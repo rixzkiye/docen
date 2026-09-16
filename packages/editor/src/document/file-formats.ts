@@ -57,6 +57,8 @@ export const READONLY_LIVE: ReadonlySet<string> = new Set([
   // View-surface toggles — paint-time view state, not document content.
   "toggle-ruler",
   "toggle-gridlines",
+  // Field codes (Alt+F9) — a projection toggle, like the view toggles above.
+  "toggle-field-codes",
   // The document views — Word's read-only mode can still switch views.
   "print-layout",
   "web-layout",
@@ -209,10 +211,14 @@ export const LOCAL_HANDLED: ReadonlySet<string> = new Set([
   "insert-footnote",
   // Field opens the field dialog (Insert → Text group; the commit arrives via
   // field:ok). The context menu's Update/Edit Field act on the atom under the
-  // caret (update = Word's F9); the checkbox flip is the form-field variant.
+  // caret (update = Word's F9), Update All Fields walks every field atom, and
+  // toggle-field-codes is Alt+F9's projection switch; the checkbox flip is the
+  // form-field variant.
   "insert-field",
   "update-field",
   "edit-field",
+  "update-all-fields",
+  "toggle-field-codes",
   "toggle-field-checkbox",
   // Chart Design's Edit Data opens the data-grid dialog (the commit arrives
   // via chart:ok → the chart-data-apply command).
