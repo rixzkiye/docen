@@ -193,7 +193,11 @@ export function projectDocumentOptions(
           typeof doc.settings?.compatibility === "object" &&
           doc.settings.compatibility.adjustLineHeightInTable === true,
       },
-      furniture: projectPageFurniture({ ...section, headers, footers }, doc),
+      furniture: projectPageFurniture(
+        { ...section, headers, footers },
+        doc,
+        ctx.revisionAuthorColors,
+      ),
       pageBorders: projectPageBorders(section.properties),
       lineNumbers: projectLineNumbers(section.properties),
       pageNumbering: projectPageNumbering(section.properties),
@@ -211,7 +215,7 @@ export function projectDocumentOptions(
             {
               blocks: [],
               flow: projectFlowBox(undefined),
-              furniture: projectPageFurniture(undefined, doc),
+              furniture: projectPageFurniture(undefined, doc, ctx.revisionAuthorColors),
               pageBorders: undefined,
               lineNumbers: undefined,
               columns: undefined,

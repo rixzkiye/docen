@@ -1,5 +1,6 @@
 import type { ParagraphChild, RunOptions } from "@office-open/docx";
 
+import type { RunPropMark } from "../converters/docx";
 import { mergeTextNodes } from "../converters/styles";
 import type { JSONContent } from "../core";
 import { Mark } from "../core";
@@ -134,17 +135,41 @@ export const Deletion = Mark.create({
   parseDocxInline: deletionRule,
 });
 
-/** Parse the stored old-rPr JSON into an options object; malformed entries
- *  degrade to no props (the revision metadata still round-trips). */
-function parseRunProps(raw: unknown): Record<string, unknown> {
-  if (typeof raw !== "string") return {};
+/** One tracked run format change (w:rPrChange). A marked run can carry several
+ *  records — different authors editing the same run produce separate entries
+ *  (PM marks of one type cannot coexist on a node, so the list is the per-author
+ *  storage). */
+export interface RunFormatRecord {
+  id: number;
+  author: string;
+  date: string;
+  /** The exact rPr mark set before the change (editor-originated records):
+   *  reject restores it verbatim, so no reconstructed carrier marks appear. */
+  before?: RunPropMark[];
+  /** The exact rPr mark set after the change — a later author's record leaves
+   *  props it still owns untouched when an older record is rejected. */
+  after?: RunPropMark[];
+  /** The record's OLD run props (office-open rPr keys), verbatim for a
+   *  DOCX-loaded record and derived from `before` for an editor-originated
+   *  one. Compile emits the newest record's props as w:rPrChange. */
+  props: Record<string, unknown>;
+}
+
+const isRunRecord = (value: unknown): value is RunFormatRecord =>
+  typeof value === "object" &&
+  value !== null &&
+  typeof (value as { id?: unknown }).id === "number" &&
+  typeof (value as { author?: unknown }).author === "string";
+
+/** Parse a formatChange mark's `records` attr; malformed entries degrade to an
+ *  empty list (a corrupt record never throws the projection/compile). */
+export function parseFormatRecords(raw: unknown): RunFormatRecord[] {
+  if (typeof raw !== "string") return [];
   try {
     const parsed: unknown = JSON.parse(raw);
-    return parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)
-      ? (parsed as Record<string, unknown>)
-      : {};
+    return Array.isArray(parsed) ? parsed.filter(isRunRecord) : [];
   } catch {
-    return {};
+    return [];
   }
 }
 
@@ -154,11 +179,12 @@ function parseRunProps(raw: unknown): Record<string, unknown> {
  *
  * OOXML stores a run's previous properties in `<w:rPrChange>` (office-open:
  * `RunOptions.revision` = `{ id, author, date, …oldRunProps }`). The mark holds
- * the revision metadata plus the old props verbatim as a JSON string; compile
- * merges them back into `revision` (renderDocx) and resolve extracts them from
- * it (parseDocx), so a Word file's format changes survive the JSON round-trip.
- * The current run properties stay on their own rPr marks — accept keeps them,
- * reject restores the old ones from `props`.
+ * a JSON list of {@link RunFormatRecord} — the revision metadata plus the old
+ * props (and, for edits made here, the exact before/after mark snapshots).
+ * Compile emits the newest record as `revision` (renderDocx) and resolve turns
+ * it back into one record (parseDocx), so a Word file's format changes survive
+ * the JSON round-trip. The current run properties stay on their own rPr marks —
+ * accept keeps them, reject restores the record's own before-state.
  *
  * TextStyle declares a `revision` attr for its mirror guard but deliberately
  * skips it in render/parse: this mark owns the field (one mapping, once).
@@ -170,32 +196,33 @@ export const FormatChange = Mark.create({
   inclusive: false,
   addAttributes() {
     return {
-      id: { default: null, rendered: false },
-      author: { default: null, rendered: false },
-      date: { default: null, rendered: false },
-      /** The old run props (office-open rPr keys) as JSON — the rPrChange body
-       *  minus id/author/date. `null` for a bare revision with no old props. */
-      props: { default: null, rendered: false },
+      /** JSON `RunFormatRecord[]` — one entry per author's tracked change on
+       *  the marked text, oldest first (the newest compiles to w:rPrChange). */
+      records: { default: null, rendered: false },
     };
   },
   parseDocx(opts: RunOptions) {
     const rev = opts.revision;
     if (!rev || typeof rev !== "object") return null;
     const { id, author, date, ...props } = rev;
-    return {
-      id: id ?? null,
-      author: author ?? null,
-      date: date ?? null,
-      props: JSON.stringify(props),
+    const record: RunFormatRecord = {
+      id: typeof id === "number" ? id : 0,
+      author: typeof author === "string" ? author : "",
+      date: typeof date === "string" ? date : "",
+      props,
     };
+    return { records: JSON.stringify([record]) };
   },
   renderDocx(attrs: Record<string, unknown>) {
+    const records = parseFormatRecords(attrs.records);
+    const newest = records[records.length - 1];
+    if (!newest) return {};
     return {
       revision: {
-        id: typeof attrs.id === "number" ? attrs.id : 0,
-        author: typeof attrs.author === "string" ? attrs.author : "",
-        date: typeof attrs.date === "string" ? attrs.date : "",
-        ...parseRunProps(attrs.props),
+        id: newest.id,
+        author: newest.author,
+        date: newest.date,
+        ...newest.props,
       },
     };
   },

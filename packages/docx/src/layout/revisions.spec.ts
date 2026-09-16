@@ -92,6 +92,42 @@ describe("revision author colors", () => {
     // recolors the authors that remain visible.
     expect(b?.style.color).toBe("2E74B5");
   });
+
+  it("keeps one author's color across body and header (document-wide palette)", () => {
+    const projected = projectDocumentOptions({
+      sections: [
+        {
+          children: [
+            {
+              paragraph: { children: [insertion(1, "Alice", "a"), insertion(2, "Bob", "b")] },
+            },
+          ],
+          headers: {
+            default: [
+              {
+                paragraph: {
+                  children: [insertion(3, "Bob", "c"), insertion(4, "Alice", "d")],
+                },
+              },
+            ],
+          },
+        },
+      ],
+    });
+    const bodyPara = projected.sections[0]!.blocks[0];
+    if (bodyPara?.kind !== "paragraph") throw new Error("expected a projected paragraph");
+    const headerPara = projected.sections[0]!.furniture.header?.[0];
+    if (headerPara?.kind !== "paragraph") throw new Error("expected a projected header paragraph");
+    const [alice, bob] = atoms(bodyPara);
+    const [headerBob, headerAlice] = atoms(headerPara);
+    // Body order assigns Alice slot 0, Bob slot 1.
+    expect(alice?.style.color).toBe("FF0000");
+    expect(bob?.style.color).toBe("2E74B5");
+    // The header lists Bob first — the shared palette keeps each author's
+    // body color instead of restarting the cycle per furniture walk.
+    expect(headerBob?.style.color).toBe(bob?.style.color);
+    expect(headerAlice?.style.color).toBe(alice?.style.color);
+  });
 });
 
 describe("format-change indicators", () => {

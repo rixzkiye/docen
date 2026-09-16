@@ -1178,7 +1178,13 @@ export class DocxManager {
   private resolveInlineContent(opts: ParagraphOptions): JSONContent[] {
     const content = this.resolveParagraphChildren(opts.children);
     if (content.length === 0 && opts.text) {
-      const marks = this.resolveMarks(opts as unknown as RunOptions);
+      // The collapsed plain-text fallback is a bare run: paragraph-level
+      // options (pStyle, alignment, and especially the w:pPrChange `revision`)
+      // are NOT run properties. Dropping `revision` here keeps a paragraph
+      // format change paragraph-only — otherwise resolveMarks would stamp a
+      // phantom run-level formatChange (and compile an empty w:rPrChange).
+      const { revision: _, ...runOpts } = opts;
+      const marks = this.resolveMarks(runOpts as unknown as RunOptions);
       const node: JSONContent = { type: "text", text: opts.text };
       if (marks) node.marks = marks;
       return [node];

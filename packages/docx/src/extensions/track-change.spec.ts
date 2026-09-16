@@ -7,6 +7,7 @@ import {
   compileDocument,
   docxExtensions,
   formatMarkNames,
+  parseFormatRecords,
   resolveDocument,
   runPropsFromMarks,
   runPropsToMarks,
@@ -55,6 +56,11 @@ function formatChangeMarks(json: JSONContent): { mark: JSONContent; text: string
   return out;
 }
 
+/** The format records inside one resolved mark. */
+function recordsOf(mark: JSONContent) {
+  return parseFormatRecords(mark.attrs?.records);
+}
+
 /** The first compiled paragraph's children. */
 function paragraphChildren(compiled: SectionChild[]): ParagraphChild[] {
   const para = compiled[0] as { paragraph: { children?: ParagraphChild[] } };
@@ -74,12 +80,9 @@ describe("w:rPrChange (run format revisions)", () => {
     ]);
     const marks = formatChangeMarks(json);
     expect(marks).toHaveLength(1);
-    expect(marks[0]!.mark.attrs).toEqual({
-      id: 7,
-      author: "Ada",
-      date: REV_DATE,
-      props: JSON.stringify({ bold: true }),
-    });
+    const [record] = recordsOf(marks[0]!.mark);
+    expect(record).toMatchObject({ id: 7, author: "Ada", date: REV_DATE });
+    expect(record!.props).toEqual({ bold: true });
     // TextStyle never carries the revision itself — one carrier, one w:rPrChange.
     const textStyle = json.content?.[0]?.content?.[0]?.marks?.find((m) => m.type === "textStyle");
     expect(textStyle?.attrs?.revision ?? null).toBeNull();
@@ -103,11 +106,9 @@ describe("w:rPrChange (run format revisions)", () => {
     ]);
     const marks = formatChangeMarks(json);
     expect(marks).toHaveLength(1);
-    expect(marks[0]!.mark.attrs?.author).toBe("Bob");
-    expect(JSON.parse(marks[0]!.mark.attrs?.props as string)).toEqual({
-      italic: true,
-      color: "FF0000",
-    });
+    const [record] = recordsOf(marks[0]!.mark);
+    expect(record!.author).toBe("Bob");
+    expect(record!.props).toEqual({ italic: true, color: "FF0000" });
     const run = paragraphChildren(compiled)[0] as RunOptions;
     expect(run.revision).toMatchObject({ id: 9, author: "Bob", italic: true, color: "FF0000" });
   });
@@ -128,7 +129,7 @@ describe("w:rPrChange (run format revisions)", () => {
     ]);
     const marks = formatChangeMarks(json);
     expect(marks).toHaveLength(1);
-    expect(marks[0]!.mark.attrs?.props).toBe("{}");
+    expect(recordsOf(marks[0]!.mark)[0]!.props).toEqual({});
     const markTypes = (json.content?.[0]?.content?.[0]?.marks ?? []).map((m) => m.type);
     expect(markTypes).toContain("bold");
     const run = paragraphChildren(compiled)[0] as RunOptions;
@@ -185,6 +186,43 @@ describe("w:pPrChange (paragraph format revisions)", () => {
     };
     expect(para.paragraph.revision?.author).toBe("Bob");
     expect(para.paragraph.revision?.alignment).toBe("left");
+  });
+});
+
+describe("collapsed plain-text paragraphs (w:pPrChange is paragraph-only)", () => {
+  it("resolves ONE paragraph revision and no run-level formatChange", () => {
+    const { json, compiled } = roundTrip([
+      {
+        paragraph: {
+          text: "plain",
+          alignment: "center",
+          revision: { id: 5, author: "Ada", date: REV_DATE, alignment: "left" },
+        },
+      },
+    ]);
+    const para = json.content?.[0] as { attrs?: { revision?: unknown } };
+    expect(para.attrs?.revision).toMatchObject({ id: 5, author: "Ada" });
+    expect(formatChangeMarks(json)).toEqual([]);
+    const run = paragraphChildren(compiled)[0] as RunOptions;
+    expect(run.text).toBe("plain");
+    expect(run.revision).toBeUndefined();
+  });
+
+  it("round-trips real XML without a phantom w:rPrChange", () => {
+    const { json, compiled } = throughXml([
+      {
+        paragraph: {
+          text: "plain",
+          alignment: "center",
+          revision: { id: 6, author: "Bob", date: REV_DATE, alignment: "left" },
+        },
+      },
+    ]);
+    expect(formatChangeMarks(json)).toEqual([]);
+    const run = paragraphChildren(compiled)[0] as RunOptions;
+    expect(run.revision).toBeUndefined();
+    const para = compiled[0] as { paragraph: { revision?: unknown } };
+    expect(para.paragraph.revision).toMatchObject({ id: 6, author: "Bob" });
   });
 });
 
