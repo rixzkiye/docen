@@ -2,6 +2,19 @@ import type { FontSlots } from "../font";
 import { formatNumber } from "../numbering-format";
 import type { LayoutDrawingLine, LayoutDrawingMember, LayoutDrawingShadow } from "./drawing";
 
+/** A run's character border (w:rPr/w:bdr) — the box Word paints around the
+ *  run's text with its own padding. */
+export interface LayoutCharBorder {
+  /** The ST_Border token (single/double/dashed/dotted/…) — absent = single. */
+  style?: string;
+  /** Stroke width in px (w:sz eighths of a point resolved). */
+  px?: number;
+  /** Padding between the run's glyphs and the box, px (w:space resolved). */
+  spacePx?: number;
+  /** Stroke color, hex RRGGBB — absent = the run's ink. */
+  color?: string;
+}
+
 export interface LayoutTextStyle {
   family: string | FontSlots;
   sizePx: number;
@@ -31,6 +44,30 @@ export interface LayoutTextStyle {
    *  Word's shading button paints on selected text. A highlight (same box,
    *  Word's palette) wins when both are present, per OOXML precedence. */
   shadingFill?: string;
+  /** Display transform for the run's cased glyphs (w:caps / w:smallCaps):
+   *  "all" uppercases every glyph at the run's size; "small" uppercases the
+   *  lowercase letters at SMALL_CAPS_SCALE of the size while the run's own
+   *  capitals stay full size. The stored text never changes — only the
+   *  measured and painted forms (see displayTextOf). */
+  caps?: "all" | "small";
+  /** Horizontal glyph scale in percent (w:w, 1–600; absent = 100) — the
+   *  run's advances measure and its glyphs paint scaled by px/100. */
+  scalePct?: number;
+  /** Baseline offset in px from w:position (negative = raised) — the glyphs
+   *  move without changing the line box, Word's raise/lower semantics. */
+  baselineShiftPx?: number;
+  /** Hidden formatting (w:vanish): hidden runs are not measured or painted
+   *  while the host's Show Hidden Text setting is off (the projection marks
+   *  the atom `suppressed`); when shown, the painter adds its dotted marker. */
+  hidden?: boolean;
+  /** Kerning threshold in points (w:kern / 2): kerning applies when the run's
+   *  font size is at least this — see kerningActive. Absent/0 = no kerning. */
+  kernPt?: number;
+  /** Character border (w:bdr) — a box around the run's glyphs. */
+  border?: LayoutCharBorder;
+  /** Emphasis mark (w:em): a small mark drawn above every glyph (dot / comma
+   *  / circle) or below it (underDot). */
+  emphasisMark?: "dot" | "comma" | "circle" | "underDot";
 }
 
 /** a:srcRect crop as fractions of the image edge (0-1, each side inward);
@@ -100,6 +137,11 @@ export type LayoutInline =
       kind: "text";
       text: string;
       style: LayoutTextStyle;
+      /** The hidden run is not displayed (Show Hidden Text off): the layout
+       *  charges no advance for it and the painter draws nothing, while the
+       *  atom keeps its `text` so the editor's caret lattice stays aligned
+       *  with the document model (Word's hidden-text behavior). */
+      suppressed?: boolean;
       field?: "page" | "numPages";
       /** The field instruction verbatim (`PAGE \* MERGEFORMAT`, `AUTHOR`,
        *  `REF _Ref123 \h`) — set on every w:fldSimple / complexField atom. */

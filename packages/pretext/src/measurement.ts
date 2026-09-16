@@ -67,6 +67,38 @@ export function getSegmentMetricCache(font: string): Map<string, SegmentMetrics>
   return cache;
 }
 
+/** docen-local: whether the measurement context honors `fontKerning`
+ *  ("normal") — an engine without the property leaves it undefined and the
+ *  write must not throw. Probed once per context; the documented no-op path
+ *  (unsupported engine) simply keeps the default "auto" metrics. */
+let fontKerningSupport: boolean | null = null;
+
+export function fontKerningSupported(): boolean {
+  if (fontKerningSupport !== null) return fontKerningSupport;
+  const ctx = getMeasureContext() as { fontKerning?: string };
+  try {
+    const before = ctx.fontKerning;
+    ctx.fontKerning = "normal";
+    fontKerningSupport = ctx.fontKerning === "normal";
+    // Restore explicitly: assigning `undefined` is an invalid CSS value some
+    // engines ignore (the property would stay "normal").
+    ctx.fontKerning = before ?? "auto";
+  } catch {
+    fontKerningSupport = false;
+  }
+  return fontKerningSupport;
+}
+
+/** Explicit canvas kerning for a preparation: "normal" when the run's w:kern
+ *  threshold is met, the engine default "auto" otherwise. A no-op where
+ *  `fontKerning` is unsupported (measurements then keep the default metrics —
+ *  the kerning fallback the layout's kerningActive contract documents). */
+function applyFontKerning(fontKerning: boolean): void {
+  if (!fontKerningSupported()) return;
+  const ctx = getMeasureContext() as { fontKerning?: string };
+  ctx.fontKerning = fontKerning ? "normal" : "auto";
+}
+
 export function getSegmentMetrics(seg: string, cache: Map<string, SegmentMetrics>): SegmentMetrics {
   let metrics = cache.get(seg);
   if (metrics === undefined) {
@@ -342,6 +374,7 @@ export function getFontMeasurementState(
   font: string,
   needsEmojiCorrection: boolean,
   needsCjkCorrection: boolean,
+  fontKerning = false,
 ): {
   cache: Map<string, SegmentMetrics>;
   fontSize: number;
@@ -350,7 +383,11 @@ export function getFontMeasurementState(
 } {
   const ctx = getMeasureContext();
   ctx.font = font;
-  const cache = getSegmentMetricCache(font);
+  applyFontKerning(fontKerning);
+  // Kerning changes the measured widths, so its two modes keep separate
+  // segment caches — a kerned preparation must never reuse auto-mode widths
+  // (or vice versa) for the same font.
+  const cache = getSegmentMetricCache(fontKerning ? `${font}\u0000kern` : font);
   const fontSize = parseFontSize(font);
   const emojiCorrection = needsEmojiCorrection ? getEmojiCorrection(font, fontSize) : 0;
   // docen-local: only probe the CJK delta when the run actually contains CJK,
@@ -363,5 +400,6 @@ export function clearMeasurementCaches(): void {
   segmentMetricCaches.clear();
   emojiCorrectionCache.clear();
   cjkCorrectionCache.clear();
+  fontKerningSupport = null;
   sharedGraphemeSegmenter = null;
 }

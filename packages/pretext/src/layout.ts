@@ -150,6 +150,15 @@ export type PrepareOptions = {
   whiteSpace?: WhiteSpaceMode;
   wordBreak?: WordBreakMode;
   letterSpacing?: number;
+  // docen-local: horizontal advance scale for the whole preparation (OOXML
+  // w:w character scaling, hidden-run zeroing). Applied to every measured
+  // glyph advance AFTER letter spacing, so the item's total advance — glyphs
+  // plus spacing — scales as one; tab stops and collapsed-space probes stay
+  // unscaled. 1 = natural.
+  widthScale?: number;
+  // docen-local: explicitly enable canvas font kerning ("normal") while this
+  // preparation measures. Absent leaves the engine default ("auto").
+  fontKerning?: boolean;
 };
 
 // Internal hard-break chunk hint for the line walker. Not public because
@@ -382,16 +391,24 @@ function measureAnalysis(
   includeSegments: boolean,
   wordBreak: WordBreakMode,
   letterSpacing: number,
+  widthScale: number,
+  fontKerning: boolean,
 ): InternalPreparedText | PreparedTextWithSegments {
   const engineProfile = getEngineProfile();
   const { cache, emojiCorrection, cjkCorrection } = getFontMeasurementState(
     font,
     textMayContainEmoji(analysis.normalized),
     isCJK(analysis.normalized),
+    fontKerning,
   );
+  // docen-local: the horizontal scale filters every glyph advance (and the
+  // letter spacing measured with it) — see PrepareOptions.widthScale.
+  // Zero is a real scale (a hidden run's suppressed advance), not a fallback.
+  const scale = Number.isFinite(widthScale) && widthScale >= 0 ? widthScale : 1;
   const discretionaryHyphenWidth =
-    getCorrectedSegmentWidth("-", getSegmentMetrics("-", cache), emojiCorrection, cjkCorrection) +
-    (letterSpacing === 0 ? 0 : letterSpacing * 2);
+    (getCorrectedSegmentWidth("-", getSegmentMetrics("-", cache), emojiCorrection, cjkCorrection) +
+      (letterSpacing === 0 ? 0 : letterSpacing * 2)) *
+    scale;
   const spaceWidth = getCorrectedSegmentWidth(
     " ",
     getSegmentMetrics(" ", cache),
@@ -449,17 +466,20 @@ function measureAnalysis(
   ): void {
     const textMetrics = getSegmentMetrics(text, cache);
     const spacingGraphemeCount = hasLetterSpacing ? countRenderedSpacingGraphemes(text, kind) : 0;
-    const width = addInternalLetterSpacing(
+    const naturalWidth = addInternalLetterSpacing(
       getCorrectedSegmentWidth(text, textMetrics, emojiCorrection, cjkCorrection),
       spacingGraphemeCount,
       letterSpacing,
     );
+    const width = naturalWidth * scale;
     const baseLineEndFitAdvance =
-      kind === "space" || kind === "preserved-space" || kind === "zero-width-break" ? 0 : width;
+      kind === "space" || kind === "preserved-space" || kind === "zero-width-break"
+        ? 0
+        : naturalWidth;
     const lineEndFitAdvance =
       baseLineEndFitAdvance === 0
         ? 0
-        : baseLineEndFitAdvance + (spacingGraphemeCount > 0 ? letterSpacing : 0);
+        : (baseLineEndFitAdvance + (spacingGraphemeCount > 0 ? letterSpacing : 0)) * scale;
     const lineEndPaintAdvance = kind === "space" || kind === "zero-width-break" ? 0 : width;
 
     if (allowOverflowBreaks && wordLike && text.length > 1) {
@@ -479,6 +499,8 @@ function measureAnalysis(
         cjkCorrection,
         fitMode,
       );
+      const scaledFitAdvances =
+        fitAdvances === null || scale === 1 ? fitAdvances : fitAdvances.map((w) => w * scale);
       const preferredBreaks =
         fitAdvances === null || wordBreak === "keep-all" ? null : getBreakablePreferredBreaks(text);
       pushMeasuredSegment(
@@ -488,7 +510,7 @@ function measureAnalysis(
         lineEndPaintAdvance,
         kind,
         start,
-        fitAdvances,
+        scaledFitAdvances,
         preferredBreaks,
         spacingGraphemeCount,
       );
@@ -582,6 +604,10 @@ function measureAnalysis(
   );
   const segLevels =
     segStarts === null ? null : computeSegmentLevels(analysis.normalized, segStarts);
+  // The stored letter spacing is the SCALED one: every walk site
+  // (getBreakableGraphemeAdvance, finalizeLinePaintWidth, …) adds it to the
+  // already-scaled segment/glyph widths, so the raw value would double-count
+  // differently at whole-segment vs grapheme breaks.
   if (segments !== null) {
     return {
       widths,
@@ -592,7 +618,7 @@ function measureAnalysis(
       segLevels,
       breakableFitAdvances,
       breakablePreferredBreaks,
-      letterSpacing,
+      letterSpacing: letterSpacing * scale,
       spacingGraphemeCounts,
       discretionaryHyphenWidth,
       tabStopAdvance,
@@ -609,7 +635,7 @@ function measureAnalysis(
     segLevels,
     breakableFitAdvances,
     breakablePreferredBreaks,
-    letterSpacing,
+    letterSpacing: letterSpacing * scale,
     spacingGraphemeCounts,
     discretionaryHyphenWidth,
     tabStopAdvance,
@@ -656,7 +682,15 @@ function prepareInternal(
   const wordBreak = options?.wordBreak ?? "normal";
   const letterSpacing = options?.letterSpacing ?? 0;
   const analysis = analyzeText(text, getEngineProfile(), options?.whiteSpace, wordBreak);
-  return measureAnalysis(analysis, font, includeSegments, wordBreak, letterSpacing);
+  return measureAnalysis(
+    analysis,
+    font,
+    includeSegments,
+    wordBreak,
+    letterSpacing,
+    options?.widthScale ?? 1,
+    options?.fontKerning === true,
+  );
 }
 
 // Prepare text for layout. Segments the text, measures each segment via canvas,

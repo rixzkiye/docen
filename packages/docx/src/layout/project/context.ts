@@ -59,4 +59,9 @@ export interface ProjectContext {
    *  verbatim instead of its cached result — no dynamic page atoms, no
    *  re-hydrated result runs. */
   showFieldCodes?: boolean;
+  /** Word's "Show hidden text" (Options → Display): hidden runs (w:vanish)
+   *  project as displayed text with their dotted marker; off (the default)
+   *  suppresses them — no advance, no ink, the source characters kept on the
+   *  atom for the caret lattice. */
+  showHiddenText?: boolean;
 }

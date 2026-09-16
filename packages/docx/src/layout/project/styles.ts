@@ -2,7 +2,12 @@
 // mergeStyleChain resolution the editor's measure side uses, plus the
 // per-run rPr resolution the text runs and the ¶-mark strut build on.
 
-import type { LayoutParagraph, LayoutTextStyle } from "@docen/layout";
+import {
+  ptToPx,
+  type LayoutCharBorder,
+  type LayoutParagraph,
+  type LayoutTextStyle,
+} from "@docen/layout";
 import type { StylesOptions } from "@office-open/docx";
 
 import { resolveRFonts } from "../../extensions/utils";
@@ -11,7 +16,7 @@ import {
   indexParagraphStyles,
   mergeStyleChain,
 } from "../../style-cascade";
-import { colorOf, isRecord, measureTwip, num, str, type Rec } from "./guards";
+import { colorOf, eighthPtToPx, isRecord, measureTwip, num, str, type Rec } from "./guards";
 
 // ── style cascade (direct pPr → style chain → docDefaults) ──
 
@@ -100,6 +105,65 @@ export interface RunStyle {
   underlineColor?: string;
   strikethrough?: boolean;
   verticalAlign?: "superscript" | "subscript";
+  /** w:allCaps / w:smallCaps — three-state (an explicit false cancels the
+   *  style chain's value, Word's direct-beats-style rule). */
+  allCaps?: boolean;
+  smallCaps?: boolean;
+  /** w:vanish (Word's Hidden effect). */
+  vanish?: boolean;
+  /** w:w character scale in percent (ST_TextScale). */
+  scalePct?: number;
+  /** w:position in points (native half-points resolved; positive = raised). */
+  positionPt?: number;
+  /** w:kern threshold in points (native half-points resolved). */
+  kernPt?: number;
+  /** w:bdr box around the run's glyphs. */
+  border?: LayoutCharBorder;
+  /** w:em emphasis mark token (ST_EmphasisMark minus "none"). */
+  emphasisMark?: "dot" | "comma" | "circle" | "underDot";
+}
+
+/** ST_TextScale resolution (w:w): only 1-600 is meaningful, and 100 is the
+ *  identity — an explicit 100 must cancel an inherited scale, so it maps to
+ *  undefined like an out-of-range value. */
+export function normalizeScalePct(v: number | undefined): number | undefined {
+  return v != null && v >= 1 && v <= 600 && v !== 100 ? v : undefined;
+}
+
+/** OOXML half-point measure (w:position / w:kern) → points. A number is the
+ *  native unit (half-points); a universal-measure string resolves through
+ *  twips (1pt = 20tw). */
+function halfPtOf(v: unknown): number | undefined {
+  const native = num(v);
+  if (native != null) return native / 2;
+  const tw = measureTwip(v);
+  return tw != null ? tw / 20 : undefined;
+}
+
+const EMPHASIS_MARKS = new Set(["dot", "comma", "circle", "underDot"]);
+
+/** w:em (an `{ type }` object; a bare token is accepted defensively) → the
+ *  engine's mark token; "none"/anything unknown → undefined. */
+function emphasisOf(v: unknown): RunStyle["emphasisMark"] {
+  const token = isRecord(v) ? str(v.type) : typeof v === "string" ? v : undefined;
+  return token && EMPHASIS_MARKS.has(token) ? (token as RunStyle["emphasisMark"]) : undefined;
+}
+
+/** w:bdr (RunBorder: style/sz eighths of a point/space points/color) → the
+ *  engine's box. An all-empty record (a round-trip shell) is no border. */
+function charBorderOf(v: unknown): LayoutCharBorder | undefined {
+  if (!isRecord(v)) return undefined;
+  const style = str(v.style);
+  const size = num(v.size);
+  const space = num(v.space);
+  const color = colorOf(v.color);
+  const border: LayoutCharBorder = {
+    ...(style && style !== "none" && style !== "nil" ? { style } : {}),
+    ...(size != null ? { px: eighthPtToPx(size) } : {}),
+    ...(space != null ? { spacePx: ptToPx(space) } : {}),
+    ...(color ? { color } : {}),
+  };
+  return Object.keys(border).length > 0 ? border : undefined;
 }
 
 /** rPr (a run's own, or the ¶-mark/paragraph default) → resolved fields.
@@ -136,5 +200,13 @@ export function runStyleOf(rPr: Rec): RunStyle {
       rPr.verticalAlign === "superscript" || rPr.verticalAlign === "subscript"
         ? rPr.verticalAlign
         : undefined,
+    allCaps: tri(rPr.allCaps),
+    smallCaps: tri(rPr.smallCaps),
+    vanish: tri(rPr.vanish),
+    scalePct: num(rPr.scale),
+    positionPt: halfPtOf(rPr.position),
+    kernPt: halfPtOf(rPr.kern),
+    border: charBorderOf(rPr.border),
+    emphasisMark: emphasisOf(rPr.emphasisMark),
   };
 }

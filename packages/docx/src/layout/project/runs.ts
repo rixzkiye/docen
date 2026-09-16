@@ -18,7 +18,7 @@ import { cropOf, outlineOf, pictureAdjustOf } from "./drawing";
 import { isRecord, measureEmu, num, str, unescapeXml, type Rec } from "./guards";
 import { metafileMembers, pictureSrc } from "./media";
 import { romanNumeral } from "./numbering";
-import { fontAttr, toFamily, runStyleOf } from "./styles";
+import { fontAttr, normalizeScalePct, toFamily, runStyleOf } from "./styles";
 
 /** Word's "By author" revision palette — slot 0 is the red Word's first
  *  reviewer gets (the canvas default before per-author colors existed, so
@@ -207,6 +207,29 @@ export function projectRuns(
     const chainSizeRaw = num(chainRPr.size);
     const chainSize = isNoteRun && chainSizeRaw === 20 ? 10 : chainSizeRaw;
     const effectiveSizePt = own.sizePt ?? chainSize ?? num(docRPr.size) ?? (isNoteRun ? 10 : 12);
+    // w:caps wins over w:smallCaps when both apply; an explicit false on
+    // either cancels the inherited caps token (direct beats the chain).
+    const caps: LayoutTextStyle["caps"] =
+      own.allCaps === true
+        ? "all"
+        : own.smallCaps === true
+          ? "small"
+          : own.allCaps === false || own.smallCaps === false
+            ? undefined
+            : defRun.caps;
+    const scaleRaw = own.scalePct ?? defRun.scalePct;
+    // ST_TextScale: only 1-600 is meaningful; 100 is the identity (and an
+    // explicit 100 must cancel an inherited scale, so it maps to undefined).
+    const scalePct = normalizeScalePct(scaleRaw);
+    // Remaining character effects cascade field-by-field (direct/character
+    // style beats the paragraph default): an explicit value wins, absent
+    // falls through to defRun.
+    const baselineShiftPx =
+      own.positionPt != null ? -ptToPx(own.positionPt) : defRun.baselineShiftPx;
+    const hidden = own.vanish ?? defRun.hidden;
+    const kernPt = own.kernPt ?? defRun.kernPt;
+    const border = own.border ?? defRun.border;
+    const emphasisMark = own.emphasisMark ?? defRun.emphasisMark;
     return {
       family: toFamily(own.font, fontAttr(chainRPr.font) ?? fontAttr(docRPr.font)) ?? defRun.family,
       sizePx: ptToPx(effectiveSizePt),
@@ -226,6 +249,13 @@ export function projectRuns(
       letterSpacingPx:
         own.characterSpacingTw != null ? twipToPx(own.characterSpacingTw) : defRun.letterSpacingPx,
       verticalAlign: own.verticalAlign ?? defRun.verticalAlign,
+      caps,
+      ...(scalePct != null ? { scalePct } : {}),
+      ...(baselineShiftPx != null ? { baselineShiftPx } : {}),
+      ...(hidden ? { hidden: true } : {}),
+      ...(kernPt != null ? { kernPt } : {}),
+      ...(border ? { border } : {}),
+      ...(emphasisMark ? { emphasisMark } : {}),
     };
   };
   const pushText = (text: string, rPr: Rec): void => {
@@ -531,5 +561,20 @@ export function projectRuns(
     }
   };
   pushRuns(runs, {});
+  // Hidden formatting (w:vanish) with the host's Show Hidden Text off: the
+  // text is neither measured nor painted, so every atom it projected is
+  // suppressed — the atom keeps its source characters (the caret lattice
+  // stays aligned) while the packer charges a zero advance. With the setting
+  // on, only the style's `hidden` flag survives and the painter adds its
+  // dotted marker.
+  //
+  // w:fitText (compress-to-width) stays unprojected: it needs a per-line
+  // target-width compression the packer's CJK-only advance squeeze cannot
+  // carry — deferred to a follow-up.
+  if (!ctx.showHiddenText) {
+    for (const atom of out) {
+      if (atom.kind === "text" && atom.style.hidden) atom.suppressed = true;
+    }
+  }
   return out;
 }

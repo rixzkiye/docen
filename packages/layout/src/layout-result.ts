@@ -26,6 +26,13 @@ export interface LaidOutTextItem {
    *  renderer paints (leading spaces of soft wraps collapsed, runs joined),
    *  not a verbatim slice of the source run's text. */
   text: string;
+  /** The painted form when a display transform (w:caps / w:smallCaps) makes
+   *  it differ from `text` — same UTF-16 length, so caret offsets derived
+   *  from `text` still index it 1:1. Absent = paint `text`. */
+  displayText?: string;
+  /** The painted glyph size override (a smallCaps lowercase piece renders as
+   *  a reduced capital); absent = the run style's own vertAlign-scaled size. */
+  fontSizePx?: number;
   xPx: number;
   widthPx: number;
   /** Carried from the source inline item (a numbering marker): synthesized

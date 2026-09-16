@@ -8,13 +8,11 @@
 
 import type { ShapeTextStack } from "@docen/core";
 import {
-  cssFontOf,
-  familyOfSlot,
   type FlowPage,
   gridPadOf,
-  isCjkCodeUnit,
   type ItemGlyphLayout,
-  itemGlyphLayout,
+  itemFontOf,
+  itemGlyphLayoutOf,
   justifiedIntervals,
   type LaidOutLine,
   type LaidOutParagraph,
@@ -804,30 +802,34 @@ export class CaretMap {
     for (const item of line.line.items) {
       if (item.kind !== "text") continue;
       const inline = line.para.inline[item.inlineIndex];
-      if (inline?.kind !== "text") continue;
-      // The slot test the layout's own measurement used (isCjkCodeUnit over
-      // the engine's CJK ranges) — the band hugs glyphs measured AND painted
-      // in the same face.
-      const font = cssFontOf(
-        inline.style,
-        familyOfSlot(inline.style.family, isCjkCodeUnit(item.text, 0)),
-      );
+      if (inline?.kind !== "text" || inline.suppressed) continue;
+      // The paint font of the item's own piece — a smallCaps lowercase piece
+      // rides at its reduced size, a caps run measures the displayed glyphs
+      // (itemFontOf picks the script slot from the display text).
+      const font = itemFontOf(inline.style, item);
       ctx.font = font;
       // The painter's own baseline: the LINE's measured baseline (the shared
       // lineBaselineDepthPx — mixed-size runs align on it, so a small run's
       // band may not re-derive its own depth), plus a vertAlign run's shift
-      // (vertAlignBaselineShiftPx in the shared measure module) — the band
-      // must anchor there too, or a footnote reference's highlight rides
-      // below its glyphs. A ruby base sinks below its annotation space the
-      // same way the painter sinks it (rubyLiftPx, layout-computed).
+      // (vertAlignBaselineShiftPx in the shared measure module) and a
+      // w:position raise/lower — the band must anchor there too, or a
+      // footnote reference's highlight rides below its glyphs. A ruby base
+      // sinks below its annotation space the same way the painter sinks it
+      // (rubyLiftPx, layout-computed).
+      const size = item.fontSizePx ?? vertAlignedSizePx(inline.style);
       const baseline =
         line.yPx +
-        lineBaselineDepthPx(line.line, vertAlignedSizePx(inline.style)) +
+        lineBaselineDepthPx(line.line, size) +
         (item.rubyLiftPx ?? 0) +
-        vertAlignBaselineShiftPx(inline.style);
+        vertAlignBaselineShiftPx(inline.style) +
+        (inline.style.baselineShiftPx ?? 0);
       // The item's own ink box (first graphemes carry its script's shape); the
       // deepest run's descent and highest run's ascent bound the highlight.
-      const metrics = ctx.measureText(Array.from(item.text).slice(0, 8).join(""));
+      const metrics = ctx.measureText(
+        Array.from(item.displayText ?? item.text)
+          .slice(0, 8)
+          .join(""),
+      );
       top = Math.min(top, baseline - metrics.actualBoundingBoxAscent);
       bottom = Math.max(bottom, baseline + metrics.actualBoundingBoxDescent);
     }
@@ -1089,9 +1091,21 @@ export class CaretMap {
     // Initialized via a cast so TS keeps the declared union at the read site
     // (closure writes aren't tracked and a plain null narrows to never).
     let bestOffset = undefined as { pos: number; dist: number } | undefined;
+    // A hidden run the host does not display (Show Hidden Text off) paints
+    // zero width, so the boundary before and after it collapse onto its x.
+    // A click there must resolve to a VISIBLE boundary — Word skips hidden
+    // text, so the boundary after the run wins the tie against the boundary
+    // before it.
+    let hiddenX: number | null = null;
     const push = (xAt: number, pos: number): void => {
       const dist = Math.abs(xAt - x);
-      if (!bestOffset || dist < bestOffset.dist) bestOffset = { pos, dist };
+      if (
+        !bestOffset ||
+        dist < bestOffset.dist ||
+        (hiddenX != null && xAt === hiddenX && dist === bestOffset.dist)
+      ) {
+        bestOffset = { pos, dist };
+      }
     };
     push(entry.xPx, this.posOfChar(entry.owner, char));
     for (const [itemIndex, item] of entry.line.items.entries()) {
@@ -1101,6 +1115,16 @@ export class CaretMap {
       // glyphs sit outside the offset space, so skip both its gap and its
       // grapheme boundaries.
       if (item.kind === "text" && item.synthetic) continue;
+      // Hidden text owns no click boundaries: it is not painted, and a click
+      // in its collapsed span belongs to the visible text on one side. Its
+      // characters still advance the offset lattice (they exist in the PM
+      // document), so every visible boundary after it keeps its position.
+      const src = entry.para.inline[item.inlineIndex];
+      if (item.kind === "text" && src?.kind === "text" && src.suppressed) {
+        char += entry.spaces[itemIndex]! + item.text.length;
+        hiddenX = entry.xPx + item.xPx;
+        continue;
+      }
       // The trimmed gap ahead of the item: its characters' left boundaries
       // share the gap the space dots center in (the previous item's laid end
       // → this item's x, evenly split), so a click inside the gap lands on
@@ -1148,8 +1172,9 @@ export class CaretMap {
   }
 
   /** One text item's glyph placement anchored at the line — the shared
-   *  itemGlyphLayout model (the exact distribution the painter's Text
-   *  renders, Leafer's CharLayout) with the item's stretch/compress
+   *  itemGlyphLayoutOf model (the exact distribution the painter's Text
+   *  renders, Leafer's CharLayout, with the caps display form, the piece's
+   *  size and the w:w scale folded in) with the item's stretch/compress
    *  interval: a justified item's interval end, or on a squeezed line the
    *  item's own right edge (the painter runs both-letter at negative
    *  slack — the same uniform per-grapheme delta as justification). */
@@ -1161,20 +1186,24 @@ export class CaretMap {
     if (item.kind !== "text") return null;
     const inline = entry.para.inline[item.inlineIndex];
     if (inline?.kind !== "text") return null;
+    // Hidden text not displayed paints zero width: every grapheme boundary
+    // collapses to the run's left edge. The click walk skips these items
+    // outright (no boundaries at all); this zero-geometry shape is the
+    // defensive contract for any consumer that still asks.
+    if (inline.suppressed) {
+      const { lens } = itemGlyphLayoutOf(item, inline.style);
+      const base = entry.xPx + item.xPx;
+      return {
+        layout: { xs: lens.map(() => 0), widths: lens.map(() => 0), lens, endX: 0 },
+        base,
+        end: base,
+      };
+    }
     const end =
       entry.intervals?.[itemIndex] ??
       (entry.line.advanceScale != null ? item.xPx + item.widthPx : undefined);
-    const font = cssFontOf(
-      inline.style,
-      familyOfSlot(inline.style.family, isCjkCodeUnit(item.text, 0)),
-    );
     return {
-      layout: itemGlyphLayout(
-        item.text,
-        font,
-        inline.style.letterSpacingPx,
-        end != null ? end - item.xPx : undefined,
-      ),
+      layout: itemGlyphLayoutOf(item, inline.style, end != null ? end - item.xPx : undefined),
       base: entry.xPx + item.xPx,
       end,
     };
@@ -1338,6 +1367,17 @@ export class CaretMap {
       // glyphs paint before the paragraph's own characters and never answer
       // a boundary query.
       if (item.kind === "text" && item.synthetic) continue;
+      // Hidden text not displayed has no painted extent: every offset inside
+      // the run (its gap and characters included) collapses to the run's
+      // left edge — the same x the following visible content starts at.
+      // Skipping it also keeps the caret lattice monotonic.
+      const src = line.para.inline[item.inlineIndex];
+      if (item.kind === "text" && src?.kind === "text" && src.suppressed) {
+        const gap = line.spaces[itemIndex]!;
+        if (offset <= char + gap + item.text.length) return line.xPx + item.xPx;
+        char += gap + item.text.length;
+        continue;
+      }
       // The trimmed gap ahead of the item: the boundary rides the gap's even
       // split — the same lattice the space dots center in. Boxed inlines
       // share it (their gap is the collapsed run before the box).

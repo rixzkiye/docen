@@ -52,6 +52,96 @@ export function vertAlignBaselineShiftPx(style: LayoutTextStyle): number {
   return 0;
 }
 
+/** The fraction of the font size a smallCaps lowercase glyph renders at
+ *  (w:smallCaps — Word's ~80% reduced capital). */
+export const SMALL_CAPS_SCALE = 0.8;
+
+/** The horizontal advance scale a run's w:w applies (1 = natural): every
+ *  glyph advance and the run's letter spacing scale together, so measure and
+ *  paint (a scaleX on the glyph element) agree. */
+export function characterScaleOf(style: LayoutTextStyle): number {
+  const pct = style.scalePct;
+  return pct != null && pct > 0 && pct !== 100 ? pct / 100 : 1;
+}
+
+/** Whether the canvas honors `fontKerning` — probed (and applied) by the
+ *  measurement kernel; the layout only needs the decision contract here.
+ *  Unsupported engines keep the default "auto" metrics (documented no-op). */
+export function kerningActive(style: LayoutTextStyle): boolean {
+  const threshold = style.kernPt;
+  if (threshold == null || threshold <= 0) return false;
+  return style.sizePx * (72 / 96) >= threshold;
+}
+
+/** The display form of a run's text under a caps transform (w:caps /
+ *  w:smallCaps): each cased code point uppercased where the mapping stays
+ *  one code point — the 1:1 UTF-16 length keeps caret/selection offsets
+ *  aligned with the source. A mapping that changes length (ß → SS) keeps
+ *  the source glyph rather than shifting every offset after it. Absent caps
+ *  returns the text untouched. */
+export function displayTextOf(text: string, caps: LayoutTextStyle["caps"]): string {
+  if (!caps) return text;
+  let out = "";
+  for (const ch of text) {
+    const up = ch.toUpperCase();
+    out += up.length === ch.length ? up : ch;
+  }
+  return out;
+}
+
+/** One same-case stretch of a caps-transformed run: the source slice, its
+ *  painted form, and whether it takes the reduced small-caps size. */
+export interface CapsPiece {
+  source: string;
+  display: string;
+  small: boolean;
+}
+
+/** Grapheme cluster segmenter — a combining mark must ride its base
+ *  character: splitting `"e\u0301"` into e + U+0301 would render the mark as
+ *  a full-size standalone piece. */
+const GRAPHEME_SEGMENTER = new Intl.Segmenter(undefined, { granularity: "grapheme" });
+
+/** Split a run's text into the pieces a caps transform measures and paints:
+ *  allCaps is one piece (the whole run uppercased at its own size); smallCaps
+ *  splits at case boundaries so the lowercase pieces can render as reduced
+ *  capitals while the run's own capitals, digits, spaces and punctuation keep
+ *  the full size. No caps = one untouched piece. The split walks grapheme
+ *  clusters, so a combining mark never separates from its base.
+ *
+ *  Hot spot: every case transition becomes its own rich-inline item, and the
+ *  per-line probe walks items one by one — smallCaps-heavy content (an
+ *  alternating-case run per word) lays 5-10× slower than the same text
+ *  without caps. The split is already minimal (a case-uniform run produces
+ *  exactly one piece), so a deeper fix — per-grapheme glyph selection inside
+ *  one prepared item — is a pretext capability to add later.
+ *
+ *  Known approximation: the rich-inline packer treats item boundaries as
+ *  potential wrap points, and a case boundary is not one in Word — a
+ *  smallCaps word ending exactly at the margin can therefore wrap at the
+ *  case change instead of moving whole. */
+export function capsPiecesOf(text: string, caps: LayoutTextStyle["caps"]): CapsPiece[] {
+  if (!text) return [];
+  if (caps === "all") return [{ source: text, display: displayTextOf(text, "all"), small: false }];
+  if (caps !== "small") return [{ source: text, display: text, small: false }];
+  const pieces: CapsPiece[] = [];
+  let source = "";
+  let small = false;
+  const flush = (): void => {
+    if (!source) return;
+    pieces.push({ source, display: displayTextOf(source, "small"), small });
+    source = "";
+  };
+  for (const { segment: grapheme } of GRAPHEME_SEGMENTER.segment(text)) {
+    const lower = grapheme.toLowerCase() === grapheme && grapheme.toUpperCase() !== grapheme;
+    if (source && lower !== small) flush();
+    small = lower;
+    source += grapheme;
+  }
+  flush();
+  return pieces;
+}
+
 /** The alphabetic baseline's offset below a painted Text element's top: the
  *  painter pins each Text's lineHeight to the font size (px form), and
  *  Leafer's baseline formula ((lineHeight + 0.7·fontSize) / 2) then puts the
@@ -186,15 +276,21 @@ export class TextMeasurer {
    *  script segment in its slot's face, the same fonts a broken line sums),
    *  so a caller-side atom's width never drifts from what the breaker charges
    *  an equivalent run. `whiteSpace` must match the mode the breaker prepares
-   *  with (pre-wrap keeps spaces as paid advances; normal collapses them). */
+   *  with (pre-wrap keeps spaces as paid advances; normal collapses them).
+   *  The run's w:w scale and w:kern mode ride the same preparation options the
+   *  breaker passes, so a trailing-space probe charges what the line did. */
   widthOf(text: string, style: LayoutTextStyle, whiteSpace?: PrepareOptions["whiteSpace"]): number {
     const { segments } = this.analyze(text, style);
+    const widthScale = characterScaleOf(style);
+    const fontKerning = kerningActive(style);
     let width = 0;
     for (const seg of segments)
       width += measureNaturalWidth(
         prepareWithSegments(seg.text, cssFontOf(style, familyOfSlot(style.family, seg.isCjk)), {
           letterSpacing: style.letterSpacingPx ?? 0,
           whiteSpace,
+          widthScale,
+          fontKerning,
         }),
       );
     return width;
@@ -211,10 +307,18 @@ export function familyOfSlot(family: string | FontSlots, isCjk: boolean): string
  *  with (canvas measureText) and the painter draws with (LeaferJS), so the
  *  two can never drift apart. */
 export function cssFontOf(style: LayoutTextStyle, family: string): string {
+  return cssFontAtSize(style, family, vertAlignedSizePx(style));
+}
+
+/** The same shorthand at an explicit size — a smallCaps piece's reduced size
+ *  or an advance-space probe. The painter passes a piece's *paint* size; the
+ *  measure side scales the size itself only for probes (the w:w advance scale
+ *  rides pretext's widthScale, not a font-size change). */
+export function cssFontAtSize(style: LayoutTextStyle, family: string, sizePx: number): string {
   const parts: string[] = [];
   if (style.italic) parts.push("italic");
   if (style.bold) parts.push("bold");
-  parts.push(`${vertAlignedSizePx(style)}px`);
+  parts.push(`${sizePx}px`);
   parts.push(family ? `"${family.replace(/"/g, '\\"')}", serif` : "serif");
   return parts.join(" ");
 }
