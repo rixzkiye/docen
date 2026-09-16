@@ -44,7 +44,7 @@ function buildMediumDocument(): JSONContent {
     });
     content.push({
       type: "paragraph",
-      attrs: i % 2 === 0 ? { alignment: "justify", indent: { firstLine: 480 } } : {},
+      attrs: i % 2 === 0 ? { alignment: "both", indent: { firstLine: 480 } } : {},
       content: [
         { type: "text", text: "本条", marks: [{ type: "bold" }] },
         { type: "text", text: "规定", marks: [{ type: "italic" }] },

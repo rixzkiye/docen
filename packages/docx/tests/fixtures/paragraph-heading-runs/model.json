@@ -40,7 +40,7 @@
     {
       "type": "paragraph",
       "attrs": {
-        "alignment": "justify",
+        "alignment": "both",
         "indent": { "firstLine": 480 },
         "spacing": { "before": 120, "after": 240, "line": 400, "lineRule": "exact" }
       },

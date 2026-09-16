@@ -5,7 +5,10 @@
 //   Tiptap JSON --compileDocument--> DocumentOptions --projectDocumentOptions--> LayoutDoc
 // and deep-compares the deterministic serialization against `layout.golden.json`.
 //
-// Regenerate goldens with `UPDATE_GOLDENS=1 pnpm exec vp test run parity`.
+// Regenerate goldens with `UPDATE_GOLDENS=1 pnpm exec vp test run parity`
+// followed by `pnpm exec vp check --fix` (the repo formatter re-wraps short
+// arrays; the harness compares structurally, so an unformatted golden still
+// passes tests but fails `vp check`).
 // Maintainer/oracle workflow: packages/docx/tests/fixtures/README.md.
 
 import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -25,6 +28,8 @@ export const DOCX_FILENAME = "input.docx";
 export const GOLDEN_FILENAME = "layout.golden.json";
 export const ORACLE_FILENAME = "oracle.pdf";
 export const META_FILENAME = "meta.json";
+/** Diff entries reported per mismatch before the list is truncated. */
+export const DIFF_LIMIT = 40;
 
 /** One fixture directory. `modelPath`/`docxPath` are set only when the file
  *  exists; a fixture with neither fails its check with a clear message. */
@@ -85,10 +90,16 @@ export function isTiptapDocument(model: unknown): model is JSONContent {
   );
 }
 
-/** The fixture's model in either direction of the converter bridge. */
+/** The fixture's model in either direction of the converter bridge. A fixture
+ *  carrying both model inputs is malformed — reject it instead of guessing. */
 export async function loadFixtureModel(
   fixture: ParityFixture,
 ): Promise<JSONContent | DocumentOptions> {
+  if (fixture.modelPath && fixture.docxPath) {
+    throw new Error(
+      `${fixture.name}: has both ${MODEL_FILENAME} and ${DOCX_FILENAME} — keep exactly one`,
+    );
+  }
   if (fixture.modelPath) {
     return JSON.parse(readFileSync(fixture.modelPath, "utf8")) as JSONContent | DocumentOptions;
   }
@@ -166,17 +177,21 @@ export function updateGoldensRequested(env: NodeJS.ProcessEnv = process.env): bo
   return env.UPDATE_GOLDENS === "1";
 }
 
-/** Structural diff over normalized values; capped so a large mismatch stays
- *  readable. */
-export function diffLayout(golden: unknown, actual: unknown, limit = 40): ParityMismatch[] {
+/** Structural diff over normalized values; capped at {@link DIFF_LIMIT} so a
+ *  large mismatch stays readable. */
+export function diffLayout(golden: unknown, actual: unknown, limit = DIFF_LIMIT): ParityMismatch[] {
   const mismatches: ParityMismatch[] = [];
   walk(toStable(golden), toStable(actual), "", mismatches, limit);
   return mismatches;
 }
 
-/** One mismatch report per differing field, with a JSON path. */
+/** One mismatch report per differing field, with a JSON path. The message
+ *  marks the list as truncated when it hit the diff cap. */
 export function formatDiff(fixtureName: string, mismatches: ParityMismatch[]): string {
-  const lines = [`✗ ${fixtureName}: ${mismatches.length} field(s) differ from ${GOLDEN_FILENAME}`];
+  const truncated = mismatches.length >= DIFF_LIMIT;
+  const lines = [
+    `✗ ${fixtureName}: ${mismatches.length}${truncated ? "+" : ""} field(s) differ from ${GOLDEN_FILENAME}`,
+  ];
   for (const mismatch of mismatches) {
     lines.push(
       `  at ${mismatch.path}`,
@@ -184,6 +199,7 @@ export function formatDiff(fixtureName: string, mismatches: ParityMismatch[]): s
       `    actual: ${display(mismatch.actual)}`,
     );
   }
+  if (truncated) lines.push(`  (list truncated at ${DIFF_LIMIT} fields)`);
   lines.push(`  (regenerate with UPDATE_GOLDENS=1 if the new layout is intended)`);
   return lines.join("\n");
 }

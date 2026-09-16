@@ -47,6 +47,7 @@
           "widowControl": true
         },
         {
+          "align": "both",
           "defaultTextStyle": {
             "family": {
               "eastAsia": "SimSun",

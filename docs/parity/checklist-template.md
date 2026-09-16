@@ -30,8 +30,12 @@ still guards the projection.
 
 ## Verification
 
-- [ ] `pnpm exec vp test run` green
-- [ ] `pnpm exec vp check` green
+- [ ] `pnpm exec vp test run parity` green
+- [ ] `pnpm exec vp test run` introduces no new failures (baseline at the time
+      of writing: 9 pre-existing failures in
+      `packages/editor/src/document/canvas/caret-map.spec.ts`)
+- [ ] `pnpm exec vp check` green (0 errors; run `--fix` after
+      `UPDATE_GOLDENS=1`)
 - [ ] Golden diff contains only the intended geometry changes
 - [ ] `pnpm exec vp test bench` shows no projection regression (when touching
       hot paths)

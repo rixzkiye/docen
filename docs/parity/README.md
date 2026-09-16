@@ -19,12 +19,15 @@ fixture-driven harness at `packages/docx/tests/parity.ts` (spec:
 
    ```bash
    UPDATE_GOLDENS=1 pnpm exec vp test run parity   # write/refresh goldens
+   pnpm exec vp check --fix                         # normalize golden formatting
    pnpm exec vp test run parity                     # verify
    ```
 
    A changed golden is a behavior change: review the diff, and only regenerate
    when the new geometry is intended (and, for oracled fixtures, matches the
-   PDF).
+   PDF). `UPDATE_GOLDENS=1` writes 2-space JSON while the repo formatter
+   re-wraps short arrays — the harness compares structurally, but `vp check`
+   needs the `--fix` pass.
 
 4. **Oracle** — for the fixtures that must match a real Word processor, export
    the document to `oracle.pdf` from the pinned WPS/Word build and record the
@@ -38,8 +41,9 @@ fixture-driven harness at `packages/docx/tests/parity.ts` (spec:
 ## Commands
 
 ```bash
-pnpm exec vp test run parity                 # fixture walker + harness contract tests
+pnpm exec vp test run parity                  # fixture walker + harness contract tests
 UPDATE_GOLDENS=1 pnpm exec vp test run parity # regenerate goldens (idempotent)
+pnpm exec vp check --fix                      # normalize golden formatting after a write
 pnpm exec vp test bench                       # projection benchmark (medium document)
 ```
 

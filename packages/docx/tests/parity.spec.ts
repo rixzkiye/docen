@@ -1,8 +1,9 @@
 // The fixture walker + harness contract tests. Every directory under
 // tests/fixtures is projected and compared against its own layout.golden.json;
-// regenerate goldens with UPDATE_GOLDENS=1. The second describe covers the
-// harness itself (missing golden skips, mismatch diff, both model branches)
-// against temporary fixtures under tests/.temp/parity-spec.
+// fixtures without a golden are skipped with a console note (regenerate with
+// UPDATE_GOLDENS=1). The second describe covers the harness itself (missing
+// golden skips, mismatch diff, both model branches) against temporary fixtures
+// under tests/.temp/parity-spec.
 
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -12,11 +13,14 @@ import { describe, expect, it } from "vitest";
 
 import { generateDOCXSync } from "../src";
 import {
+  DIFF_LIMIT,
   DOCX_FILENAME,
   GOLDEN_FILENAME,
   MODEL_FILENAME,
   checkFixture,
+  diffLayout,
   discoverFixtures,
+  formatDiff,
   updateGoldensRequested,
 } from "./parity";
 
@@ -41,7 +45,9 @@ describe("layout parity fixtures", () => {
         return;
       }
       if (outcome.status === "updated") {
-        console.log(`✍ ${fixture.name}: wrote ${GOLDEN_FILENAME}`);
+        console.log(
+          `✍ ${fixture.name}: wrote ${GOLDEN_FILENAME} (run pnpm exec vp check --fix to format)`,
+        );
         return;
       }
       if (outcome.status === "mismatch") throw new Error(outcome.diff);
@@ -80,6 +86,14 @@ describe.sequential("parity harness", () => {
     writeFixture("missing-golden", { [MODEL_FILENAME]: MINIMAL_MODEL });
     const outcome = await checkFixture(fixtureOf("missing-golden"));
     expect(outcome.status).toBe("missing-golden");
+  });
+
+  it("rejects a fixture carrying both model inputs", async () => {
+    writeFixture("both-inputs", {
+      [MODEL_FILENAME]: MINIMAL_MODEL,
+      [DOCX_FILENAME]: "not-a-docx",
+    });
+    await expect(checkFixture(fixtureOf("both-inputs"))).rejects.toThrow(/keep exactly one/);
   });
 
   it("UPDATE_GOLDENS writes the golden, then the fixture matches", async () => {
@@ -146,6 +160,17 @@ describe.sequential("parity harness", () => {
       sections: { blocks: { inline: { kind: string; text: string }[] }[] }[];
     };
     expect(golden.sections[0]!.blocks[0]!.inline[0]).toMatchObject({ kind: "text", text: "docx" });
+  });
+
+  it("marks the diff as truncated at the cap", () => {
+    const size = DIFF_LIMIT + 20;
+    const golden = Object.fromEntries(Array.from({ length: size }, (_, i) => [`k${i}`, 1]));
+    const actual = Object.fromEntries(Array.from({ length: size }, (_, i) => [`k${i}`, 2]));
+    const mismatches = diffLayout(golden, actual);
+    expect(mismatches).toHaveLength(DIFF_LIMIT);
+    const text = formatDiff("cap", mismatches);
+    expect(text).toContain(`${DIFF_LIMIT}+ field(s) differ`);
+    expect(text).toContain(`truncated at ${DIFF_LIMIT} fields`);
   });
 
   it("cleans up the temporary fixtures", () => {

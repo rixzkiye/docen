@@ -25,15 +25,19 @@ fixtures/<name>/
   meta.json            provenance of oracle.pdf (see below)
 ```
 
-A fixture must contain exactly one of `model.json` / `input.docx`. Prefer
-`model.json`: it is human-editable, diffable, and binary-free. Use
-`input.docx` only when the fixture must prove the parse path itself.
+A fixture must contain exactly one of `model.json` / `input.docx`; the harness
+rejects a directory with both. Prefer `model.json`: it is human-editable,
+diffable, and binary-free. Use `input.docx` only when the fixture must prove
+the parse path itself.
 
 `layout.golden.json` is generated, never hand-edited:
 
 ```bash
 # regenerate every golden (a matching golden is left untouched)
 UPDATE_GOLDENS=1 pnpm exec vp test run parity
+# then normalize formatting — UPDATE_GOLDENS writes 2-space JSON, the repo
+# formatter re-wraps short arrays
+pnpm exec vp check --fix
 
 # or a single fixture
 UPDATE_GOLDENS=1 pnpm exec vp test run parity -t "paragraph-heading-runs"
@@ -41,6 +45,13 @@ UPDATE_GOLDENS=1 pnpm exec vp test run parity -t "paragraph-heading-runs"
 # verify without regenerating
 pnpm exec vp test run parity
 ```
+
+> `UPDATE_GOLDENS=1` writes deterministic 2-space JSON, but the repo formatter
+> re-wraps short arrays (`"columnWidthsPx": [160, 160, 160]`), so a freshly
+> regenerated golden can fail `vp check` even though the harness compares
+> structurally and passes. Always run `pnpm exec vp check --fix` after
+> regenerating; `UPDATE_GOLDENS=1` itself leaves semantically matching goldens
+> untouched.
 
 A fixture without a golden is **skipped, not failed** — the spec logs
 `⏭ <name>: no layout.golden.json` and continues. Run with `UPDATE_GOLDENS=1`
