@@ -67,6 +67,21 @@ interface NoteExtras {
 const CAPTION_SEPARATOR = /^[\s:：\-—–.。]+/;
 const CAPTION_SEPARATOR_CHAR = /[\s:：\-—–.。]/;
 
+/** Zero-width passthrough marks (w:bookmarkStart/End, comment range markers,
+ *  proofing markers) — they occupy a position but carry no content, so a
+ *  content-range scan must step past them. */
+const MARK_PASSTHROUGH_KEYS = [
+  "bookmarkStart",
+  "bookmarkEnd",
+  "commentRangeStart",
+  "commentRangeEnd",
+  "proofErr",
+] as const;
+
+/** Fields whose value reads the bookmark table — Update All Fields resolves
+ *  them after the pass that renumbers captions (see the two phases). */
+const BOOKMARK_FIELD_NAMES = new Set(["REF", "PAGEREF", "NOTEREF"]);
+
 /** One caption label's settings entry (settings.xml `w:captions/w:caption`,
  *  carried in documentExtras.settings) — the per-label chapter-number shape
  *  Word persists alongside the inserted field. */
@@ -805,7 +820,10 @@ export class DialogCommands {
   }
 
   /** The absolute position of a caption's first non-separator character at or
-   *  after `from` (Word's "Only caption text" starts past the separator). */
+   *  after `from` (Word's "Only caption text" starts past the separator).
+   *  Zero-width marks — the label's `bookmarkEnd` sits exactly at `from` —
+   *  are not text; the scan steps past them to the first real character (or
+   *  inline atom), so the resulting bookmark never carries the separator. */
   #captionTextStart(node: PMNode, pos: number, from: number): number | undefined {
     let start: number | undefined;
     node.forEach((child, offset) => {
@@ -822,6 +840,17 @@ export class DialogCommands {
           }
         }
         return;
+      }
+      if (child.type.name === "inlinePassthrough") {
+        const data = child.attrs.data;
+        if (typeof data === "string") {
+          try {
+            const branch = JSON.parse(data) as Record<string, unknown>;
+            if (MARK_PASSTHROUGH_KEYS.some((key) => key in branch)) return;
+          } catch {
+            /* opaque verbatim blob — treated as content below */
+          }
+        }
       }
       if (at >= from) start = at;
     });
@@ -886,7 +915,14 @@ export class DialogCommands {
   crossReferenceTargets(): CrossReferenceTarget[] {
     const editor = this.#target();
     if (!editor) return [];
-    const doc = editor.state.doc;
+    return this.#crossReferenceTargetsIn(editor, editor.state.doc);
+  }
+
+  /** The candidate scan over one document snapshot — Update All Fields runs
+   *  it again against the transaction's phase-1 doc so references quote the
+   *  numbering just written (positions are stable: attribute patches keep
+   *  node sizes). */
+  #crossReferenceTargetsIn(editor: Editor, doc: PMNode): CrossReferenceTarget[] {
     const attrs = doc.attrs as { styles?: StylesOptions; documentExtras?: unknown };
     const styles = attrs.styles;
     const extras = (attrs.documentExtras ?? {}) as NoteExtras;
@@ -1687,10 +1723,17 @@ export class DialogCommands {
    *  SEQ occurrences take their own ordinal per label (the caption sequence),
    *  restarting at each heading their `\s` switch names; `\*` formats the
    *  number and `\s` prefixes the chapter number, so a deleted or moved
-   *  caption renumbers from the document itself. REF/PAGEREF resolve through
-   *  the bookmark table, and page-dependent fields use the host's pinned
-   *  pagination when it exists. Returns the number of fields whose cache
-   *  changed.
+   *  caption renumbers from the document itself. REF/PAGEREF/NOTEREF resolve
+   *  through the bookmark table, and page-dependent fields use the host's
+   *  pinned pagination when it exists. Returns the number of fields whose
+   *  cache changed.
+   *
+   *  Two phases in one transaction: every other field (captions' SEQ
+   *  included) lands first, then the bookmark table is re-scanned from that
+   *  transaction doc, then the REF family resolves — a reference to a caption
+   *  whose SEQ renumbered in this pass quotes the new number immediately
+   *  instead of needing a second update. Positions are stable across the
+   *  phases (attribute patches never change node sizes).
    *
    *  Limitation: a complex field whose result is structured (`resultRunsXml`
    *  — TOC entries and nested fields) is patched on its flat `result` only;
@@ -1702,22 +1745,17 @@ export class DialogCommands {
     if (!editor) return 0;
     const base = this.#fieldBase(editor);
     const seq = this.#seqWalk(editor);
-    const changes: { pos: number; data: string }[] = [];
-    editor.state.doc.descendants((node, pos) => {
-      if (node.type.name !== "inlinePassthrough") return true;
-      const data = node.attrs.data;
-      if (typeof data !== "string") return true;
-      let branch: Record<string, unknown>;
-      try {
-        branch = JSON.parse(data) as Record<string, unknown>;
-      } catch {
-        return true;
-      }
-      const ref = fieldRef(branch);
-      if (!ref?.instruction || ref.kind === "formField") return true;
-      const field = parseFieldInstruction(ref.instruction);
+    const tr = editor.state.tr;
+    const changed = new Set<number>();
+
+    const contextOf = (
+      pos: number,
+      field: ReturnType<typeof parseFieldInstruction>,
+      bookmarks: ReadonlyMap<string, FieldBookmark>,
+    ): FieldContext => {
       const context: FieldContext = {
         ...base,
+        bookmarks,
         frame: this.#frameAt(editor, pos),
         selfPos: pos,
       };
@@ -1729,18 +1767,47 @@ export class DialogCommands {
         const chapter = level != null ? seq.chapters.get(pos) : undefined;
         if (level != null && chapter != null) context.chapters = new Map([[level, chapter]]);
       }
-      const value = evaluateField(ref.instruction, context);
-      if (value == null || value === ref.result) return true;
-      const patch = ref.kind === "simpleField" ? { cachedValue: value } : { result: value };
-      const next = this.#patchField(branch, ref.kind, patch);
-      if (next) changes.push({ pos, data: JSON.stringify(next) });
-      return true;
-    });
-    if (changes.length === 0) return 0;
-    const tr = editor.state.tr;
-    for (const change of changes) tr.setNodeAttribute(change.pos, "data", change.data);
+      return context;
+    };
+
+    const apply = (
+      doc: PMNode,
+      bookmarks: ReadonlyMap<string, FieldBookmark>,
+      refFamily: boolean,
+    ): void => {
+      doc.descendants((node, pos) => {
+        if (node.type.name !== "inlinePassthrough") return true;
+        const data = node.attrs.data;
+        if (typeof data !== "string") return true;
+        let branch: Record<string, unknown>;
+        try {
+          branch = JSON.parse(data) as Record<string, unknown>;
+        } catch {
+          return true;
+        }
+        const ref = fieldRef(branch);
+        if (!ref?.instruction || ref.kind === "formField") return true;
+        const field = parseFieldInstruction(ref.instruction);
+        if (BOOKMARK_FIELD_NAMES.has(field.name) !== refFamily) return true;
+        const value = evaluateField(ref.instruction, contextOf(pos, field, bookmarks));
+        if (value == null || value === ref.result) return true;
+        const patch = ref.kind === "simpleField" ? { cachedValue: value } : { result: value };
+        const next = this.#patchField(branch, ref.kind, patch);
+        if (!next) return true;
+        tr.setNodeAttribute(pos, "data", JSON.stringify(next));
+        changed.add(pos);
+        return true;
+      });
+    };
+
+    // Phase 1: everything but the bookmark-reading REF family.
+    apply(editor.state.doc, base.bookmarks ?? new Map(), false);
+    // Phase 2: the REF family against the phase-1 doc's bookmarks.
+    apply(tr.doc, this.#bookmarks(editor, undefined, tr.doc), true);
+
+    if (changed.size === 0) return 0;
     editor.view.dispatch(tr);
-    return changes.length;
+    return changed.size;
   }
 
   /** Context menu → checkbox toggle: flip the form field's checked flag (the
@@ -1865,13 +1932,15 @@ export class DialogCommands {
    *  numFmt applied) with that page's section format. Falls back to the
    *  bridge's physical page only when no frame is available (headless);
    *  absent = the bookmark keeps its cached value. `extras` carries bookmarks
-   *  created by the transaction a commit is building. */
+   *  created by the transaction a commit is building; `doc` scans a document
+   *  snapshot other than the live one (Update All's phase-1 doc). */
   #bookmarks(
     editor: Editor,
     extras?: ReadonlyMap<string, FieldBookmark>,
+    doc?: PMNode,
   ): ReadonlyMap<string, FieldBookmark> {
     const map = new Map<string, FieldBookmark>();
-    for (const target of this.crossReferenceTargets()) {
+    for (const target of this.#crossReferenceTargetsIn(editor, doc ?? editor.state.doc)) {
       if (!target.name) continue;
       map.set(target.name, this.#fieldBookmark(editor, target.pos, target.text, target.number));
     }

@@ -716,3 +716,111 @@ describe("dialog-option guards", () => {
     editor.destroy();
   });
 });
+
+describe("caption text separator handling (D1)", () => {
+  it("keeps 'Only caption text' separator-free across updates for every separator shape", () => {
+    for (const raw of [
+      ": Alpha chart",
+      "- Alpha chart",
+      ". Alpha chart",
+      "\u2014 Alpha chart",
+      "：Alpha chart",
+    ]) {
+      const editor = build([
+        {
+          type: "paragraph",
+          attrs: { style: "Caption" },
+          content: [
+            fieldAtom({ bookmarkStart: { id: 5, name: "_Ref00000005" } }),
+            { type: "text", text: "Figure " },
+            fieldAtom({
+              simpleField: { instruction: "SEQ Figure \\* ARABIC", cachedValue: "1" },
+            }),
+            fieldAtom({ bookmarkEnd: { id: 5 } }),
+            { type: "text", text: raw },
+          ],
+        },
+        paragraph("refs"),
+      ]);
+      const dialogs = new DialogCommands(host(editor));
+      caretIn(editor, "refs");
+      const target = targetOfKind(dialogs, "caption");
+      expect(target.captionText).toBe("Alpha chart");
+      commit(dialogs, target.key, "captionText");
+      expect(fieldsOf(editor).at(-1)!.cached).toBe("Alpha chart");
+      // One pass and a second pass must both keep the separator out of the
+      // re-derived bookmark text.
+      expect(dialogs.updateAllFields()).toBe(0);
+      expect(fieldsOf(editor).at(-1)!.cached).toBe("Alpha chart");
+      expect(dialogs.updateAllFields()).toBe(0);
+      expect(fieldsOf(editor).at(-1)!.cached).toBe("Alpha chart");
+      editor.destroy();
+    }
+  });
+
+  it("keeps the A1 caption dialog's colon out across F9 and Update All", () => {
+    const editor = build([paragraph("内容"), paragraph("refs")]);
+    const dialogs = new DialogCommands(host(editor));
+    caretIn(editor, "内容");
+    dialogs.onCaptionOk({
+      detail: { label: "Figure", text: "Alpha chart", position: "below" },
+    } as unknown as Event);
+    caretIn(editor, "refs");
+    const target = targetOfKind(dialogs, "caption");
+    commit(dialogs, target.key, "captionText");
+    expect(fieldsOf(editor).at(-1)!.cached).toBe("Alpha chart");
+    // F9 on the reference itself.
+    editor.commands.setTextSelection(fieldsOf(editor).at(-1)!.pos + 1);
+    dialogs.fieldUpdateAtSelection();
+    expect(fieldsOf(editor).at(-1)!.cached).toBe("Alpha chart");
+    // Update All Fields, twice.
+    expect(dialogs.updateAllFields()).toBe(0);
+    expect(dialogs.updateAllFields()).toBe(0);
+    expect(fieldsOf(editor).at(-1)!.cached).toBe("Alpha chart");
+    editor.destroy();
+  });
+});
+
+describe("Update All refreshes references to a renumbered caption (D2)", () => {
+  it("applies the fresh SEQ number to label/entire references in one pass", () => {
+    const editor = build([heading(1, "第一章"), paragraph("内容"), paragraph("refs")]);
+    const dialogs = new DialogCommands(host(editor));
+    caretIn(editor, "内容");
+    dialogs.onCaptionOk({
+      detail: { label: "Figure", text: "Alpha", position: "below" },
+    } as unknown as Event);
+    caretIn(editor, "refs");
+    commit(dialogs, targetOfKind(dialogs, "caption").key, "label");
+    commit(dialogs, targetOfKind(dialogs, "caption").key, "entire");
+    const refValues = (): string[] =>
+      fieldsOf(editor)
+        .filter((entry) => entry.instruction.startsWith("REF _Ref"))
+        .map((entry) => entry.cached);
+    expect(refValues()).toEqual(["Figure 1", "Figure 1: Alpha"]);
+
+    // A new caption above the referenced one pushes it to Figure 2; the
+    // existing references still cache Figure 1.
+    caretIn(editor, "内容");
+    dialogs.onCaptionOk({
+      detail: { label: "Figure", text: "Beta", position: "above" },
+    } as unknown as Event);
+    expect(refValues()).toEqual(["Figure 1", "Figure 1: Alpha"]);
+
+    let transactions = 0;
+    let docChanged = 0;
+    editor.on("transaction", ({ transaction }) => {
+      transactions += 1;
+      if (transaction.docChanged) docChanged += 1;
+    });
+
+    // ONE pass: the caption's SEQ renumber lands before the REF-family
+    // resolves, so the references quote the new number immediately.
+    expect(dialogs.updateAllFields()).toBe(3);
+    expect(docChanged).toBe(1);
+    expect(transactions).toBe(1);
+    expect(refValues()).toEqual(["Figure 2", "Figure 2: Alpha"]);
+    expect(dialogs.updateAllFields()).toBe(0);
+    expect(refValues()).toEqual(["Figure 2", "Figure 2: Alpha"]);
+    editor.destroy();
+  });
+});
