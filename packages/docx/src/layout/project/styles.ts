@@ -121,6 +121,18 @@ export interface RunStyle {
   border?: LayoutCharBorder;
   /** w:em emphasis mark token (ST_EmphasisMark minus "none"). */
   emphasisMark?: "dot" | "comma" | "circle" | "underDot";
+  /** w:outline — character outline. */
+  outline?: boolean | { color?: string; widthPx?: number };
+  /** w:shadow — drop shadow. */
+  shadow?: boolean | { x?: number; y?: number; blur?: number; color?: string };
+  /** w:emboss — raised appearance. */
+  emboss?: boolean;
+  /** w:imprint — engraved appearance. */
+  imprint?: boolean;
+  /** Glow effect. */
+  glow?: { radiusPx?: number; color?: string };
+  /** Reflection effect. */
+  reflection?: { blur?: number; distancePx?: number; opacity?: number };
 }
 
 /** ST_TextScale resolution (w:w): only 1-600 is meaningful, and 100 is the
@@ -208,5 +220,11 @@ export function runStyleOf(rPr: Rec): RunStyle {
     kernPt: halfPtOf(rPr.kern),
     border: charBorderOf(rPr.border),
     emphasisMark: emphasisOf(rPr.emphasisMark),
+    outline: tri(rPr.outline) ?? (isRecord(rPr.outline) ? (rPr.outline as never) : undefined),
+    shadow: tri(rPr.shadow) ?? (isRecord(rPr.shadow) ? (rPr.shadow as never) : undefined),
+    emboss: tri(rPr.emboss),
+    imprint: tri(rPr.imprint),
+    glow: isRecord(rPr.glow) ? (rPr.glow as never) : undefined,
+    reflection: isRecord(rPr.reflection) ? (rPr.reflection as never) : undefined,
   };
 }

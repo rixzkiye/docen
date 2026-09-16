@@ -198,7 +198,15 @@ export function projectParagraph(p: BodyParagraph, ctx: ProjectContext): LayoutP
         const positionPx = measureTwip(ts.position);
         if (positionPx == null) return [];
         const type =
-          ts.type === "right" ? "right" : ts.type === "center" ? "center" : ("left" as const);
+          ts.type === "right"
+            ? "right"
+            : ts.type === "center"
+              ? "center"
+              : ts.type === "decimal"
+                ? "decimal"
+                : ts.type === "bar"
+                  ? "bar"
+                  : ("left" as const);
         const leader =
           ts.leader === "dot" ||
           ts.leader === "heavy" ||
@@ -280,7 +288,11 @@ export function projectParagraph(p: BodyParagraph, ctx: ProjectContext): LayoutP
   // Margin-balloon anchors: run-level ones come from the inline walk,
   // paragraph-level ones from a pPrChange on this node.
   const anchors: LayoutBalloonAnchor[] = [];
-  const inline = projectRuns(runs, chainRPr, docRPr, defaultTextStyle, ctx, anchors);
+  const suppressAutoHyphens =
+    pPr.suppressAutoHyphens === true || chainPPr.suppressAutoHyphens === true;
+  const runCtx: ProjectContext =
+    suppressAutoHyphens !== ctx.suppressAutoHyphens ? { ...ctx, suppressAutoHyphens } : ctx;
+  const inline = projectRuns(runs, chainRPr, docRPr, defaultTextStyle, runCtx, anchors);
   // A tracked pPr change (w:pPrChange) marks the paragraph for the painter's
   // change bar — author-colored, or neutral in "By change type" mode.
   const revision = isRecord(pPr.revision) ? pPr.revision : undefined;

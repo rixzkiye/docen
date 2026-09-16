@@ -130,6 +130,7 @@ export function projectDocumentOptions(
   markup?: MarkupDisplay,
   showFieldCodes?: boolean,
   showHiddenText?: boolean,
+  hyphenation?: { auto?: boolean; doNotHyphenateCaps?: boolean; zoneTw?: number; limit?: number },
 ): {
   sections: ProjectedSection[];
   background?: ProjectedPageBackground;
@@ -165,6 +166,22 @@ export function projectDocumentOptions(
       doc.settings?.defaultTabStop != null && doc.settings.defaultTabStop > 0
         ? twipToPx(doc.settings.defaultTabStop)
         : undefined,
+    autoHyphenation:
+      hyphenation?.auto != null ? hyphenation.auto : doc.settings?.autoHyphenation === true,
+    doNotHyphenateCaps:
+      hyphenation?.doNotHyphenateCaps != null
+        ? hyphenation.doNotHyphenateCaps
+        : doc.settings?.doNotHyphenateCaps === true,
+    hyphenationZoneTw:
+      hyphenation?.zoneTw ??
+      (typeof doc.settings?.hyphenationZone === "number"
+        ? doc.settings.hyphenationZone
+        : undefined),
+    consecutiveHyphenLimit:
+      hyphenation?.limit ??
+      (typeof doc.settings?.consecutiveHyphenLimit === "number"
+        ? doc.settings.consecutiveHyphenLimit
+        : undefined),
   };
   const sectionBlocks = (doc.sections ?? []).map((section) => {
     const blocks: LayoutBlock[] = [];

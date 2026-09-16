@@ -7,6 +7,7 @@ export * from "./text/measure";
 export * from "./text/advance";
 export * from "./text/glyphs";
 export * from "./text/line-break";
+export * from "./text/hyphenation";
 export * from "./block/paragraph";
 export * from "./block/geometry";
 export * from "./block/table";

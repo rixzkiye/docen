@@ -5,6 +5,7 @@
 
 import {
   emuToPx,
+  hyphenateText,
   ptToPx,
   twipToPx,
   type LayoutBalloonAnchor,
@@ -320,6 +321,12 @@ export function projectRuns(
     const kernPt = own.kernPt ?? defRun.kernPt;
     const border = own.border ?? defRun.border;
     const emphasisMark = own.emphasisMark ?? defRun.emphasisMark;
+    const outline = own.outline ?? defRun.outline;
+    const shadow = own.shadow ?? defRun.shadow;
+    const emboss = own.emboss ?? defRun.emboss;
+    const imprint = own.imprint ?? defRun.imprint;
+    const glow = own.glow ?? defRun.glow;
+    const reflection = own.reflection ?? defRun.reflection;
     return {
       family: toFamily(own.font, fontAttr(chainRPr.font) ?? fontAttr(docRPr.font)) ?? defRun.family,
       sizePx: ptToPx(effectiveSizePt),
@@ -346,17 +353,32 @@ export function projectRuns(
       ...(kernPt != null ? { kernPt } : {}),
       ...(border ? { border } : {}),
       ...(emphasisMark ? { emphasisMark } : {}),
+      ...(outline ? { outline } : {}),
+      ...(shadow ? { shadow } : {}),
+      ...(emboss ? { emboss: true } : {}),
+      ...(imprint ? { imprint: true } : {}),
+      ...(glow ? { glow } : {}),
+      ...(reflection ? { reflection } : {}),
     };
   };
   const pushText = (text: string, rPr: Rec): void => {
     if (!text) return;
+    const runLang = str(rPr.language) || "en";
+    const runText =
+      ctx.autoHyphenation && !ctx.suppressAutoHyphens
+        ? hyphenateText(text, runLang, {
+            doNotHyphenateCaps: ctx.doNotHyphenateCaps,
+            hyphenationZoneTw: ctx.hyphenationZoneTw,
+            consecutiveHyphenLimit: ctx.consecutiveHyphenLimit,
+          })
+        : text;
     // Read per atom — openComments mutates as the walk opens/closes ranges.
     const commentIds =
       openComments && openComments.size > 0 ? [...openComments].sort((a, b) => a - b) : undefined;
     // Two-lines-in-one (双行合一 / 合并字符): the run packs into two
     // half-size lines; the dialog's spaces mark the split in Word, here
     // folded away for an even split.
-    const combine = combineOf(rPr, text);
+    const combine = combineOf(rPr, runText);
     // A run whose rPrChange is shown carries the format-change paint marker
     // (Word's change bar rides the run's line — the painter draws it) and,
     // when balloons are on, a margin anchor.
@@ -364,7 +386,7 @@ export function projectRuns(
     const indicator = revision ? formatIndicatorOf(ctx, revision) : {};
     out.push({
       kind: "text",
-      text,
+      text: runText,
       style: textStyleOf(rPr),
       commentIds,
       ...(combine ? { combine } : {}),

@@ -16,6 +16,7 @@ import type {
   LayoutParagraph,
   LayoutParagraphBorderEdge,
   LayoutRuby,
+  LayoutTabStop,
   LayoutTableBorders,
 } from "./layout-doc";
 
@@ -176,6 +177,8 @@ export interface LaidOutParagraph {
   /** Indents mirrored from the input — the painter offsets each line's origin
    *  (left on every line, firstLine additionally on line 0; hanging < 0). */
   indent?: LayoutIndent;
+  /** Explicit tab stops mirrored from the input — the painter renders bar tabs. */
+  tabStops?: LayoutTabStop[];
   /** ¶-mark strut size in px (w:pPr/w:rPr/w:sz) — the formatting marks' size
    *  fallback on a textless line. */
   markSizePx?: number;

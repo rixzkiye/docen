@@ -194,6 +194,7 @@ export function layoutParagraph(
     borders: para.borders,
     shadingFill: para.shadingFill,
     indent: para.indent,
+    tabStops: para.tabStops,
     drawings: para.drawings,
     markSizePx: para.markSizePx,
     preserveSpaces: true,

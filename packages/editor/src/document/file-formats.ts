@@ -151,6 +151,8 @@ export const LOCAL_HANDLED: ReadonlySet<string> = new Set([
   // toggles the section's w:lnNumType (both via #mutateCurrentSection).
   "columns",
   "line-numbers",
+  "hyphenation",
+  "insert-soft-hyphen",
   "zoom",
   "zoom-100",
   "save",

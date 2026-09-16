@@ -72,6 +72,9 @@ declare module "@tiptap/core" {
       "line-spacing": (mult?: string) => ReturnType;
       "paragraph-dialog-apply": (patch?: ParagraphDialogPatch) => ReturnType;
       "paragraph-dialog-default": (patch?: ParagraphDialogPatch) => ReturnType;
+      "set-paragraph-tabs": (
+        stops?: Array<{ position: number; type?: string; leader?: string }>,
+      ) => ReturnType;
       "style-paragraph-patch": (arg?: { id: string; patch: ParagraphDialogPatch }) => ReturnType;
       "style-run-patch": (arg?: { id: string; props: Record<string, unknown> }) => ReturnType;
       shading: (value?: unknown) => ReturnType;
@@ -2445,6 +2448,18 @@ export const DocumentCommands = Extension.create({
           applyStyleProps(styles, "Normal", paragraphPatchAsStyleProps(patch), "paragraph");
           tr.step(new DocAttrStep("styles", styles));
           return true;
+        },
+      "set-paragraph-tabs":
+        (stops) =>
+        ({ state, tr }) => {
+          let touched = false;
+          for (const { pos, node } of selectedParagraphs(state)) {
+            const attrs = { ...(node.attrs as Record<string, unknown>) };
+            attrs.tabStops = stops && stops.length > 0 ? stops : null;
+            tr.setNodeMarkup(pos, undefined, attrs);
+            touched = true;
+          }
+          return touched;
         },
       // The Modify Style dialog's Format buttons — the Font/Paragraph dialogs
       // opened with a style target commit onto that style's own definition

@@ -52,7 +52,7 @@ export interface LayoutBalloonAnchor {
 /** One w:tab stop, px from the content-box left edge. */
 export interface LayoutTabStop {
   positionPx: number;
-  type: "left" | "center" | "right";
+  type: "left" | "center" | "right" | "decimal" | "bar";
   /** w:leader — the fill drawn across the tab's advance ("none" dropped). */
   leader?: "dot" | "heavy" | "hyphen" | "middleDot" | "underscore";
 }

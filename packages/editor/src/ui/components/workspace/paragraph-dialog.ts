@@ -340,6 +340,7 @@ const template = html<DocenParagraphDialog>`
       </div>
     </div>
     <div slot="action">
+      <fluent-button ${ref("tabsBtn")} @click="${(x) => x.openTabs()}"></fluent-button>
       <fluent-button ${ref("defaultBtn")} @click="${(x) => x.applyAsDefault()}"></fluent-button>
       <fluent-button ${ref("cancelBtn")} @click="${(x) => x.hide()}"></fluent-button>
       <fluent-button
@@ -440,10 +441,15 @@ class DocenParagraphDialog extends FASTElement {
   @observable autoSpaceDNLabel?: HTMLElement;
   @observable textAlignLabel?: HTMLElement;
   @observable taDropdown?: FluentDropdown;
+  @observable tabsBtn?: HTMLElement;
   @observable defaultBtn?: HTMLElement;
   @observable okBtn?: HTMLElement;
   @observable cancelBtn?: HTMLElement;
   @observable ptF?: HTMLElement;
+
+  openTabs(): void {
+    this.$emit("paragraph:open-tabs");
+  }
 
   #unobserveLang?: () => void;
   #tab: "indent" | "breaks" | "asian" = "indent";
@@ -787,6 +793,7 @@ class DocenParagraphDialog extends FASTElement {
     if (this.snapToGridLabel) this.snapToGridLabel.textContent = t("paragraph.snapToGrid", this);
     if (this.contextualSpacingLabel)
       this.contextualSpacingLabel.textContent = t("paragraph.contextualSpacing", this);
+    if (this.tabsBtn) this.tabsBtn.textContent = t("paragraph.tabs", this);
     if (this.defaultBtn) this.defaultBtn.textContent = t("paragraph.setDefault", this);
     if (this.pageBreaksHeading)
       this.pageBreaksHeading.textContent = t("paragraph.pageBreaksHeading", this);

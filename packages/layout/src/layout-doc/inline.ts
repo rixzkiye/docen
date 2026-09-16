@@ -68,6 +68,18 @@ export interface LayoutTextStyle {
   /** Emphasis mark (w:em): a small mark drawn above every glyph (dot / comma
    *  / circle) or below it (underDot). */
   emphasisMark?: "dot" | "comma" | "circle" | "underDot";
+  /** w:outline — character outline / hollow stroke effect. */
+  outline?: boolean | { color?: string; widthPx?: number };
+  /** w:shadow — drop shadow effect. */
+  shadow?: boolean | { x?: number; y?: number; blur?: number; color?: string };
+  /** w:emboss — raised 3D appearance. */
+  emboss?: boolean;
+  /** w:imprint — engraved 3D appearance. */
+  imprint?: boolean;
+  /** Glow halo effect (Word 2010+ / DrawingML). */
+  glow?: { radiusPx?: number; color?: string };
+  /** Reflection effect (Word 2010+ / DrawingML). */
+  reflection?: { blur?: number; distancePx?: number; opacity?: number };
 }
 
 /** a:srcRect crop as fractions of the image edge (0-1, each side inward);

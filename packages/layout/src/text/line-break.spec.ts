@@ -224,6 +224,31 @@ describe("packLines", () => {
     expect(items[2].xPx + items[2].widthPx).toBeCloseTo(200, 5);
   });
 
+  it("aligns decimal text at decimal tab stop", () => {
+    // "12" = 16px; decimal stop at 100 → "." starts exactly at 100
+    const lines = pack([{ kind: "tab" }, text("12.34")], 200, {
+      tabStops: [{ positionPx: 100, type: "decimal" }],
+    });
+    expect(lines).toHaveLength(1);
+    const items = lines[0].items;
+    // Tab ends at 84, text "12.34" starts at 84, so "12" ends at 100
+    expect(items[0]).toMatchObject({ kind: "tab", xPx: 0, widthPx: 84 });
+    expect(items[1]).toMatchObject({ kind: "text", text: "12.34", xPx: 84 });
+  });
+
+  it("skips bar tab stop during text tab advance", () => {
+    const lines = pack([{ kind: "tab" }, text("abc")], 200, {
+      tabStops: [
+        { positionPx: 30, type: "bar" },
+        { positionPx: 80, type: "left" },
+      ],
+    });
+    expect(lines).toHaveLength(1);
+    const items = lines[0].items;
+    // Tab skips bar stop at 30 and lands at 80
+    expect(items[0]).toMatchObject({ kind: "tab", xPx: 0, widthPx: 80 });
+  });
+
   it("continues the same line across a tab group boundary", () => {
     const lines = pack([text("ab"), { kind: "tab" }, text("cd")], 200);
     expect(lines).toHaveLength(1);
