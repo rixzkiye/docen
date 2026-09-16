@@ -187,6 +187,8 @@ export type LayoutInline =
        *  bar beside the line this run appears on, in the author's revision
        *  color. Pure paint metadata — measuring and wrapping ignore it. */
       formatChange?: { color: string };
+      /** Hyperlink destination (external URL or internal #bookmark anchor). */
+      link?: { url?: string; anchor?: string; tooltip?: string };
     }
   | { kind: "break" }
   | { kind: "tab"; toPx?: number }
