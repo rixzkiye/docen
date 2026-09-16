@@ -8,7 +8,13 @@ import {
 } from "@docen/docx";
 import { Extension } from "@docen/docx/core";
 import { EMU_PER_PX } from "@docen/layout";
-import type { Node as PMNode, ResolvedPos } from "@tiptap/pm/model";
+import {
+  Fragment,
+  Slice,
+  type Node as PMNode,
+  type ResolvedPos,
+  type Schema,
+} from "@tiptap/pm/model";
 import type { Mark } from "@tiptap/pm/model";
 import type { EditorState } from "@tiptap/pm/state";
 import type { Transaction } from "@tiptap/pm/state";
@@ -16,6 +22,7 @@ import { NodeSelection, TextSelection } from "@tiptap/pm/state";
 import { DocAttrStep } from "@tiptap/pm/transform";
 
 import { freshChildEmu, memberEmuOf, unionBox, type Box } from "../../drawing";
+import { autotextMatch, blocksOfDocAttrs, type BuildingBlock } from "../building-blocks";
 import { CellSelection, cellsInRect } from "../canvas/cell-selection";
 
 /**
@@ -97,6 +104,10 @@ declare module "@tiptap/core" {
       "insert-table": (options?: InsertTableOptions) => ReturnType;
       chart: () => ReturnType;
       "delete-table": () => ReturnType;
+      // Quick Parts (D2): insert a saved building block / the F3 AutoText
+      // expansion (replace the typed block name with its content).
+      "insert-building-block": (id?: string) => ReturnType;
+      "autotext-f3": () => ReturnType;
       // Table context commands (the Table Design / Layout contextual tabs).
       "insert-row-above": () => ReturnType;
       "insert-row-below": () => ReturnType;
@@ -2243,6 +2254,21 @@ function transformCase(text: string, mode?: string): string {
 }
 
 // ── The extension ───────────────────────────────────────────────────────────
+
+/** The PM slice for a building block's stored Tiptap slice. Null when the
+ *  content no longer fits this schema (foreign/corrupt block — the command
+ *  declines instead of throwing). */
+function blockSliceOf(schema: Schema, block: BuildingBlock): Slice | null {
+  try {
+    return new Slice(
+      Fragment.fromJSON(schema, block.content.content),
+      block.content.openStart,
+      block.content.openEnd,
+    );
+  } catch {
+    return null;
+  }
+}
 
 export const DocumentCommands = Extension.create({
   name: "documentCommands",
@@ -4975,6 +5001,54 @@ export const DocumentCommands = Extension.create({
           // Keep the multi-selection's anchor (the document-first member)
           // selected — stampFloating left the last moved member selected.
           tr.setSelection(NodeSelection.create(tr.doc, members[0]!.target.pos));
+          return true;
+        },
+      // ── Quick Parts (D2) ────────────────────────────────────────────────
+      // Insert a saved building block at the caret as ONE transaction (one
+      // undo step). The stored slice carries its own open depths, so a
+      // partial-paragraph block merges with the caret paragraph and a
+      // block-level block splits it (ProseMirror's replaceSelection fitting).
+      "insert-building-block":
+        (id) =>
+        ({ state, dispatch }) => {
+          if (typeof id !== "string" || id === "") return false;
+          const block = blocksOfDocAttrs(state.doc.attrs).find((b) => b.id === id);
+          const slice = block ? blockSliceOf(state.schema, block) : null;
+          if (!slice) return false;
+          let tr: Transaction;
+          try {
+            tr = state.tr.replaceSelection(slice);
+          } catch {
+            // The content cannot fit at this position — decline (the ribbon
+            // greys via can()) instead of throwing mid-dispatch.
+            return false;
+          }
+          if (dispatch) dispatch(tr.scrollIntoView());
+          return true;
+        },
+      // F3 (Word AutoText): replace the block name typed before the caret with
+      // the matching block's content — exact, case-insensitive, longest name.
+      // No match (partial name, mid-word caret, empty doc) declines.
+      "autotext-f3":
+        () =>
+        ({ state, dispatch }) => {
+          const { $from, empty } = state.selection;
+          if (!empty || !$from.parent.isTextblock) return false;
+          const blocks = blocksOfDocAttrs(state.doc.attrs);
+          if (blocks.length === 0) return false;
+          const textBefore = $from.parent.textBetween(0, $from.parentOffset);
+          const match = autotextMatch(textBefore, blocks);
+          const slice = match ? blockSliceOf(state.schema, match.block) : null;
+          if (!match || !slice) return false;
+          let tr: Transaction;
+          try {
+            tr = state.tr
+              .setSelection(TextSelection.create(state.doc, $from.pos - match.back, $from.pos))
+              .replaceSelection(slice);
+          } catch {
+            return false;
+          }
+          if (dispatch) dispatch(tr.scrollIntoView());
           return true;
         },
     };

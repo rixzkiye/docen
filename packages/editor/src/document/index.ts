@@ -25,6 +25,7 @@ import {
   parseMarkdown,
   prepareDocument,
   resolveFontName,
+  selectionSlicePayload,
   type JSONContent,
   type SectionPropertiesOptions,
   type StyleEntry,
@@ -91,9 +92,16 @@ import type {
   DocumentPropertiesCore,
   DocumentPropertiesStats,
 } from "../ui/components/workspace/properties-dialog";
+import type { QuickPartValues } from "../ui/components/workspace/quick-part-dialog";
 import type { DocenTabsDialog } from "../ui/components/workspace/tabs-dialog";
 import type { WordCountStats } from "../ui/components/workspace/word-count-dialog";
 import { createDefaultAddin, textCounter, wordCounter } from "./addin";
+import {
+  blocksOfDocAttrs,
+  groupBlocksByGallery,
+  parseSlicePayload,
+  withBlocks,
+} from "./building-blocks";
 import { autocorrectConfigOf } from "./canvas/autocorrect";
 import {
   mountEditBridge,
@@ -120,6 +128,10 @@ import { CommentsCommands } from "./commands/comments";
 import { DesignCommands } from "./commands/design";
 import { DialogCommands } from "./commands/dialogs";
 import { hostCommands, type HostCommandRegistry } from "./commands/host";
+import {
+  BuildingBlocksHostCommands,
+  type BuildingBlocksHostView,
+} from "./commands/host/building-blocks";
 import { applyRecipientsRow, MailMergeCommands } from "./commands/mail-merge";
 import { NavigationCommands } from "./commands/navigation";
 import { ReferencesCommands } from "./commands/references";
@@ -1115,6 +1127,7 @@ class DocenDocument extends AddinHost<Editor> {
       this.#syncArrangeGreying();
       this.#syncFormatButtons();
       this.#syncDrawingMenus();
+      this.#syncQuickPartsMenu();
       this.#updateStatus();
     };
     editor.on("transaction", sync);
@@ -1878,6 +1891,24 @@ class DocenDocument extends AddinHost<Editor> {
     this.shadowRoot!.querySelector("docen-autocorrect-dialog")?.addEventListener(
       "autocorrect:ok",
       this.#onAutocorrectOk as EventListener,
+    );
+    // Quick Parts dialogs — the save commit + the organizer's per-row actions
+    // route into the building-blocks domain.
+    this.shadowRoot!.querySelector("docen-quick-part-dialog")?.addEventListener(
+      "quick-part:save",
+      this.#onQuickPartSave as EventListener,
+    );
+    this.shadowRoot!.querySelector("docen-building-blocks-dialog")?.addEventListener(
+      "building-blocks:insert",
+      this.#onBuildingBlockEvent as EventListener,
+    );
+    this.shadowRoot!.querySelector("docen-building-blocks-dialog")?.addEventListener(
+      "building-blocks:rename",
+      this.#onBuildingBlockEvent as EventListener,
+    );
+    this.shadowRoot!.querySelector("docen-building-blocks-dialog")?.addEventListener(
+      "building-blocks:delete",
+      this.#onBuildingBlockEvent as EventListener,
     );
     // Footnote/endnote settings dialog — ok (document-level numbering).
     this.shadowRoot!.querySelector("docen-note-settings-dialog")?.addEventListener(
@@ -3076,6 +3107,18 @@ class DocenDocument extends AddinHost<Editor> {
       ?.querySelector("docen-autocorrect-dialog")
       ?.removeEventListener("autocorrect:ok", this.#onAutocorrectOk as EventListener);
     this.shadowRoot
+      ?.querySelector("docen-quick-part-dialog")
+      ?.removeEventListener("quick-part:save", this.#onQuickPartSave as EventListener);
+    for (const buildingBlocksEvent of [
+      "building-blocks:insert",
+      "building-blocks:rename",
+      "building-blocks:delete",
+    ]) {
+      this.shadowRoot
+        ?.querySelector("docen-building-blocks-dialog")
+        ?.removeEventListener(buildingBlocksEvent, this.#onBuildingBlockEvent as EventListener);
+    }
+    this.shadowRoot
       ?.querySelector("docen-note-settings-dialog")
       ?.removeEventListener("note-settings:ok", this.onNoteSettingsOk as EventListener);
     this.shadowRoot
@@ -3466,6 +3509,7 @@ class DocenDocument extends AddinHost<Editor> {
     this.#syncDrawingSize();
     this.#syncFormatButtons();
     this.#syncDrawingMenus();
+    this.#syncQuickPartsMenu();
     this.#renderPanes();
   }
 
@@ -3760,6 +3804,43 @@ class DocenDocument extends AddinHost<Editor> {
         if (json !== el.getAttribute("items")) el.setAttribute("items", json);
       }
     }
+  }
+
+  /** Re-stamp the Insert → Text → Quick Parts menu with the document's
+   *  building blocks grouped by gallery (Word's Explore Quick Parts), greying
+   *  Save Selection without a selection. Runs per transaction and after
+   *  #renderChrome rebuilds the ribbon (the static seed carries no blocks). */
+  #syncQuickPartsMenu(): void {
+    const menu = this.shadowRoot?.querySelector<HTMLElement>(
+      'docen-ribbon-menu[event="quick-parts"]',
+    );
+    if (!menu) return;
+    const editor = this.#bridge?.activeEditor() ?? this.editor;
+    const blocks = editor ? blocksOfDocAttrs(editor.state.doc.attrs) : [];
+    const selection = editor?.state.selection;
+    const editable = editor?.isEditable ?? false;
+    const items: RibbonMenuItem[] = [
+      {
+        text: t("ribbon.opt.save-quick-part", this),
+        value: "save",
+        event: "save-quick-part",
+        disabled: !editable || !selection || selection.empty,
+      },
+      {
+        text: t("ribbon.opt.building-blocks-organizer", this),
+        value: "organizer",
+        event: "building-blocks-organizer",
+        disabled: blocks.length === 0,
+      },
+    ];
+    for (const group of groupBlocksByGallery(blocks)) {
+      items.push({ text: t(`buildingBlock.gallery.${group.gallery}`, this), header: true });
+      for (const block of group.blocks) {
+        items.push({ text: block.name, value: block.id, event: "quick-parts" });
+      }
+    }
+    const json = JSON.stringify(items);
+    if (json !== menu.getAttribute("items")) menu.setAttribute("items", json);
   }
 
   /** Re-stamp the tab-row "Editing" menu so its label + checked item match the
@@ -5455,222 +5536,277 @@ class DocenDocument extends AddinHost<Editor> {
    *  first dispatch (the adapter closures read live element state), then
    *  cached. Each domain receives only the narrow view its bodies call. */
   #hostRegistry?: HostCommandRegistry;
+  /** Quick Parts domain — its dialog commits (save/rename/delete) arrive as
+   *  element events and route back into this instance. */
+  #buildingBlocks?: BuildingBlocksHostCommands;
 
   #hostCommandRegistry(): HostCommandRegistry {
-    return (this.#hostRegistry ??= hostCommands({
-      navigation: {
-        editor: () => this.editor,
-        togglePane: (id) => this.#togglePane(id),
-        goToPage: () => this.#goToPage(),
-        openGoToDialog: (kind) => this.#openGoToDialog(kind as GoToKind | undefined),
-        openPropertiesDialog: () => this.#openPropertiesDialog(),
-        openSearch: () => this.#navigation.openSearch(),
-        openFindReplace: () => this.#navigation.openFindReplace(),
-        zoom: () => this.#zoom,
-        setZoom: (pct) => this.#setZoom(pct),
-        showZoomDialog: () => this.#showZoomDialog(),
-        zoomPreset: (preset) => this.#zoomPreset(preset),
-        docProtected: () => this.#docProtected,
-        syncEditModeMenu: () => this.#syncEditModeMenu(),
-        setShowMarks: (on) => this.setShowMarks(on),
-        getShowMarks: () => this.getShowMarks(),
-        showRuler: () => this.#stage?.showRuler ?? false,
-        setShowRuler: (on) => this.#stage?.setShowRuler(on),
-        showGridlines: () => this.#stage?.showGridlines ?? false,
-        setShowGridlines: (on) => this.#stage?.setShowGridlines(on),
-        setView: (view) => this.setAttribute("view", view),
-      },
-      sections: {
-        openPageSetup: () => this.#sections.openPageSetup(),
-        setPageSize: (value) => this.#sections.setPageSize(value),
-        setOrientation: (value) => this.#sections.setOrientation(value),
-        setMargins: (value) => this.#sections.setMargins(value),
-        openColumnsDialog: () => this.#sections.openColumnsDialog(),
-        setColumnCount: (count) => this.#sections.setColumnCount(count),
-        openLineNumbersOptions: () => this.#sections.openLineNumbersOptions(),
-        setLineNumbers: (mode) => this.#sections.setLineNumbers(mode),
-        openBordersDialog: (tab) => this.#sections.openBordersDialog(tab),
-        setPageBorders: (preset) => this.#sections.setPageBorders(preset),
-        insertCoverPage: () => this.#insertCoverPage(),
-        insertBlankPage: () => this.#insertBlankPage(),
-        setHyphenation: (mode) => this.#setHyphenation(mode),
-        openHyphenationOptions: () => this.#openHyphenationOptions(),
-        insertSoftHyphen: () => this.#insertSoftHyphen(),
-      },
-      references: {
-        editor: () => this.editor,
-        bridge: () => this.#bridge,
-        flow: () => this.#flow,
-        element: () => this,
-        openNoteSettings: () => this.#openNoteSettings(),
-        markIndexEntry: (target) => this.#references.markIndexEntry(target),
-        markCitation: (target) => this.#references.markCitation(target),
-        setCitationStyle: (style) => this.#references.setCitationStyle(style),
-        insertBibliography: () => this.#references.insertBibliography(),
-        bibliographySources: () => this.#references.bibliographySources(),
-        crossReferenceTargets: () => this.#dialogs.crossReferenceTargets(),
-        noteInsert: (kind) => this.#dialogs.noteInsert(kind),
-        noteEditAtSelection: () => this.#dialogs.noteEditAtSelection(),
-        noteDeleteAtSelection: () => this.#dialogs.noteDeleteAtSelection(),
-        jumpNextNote: () => this.#jumpNextNote(),
-        jumpPreviousNote: () => this.#jumpPreviousNote(),
-        openBookmarkDialog: () => this.#openBookmarkDialog(),
-        insertBookmark: () => this.#insertBookmark(),
-      },
-      mailMerge: {
-        element: () => this,
-        recipients: () => this.#merge.recipients(),
-        insertAddressBlock: () => this.#merge.insertAddressBlock(),
-        insertGreetingLine: () => this.#merge.insertGreetingLine(),
-        togglePreview: () => this.#merge.togglePreview(),
-        firstRecord: () => this.#merge.firstRecord(),
-        lastRecord: () => this.#merge.lastRecord(),
-        setMergeType: (type) => this.#merge.setMergeType(type),
-        finishMerge: (mode) => void this.#finishMerge(mode),
-      },
-      comments: {
-        insertComment: () => this.#comments.insertComment(),
-        editComment: () => this.#comments.editComment(),
-        deleteComment: () => this.#comments.deleteComment(),
-        jumpComment: (direction) => this.#comments.jumpComment(direction),
-        togglePane: (id) => this.#togglePane(id),
-        setTaskpane: (id, open) => this.#setTaskpane(id, open),
-        getTaskpaneState: (id) => this.getTaskpaneState(id),
-      },
-      revisions: {
-        editor: () => this.editor,
-        togglePane: (id) => this.#togglePane(id),
-        setMarkupView: (view) => {
-          this.#markupView = view;
+    this.#buildingBlocks ??= new BuildingBlocksHostCommands(this.#buildingBlocksView());
+    return (this.#hostRegistry ??= hostCommands(
+      {
+        navigation: {
+          editor: () => this.editor,
+          togglePane: (id) => this.#togglePane(id),
+          goToPage: () => this.#goToPage(),
+          openGoToDialog: (kind) => this.#openGoToDialog(kind as GoToKind | undefined),
+          openPropertiesDialog: () => this.#openPropertiesDialog(),
+          openSearch: () => this.#navigation.openSearch(),
+          openFindReplace: () => this.#navigation.openFindReplace(),
+          zoom: () => this.#zoom,
+          setZoom: (pct) => this.#setZoom(pct),
+          showZoomDialog: () => this.#showZoomDialog(),
+          zoomPreset: (preset) => this.#zoomPreset(preset),
+          docProtected: () => this.#docProtected,
+          syncEditModeMenu: () => this.#syncEditModeMenu(),
+          setShowMarks: (on) => this.setShowMarks(on),
+          getShowMarks: () => this.getShowMarks(),
+          showRuler: () => this.#stage?.showRuler ?? false,
+          setShowRuler: (on) => this.#stage?.setShowRuler(on),
+          showGridlines: () => this.#stage?.showGridlines ?? false,
+          setShowGridlines: (on) => this.#stage?.setShowGridlines(on),
+          setView: (view) => this.setAttribute("view", view),
         },
-        getMarkupAuthors: () => this.#markupAuthors,
-        setMarkupAuthors: (authors) => {
-          this.#markupAuthors = authors;
+        sections: {
+          openPageSetup: () => this.#sections.openPageSetup(),
+          setPageSize: (value) => this.#sections.setPageSize(value),
+          setOrientation: (value) => this.#sections.setOrientation(value),
+          setMargins: (value) => this.#sections.setMargins(value),
+          openColumnsDialog: () => this.#sections.openColumnsDialog(),
+          setColumnCount: (count) => this.#sections.setColumnCount(count),
+          openLineNumbersOptions: () => this.#sections.openLineNumbersOptions(),
+          setLineNumbers: (mode) => this.#sections.setLineNumbers(mode),
+          openBordersDialog: (tab) => this.#sections.openBordersDialog(tab),
+          setPageBorders: (preset) => this.#sections.setPageBorders(preset),
+          insertCoverPage: () => this.#insertCoverPage(),
+          insertBlankPage: () => this.#insertBlankPage(),
+          setHyphenation: (mode) => this.#setHyphenation(mode),
+          openHyphenationOptions: () => this.#openHyphenationOptions(),
+          insertSoftHyphen: () => this.#insertSoftHyphen(),
         },
-        setMarkupColors: (colors) => {
-          this.#markupColors = colors;
+        references: {
+          editor: () => this.editor,
+          bridge: () => this.#bridge,
+          flow: () => this.#flow,
+          element: () => this,
+          openNoteSettings: () => this.#openNoteSettings(),
+          markIndexEntry: (target) => this.#references.markIndexEntry(target),
+          markCitation: (target) => this.#references.markCitation(target),
+          setCitationStyle: (style) => this.#references.setCitationStyle(style),
+          insertBibliography: () => this.#references.insertBibliography(),
+          bibliographySources: () => this.#references.bibliographySources(),
+          crossReferenceTargets: () => this.#dialogs.crossReferenceTargets(),
+          noteInsert: (kind) => this.#dialogs.noteInsert(kind),
+          noteEditAtSelection: () => this.#dialogs.noteEditAtSelection(),
+          noteDeleteAtSelection: () => this.#dialogs.noteDeleteAtSelection(),
+          jumpNextNote: () => this.#jumpNextNote(),
+          jumpPreviousNote: () => this.#jumpPreviousNote(),
+          openBookmarkDialog: () => this.#openBookmarkDialog(),
+          insertBookmark: () => this.#insertBookmark(),
         },
-        setBalloons: (mode) => {
-          this.#balloons = mode;
+        mailMerge: {
+          element: () => this,
+          recipients: () => this.#merge.recipients(),
+          insertAddressBlock: () => this.#merge.insertAddressBlock(),
+          insertGreetingLine: () => this.#merge.insertGreetingLine(),
+          togglePreview: () => this.#merge.togglePreview(),
+          firstRecord: () => this.#merge.firstRecord(),
+          lastRecord: () => this.#merge.lastRecord(),
+          setMergeType: (type) => this.#merge.setMergeType(type),
+          finishMerge: (mode) => void this.#finishMerge(mode),
         },
-        renderDoc: (doc) => this.#renderDoc(doc),
-        syncMarkupMenus: () => this.#syncMarkupMenus(),
-        getJSON: () => this.getJSON(),
-      },
-      proofing: {
-        editor: () => this.editor,
-        showWordCount: () => this.#showWordCount(),
-        spellingRun: () => this.#spelling.run(),
-        setTaskpane: (id, open) => this.#setTaskpane(id, open),
-        spellingIssues: () => this.#spelling.issues(),
-        spellingGoto: (index) => this.#spelling.goto(index),
-        spellingReplace: (replacement) => this.#spelling.replace(replacement),
-        spellingIgnore: (mode) => this.#spelling.ignore(mode),
-        openLanguageDialog: () => this.#onLanguageOpen(),
-        openThesaurus: (word?: string) => this.#openThesaurus(word),
-      },
-      fields: {
-        fieldInsert: () => this.#dialogs.fieldInsert(),
-        fieldUpdateAtSelection: () => this.#dialogs.fieldUpdateAtSelection(),
-        updateAllFields: () => this.#dialogs.updateAllFields(),
-        fieldEditAtSelection: () => this.#dialogs.fieldEditAtSelection(),
-        fieldToggleCheckboxAtSelection: () => this.#dialogs.fieldToggleCheckboxAtSelection(),
-        toggleFieldCodes: () => this.toggleFieldCodes(),
-        insertEquation: (template) => this.#insertEquation(template),
-        insertEquationSymbol: (char) => this.#insertEquationSymbol(char),
-      },
-      clipboard: {
-        editor: () => this.editor,
-        activeEditor: () => this.#bridge?.activeEditor() ?? this.editor,
-        element: () => this,
-        copySelection: (cut) => this.#bridge?.copySelection(cut),
-        paste: (textOnly) => this.#clipboard.paste(textOnly),
-        togglePane: (id) => this.#togglePane(id),
-        showTaskpane: (id) => this.showTaskpane(id),
-        renderStylesPane: () => this.#renderStylesPane(),
-        toggleMarkdownInput: () => {
-          this.#markdown = !this.#markdown;
+        comments: {
+          insertComment: () => this.#comments.insertComment(),
+          editComment: () => this.#comments.editComment(),
+          deleteComment: () => this.#comments.deleteComment(),
+          jumpComment: (direction) => this.#comments.jumpComment(direction),
+          togglePane: (id) => this.#togglePane(id),
+          setTaskpane: (id, open) => this.#setTaskpane(id, open),
+          getTaskpaneState: (id) => this.getTaskpaneState(id),
         },
-        syncFormatButtons: () => this.#syncFormatButtons(),
-        insertLink: () => this.#insertLink(),
-        hrefAtCaret: () => this.#hrefAtCaret(),
-        jumpToBookmark: (name) => this.#jumpToBookmark(name),
-        select: (value) => this.#select(value),
-        toggleFormatPainter: () => this.#toggleFormatPainter(),
-      },
-      drawing: {
-        editor: () => this.editor,
-        activeEditor: () => this.#bridge?.activeEditor() ?? this.editor,
-        element: () => this,
-        showCompressPictures: () => this.#showCompressPictures(),
-        armTransparentPick: () => this.#armTransparentPick(),
-        drawingMulti: () => this.#bridge?.drawingMulti(),
-        pickImage: () => this.#imageInput?.click(),
-        pickPicture: () => this.#pictureInput?.click(),
-        focusBridge: () => this.#bridge?.focus(),
-        drawingState: () => this.#drawingStateOf(),
-        enterCropMode: () => {
-          this.#bridge?.enterCropMode();
+        revisions: {
+          editor: () => this.editor,
+          togglePane: (id) => this.#togglePane(id),
+          setMarkupView: (view) => {
+            this.#markupView = view;
+          },
+          getMarkupAuthors: () => this.#markupAuthors,
+          setMarkupAuthors: (authors) => {
+            this.#markupAuthors = authors;
+          },
+          setMarkupColors: (colors) => {
+            this.#markupColors = colors;
+          },
+          setBalloons: (mode) => {
+            this.#balloons = mode;
+          },
+          renderDoc: (doc) => this.#renderDoc(doc),
+          syncMarkupMenus: () => this.#syncMarkupMenus(),
+          getJSON: () => this.getJSON(),
         },
-        insertShapeAt: (preset) => this.#insertShapeAt(preset),
-        armShapeDrawer: (preset) => this.#armShapeDrawer(preset),
-        insertWordArt: () => this.#insertWordArt(),
-      },
-      tables: {
-        element: () => this,
-        editor: () => this.editor,
-        activeEditor: () => this.#bridge?.activeEditor() ?? this.editor,
-        contentWidthPx: () => this.#flow?.contentWidthPx,
-        setPenStyle: (style) => {
-          this.#pen = { ...this.#pen, style };
+        proofing: {
+          editor: () => this.editor,
+          showWordCount: () => this.#showWordCount(),
+          spellingRun: () => this.#spelling.run(),
+          setTaskpane: (id, open) => this.#setTaskpane(id, open),
+          spellingIssues: () => this.#spelling.issues(),
+          spellingGoto: (index) => this.#spelling.goto(index),
+          spellingReplace: (replacement) => this.#spelling.replace(replacement),
+          spellingIgnore: (mode) => this.#spelling.ignore(mode),
+          openLanguageDialog: () => this.#onLanguageOpen(),
+          openThesaurus: (word?: string) => this.#openThesaurus(word),
         },
-        setPenSize: (size) => {
-          this.#pen = { ...this.#pen, size };
+        fields: {
+          fieldInsert: () => this.#dialogs.fieldInsert(),
+          fieldUpdateAtSelection: () => this.#dialogs.fieldUpdateAtSelection(),
+          updateAllFields: () => this.#dialogs.updateAllFields(),
+          fieldEditAtSelection: () => this.#dialogs.fieldEditAtSelection(),
+          fieldToggleCheckboxAtSelection: () => this.#dialogs.fieldToggleCheckboxAtSelection(),
+          toggleFieldCodes: () => this.toggleFieldCodes(),
+          insertEquation: (template) => this.#insertEquation(template),
+          insertEquationSymbol: (char) => this.#insertEquationSymbol(char),
         },
-        setPenColor: (color) => {
-          this.#pen = { ...this.#pen, color };
+        clipboard: {
+          editor: () => this.editor,
+          activeEditor: () => this.#bridge?.activeEditor() ?? this.editor,
+          element: () => this,
+          copySelection: (cut) => this.#bridge?.copySelection(cut),
+          paste: (textOnly) => this.#clipboard.paste(textOnly),
+          togglePane: (id) => this.#togglePane(id),
+          showTaskpane: (id) => this.showTaskpane(id),
+          renderStylesPane: () => this.#renderStylesPane(),
+          toggleMarkdownInput: () => {
+            this.#markdown = !this.#markdown;
+          },
+          syncFormatButtons: () => this.#syncFormatButtons(),
+          insertLink: () => this.#insertLink(),
+          hrefAtCaret: () => this.#hrefAtCaret(),
+          jumpToBookmark: (name) => this.#jumpToBookmark(name),
+          select: (value) => this.#select(value),
+          toggleFormatPainter: () => this.#toggleFormatPainter(),
         },
-        borderPainting: () => this.#borderPainting,
-        borderErase: () => this.#borderErase,
-        stopBorderPainting: () => this.#stopBorderPainting(),
-        armBorderPainter: (erase) => this.#armBorderPainter(erase),
+        drawing: {
+          editor: () => this.editor,
+          activeEditor: () => this.#bridge?.activeEditor() ?? this.editor,
+          element: () => this,
+          showCompressPictures: () => this.#showCompressPictures(),
+          armTransparentPick: () => this.#armTransparentPick(),
+          drawingMulti: () => this.#bridge?.drawingMulti(),
+          pickImage: () => this.#imageInput?.click(),
+          pickPicture: () => this.#pictureInput?.click(),
+          focusBridge: () => this.#bridge?.focus(),
+          drawingState: () => this.#drawingStateOf(),
+          enterCropMode: () => {
+            this.#bridge?.enterCropMode();
+          },
+          insertShapeAt: (preset) => this.#insertShapeAt(preset),
+          armShapeDrawer: (preset) => this.#armShapeDrawer(preset),
+          insertWordArt: () => this.#insertWordArt(),
+        },
+        tables: {
+          element: () => this,
+          editor: () => this.editor,
+          activeEditor: () => this.#bridge?.activeEditor() ?? this.editor,
+          contentWidthPx: () => this.#flow?.contentWidthPx,
+          setPenStyle: (style) => {
+            this.#pen = { ...this.#pen, style };
+          },
+          setPenSize: (size) => {
+            this.#pen = { ...this.#pen, size };
+          },
+          setPenColor: (color) => {
+            this.#pen = { ...this.#pen, color };
+          },
+          borderPainting: () => this.#borderPainting,
+          borderErase: () => this.#borderErase,
+          stopBorderPainting: () => this.#stopBorderPainting(),
+          armBorderPainter: (erase) => this.#armBorderPainter(erase),
+        },
+        dialogs: {
+          element: () => this,
+          activeEditor: () => this.#bridge?.activeEditor() ?? this.editor,
+          docStyles: (editor) => this.#docStyles(editor),
+          runState: (state) => this.#runStateOf(state),
+          chartEditAtSelection: () => this.#dialogs.chartEditAtSelection(),
+          phoneticOpen: () => this.#dialogs.phoneticOpen(),
+          twoInOneOpen: () => this.#dialogs.twoInOneOpen(),
+          defineListOpen: () => this.#dialogs.defineListOpen(),
+        },
+        fileIo: {
+          emitCancelable: (name) => this.#emitCancelable(name),
+          saveAs: () => this.#saveAs(),
+          pickFile: () => this.#pickFile(),
+          print: () => this.#print(),
+          insertFileText: () => this.#insertFileText(),
+        },
+        headerFooter: {
+          editor: () => this.editor,
+          bridge: () => this.#bridge,
+          activeEditor: () => this.#bridge?.activeEditor() ?? this.editor,
+          storyPage: () => this.#storyPage,
+          toggleSectionFlag: (flag) => this.#sections.toggleSectionFlag(flag),
+          removeStory: (kind) => this.#removeStory(kind),
+          removePageNumbers: () => this.#removePageNumbers(),
+          openPageNumberFormat: () => this.#sections.openPageNumberFormat(),
+        },
+        design: {
+          setPageColor: (value) => this.#design.setPageColor(value),
+          setParagraphSpacing: (preset) => this.#design.setParagraphSpacing(preset),
+          openWatermarkDialog: () => this.#design.openWatermarkDialog(),
+          setWatermark: (preset) => this.#design.setWatermark(preset),
+          openFillEffectsDialog: () => this.#design.openFillEffectsDialog(),
+          restoreStylesSnapshot: () => this.#restoreStylesSnapshot(),
+        },
       },
-      dialogs: {
-        element: () => this,
-        activeEditor: () => this.#bridge?.activeEditor() ?? this.editor,
-        docStyles: (editor) => this.#docStyles(editor),
-        runState: (state) => this.#runStateOf(state),
-        chartEditAtSelection: () => this.#dialogs.chartEditAtSelection(),
-        phoneticOpen: () => this.#dialogs.phoneticOpen(),
-        twoInOneOpen: () => this.#dialogs.twoInOneOpen(),
-        defineListOpen: () => this.#dialogs.defineListOpen(),
+      [this.#buildingBlocks],
+    ));
+  }
+
+  /** The Quick Parts domain's narrow view — the block list lives in the MAIN
+   *  document's attrs (documentExtras.docenBlocks/glossary) even while a
+   *  furniture story is being edited; insertion targets the active editor so a
+   *  story caret receives the content. Mutations are single doc-attr
+   *  transactions; insertion routes the Tiptap command. */
+  #buildingBlocksView(): BuildingBlocksHostView {
+    const active = (): Editor | null | undefined => this.#bridge?.activeEditor() ?? this.editor;
+    return {
+      element: () => this,
+      editable: () => active()?.isEditable === true,
+      blocks: () => (this.editor ? blocksOfDocAttrs(this.editor.state.doc.attrs) : []),
+      setBlocks: (blocks) => {
+        const editor = this.editor;
+        if (!editor?.isEditable) return;
+        editor.commands.command(({ state, dispatch }) => {
+          dispatch?.(
+            state.tr.setDocAttribute(
+              "documentExtras",
+              withBlocks(state.doc.attrs.documentExtras, blocks),
+            ),
+          );
+          return true;
+        });
       },
-      fileIo: {
-        emitCancelable: (name) => this.#emitCancelable(name),
-        saveAs: () => this.#saveAs(),
-        pickFile: () => this.#pickFile(),
-        print: () => this.#print(),
-        insertFileText: () => this.#insertFileText(),
+      insertBlock: (id) => {
+        const editor = active();
+        if (!editor?.isEditable) return;
+        editor.commands["insert-building-block"](id);
+        this.#bridge?.focus();
       },
-      headerFooter: {
-        editor: () => this.editor,
-        bridge: () => this.#bridge,
-        activeEditor: () => this.#bridge?.activeEditor() ?? this.editor,
-        storyPage: () => this.#storyPage,
-        toggleSectionFlag: (flag) => this.#sections.toggleSectionFlag(flag),
-        removeStory: (kind) => this.#removeStory(kind),
-        removePageNumbers: () => this.#removePageNumbers(),
-        openPageNumberFormat: () => this.#sections.openPageNumberFormat(),
+      selectionSlice: () => {
+        const editor = active();
+        if (!editor) return null;
+        const slice = parseSlicePayload(selectionSlicePayload(editor.state));
+        if (!slice) return null;
+        const { from, to } = editor.state.selection;
+        const text = editor.state.doc.textBetween(from, to, "\n", "\n").trim();
+        const firstLine = text.split("\n")[0] ?? "";
+        return {
+          slice,
+          preview: text.slice(0, 200),
+          suggestedName: firstLine.slice(0, 64).trim(),
+        };
       },
-      design: {
-        setPageColor: (value) => this.#design.setPageColor(value),
-        setParagraphSpacing: (preset) => this.#design.setParagraphSpacing(preset),
-        openWatermarkDialog: () => this.#design.openWatermarkDialog(),
-        setWatermark: (preset) => this.#design.setWatermark(preset),
-        openFillEffectsDialog: () => this.#design.openFillEffectsDialog(),
-        restoreStylesSnapshot: () => this.#restoreStylesSnapshot(),
-      },
-    }));
+      focusBridge: () => this.#bridge?.focus(),
+    };
   }
 
   readonly #onCommand = (event: CustomEvent<{ event?: string; value?: string }>): void => {
@@ -5985,6 +6121,24 @@ class DocenDocument extends AddinHost<Editor> {
       },
     });
     this.#bridge?.focus();
+  };
+
+  /** Save Selection to Quick Part Gallery… 确定 — the domain appends the
+   *  captured selection as a block (one document transaction). */
+  readonly #onQuickPartSave = (event: CustomEvent<QuickPartValues>): void => {
+    if (event.detail) this.#buildingBlocks?.commitSave(event.detail);
+  };
+
+  /** The Building Blocks Organizer's per-row actions. */
+  readonly #onBuildingBlockEvent = (event: CustomEvent<{ id?: string; name?: string }>): void => {
+    const { id, name } = event.detail ?? {};
+    if (!id) return;
+    if (event.type === "building-blocks:insert") this.#buildingBlocks?.insert(id);
+    else if (event.type === "building-blocks:rename" && name) {
+      this.#buildingBlocks?.renameBlock(id, name);
+    } else if (event.type === "building-blocks:delete") {
+      this.#buildingBlocks?.deleteBlock(id);
+    }
   };
 
   /** Options → Document commit: fold the dialog's values into
@@ -7193,5 +7347,34 @@ export type {
   SettingsStorage,
   WritingSettings,
 } from "./settings";
+
+// Building blocks (Quick Parts / AutoText) — the docen model, its document
+// persistence (documentExtras.docenBlocks) and the derived Word glossary part
+// (word/glossary/document.xml) projection.
+export {
+  autotextMatch,
+  BLOCK_GALLERIES,
+  blocksFromGlossary,
+  blocksOfDocAttrs,
+  BUILDING_BLOCKS_VERSION,
+  createBuildingBlock,
+  DEFAULT_BLOCK_CATEGORY,
+  DEFAULT_BLOCK_GALLERY,
+  glossaryOfBlocks,
+  groupBlocksByGallery,
+  isDuplicateBlockName,
+  parseBuildingBlocks,
+  parseSlicePayload,
+  sortBlocks,
+  withBlocks,
+} from "./building-blocks";
+export type {
+  BuildingBlock,
+  BuildingBlockInsertMode,
+  BuildingBlockSlice,
+  BuildingBlocksData,
+} from "./building-blocks";
+export type { BuildingBlocksSeed } from "../ui/components/workspace/building-blocks-dialog";
+export type { QuickPartSeed, QuickPartValues } from "../ui/components/workspace/quick-part-dialog";
 
 export default DocenDocument;

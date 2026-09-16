@@ -71,6 +71,19 @@ export const pageNumberItems = (): string =>
     { text: opt("remove-page-numbers"), value: "remove-numbers" },
   ]);
 
+/** The Quick Parts split's static seed — the two organizer actions. The host
+ *  re-stamps the items on every transaction with the document's building
+ *  blocks grouped by gallery (they live in documentExtras, which the static
+ *  schema can't read). */
+export const quickPartsItems = (): RibbonMenuItem[] => [
+  { text: opt("save-quick-part"), value: "save", event: "save-quick-part" },
+  {
+    text: opt("building-blocks-organizer"),
+    value: "organizer",
+    event: "building-blocks-organizer",
+  },
+];
+
 /** The Equation menu: the common OMML structures as empty-argument templates
  *  (Word's equation tool's frequent structures) — the canvas paints each as a
  *  dashed placeholder slot until the math layout engine lands. */
@@ -386,6 +399,7 @@ export const insertTab = (): RibbonTab =>
     ]),
     group("text", [
       btn("text-box", "text-box", { size: "large" }),
+      menu("quick-parts", "quick-parts", quickPartsItems(), { size: "large" }),
       btn("wordart", "wordart", { size: "large" }),
       btn("insert-field", "insert-field", { size: "large" }),
       btn("date-time", "date-time", { size: "large" }),

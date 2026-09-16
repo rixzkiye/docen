@@ -61,6 +61,32 @@ export type {
   WritingSettings,
 } from "./document";
 
+// Building blocks (Quick Parts / AutoText): the docen model, the document
+// persistence helpers (documentExtras.docenBlocks) and the Word glossary
+// projection. DocPartGallery/DocPartOptions come from @docen/docx.
+export {
+  autotextMatch,
+  BLOCK_GALLERIES,
+  blocksFromGlossary,
+  blocksOfDocAttrs,
+  BUILDING_BLOCKS_VERSION,
+  createBuildingBlock,
+  DEFAULT_BLOCK_CATEGORY,
+  DEFAULT_BLOCK_GALLERY,
+  glossaryOfBlocks,
+  groupBlocksByGallery,
+  isDuplicateBlockName,
+  parseBuildingBlocks,
+  sortBlocks,
+  withBlocks,
+} from "./document";
+export type {
+  BuildingBlock,
+  BuildingBlockInsertMode,
+  BuildingBlockSlice,
+  BuildingBlocksData,
+} from "./document";
+
 // Fluent theme factories re-exported so registerTheme() callers build brand
 // themes (createLightTheme/createDarkTheme) from @docen/editor alone — no need
 // to depend on @fluentui/tokens directly. Mirrors how an Office.js host hands

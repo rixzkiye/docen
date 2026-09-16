@@ -238,6 +238,8 @@ export const documentTemplate = html`
   <div class="input-layer" part="input-layer"></div>
   <docen-options-dialog part="options"></docen-options-dialog>
   <docen-autocorrect-dialog part="autocorrect"></docen-autocorrect-dialog>
+  <docen-quick-part-dialog part="quick-part"></docen-quick-part-dialog>
+  <docen-building-blocks-dialog part="building-blocks"></docen-building-blocks-dialog>
   <docen-word-count-dialog part="word-count"></docen-word-count-dialog>
   <docen-symbol-dialog part="symbol"></docen-symbol-dialog>
   <docen-paragraph-dialog part="paragraph"></docen-paragraph-dialog>

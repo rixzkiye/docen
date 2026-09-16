@@ -2672,6 +2672,25 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
       }
       return;
     }
+    // Plain function-key entries in the shared table (F3 = AutoText/Quick
+    // Parts). The modifier branch below only consults the table for Mod
+    // combos, so an unmodified table key is matched here (Shift+F3 is Word's
+    // change-case cycle, not AutoText).
+    if (!event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey) {
+      const fnCommand = KEYBOARD_SHORTCUTS[event.key];
+      if (fnCommand) {
+        event.preventDefault();
+        if (!editable) return;
+        const [name, arg] = fnCommand.split(":");
+        (
+          active().editor.commands as unknown as Record<
+            string,
+            ((arg?: string) => boolean) | undefined
+          >
+        )[name]?.(arg);
+        return;
+      }
+    }
     if (event.ctrlKey || event.metaKey) {
       const key = event.key;
       const lower = key.toLowerCase();
