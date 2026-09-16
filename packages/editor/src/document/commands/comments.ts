@@ -60,6 +60,46 @@ function wordRangeAt(
   return from < to ? { from: start + from, to: start + to } : null;
 }
 
+/** Resolve a selection range into valid inline positions for comment markers
+ *  (inlinePassthrough atoms), supporting text runs, table cells, and drawing/shape
+ *  nodes. */
+function findInlineAnchorRange(
+  doc: import("@tiptap/pm/model").Node,
+  from: number,
+  to: number,
+): { from: number; to: number } | null {
+  const $from = doc.resolve(from);
+  const $to = doc.resolve(to);
+
+  // If both endpoints are inside inline containers (paragraphs, headings)
+  if ($from.parent.inlineContent && $to.parent.inlineContent) {
+    return { from, to };
+  }
+
+  // If spanning or selecting block nodes (e.g. table cells, drawings):
+  let inlineFrom: number | null = null;
+  let inlineTo: number | null = null;
+
+  doc.nodesBetween(from, to, (node, pos) => {
+    if (node.isInline) {
+      if (inlineFrom == null) inlineFrom = pos;
+      inlineTo = pos + node.nodeSize;
+    } else if (node.inlineContent) {
+      if (inlineFrom == null) inlineFrom = pos + 1;
+      inlineTo = pos + node.nodeSize - 1;
+    }
+    return true;
+  });
+
+  if (inlineFrom != null && inlineTo != null && inlineFrom <= inlineTo) {
+    return { from: inlineFrom, to: inlineTo };
+  }
+
+  if ($from.parent.inlineContent) return { from, to: from };
+  if ($to.parent.inlineContent) return { from: to, to };
+  return null;
+}
+
 /** The comment threads' model view — doc.attrs.documentExtras carries the
  *  round-trip channels: comments (word/comments.xml entries, replies included)
  *  and commentsExtended (w15:commentEx — the paraId reply links + resolved
@@ -334,18 +374,41 @@ export class CommentsCommands {
    *  `comment:create` event (#onCommentCreate commits it). Without a
    *  selection the word at the caret anchors the comment (Word for the web's
    *  behavior); a caret on whitespace is a no-op. */
-  insertComment(): void {
+  insertComment(options?: { text?: string; author?: string; initials?: string }): void {
     const editor = this.host.editor();
     if (!editor) return;
     // Spread would miss from/to — they're prototype getters on Selection.
     const { from, to } = editor.state.selection;
+    let range: { from: number; to: number } | null = null;
     if (from === to) {
-      const word = wordRangeAt(editor.state.doc, from);
-      if (!word) return;
-      this.#pendingCommentRange = word;
+      range = wordRangeAt(editor.state.doc, from);
+      if (!range) {
+        const $pos = editor.state.doc.resolve(from);
+        if ($pos.nodeAfter?.isInline) {
+          range = { from, to: from + $pos.nodeAfter.nodeSize };
+        } else if ($pos.nodeBefore?.isInline) {
+          range = { from: from - $pos.nodeBefore.nodeSize, to: from };
+        }
+      }
+      if (!range) return;
     } else {
-      this.#pendingCommentRange = { from, to };
+      range = findInlineAnchorRange(editor.state.doc, from, to) ?? { from, to };
     }
+    this.#pendingCommentRange = range;
+
+    if (options?.text) {
+      this.onCommentCreate(
+        new CustomEvent("comment:create", {
+          detail: {
+            text: options.text,
+            author: options.author,
+            initials: options.initials,
+          },
+        }),
+      );
+      return;
+    }
+
     this.#openCommentCompose();
   }
 
@@ -459,9 +522,13 @@ export class CommentsCommands {
    *  around it with a commentReference after — and append the structured
    *  content to doc.attrs.documentExtras.comments (word/comments.xml on
    *  export, the round-trip channel the parse side already fills). */
-  readonly onCommentCreate = (event: CustomEvent<{ text?: string }>): void => {
+  readonly onCommentCreate = (
+    event: CustomEvent<{ text?: string; author?: string; initials?: string }>,
+  ): void => {
     const editor = this.host.editor();
     const text = event.detail?.text?.trim();
+    const author = event.detail?.author?.trim() || "Docen User";
+    const initials = event.detail?.initials?.trim() || author.slice(0, 2).toUpperCase();
     const range = this.#pendingCommentRange;
     this.#pendingCommentRange = undefined;
     this.#closeCommentCompose();
@@ -497,8 +564,8 @@ export class CommentsCommands {
             ...comments,
             {
               id,
-              author: "Docen User",
-              initials: "DU",
+              author,
+              initials,
               date: new Date().toISOString(),
               children: [{ children: [text], paraId }],
             },
@@ -555,10 +622,14 @@ export class CommentsCommands {
    *  w:comment with no body anchors, linked through commentsExtended's
    *  paraIdParent). Legacy parents without a paraId mint one so the reply can
    *  link to them — one transaction, one undo step. */
-  readonly onCommentReply = (event: CustomEvent<{ parentId?: number; text?: string }>): void => {
+  readonly onCommentReply = (
+    event: CustomEvent<{ parentId?: number; text?: string; author?: string; initials?: string }>,
+  ): void => {
     const editor = this.host.editor();
     const parentId = event.detail?.parentId;
     const text = event.detail?.text?.trim();
+    const author = event.detail?.author?.trim() || "Docen User";
+    const initials = event.detail?.initials?.trim() || author.slice(0, 2).toUpperCase();
     if (!editor || parentId == null || !text) return;
     const docAttrs = (editor.state.doc.attrs ?? {}) as { documentExtras?: CommentExtras };
     const extras = docAttrs.documentExtras ?? {};
@@ -583,8 +654,8 @@ export class CommentsCommands {
           ...comments,
           {
             id,
-            author: "Docen User",
-            initials: "DU",
+            author,
+            initials,
             date: new Date().toISOString(),
             children: [{ children: [text], paraId }],
           },
