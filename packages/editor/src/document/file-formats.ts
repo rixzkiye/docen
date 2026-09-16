@@ -203,8 +203,14 @@ export const LOCAL_HANDLED: ReadonlySet<string> = new Set([
   // Index — Mark Entry prompts and seeds an XE field; insert/update collect
   // the XE fields into the Index-styled entry block (commands take pageOf).
   "mark-entry",
+  "mark-entry-all",
   "insert-index",
   "update-index",
+  // Table of Authorities — Mark Citation seeds a TA field; insert/update TOA
+  // collect the TA citations into TOAHeading/TableOfAuthorities paragraphs.
+  "mark-citation",
+  "insert-toa",
+  "update-toa",
   // Citations & Bibliography — the Source Manager dialog in two modes (its
   // sources:ok writes attrs.bibliography; citation:ok seeds a cached CITATION
   // field), and the Bibliography block rebuild.
@@ -213,8 +219,7 @@ export const LOCAL_HANDLED: ReadonlySet<string> = new Set([
   "bibliography",
   // TOC insert/update — dispatch with the bridge's pageOf (page numbers live
   // in the canvas caret map, which editor.commands can't reach). Table of
-  // Figures is the same field with the \c caption switch (mark-citation /
-  // insert-toa — the Table of Authorities pair — stay unwired and greyed).
+  // Figures is the same field with the \c caption switch.
   "toc",
   "update-toc",
   "toc-dialog",

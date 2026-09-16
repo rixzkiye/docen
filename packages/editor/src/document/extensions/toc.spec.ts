@@ -423,4 +423,80 @@ describe("figure table with chapter-numbered captions", () => {
     expect(entries.map((e) => e.page)).toEqual(["7", "7", "7"]);
     editor.destroy();
   });
+
+  it("stamps _Toc bookmarks on headings and links entries to them", () => {
+    const editor = build(docOf(heading(1, "Chapter 1"), heading(2, "Section 1.1")));
+    editor.commands.setTextSelection(1);
+    expect(editor.commands.toc()).toBe(true);
+
+    const entries = entriesOf(editor);
+    expect(entries[0]!.linkHref).toBe("#_Toc1");
+    expect(entries[1]!.linkHref).toBe("#_Toc2");
+
+    // Headings in the document now carry matching _Toc bookmarkStart/bookmarkEnd atoms.
+    const bookmarks: string[] = [];
+    editor.state.doc.descendants((node) => {
+      if (node.type.name === "inlinePassthrough") {
+        try {
+          const data = JSON.parse(String(node.attrs.data ?? "{}")) as {
+            bookmarkStart?: { name?: string };
+          };
+          if (data.bookmarkStart?.name) bookmarks.push(data.bookmarkStart.name);
+        } catch {
+          /* skip */
+        }
+      }
+      return true;
+    });
+    expect(bookmarks).toContain("_Toc1");
+    expect(bookmarks).toContain("_Toc2");
+    editor.destroy();
+  });
+
+  it("supports \\t custom styles switch to map custom paragraph styles to TOC levels", () => {
+    const editor = build(
+      docOf(
+        {
+          type: "paragraph",
+          attrs: { style: "SpecialTitle" },
+          content: [{ type: "text", text: "Special Header" }],
+        },
+        heading(1, "Normal Heading"),
+      ),
+    );
+    editor.commands.setTextSelection(1);
+    expect(
+      editor.commands.toc(undefined, undefined, {
+        headingRange: "1-3",
+        styles: "SpecialTitle,1",
+      }),
+    ).toBe(true);
+
+    const entries = entriesOf(editor);
+    expect(entries).toHaveLength(2);
+    expect(entries[0]).toMatchObject({ style: "TOC1", text: "Special Header" });
+    expect(entries[1]).toMatchObject({ style: "TOC1", text: "Normal Heading" });
+    editor.destroy();
+  });
+
+  it("update-toc-page matches headings via bookmark names even when heading text is renamed", () => {
+    const editor = build(docOf(heading(1, "Original Title")));
+    editor.commands.setTextSelection(1);
+    expect(editor.commands.toc(() => 3)).toBe(true);
+    expect(entriesOf(editor)[0]!.page).toBe("3");
+
+    // Rename the heading text in the doc
+    const [from, to] = headingTextRange(editor, "Original Title");
+    editor.commands.command(({ state, dispatch }) => {
+      dispatch?.(state.tr.insertText("Completely Different Title", from, to));
+      return true;
+    });
+
+    // Update page numbers: since the bookmark _Toc1 still lives on the heading,
+    // update-toc-page resolves the heading and updates its page number!
+    expect(editor.commands["update-toc-page"](() => 9)).toBe(true);
+    const entries = entriesOf(editor);
+    expect(entries[0]!.page).toBe("9");
+    editor.destroy();
+  });
 });

@@ -62,6 +62,27 @@ export class ReferencesCommands {
     this.host.bridge()?.focus();
   }
 
+  /** Mark Citation — prompt for the citation text (defaulting to the selection) and
+   *  seed a `TA \l "…" \s "…" \c 1` field at the selection's end. */
+  markCitation(target: Editor): void {
+    const { empty, from, to } = target.state.selection;
+    const selected = empty ? "" : target.state.doc.textBetween(from, to, " ");
+    const citation = window.prompt(t("toa.prompt", this.host.element()), selected)?.trim();
+    if (!citation) return;
+    const seed: JSONContent = {
+      type: "inlinePassthrough",
+      attrs: {
+        data: JSON.stringify({
+          simpleField: {
+            instruction: `TA \\l "${citation.replaceAll('"', "''")}" \\s "${citation.replaceAll('"', "''")}" \\c 1`,
+          },
+        }),
+      },
+    } as JSONContent;
+    target.view.dispatch(target.state.tr.insert(to, target.schema.nodeFromJSON(seed)));
+    this.host.bridge()?.focus();
+  }
+
   /** The document's bibliography sources — doc.attrs.bibliography (the Source
    *  Manager's master list, word/bibliography.xml on save). */
   bibliographySources(): BibliographySource[] {
