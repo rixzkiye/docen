@@ -1,9 +1,11 @@
 import {
   formatMarkNames,
   parseFormatRecords,
+  parseRunMarks,
   runPropsFromMarks,
   runPropsToMarks,
   SECTION_ATTR_KEYS,
+  type RunFormatEdit,
   type RunFormatRecord,
   type RunPropMark,
 } from "@docen/docx";
@@ -38,11 +40,14 @@ import { getSettings, type IdentitySettings } from "../settings";
  *
  * Format changes (w:rPrChange/w:pPrChange) are recorded by the same plugin:
  * mark add/remove steps on rPr marks and attr-only paragraph replacements
- * (setNodeMarkup) become `formatChange` marks / paragraph `revision` attrs
- * carrying the OLD properties. Accept keeps the new formatting and drops the
- * record; reject restores the old rPr/pPr. The revision author comes from the
- * settings store's identity (name, else initials, else Word's historical
- * default "docen").
+ * (setNodeMarkup) become `formatChange` marks / paragraph `revision` attrs.
+ * Each run keeps an ordered op-log (base mark set + one delta per edit, folded
+ * per author): reject replays the surviving edits over the base, so it is
+ * order-independent and mark-exact — no props→marks reconstruction on the
+ * editor path. Accept keeps the new formatting and drops the record; reject
+ * restores the old rPr/pPr. The revision author comes from the settings
+ * store's identity (name, else initials, else Word's historical default
+ * "docen").
  */
 
 /** Fallback revision author when no user identity is set — keeps documents
@@ -118,8 +123,8 @@ function formatRecordsOf(node: PMNode | null | undefined): RunFormatRecord[] {
   return [];
 }
 
-/** A text node's rPr marks (name + attrs) — the mark-exact snapshot a format
- *  record's reject restores. */
+/** A text node's rPr marks (name + attrs) — the exact state whose diff is an
+ *  edit and whose base snapshot a reject replays over. */
 function rprMarksOf(node: PMNode | null | undefined, names: ReadonlySet<string>): RunPropMark[] {
   if (!node?.isText) return [];
   const marks: RunPropMark[] = [];
@@ -211,23 +216,25 @@ interface RunFormatSegment {
  *  (bold + plain) yields one record per run instead of one snapshot applied to
  *  the whole selection. */
 function runFormatSegments(
-  oldState: EditorState,
-  tr: Transaction,
+  beforeDoc: PMNode,
+  afterDoc: PMNode,
+  liveDoc: PMNode,
   step: AddMarkStep | RemoveMarkStep,
   names: ReadonlySet<string>,
 ): RunFormatSegment[] {
   const segments: RunFormatSegment[] = [];
-  oldState.doc.nodesBetween(step.from, step.to, (node, pos) => {
+  beforeDoc.nodesBetween(step.from, step.to, (node, pos) => {
     if (!node.isText) return true;
     const from = Math.max(pos, step.from);
     const to = Math.min(pos + node.nodeSize, step.to);
     if (from >= to) return true;
     const before = rprMarksOf(node, names);
-    // The appended transaction starts from the post-transaction doc, so the
-    // step's own mark change is already reflected there.
-    const afterNode = tr.doc.nodeAt(from);
-    const after = rprMarksOf(afterNode, names);
-    const records = formatRecordsOf(afterNode);
+    // The step's own effect: the after-doc is the next step's before-doc (the
+    // last step's is the transaction's final doc), so each edit's delta is
+    // exactly what that edit changed. Records come from the live appended
+    // transaction, which already carries this round's earlier edits.
+    const after = rprMarksOf(afterDoc.nodeAt(from), names);
+    const records = formatRecordsOf(liveDoc.nodeAt(from));
     const last = segments[segments.length - 1];
     if (
       last &&
@@ -245,44 +252,132 @@ function runFormatSegments(
   return segments;
 }
 
+/** The exact marks `after` adds over `before` and vice versa (type + attrs). */
+function markDelta(
+  before: readonly RunPropMark[],
+  after: readonly RunPropMark[],
+): {
+  removed: RunPropMark[];
+  added: RunPropMark[];
+} {
+  return {
+    removed: before.filter((mark) => !after.some((other) => sameMark(mark, other))),
+    added: after.filter((mark) => !before.some((other) => sameMark(mark, other))),
+  };
+}
+
+const sameMark = (a: RunPropMark, b: RunPropMark): boolean =>
+  a.type === b.type && JSON.stringify(a.attrs ?? {}) === JSON.stringify(b.attrs ?? {});
+
+/** Apply one op-log edit to a mark set: remove the exact marks it removed,
+ *  then add its marks (a same-type add replaces its predecessor — PM's
+ *  exclusivity). */
+function applyMarkDelta(marks: readonly RunPropMark[], edit: RunFormatEdit): RunPropMark[] {
+  let out = marks.filter((mark) => !edit.removed.some((removed) => sameMark(mark, removed)));
+  for (const added of edit.added) {
+    out = out.filter((mark) => mark.type !== added.type);
+    out.push(added);
+  }
+  return out;
+}
+
+/** The run's desired marks after every surviving record's edits are replayed
+ *  over the mark's base state, in edit order (folded records can interleave
+ *  with other authors, so `seq` — not record order — orders the replay). */
+function replayRunMarks(
+  base: readonly RunPropMark[],
+  records: readonly RunFormatRecord[],
+): RunPropMark[] {
+  const edits = records.flatMap((record) => record.edits).sort((a, b) => a.seq - b.seq);
+  let marks: RunPropMark[] = [...base];
+  for (const edit of edits) marks = applyMarkDelta(marks, edit);
+  return marks;
+}
+
+/** The highest edit sequence across a mark's records (−1 when none). */
+function maxEditSeq(records: readonly RunFormatRecord[]): number {
+  return records.reduce(
+    (max, record) => record.edits.reduce((inner, edit) => Math.max(inner, edit.seq), max),
+    -1,
+  );
+}
+
+/** Turn a DOCX-loaded record (no base/edits) into an ordinary op-log delta the
+ *  moment an editor edit lands on the same mark: reconstructing its before
+ *  props is the only snapshot OOXML carries, and it must become part of the
+ *  log or a later reject would lose it. */
+function materializeLoadedRecord(
+  record: RunFormatRecord,
+  base: readonly RunPropMark[],
+  current: readonly RunPropMark[],
+): RunFormatRecord {
+  if (record.edits.length > 0) return record;
+  return { ...record, edits: [{ seq: 0, ...markDelta(base, current) }] };
+}
+
+/** The formatChange mark on a text node, or undefined. */
+function formatMarkOf(node: PMNode | null | undefined, formatType: MarkType) {
+  if (!node?.isText) return undefined;
+  return node.marks.find((mark) => mark.type === formatType);
+}
+
 /** Record AddMark/RemoveMark steps on rPr marks as format revisions
- *  (w:rPrChange) — one record per changed run, per author. Mark steps are
- *  size-neutral, so the pre-transaction offsets stay valid in the appended
- *  transaction's doc. */
+ *  (w:rPrChange) — one record per changed run, per author, as an ordered edit
+ *  log. Mark steps are size-neutral, so the pre-transaction offsets stay valid
+ *  in the appended transaction's doc. */
 function markRunFormatChanges(
   tr: Transaction,
   transactions: readonly Transaction[],
-  oldState: EditorState,
   formatType: MarkType,
 ): boolean {
   const names = new Set(formatMarkNames());
   const author = revisionAuthor();
   let touched = false;
   for (const source of transactions) {
-    for (const step of source.steps) {
+    for (let i = 0; i < source.steps.length; i++) {
+      const step = source.steps[i];
       if (!(step instanceof AddMarkStep || step instanceof RemoveMarkStep)) continue;
       if (!names.has(step.mark.type.name)) continue;
-      for (const segment of runFormatSegments(oldState, tr, step, names)) {
-        const records = segment.records.map((record) => ({ ...record }));
+      const beforeDoc = source.docs[i]!;
+      const afterDoc = source.docs[i + 1] ?? source.doc;
+      for (const segment of runFormatSegments(beforeDoc, afterDoc, tr.doc, step, names)) {
+        const delta = markDelta(segment.before, segment.after);
+        if (delta.removed.length === 0 && delta.added.length === 0) continue;
+        const mark = formatMarkOf(tr.doc.nodeAt(segment.from), formatType);
+        let base = parseRunMarks(mark?.attrs.base);
+        let records = parseFormatRecords(mark?.attrs.records).map((record) => ({ ...record }));
+        if (base === null && records.length > 0) {
+          // A DOCX-loaded record precedes editor edits: materialize its
+          // reconstructed before-state as the log's base.
+          base = runPropsToMarks(records[0]!.props);
+          records = records.map((record) => materializeLoadedRecord(record, base!, segment.before));
+        }
+        if (base === null) base = segment.before;
+        const edit: RunFormatEdit = { seq: maxEditSeq(records) + 1, ...delta };
         const mine = records.findIndex((record) => record.author === author);
         if (mine >= 0) {
-          // Same-author merge: Word folds repeated edits into one rPrChange
-          // holding the ORIGINAL before-state; only `after` advances.
-          records[mine] = { ...records[mine]!, after: segment.after };
+          // Same-author fold: append the edit to THEIR record — never touch
+          // another author's record, and never reorder the log (seq owns order).
+          records = records.map((record, index) =>
+            index === mine ? { ...record, edits: [...record.edits, edit] } : record,
+          );
         } else {
-          records.push({
-            id: nextRevisionId(tr.doc),
-            author,
-            date: revisionDate(),
-            before: segment.before,
-            after: segment.after,
-            props: runPropsFromMarks(segment.before),
-          });
+          records = [
+            ...records,
+            {
+              id: nextRevisionId(tr.doc),
+              author,
+              date: revisionDate(),
+              edits: [edit],
+              // The old props are the state before this author's FIRST edit.
+              props: runPropsFromMarks(segment.before),
+            },
+          ];
         }
         tr.addMark(
           segment.from,
           segment.to,
-          formatType.create({ records: JSON.stringify(records) }),
+          formatType.create({ base: JSON.stringify(base), records: JSON.stringify(records) }),
         );
         touched = true;
       }
@@ -452,7 +547,7 @@ const trackChangesPlugin = new Plugin<boolean>({
         (source) => source.before.content.size === source.doc.content.size,
       );
       if (sizeNeutral) {
-        if (markRunFormatChanges(tr, transactions, oldState, formatType)) changed = true;
+        if (markRunFormatChanges(tr, transactions, formatType)) changed = true;
         if (markParagraphFormatChanges(tr, transactions)) changed = true;
       }
     }
@@ -477,8 +572,9 @@ interface RevisionRange {
   /** Paragraph format change (w:pPrChange): the paragraph node position —
    *  accept/reject rewrites its attrs in place. */
   paraPos?: number;
-  /** Run format change (w:rPrChange): the record itself — reject restores this
-   *  record's own before-state (mark-exact for editor-originated records). */
+  /** Run format change (w:rPrChange): the record itself — reject replays the
+   *  mark's base + surviving records' edits (order-independent, mark-exact on
+   *  the editor path). */
   run?: RunFormatRecord;
 }
 
@@ -612,8 +708,8 @@ function pickRevision(ranges: RevisionRange[], from: number, to: number): Revisi
 }
 
 /** Replace a run's whole rPr with this exact mark set — the reject restore:
- *  every rPr mark drops, then the snapshot's marks come back, so a reject
- *  never leaves a reconstructed carrier (e.g. textStyle) behind. */
+ *  every rPr mark drops, then the desired marks come back, so a reject never
+ *  leaves a reconstructed carrier (e.g. textStyle) behind. */
 function setRunMarks(
   tr: Transaction,
   state: EditorState,
@@ -631,43 +727,8 @@ function setRunMarks(
   }
 }
 
-/** Restore one run record's before-state on a node segment. The newest record
- *  restores its exact before-mark snapshot; an older record reverts only the
- *  props it changed and that no later record overwrote (a later author's
- *  change is never clobbered); a DOCX-loaded record (no mark snapshot)
- *  reconstructs its before props. */
-function restoreRunRecord(
-  tr: Transaction,
-  state: EditorState,
-  from: number,
-  to: number,
-  record: RunFormatRecord,
-  newest: boolean,
-  names: ReadonlySet<string>,
-): void {
-  if (newest && record.before) {
-    setRunMarks(tr, state, from, to, record.before);
-    return;
-  }
-  if (!record.after) {
-    setRunMarks(tr, state, from, to, runPropsToMarks(record.props));
-    return;
-  }
-  const current = runPropsFromMarks(rprMarksOf(tr.doc.nodeAt(from), names));
-  const before = record.before ? runPropsFromMarks(record.before) : record.props;
-  const after = runPropsFromMarks(record.after);
-  const desired: Record<string, unknown> = { ...current };
-  for (const key of new Set([...Object.keys(before), ...Object.keys(after)])) {
-    // A later record still owns this prop (its after-value stands) — keep it.
-    if (JSON.stringify(current[key]) !== JSON.stringify(after[key])) continue;
-    if (before[key] === undefined) delete desired[key];
-    else desired[key] = before[key];
-  }
-  setRunMarks(tr, state, from, to, runPropsToMarks(desired));
-}
-
-/** Accept (drop the record, keep the formatting) or reject (restore the
- *  record's before-state) one run format record on its segment(s). */
+/** Accept (drop the record, keep the formatting) or reject (replay the
+ *  surviving op-log) one run format record on its segment(s). */
 function applyRunFormatRecord(
   tr: Transaction,
   state: EditorState,
@@ -685,32 +746,36 @@ function applyRunFormatRecord(
     if (from < to) segments.push({ from, to });
     return true;
   });
-  const names = new Set(formatMarkNames());
   for (const segment of segments) {
     // Read from the live transaction: a sweep may already have removed another
     // record from this node.
-    const records = formatRecordsOf(tr.doc.nodeAt(segment.from));
-    const index = records.findIndex((r) => r.id === record.id);
+    const mark = formatMarkOf(tr.doc.nodeAt(segment.from), formatType);
+    if (!mark) continue;
+    const records = parseFormatRecords(mark.attrs.records);
+    const index = records.findIndex((candidate) => candidate.id === record.id);
     if (index < 0) continue;
     const remaining = records.filter((_, i) => i !== index);
     if (remaining.length > 0) {
       tr.addMark(
         segment.from,
         segment.to,
-        formatType.create({ records: JSON.stringify(remaining) }),
+        formatType.create({ base: mark.attrs.base ?? null, records: JSON.stringify(remaining) }),
       );
     } else {
       tr.removeMark(segment.from, segment.to, formatType);
     }
     if (accept) continue;
-    restoreRunRecord(
+    // Reject recomputes the run's marks from the op-log: base state + every
+    // surviving record's edits in order. Order-independent, and mark-exact on
+    // the editor path (no props→marks reconstruction). A DOCX-loaded mark has
+    // no base — its old props are the only before-state available.
+    const base = parseRunMarks(mark.attrs.base);
+    setRunMarks(
       tr,
       state,
       segment.from,
       segment.to,
-      record,
-      index === records.length - 1,
-      names,
+      base === null ? runPropsToMarks(record.props) : replayRunMarks(base, remaining),
     );
   }
 }

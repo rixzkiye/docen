@@ -135,41 +135,84 @@ export const Deletion = Mark.create({
   parseDocxInline: deletionRule,
 });
 
-/** One tracked run format change (w:rPrChange). A marked run can carry several
- *  records — different authors editing the same run produce separate entries
+/** One edit in a record's own-edit log — an exact mark-level delta. */
+export interface RunFormatEdit {
+  /** Monotonic order across the mark's records. Folded same-author edits can
+   *  interleave with other authors, so replay sorts by this, never by record
+   *  order (a folded older record may contain a later edit). */
+  seq: number;
+  /** The marks the edit removed (type + attrs, exactly). */
+  removed: RunPropMark[];
+  /** The marks the edit added. */
+  added: RunPropMark[];
+}
+
+/** One tracked run format change (w:rPrChange): the revision identity plus the
+ *  author's own edits. Different authors keep separate records on the same run
  *  (PM marks of one type cannot coexist on a node, so the list is the per-author
  *  storage). */
 export interface RunFormatRecord {
   id: number;
   author: string;
   date: string;
-  /** The exact rPr mark set before the change (editor-originated records):
-   *  reject restores it verbatim, so no reconstructed carrier marks appear. */
-  before?: RunPropMark[];
-  /** The exact rPr mark set after the change — a later author's record leaves
-   *  props it still owns untouched when an older record is rejected. */
-  after?: RunPropMark[];
-  /** The record's OLD run props (office-open rPr keys), verbatim for a
-   *  DOCX-loaded record and derived from `before` for an editor-originated
-   *  one. Compile emits the newest record's props as w:rPrChange. */
+  /** The record's OWN edits, oldest first — a mark-level op-log replayed over
+   *  the run's base state. Empty for a DOCX-loaded record. */
+  edits: RunFormatEdit[];
+  /** The record's OLD run props (office-open keys) — the state before the
+   *  record's first edit. Compiles to w:rPrChange for the record carrying the
+   *  latest edit; also the reject target for a DOCX-loaded record (which has
+   *  no base/edits to replay). */
   props: Record<string, unknown>;
 }
+
+const isRunEdit = (value: unknown): value is RunFormatEdit =>
+  typeof value === "object" &&
+  value !== null &&
+  typeof (value as { seq?: unknown }).seq === "number" &&
+  Array.isArray((value as { removed?: unknown }).removed) &&
+  Array.isArray((value as { added?: unknown }).added);
 
 const isRunRecord = (value: unknown): value is RunFormatRecord =>
   typeof value === "object" &&
   value !== null &&
   typeof (value as { id?: unknown }).id === "number" &&
-  typeof (value as { author?: unknown }).author === "string";
+  typeof (value as { author?: unknown }).author === "string" &&
+  (value as { props?: unknown }).props !== null &&
+  typeof (value as { props?: unknown }).props === "object";
 
 /** Parse a formatChange mark's `records` attr; malformed entries degrade to an
- *  empty list (a corrupt record never throws the projection/compile). */
+ *  empty list (a corrupt record never throws the projection/compile). A record
+ *  missing its op-log loads with no edits. */
 export function parseFormatRecords(raw: unknown): RunFormatRecord[] {
   if (typeof raw !== "string") return [];
   try {
     const parsed: unknown = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed.filter(isRunRecord) : [];
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter(isRunRecord).map((record) => ({
+      ...record,
+      edits: Array.isArray(record.edits) ? record.edits.filter(isRunEdit) : [],
+    }));
   } catch {
     return [];
+  }
+}
+
+/** Parse a formatChange mark's `base` attr — the exact rPr mark set the mark's
+ *  op-log replays over. Null when the mark was DOCX-loaded (no base snapshot). */
+export function parseRunMarks(raw: unknown): RunPropMark[] | null {
+  if (typeof raw !== "string") return null;
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    return Array.isArray(parsed)
+      ? parsed.filter(
+          (mark): mark is RunPropMark =>
+            typeof mark === "object" &&
+            mark !== null &&
+            typeof (mark as { type?: unknown }).type === "string",
+        )
+      : null;
+  } catch {
+    return null;
   }
 }
 
@@ -179,12 +222,12 @@ export function parseFormatRecords(raw: unknown): RunFormatRecord[] {
  *
  * OOXML stores a run's previous properties in `<w:rPrChange>` (office-open:
  * `RunOptions.revision` = `{ id, author, date, …oldRunProps }`). The mark holds
- * a JSON list of {@link RunFormatRecord} — the revision metadata plus the old
- * props (and, for edits made here, the exact before/after mark snapshots).
- * Compile emits the newest record as `revision` (renderDocx) and resolve turns
- * it back into one record (parseDocx), so a Word file's format changes survive
- * the JSON round-trip. The current run properties stay on their own rPr marks —
- * accept keeps them, reject restores the record's own before-state.
+ * the exact rPr mark set the revisions started from (`base`) plus a JSON list
+ * of {@link RunFormatRecord} op-logs. Reject recomputes the run's marks by
+ * replaying the surviving records' edits over `base` — order-independent, with
+ * no props→marks reconstruction on the editor path. Compile emits the record
+ * carrying the latest edit as `revision` (renderDocx) and resolve turns one
+ * back into a DOCX-loaded record (parseDocx), so Word files round-trip.
  *
  * TextStyle declares a `revision` attr for its mirror guard but deliberately
  * skips it in render/parse: this mark owns the field (one mapping, once).
@@ -196,8 +239,11 @@ export const FormatChange = Mark.create({
   inclusive: false,
   addAttributes() {
     return {
+      /** JSON `RunPropMark[]` — the exact rPr marks before the first recorded
+       *  edit. Null on a DOCX-loaded mark (no mark snapshot exists). */
+      base: { default: null, rendered: false },
       /** JSON `RunFormatRecord[]` — one entry per author's tracked change on
-       *  the marked text, oldest first (the newest compiles to w:rPrChange). */
+       *  the marked text; replay orders the edits by their `seq`. */
       records: { default: null, rendered: false },
     };
   },
@@ -209,13 +255,16 @@ export const FormatChange = Mark.create({
       id: typeof id === "number" ? id : 0,
       author: typeof author === "string" ? author : "",
       date: typeof date === "string" ? date : "",
+      edits: [],
       props,
     };
-    return { records: JSON.stringify([record]) };
+    // A loaded record carries no mark snapshot: reject reconstructs its old
+    // props (the only before-state OOXML keeps).
+    return { base: null, records: JSON.stringify([record]) };
   },
   renderDocx(attrs: Record<string, unknown>) {
     const records = parseFormatRecords(attrs.records);
-    const newest = records[records.length - 1];
+    const newest = latestEditedRecord(records);
     if (!newest) return {};
     return {
       revision: {
@@ -227,3 +276,19 @@ export const FormatChange = Mark.create({
     };
   },
 });
+
+/** The record carrying the mark's latest edit (a folded older record may hold
+ *  a later edit than the list tail). Loaded records without edits tie at -1;
+ *  the last such record wins. */
+function latestEditedRecord(records: readonly RunFormatRecord[]): RunFormatRecord | undefined {
+  let newest: RunFormatRecord | undefined;
+  let best = -1;
+  for (const record of records) {
+    const seq = record.edits.reduce((max, edit) => Math.max(max, edit.seq), -1);
+    if (seq >= best) {
+      best = seq;
+      newest = record;
+    }
+  }
+  return newest;
+}

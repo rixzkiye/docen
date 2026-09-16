@@ -104,6 +104,11 @@ const markNames = (editor: EditorType, pos = 1): string[] => {
   return (text?.marks ?? []).map((mark: Mark) => mark.type.name);
 };
 
+/** The rPr mark names on the text node at `pos` — the revision carrier
+ *  itself excluded (the tests assert the tracked formatting). */
+const rprMarkNames = (editor: EditorType, pos = 1): string[] =>
+  markNames(editor, pos).filter((name) => name !== "formatChange");
+
 /** The compiled run options of the first paragraph — the DOCX-facing proof. */
 const compiledRuns = (editor: EditorType): Record<string, unknown>[] => {
   const out = compileDocument(editor.getJSON() as never, docxExtensions);
@@ -392,6 +397,95 @@ describe.sequential("per-author run records", () => {
     expect(markNames(editor)).toContain("italic");
     expect(formatRecords(editor).map((record) => record.author)).toEqual(["Bob"]);
     editor.destroy();
+  });
+});
+
+describe.sequential("ordered op-log rejects (R1-R3)", () => {
+  /** Ada bolds the run, Bob italicizes it — two records, one run. */
+  const adaThenBob = (editor: EditorType): RunFormatRecord[] => {
+    updateSettings({ identity: { name: "Ada" } });
+    editor.commands["track-changes"](true);
+    addMark(editor, "bold", 1, 6);
+    updateSettings({ identity: { name: "Bob" } });
+    addMark(editor, "italic", 1, 6);
+    return formatRecords(editor);
+  };
+
+  it("rejecting both authors' records in pane order ends plain (R1)", () => {
+    const editor = build();
+    const records = adaThenBob(editor);
+    expect(records.map((record) => record.author)).toEqual(["Ada", "Bob"]);
+    editor.commands["reject-change"](String(records[0]!.id));
+    expect(rprMarkNames(editor)).toEqual(["italic"]);
+    editor.commands["reject-change"](String(records[1]!.id));
+    expect(formatMarks(editor)).toEqual([]);
+    expect(rprMarkNames(editor)).toEqual([]);
+    // Plain text may compile back to a bare paragraph string — assert the
+    // formatting is absent either way.
+    const runs = compiledRuns(editor);
+    expect(runs.some((run) => run.bold != null)).toBe(false);
+    expect(runs.some((run) => run.italic != null)).toBe(false);
+    editor.destroy();
+  });
+
+  it("ribbon Reject and Move to Next twice ends plain (R1)", () => {
+    const editor = build();
+    adaThenBob(editor);
+    editor.commands["reject-change"]();
+    expect(formatRecords(editor).map((record) => record.author)).toEqual(["Bob"]);
+    editor.commands["reject-change"]();
+    expect(formatMarks(editor)).toEqual([]);
+    expect(rprMarkNames(editor)).toEqual([]);
+    editor.destroy();
+  });
+
+  it("rejecting Ada's folded record after her second edit keeps Bob's italic (R3)", () => {
+    const editor = build();
+    updateSettings({ identity: { name: "Ada" } });
+    editor.commands["track-changes"](true);
+    addMark(editor, "bold", 1, 6);
+    updateSettings({ identity: { name: "Bob" } });
+    addMark(editor, "italic", 1, 6);
+    // Ada edits the run again after Bob: her second edit must fold into HER
+    // record (an owned op-log entry), never into Bob's or into her `after`.
+    updateSettings({ identity: { name: "Ada" } });
+    removeMark(editor, "bold", 1, 6);
+    const records = formatRecords(editor);
+    expect(records).toHaveLength(2);
+    expect(records[0]!.author).toBe("Ada");
+    expect(records[0]!.edits).toHaveLength(2);
+    expect(records[1]!.author).toBe("Bob");
+    editor.commands["reject-change"](String(records[0]!.id));
+    // Ada's net change is gone; Bob's italic survives.
+    expect(rprMarkNames(editor)).toEqual(["italic"]);
+    expect(formatRecords(editor).map((record) => record.author)).toEqual(["Bob"]);
+    editor.commands["reject-change"](String(records[1]!.id));
+    expect(rprMarkNames(editor)).toEqual([]);
+    editor.destroy();
+  });
+
+  it("partial reject leaves no carrier: the surviving prop stays removable (R2)", () => {
+    // Reject the newer record first: the older author's prop survives exactly.
+    const newerFirst = build();
+    const newerRecords = adaThenBob(newerFirst);
+    newerFirst.commands["reject-change"](String(newerRecords[1]!.id));
+    expect(rprMarkNames(newerFirst)).toEqual(["bold"]);
+    newerFirst.commands["track-changes"](false);
+    removeMark(newerFirst, "bold", 1, 6);
+    expect(rprMarkNames(newerFirst)).toEqual([]);
+    expect(compiledRuns(newerFirst)[0]).not.toHaveProperty("bold");
+    newerFirst.destroy();
+
+    // Reject the older record first: the newer author's prop survives exactly.
+    const olderFirst = build();
+    const olderRecords = adaThenBob(olderFirst);
+    olderFirst.commands["reject-change"](String(olderRecords[0]!.id));
+    expect(rprMarkNames(olderFirst)).toEqual(["italic"]);
+    olderFirst.commands["track-changes"](false);
+    removeMark(olderFirst, "italic", 1, 6);
+    expect(rprMarkNames(olderFirst)).toEqual([]);
+    expect(compiledRuns(olderFirst)[0]).not.toHaveProperty("italic");
+    olderFirst.destroy();
   });
 });
 
