@@ -182,7 +182,7 @@ import {
   type IdentitySettings,
   type SettingsPatch,
 } from "./settings";
-import { spellSuggestions } from "./spelling";
+import { getSynonyms, spellSuggestions } from "./spelling";
 import { findTemplate, templateLocale } from "./templates";
 
 /** Split buttons whose face carries no command of its own — the handler only
@@ -414,6 +414,7 @@ export type TaskPaneId =
   | "comments"
   | "clipboard"
   | "proofing"
+  | "thesaurus"
   | "revisions"
   | "styles";
 
@@ -1544,6 +1545,13 @@ class DocenDocument extends AddinHost<Editor> {
       ?.querySelector<HTMLElement>("docen-spelling-pane")
       ?.addEventListener("spelling:nav", ((event: CustomEvent<number>) =>
         this.#spelling.goto(this.#spelling.activeIndex() + event.detail)) as EventListener);
+    this.shadowRoot
+      ?.querySelector<HTMLElement>("docen-thesaurus-pane")
+      ?.addEventListener("thesaurus:insert", ((event: CustomEvent<string>) => {
+        if (event.detail && this.editor) {
+          this.editor.commands.insertContent(event.detail);
+        }
+      }) as EventListener);
 
     this.#stageHost = this.shadowRoot!.querySelector<HTMLElement>(".docen-canvas") ?? undefined;
     this.#stageHost?.addEventListener("wheel", this.#onWheel as EventListener, {
@@ -3469,6 +3477,7 @@ class DocenDocument extends AddinHost<Editor> {
       ["revisions-pane", "pane.revisions"],
       ["clipboard-pane", "pane.clipboard"],
       ["proofing-pane", "pane.proofing"],
+      ["thesaurus-pane", "pane.thesaurus"],
       ["styles-pane", "pane.styles"],
     ] as const) {
       root.querySelector(`docen-task-pane[part="${part}"]`)?.setAttribute("title", t(key, this));
@@ -4117,7 +4126,10 @@ class DocenDocument extends AddinHost<Editor> {
    *  are skipped. */
   readonly #onTransaction = (props: { transaction: Transaction }): void => {
     // The status-bar language mirrors the caret's proofing language (Word).
-    if (props.transaction.selectionSet) this.#syncStatusLanguage();
+    if (props.transaction.selectionSet) {
+      this.#syncStatusLanguage();
+      this.#updateStatus();
+    }
     if (props.transaction.docChanged) {
       this.#jsonDirty = true;
       this.#spelling.mapThrough(props.transaction);
@@ -4293,12 +4305,22 @@ class DocenDocument extends AddinHost<Editor> {
       this.#lastWords = cc?.words?.() ?? 0;
       this.#lastDocSize = docSize;
     }
+    let wordsVal = String(this.#lastWords);
+    if (editor && !editor.state.selection.empty) {
+      const selText = editor.state.doc.textBetween(
+        editor.state.selection.from,
+        editor.state.selection.to,
+        " ",
+      );
+      const selWords = (selText.trim().match(/\S+/g) || []).length;
+      wordsVal = `${selWords} / ${this.#lastWords}`;
+    }
     // Push the numeric state to <docen-status-bar>; it localizes + renders.
     if (bar) {
       bar.setAttribute("section", String(section));
       bar.setAttribute("page", String(page || 1));
       bar.setAttribute("total", String(total || 1));
-      bar.setAttribute("words", String(this.#lastWords));
+      bar.setAttribute("words", wordsVal);
       bar.setAttribute("zoom", String(this.#zoom));
       bar.setAttribute("view", this.#viewMode());
     }
@@ -5040,9 +5062,10 @@ class DocenDocument extends AddinHost<Editor> {
     // suggestions and the ignore levels. activateAt marks it active so the
     // shared replace/ignore commands below act on this occurrence.
     const spellingHit = pos != null ? this.#spelling.activateAt(pos) : null;
+    const grammarHit = !spellingHit && pos != null ? this.#spelling.activateGrammarAt(pos) : null;
     const items: RibbonMenuItem[] = [];
     if (spellingHit) {
-      const suggestions = spellSuggestions(spellingHit.word);
+      const suggestions = spellSuggestions(spellingHit.word, 5, spellingHit.lang);
       if (suggestions.length) {
         for (const suggestion of suggestions) {
           items.push({ text: suggestion, event: "spell-pick", value: suggestion });
@@ -5054,6 +5077,50 @@ class DocenDocument extends AddinHost<Editor> {
       items.push({ text: t("spelling.ignore-once", this), event: "spell-ignore-once" });
       items.push({ text: t("spelling.ignore-all", this), event: "spell-ignore-all" });
       items.push({ text: t("spelling.add", this), event: "spell-add" });
+      items.push({ text: "-" });
+    } else if (grammarHit) {
+      if (grammarHit.replacements.length) {
+        for (const rep of grammarHit.replacements) {
+          items.push({ text: rep, event: "spell-pick", value: rep });
+        }
+      }
+      items.push({ text: "-" });
+      items.push({ text: t("spelling.ignore-once", this), event: "grammar-ignore-once" });
+      items.push({ text: "-" });
+    }
+
+    let wordUnderCursor = "";
+    if (inSelection) {
+      const selText = editor.state.doc.textBetween(selection.from, selection.to, " ").trim();
+      if (/^[A-Za-z\u00C0-\u024F\u1E00-\u1EFF]+$/.test(selText)) {
+        wordUnderCursor = selText;
+      }
+    } else if (pos != null) {
+      const $pos = editor.state.doc.resolve(Math.min(pos, editor.state.doc.content.size));
+      const text = $pos.parent.textBetween(0, $pos.parent.content.size, " ");
+      const offset = $pos.parentOffset;
+      const re = /\b([A-Za-z\u00C0-\u024F\u1E00-\u1EFF]+)\b/g;
+      let m: RegExpExecArray | null;
+      while ((m = re.exec(text)) !== null) {
+        if (m.index <= offset && offset <= m.index + m[0].length) {
+          wordUnderCursor = m[1];
+          break;
+        }
+      }
+    }
+    if (wordUnderCursor) {
+      const synonyms = getSynonyms(wordUnderCursor, this.#caretLanguage().value, 4);
+      if (synonyms.length > 0) {
+        items.push({ text: `${t("context.synonyms", this)}:`, disabled: true });
+        for (const syn of synonyms) {
+          items.push({ text: `  ${syn}`, event: "thesaurus-replace", value: syn });
+        }
+      }
+      items.push({
+        text: `${t("pane.thesaurus", this)}...`,
+        event: "thesaurus",
+        value: wordUnderCursor,
+      });
       items.push({ text: "-" });
     }
     if (inSelection) {
@@ -5454,6 +5521,7 @@ class DocenDocument extends AddinHost<Editor> {
         spellingReplace: (replacement) => this.#spelling.replace(replacement),
         spellingIgnore: (mode) => this.#spelling.ignore(mode),
         openLanguageDialog: () => this.#onLanguageOpen(),
+        openThesaurus: (word?: string) => this.#openThesaurus(word),
       },
       fields: {
         fieldInsert: () => this.#dialogs.fieldInsert(),
@@ -5752,6 +5820,40 @@ class DocenDocument extends AddinHost<Editor> {
     const { value, noProof } = this.#caretLanguage();
     dialog?.show(value || null, noProof);
   };
+
+  /** Open the Thesaurus task pane with the given or selected/current word. */
+  #openThesaurus(word?: string): void {
+    const editor = this.editor;
+    let target = word;
+    if (!target && editor) {
+      const sel = editor.state.selection;
+      if (!sel.empty) {
+        target = editor.state.doc.textBetween(sel.from, sel.to, " ").trim();
+      } else {
+        const $pos = sel.$from;
+        const text = $pos.parent.textBetween(0, $pos.parent.content.size, " ");
+        const offset = $pos.parentOffset;
+        const re = /\b([A-Za-z\u00C0-\u024F\u1E00-\u1EFF]+)\b/g;
+        let m: RegExpExecArray | null;
+        while ((m = re.exec(text)) !== null) {
+          if (m.index <= offset && offset <= m.index + m[0].length) {
+            target = m[1];
+            break;
+          }
+        }
+      }
+    }
+    this.#setTaskpane("thesaurus", true);
+    const pane = this.shadowRoot?.querySelector("docen-thesaurus-pane") as
+      | (HTMLElement & { lookup: (w: string) => void; lang: string })
+      | null;
+    if (pane) {
+      pane.lang = this.#caretLanguage().value;
+      if (target) {
+        pane.lookup(target);
+      }
+    }
+  }
 
   /** Mirror the caret's proofing language into the status bar (Word shows the
    *  selection's language there). */
@@ -6925,11 +7027,13 @@ class DocenDocument extends AddinHost<Editor> {
             ? "clipboard-pane"
             : id === "proofing"
               ? "proofing-pane"
-              : id === "revisions"
-                ? "revisions-pane"
-                : id === "styles"
-                  ? "styles-pane"
-                  : "props-pane";
+              : id === "thesaurus"
+                ? "thesaurus-pane"
+                : id === "revisions"
+                  ? "revisions-pane"
+                  : id === "styles"
+                    ? "styles-pane"
+                    : "props-pane";
     return this.shadowRoot?.querySelector(`docen-task-pane[part="${part}"]`) as
       | (HTMLElement & { open: boolean })
       | null;

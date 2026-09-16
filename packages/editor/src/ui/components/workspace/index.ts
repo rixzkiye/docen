@@ -22,6 +22,7 @@ export { default as DocenLinkDialog } from "./link-dialog";
 export { default as DocenZoomDialog } from "./zoom-dialog";
 export { default as DocenClipboardPane } from "./clipboard-pane";
 export { default as DocenSpellingPane } from "./spelling-pane";
+export { default as DocenThesaurusPane } from "./thesaurus-pane";
 export { default as DocenLanguageDialog } from "./language-dialog";
 export { default as DocenDateTimeDialog } from "./date-time-dialog";
 export { default as DocenTocDialog } from "./toc-dialog";

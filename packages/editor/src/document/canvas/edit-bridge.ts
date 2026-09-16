@@ -384,6 +384,7 @@ export interface EditBridge {
   /** Hand the host's spell-check results to the squiggle overlay (the check
    *  itself runs in the host, debounced per transaction). */
   setSpellingIssues(issues: Array<{ from: number; to: number }>): void;
+  setGrammarIssues(issues: Array<{ from: number; to: number }>): void;
   destroy(): void;
 }
 
@@ -730,6 +731,12 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
     "%3Cpath d='M0 2.5 L1.5 0.5 L3 2.5 L4.5 0.5 L6 2.5' fill='none' stroke='%23e81123'/%3E%3C/svg%3E\")";
   let spellingIssues: Array<{ from: number; to: number }> = [];
 
+  const grammarPool: PoolEntry[] = [];
+  const GRAMMAR_SQUIGGLE =
+    "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='6' height='3'%3E" +
+    "%3Cpath d='M0 2.5 L1.5 0.5 L3 2.5 L4.5 0.5 L6 2.5' fill='none' stroke='%230078d4'/%3E%3C/svg%3E\")";
+  let grammarIssues: Array<{ from: number; to: number }> = [];
+
   /** `r` minus every hole it meets — axis-aligned leftovers only (a 3px-tall
    *  squiggle cut by a float box keeps its left/right strips; a fully
    *  covered one vanishes). */
@@ -786,10 +793,34 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
     pooledPlace(spellingPool, rects, { zIndex: "2" });
   };
 
+  const placeGrammar = (): void => {
+    const s = active();
+    const rects: OverlayRect[] = [];
+    if (mapFresh(s)) {
+      for (const issue of grammarIssues) {
+        for (const r of s.map.selectionRects(issue.from, issue.to)) {
+          const wave = { x: r.xPx, y: r.yPx + r.heightPx - 3, width: r.widthPx, height: 3 };
+          const holes = opts.frontFloats?.(r.page) ?? [];
+          for (const g of holes.length ? rectMinus(wave, holes) : [wave])
+            rects.push({
+              page: framePage(s, r.page),
+              x: g.x,
+              y: g.y,
+              width: g.width,
+              height: g.height,
+              background: `${GRAMMAR_SQUIGGLE} repeat-x`,
+            });
+        }
+      }
+    }
+    pooledPlace(grammarPool, rects, { zIndex: "2" });
+  };
+
   const placeCaret = (): void => {
     placeSelection();
     placeSearch();
     placeSpelling();
+    placeGrammar();
     // A selection that stopped being the drawing's NodeSelection (arrow keys,
     // a command, undo) drops the selection box — the box mirrors the PM state.
     if (draw.selected && !(main.editor.state.selection instanceof NodeSelection)) {
@@ -1688,6 +1719,8 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
     // pool against the active story.
     spellingIssues = [];
     pooledPlace(spellingPool, [], {});
+    grammarIssues = [];
+    pooledPlace(grammarPool, [], {});
     // The caret enters at the story's end (Word drops you after the text) —
     // the last textblock's end, not the doc's outer boundary (no caret there).
     setSel(TextSelection.atEnd(s.editor.state.doc).from);
@@ -3232,6 +3265,11 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
       spellingIssues = issues;
       placeSpelling();
     },
+    /** Hand the host's fresh grammar-check results to the overlay. */
+    setGrammarIssues(issues: Array<{ from: number; to: number }>): void {
+      grammarIssues = issues;
+      placeGrammar();
+    },
     destroy(): void {
       if (main.raf) cancelAnimationFrame(main.raf);
       blink?.cancel();
@@ -3247,6 +3285,7 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
       pooledPlace(selectionPool, [], {});
       pooledPlace(searchPool, [], {});
       pooledPlace(spellingPool, [], {});
+      pooledPlace(grammarPool, [], {});
       ta.remove();
       caret.remove();
       shapeGhostEl.remove();

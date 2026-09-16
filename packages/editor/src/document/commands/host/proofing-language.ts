@@ -12,19 +12,21 @@ export interface ProofingLanguageHostView {
   showWordCount(): void;
   /** Re-run the spelling check and rebuild the proofing pane. */
   spellingRun(): void;
-  /** Open/close a task pane (the proofing pane). */
-  setTaskpane(id: "proofing", open: boolean): void;
+  /** Open/close a task pane (the proofing or thesaurus pane). */
+  setTaskpane(id: "proofing" | "thesaurus", open: boolean): void;
   spellingIssues(): SpellingIssue[];
   spellingGoto(index: number): void;
   spellingReplace(replacement: string): void;
   spellingIgnore(mode: "once" | "ignore" | "add"): void;
   /** Open the proofing-language dialog for the selection. */
   openLanguageDialog(): void;
+  /** Open the thesaurus pane with an optional initial word lookup. */
+  openThesaurus(word?: string): void;
 }
 
 /**
  * Proofing and language commands split out of the host element: Word Count,
- * Spelling & Grammar (check/replace/ignore), and the proofing-language dialog.
+ * Spelling & Grammar (check/replace/ignore), Thesaurus, and the proofing-language dialog.
  */
 export class ProofingLanguageHostCommands implements HostCommandDomain {
   constructor(private readonly host: ProofingLanguageHostView) {}
@@ -37,6 +39,9 @@ export class ProofingLanguageHostCommands implements HostCommandDomain {
     "spell-ignore-once",
     "spell-ignore-all",
     "spell-add",
+    "grammar-ignore-once",
+    "thesaurus",
+    "thesaurus-replace",
     "language",
   ];
 
@@ -73,6 +78,21 @@ export class ProofingLanguageHostCommands implements HostCommandDomain {
       this.host.spellingIgnore(
         event === "spell-ignore-once" ? "once" : event === "spell-ignore-all" ? "ignore" : "add",
       );
+      return true;
+    }
+    if (event === "grammar-ignore-once") {
+      this.host.spellingIgnore("once");
+      return true;
+    }
+    // Thesaurus (Review → Thesaurus, context menu Synonyms / Thesaurus):
+    if (event === "thesaurus") {
+      this.host.openThesaurus(value);
+      return true;
+    }
+    if (event === "thesaurus-replace") {
+      if (value) {
+        editor.commands.insertContent(value);
+      }
       return true;
     }
     // Language (Review → Language, the status-bar language item): the

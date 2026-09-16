@@ -499,11 +499,25 @@ class DocenStatusBar extends FASTElement {
   }
 
   #renderWords(): void {
-    if (this.wordsEl)
-      this.wordsEl.textContent =
-        this.words == null
-          ? ""
-          : t("status.words", this).replace("{n}", String(Number(this.words)));
+    if (!this.wordsEl) return;
+    if (this.words == null) {
+      this.wordsEl.textContent = "";
+      return;
+    }
+    if (this.words.includes("/")) {
+      const parts = this.words.split("/").map((p) => p.trim());
+      const sel = parts[0] ?? "0";
+      const total = parts[1] ?? "0";
+      const selFmt = t("status.words-selected", this);
+      if (selFmt && selFmt !== "status.words-selected") {
+        this.wordsEl.textContent = selFmt.replace("{sel}", sel).replace("{total}", total);
+      } else {
+        this.wordsEl.textContent =
+          `${sel} / ${total} ${t("status.words", this).replace("{n}", "").trim()}`.trim();
+      }
+    } else {
+      this.wordsEl.textContent = t("status.words", this).replace("{n}", String(Number(this.words)));
+    }
   }
 
   #renderZoom(): void {

@@ -7,6 +7,8 @@ import { observeLang, t } from "../../i18n/localize";
 export interface SpellingPaneEntry {
   word: string;
   suggestions: string[];
+  category?: "spelling" | "grammar" | "style";
+  message?: string;
 }
 
 /** One suggestion row — clicking replaces the active misspelling with it. */
@@ -42,8 +44,28 @@ const styles = css`
     padding: 14px 8px;
     text-align: center;
   }
+  .header-line {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
   .counter {
     color: var(--docen-color-text-2, #616161);
+  }
+  .badge {
+    font-size: 10px;
+    font-weight: 700;
+    padding: 1px 6px;
+    border-radius: 3px;
+  }
+  .badge.spelling {
+    background: #fde7e9;
+    color: #a80000;
+  }
+  .badge.grammar,
+  .badge.style {
+    background: #eff6fc;
+    color: #005a9e;
   }
   .word {
     font-size: 18px;
@@ -52,6 +74,16 @@ const styles = css`
     text-decoration: underline wavy #e81123;
     text-underline-offset: 4px;
     overflow-wrap: anywhere;
+  }
+  .word.grammar,
+  .word.style {
+    color: #0078d4;
+    text-decoration: underline wavy #0078d4;
+  }
+  .message {
+    font-size: 12px;
+    color: var(--docen-color-text-2, #616161);
+    line-height: 1.4;
   }
   .section {
     color: var(--docen-color-text-2, #616161);
@@ -83,10 +115,21 @@ const template = html<DocenSpellingPane>`
     ${(x) =>
       x.entries.length
         ? html`
-            <span class="counter">
-              ${(x) => `${x.active + 1} / ${x.entries.length} · ${x.total}`}
+            <div class="header-line">
+              <span class="counter">
+                ${(x) => `${x.active + 1} / ${x.entries.length} · ${x.total}`}
+              </span>
+              <span class="badge ${(x) => x.entries[x.active]?.category ?? "spelling"}">
+                ${(x) => (x.entries[x.active]?.category ?? "spelling").toUpperCase()}
+              </span>
+            </div>
+            <span class="word ${(x) => x.entries[x.active]?.category ?? "spelling"}">
+              ${(x) => x.entries[x.active]?.word ?? ""}
             </span>
-            <span class="word">${(x) => x.entries[x.active]?.word ?? ""}</span>
+            ${(x) =>
+              x.entries[x.active]?.message
+                ? html`<span class="message">${x.entries[x.active]?.message}</span>`
+                : ""}
             <span class="section">${(x) => t("spelling.suggestions", x)}</span>
             <div class="suggestions">
               ${repeat((x) => x.entries[x.active]?.suggestions ?? [], suggestionTemplate)}
@@ -95,14 +138,20 @@ const template = html<DocenSpellingPane>`
               <fluent-button appearance="neutral" @click="${(x) => x.$emit("spelling:ignore-once")}"
                 >${(x) => t("spelling.ignore-once", x)}</fluent-button
               >
-              <!-- Ignore All clears every misspelling in the document, not
-                   just the active word's occurrences. -->
-              <fluent-button appearance="neutral" @click="${(x) => x.$emit("spelling:ignore-all")}"
-                >${(x) => t("spelling.ignore-all", x)}</fluent-button
-              >
-              <fluent-button appearance="neutral" @click="${(x) => x.$emit("spelling:add")}"
-                >${(x) => t("spelling.add", x)}</fluent-button
-              >
+              ${(x) =>
+                x.entries[x.active]?.category !== "grammar" &&
+                x.entries[x.active]?.category !== "style"
+                  ? html`
+                      <fluent-button
+                        appearance="neutral"
+                        @click="${(x) => x.$emit("spelling:ignore-all")}"
+                        >${(x) => t("spelling.ignore-all", x)}</fluent-button
+                      >
+                      <fluent-button appearance="neutral" @click="${(x) => x.$emit("spelling:add")}"
+                        >${(x) => t("spelling.add", x)}</fluent-button
+                      >
+                    `
+                  : ""}
             </div>
           `
         : html`<div class="empty">${(x) => t("spelling.empty", x)}</div>`}
