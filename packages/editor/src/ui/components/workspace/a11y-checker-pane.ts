@@ -12,6 +12,11 @@ export interface A11yIssue {
   message: string;
   nodeIndex?: number;
   nodeType: string;
+  params?: {
+    from?: number;
+    to?: number;
+    text?: string;
+  };
 }
 
 /**
@@ -51,6 +56,7 @@ export function scanA11yIssues(doc: JSONContent | null | undefined): A11yIssue[]
           severity: "warning",
           rule: "heading-order",
           message: `Heading level jumped from H${lastHeadingLevel} to H${level}`,
+          params: { from: lastHeadingLevel, to: level },
           nodeIndex: currentIdx,
           nodeType: "heading",
         });
@@ -86,6 +92,7 @@ export function scanA11yIssues(doc: JSONContent | null | undefined): A11yIssue[]
             severity: "tip",
             rule: "link-text",
             message: `Ambiguous link text "${node.text}"`,
+            params: { text: node.text },
             nodeIndex: currentIdx,
             nodeType: "link",
           });
@@ -211,12 +218,33 @@ export class DocenA11yCheckerPane extends FASTElement {
 
   override connectedCallback(): void {
     super.connectedCallback();
-    this.#unsubscribe = observeLang(() => {});
+    this.#unsubscribe = observeLang(() => this.#renderList());
   }
 
   override disconnectedCallback(): void {
     this.#unsubscribe?.();
     super.disconnectedCallback();
+  }
+
+  formatMessage(issue: A11yIssue): string {
+    if (issue.rule === "alt-text") {
+      return t("a11y.missingAltText", this);
+    }
+    if (issue.rule === "heading-order") {
+      const from = String(issue.params?.from ?? 1);
+      const to = String(issue.params?.to ?? 2);
+      const tpl = t("a11y.headingJump", this);
+      return tpl.replace("{from}", from).replace("{to}", to);
+    }
+    if (issue.rule === "table-header") {
+      return t("a11y.missingTableHeader", this);
+    }
+    if (issue.rule === "link-text") {
+      const text = String(issue.params?.text ?? "");
+      const tpl = t("a11y.ambiguousLink", this);
+      return tpl.replace("{text}", text);
+    }
+    return issue.message;
   }
 
   check(doc: JSONContent | null | undefined): void {
@@ -240,7 +268,7 @@ export class DocenA11yCheckerPane extends FASTElement {
 
       const msg = document.createElement("div");
       msg.className = "issue-msg";
-      msg.textContent = issue.message;
+      msg.textContent = this.formatMessage(issue);
 
       const sub = document.createElement("div");
       sub.className = "issue-sub";

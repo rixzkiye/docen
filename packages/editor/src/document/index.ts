@@ -136,7 +136,7 @@ import {
 import { documentStyles, documentTemplate, escapeHtml } from "./chrome";
 import { ClipboardCommands } from "./commands/clipboard";
 import { CommentsCommands } from "./commands/comments";
-import { compareDocs } from "./commands/compare";
+import { combineDocs, compareDocs } from "./commands/compare";
 import { DesignCommands } from "./commands/design";
 import { DialogCommands } from "./commands/dialogs";
 import { hostCommands, type HostCommandRegistry } from "./commands/host";
@@ -976,10 +976,12 @@ class DocenDocument extends AddinHost<Editor> {
     }
 
     if (origJson && revJson) {
-      const compared = compareDocs(origJson, revJson, {
-        author: detail.revisedAuthor || "Comparison",
-      });
-      this.setJSON(compared);
+      const author = detail.revisedAuthor || "Comparison";
+      const result =
+        detail.mode === "combine"
+          ? combineDocs(origJson, [{ doc: revJson, author }])
+          : compareDocs(origJson, revJson, { author });
+      this.setJSON(result);
     }
   };
 
@@ -1899,6 +1901,7 @@ class DocenDocument extends AddinHost<Editor> {
 
     this.#bridge = mountEditBridge({
       host: this.#stageHost,
+      canEdit: (ed) => (this.#protectionMode === "forms" ? this.#isInsideSdt(ed) : true),
       // The textarea must live outside docen-context-menu (fluent-menu eats
       // Space/Enter) — the input layer at the shadow root is menu-free.
       inputHost: this.shadowRoot!.querySelector<HTMLElement>(".input-layer")!,
@@ -6207,18 +6210,22 @@ class DocenDocument extends AddinHost<Editor> {
     const themeDef = THEMES[themeId] ?? THEMES.office;
     if (!themeDef) return;
 
-    const target = (this.shadowRoot?.querySelector("docen-workspace") ?? this) as HTMLElement;
-    if (kind === "theme" || kind === "theme-color") {
-      target.style.setProperty("--docen-theme-accent1", `#${themeDef.colors.accent1}`);
-      target.style.setProperty("--docen-theme-accent2", `#${themeDef.colors.accent2}`);
-      target.style.setProperty("--docen-theme-accent3", `#${themeDef.colors.accent3}`);
-      target.style.setProperty("--docen-theme-accent4", `#${themeDef.colors.accent4}`);
-      target.style.setProperty("--docen-theme-accent5", `#${themeDef.colors.accent5}`);
-      target.style.setProperty("--docen-theme-accent6", `#${themeDef.colors.accent6}`);
-    }
-    if (kind === "theme" || kind === "theme-font") {
-      target.style.setProperty("--docen-theme-font-major", themeDef.fonts.majorFont);
-      target.style.setProperty("--docen-theme-font-minor", themeDef.fonts.minorFont);
+    const targets = [this, this.shadowRoot?.querySelector("docen-workspace")].filter(
+      Boolean,
+    ) as HTMLElement[];
+    for (const target of targets) {
+      if (kind === "theme" || kind === "theme-color") {
+        target.style.setProperty("--docen-theme-accent1", `#${themeDef.colors.accent1}`);
+        target.style.setProperty("--docen-theme-accent2", `#${themeDef.colors.accent2}`);
+        target.style.setProperty("--docen-theme-accent3", `#${themeDef.colors.accent3}`);
+        target.style.setProperty("--docen-theme-accent4", `#${themeDef.colors.accent4}`);
+        target.style.setProperty("--docen-theme-accent5", `#${themeDef.colors.accent5}`);
+        target.style.setProperty("--docen-theme-accent6", `#${themeDef.colors.accent6}`);
+      }
+      if (kind === "theme" || kind === "theme-font") {
+        target.style.setProperty("--docen-theme-font-major", themeDef.fonts.majorFont);
+        target.style.setProperty("--docen-theme-font-minor", themeDef.fonts.minorFont);
+      }
     }
     this.#bridge?.replaceOverlays();
   }
@@ -6272,7 +6279,7 @@ class DocenDocument extends AddinHost<Editor> {
   }
 
   #isInsideSdt(editor: Editor): boolean {
-    const { $from } = editor.state.selection;
+    const { $from, $to } = editor.state.selection;
     for (let d = $from.depth; d > 0; d--) {
       const node = $from.node(d);
       if (
@@ -6280,6 +6287,9 @@ class DocenDocument extends AddinHost<Editor> {
         node.type.name === "sdtInline" ||
         node.attrs?.properties
       ) {
+        if ($to.pos < $from.start(d) || $to.pos > $from.end(d)) return false;
+        const props = (node.attrs?.properties ?? {}) as Record<string, unknown>;
+        if (props.cannotEdit === true) return false;
         return true;
       }
     }
@@ -6311,6 +6321,56 @@ class DocenDocument extends AddinHost<Editor> {
     const para = $from.parent;
     const paraAttrs = (para.attrs ?? {}) as Record<string, any>;
 
+    let activeSecProps: SectionPropertiesOptions | undefined;
+    let foundSection = false;
+    editor.state.doc.descendants((node, pos) => {
+      if (foundSection) return false;
+      if (
+        node.type.name === "paragraph" &&
+        (node.attrs as { sectionProperties?: unknown }).sectionProperties != null
+      ) {
+        if (pos >= $from.pos) {
+          activeSecProps = (node.attrs as { sectionProperties?: SectionPropertiesOptions })
+            .sectionProperties;
+          foundSection = true;
+          return false;
+        }
+      }
+    });
+    if (!activeSecProps) {
+      activeSecProps = (editor.state.doc.attrs as { sectionProperties?: SectionPropertiesOptions })
+        ?.sectionProperties;
+    }
+
+    const pageSize =
+      activeSecProps?.pageSize && typeof activeSecProps.pageSize === "object"
+        ? activeSecProps.pageSize
+        : undefined;
+    const pageMargin =
+      activeSecProps?.pageMargin && typeof activeSecProps.pageMargin === "object"
+        ? activeSecProps.pageMargin
+        : undefined;
+
+    let orientationStr = "Portrait";
+    if (pageSize?.orientation === "landscape") {
+      orientationStr = "Landscape";
+    }
+    let marginsStr = "Normal (1 in)";
+    if (pageMargin) {
+      const { top, left } = pageMargin;
+      if (top != null && left != null) {
+        const topIn = (Number(top) / 1440).toFixed(1);
+        const leftIn = (Number(left) / 1440).toFixed(1);
+        marginsStr = `Top: ${topIn}", Left: ${leftIn}"`;
+      }
+    }
+    let paperSizeStr: string | undefined;
+    if (pageSize?.width && pageSize?.height) {
+      const wIn = (Number(pageSize.width) / 1440).toFixed(1);
+      const hIn = (Number(pageSize.height) / 1440).toFixed(1);
+      paperSizeStr = `${wIn}" × ${hIn}"`;
+    }
+
     const info: FormattingInfo = {
       sampleText: sampleText.trim() || "Selected text",
       font: {
@@ -6327,8 +6387,9 @@ class DocenDocument extends AddinHost<Editor> {
         lineSpacing: paraAttrs.lineSpacing ? String(paraAttrs.lineSpacing) : "1.15",
       },
       section: {
-        margins: "Normal (1 in)",
-        orientation: "Portrait",
+        margins: marginsStr,
+        orientation: orientationStr,
+        paperSize: paperSizeStr,
       },
     };
 
@@ -6456,6 +6517,9 @@ class DocenDocument extends AddinHost<Editor> {
         this.#setAutosave((event.target as HTMLInputElement).checked === true);
         break;
       }
+      case "version-history":
+        this.#openVersionHistory();
+        break;
       case "open":
         // Host can take over via docen:open (preventDefault); else open the
         // picker — #onFileChange auto-detects docx/md from the extension.
@@ -6747,8 +6811,14 @@ class DocenDocument extends AddinHost<Editor> {
       if (tabTwip != null) settings.defaultTabStop = tabTwip;
       if (d.updateFields) settings.updateFields = true;
       else delete settings.updateFields;
-      if (d.protection === "none") delete settings.documentProtection;
-      else settings.documentProtection = { edit: d.protection };
+      if (d.protection === "none") {
+        delete settings.documentProtection;
+      } else {
+        settings.documentProtection = {
+          ...(prev.documentProtection as object | undefined),
+          edit: d.protection,
+        };
+      }
       settings.compatibility = {
         ...(prev.compatibility as object | undefined),
         version: d.compatVersion,
@@ -6760,9 +6830,28 @@ class DocenDocument extends AddinHost<Editor> {
     // Protection folds into #syncEditable's formula; a tracked-changes
     // restriction additionally forces revision tracking on (Word "start
     // enforcement" behavior).
-    this.#docProtected = d.protection === "readOnly";
+    this.#protectionMode = d.protection !== "none" ? d.protection : undefined;
+    this.#docProtected = d.protection === "readOnly" || d.protection === "comments";
     if (d.protection === "trackedChanges") editor.commands["track-changes"](true);
     this.#syncEditable();
+    this.#syncEditModeMenu();
+    const pane = this.shadowRoot?.querySelector("docen-restrict-editing-pane") as {
+      setProtectionState?(state: any, hash?: string): void;
+    } | null;
+    if (pane) {
+      const docProt = prev.documentProtection as
+        | { formatting?: boolean; hash?: string }
+        | undefined;
+      const isEnforced = d.protection !== "none";
+      pane.setProtectionState?.(
+        {
+          isEnforced,
+          type: isEnforced ? d.protection : "trackedChanges",
+          formattingRestricted: Boolean(docProt?.formatting),
+        },
+        docProt?.hash,
+      );
+    }
   }
 
   /** References → footnotes group launcher: the Word Footnote and Endnote

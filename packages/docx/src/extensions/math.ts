@@ -2,6 +2,15 @@ import { Node } from "../core";
 import { attrNative } from "./utils";
 
 /**
+ * Math Architecture Decision:
+ * - `inlinePassthrough.math` (registered in coverage.ts) is canonical for DOCX/OOXML
+ *   lossless roundtrip and byte fidelity.
+ * - `MathInline` (`mathInline`) and convertLinearToOMML / convertOMMLToLinear provide
+ *   the linear LaTeX-like representation (`\frac{a}{b}`, `\sqrt{x}`, etc.) for authoring,
+ *   HTML clipboard roundtrips, and UI interaction.
+ */
+
+/**
  * Convert simple linear math text (e.g. `\frac{a}{b}`, `\sqrt{x}`, `x^2`, `x_i`)
  * into structured OMML MathInput for @office-open/docx.
  */

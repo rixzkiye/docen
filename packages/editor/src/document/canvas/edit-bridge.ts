@@ -276,6 +276,8 @@ export interface EditBridgeOptions {
    *  collapse halves of an interior line included) for the host to commit as
    *  one paint/erase command. */
   applyBorderPaint?: (sides: { pos: number; side: "top" | "bottom" | "left" | "right" }[]) => void;
+  /** Whether direct editing (typing, backspace, paste, cut) is permitted at the current selection. */
+  canEdit?: (editor: Editor) => boolean;
 }
 
 export interface EditBridge {
@@ -470,6 +472,12 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
   const main = makeStory(opts.content, opts.onDoc, -1);
   let story: Story | null = null;
   const active = (): Story => story ?? main;
+  const canEditActive = (): boolean => {
+    const s = active();
+    if (!s.editor.isEditable) return false;
+    if (opts.canEdit && !opts.canEdit(s.editor)) return false;
+    return true;
+  };
   // Word's Repeat (F4): the last plain-text typing session, kept on the
   // editor's storage so the host's repeat command shares this single source.
   // Consecutive insertText calls merge into one session ("typing a word");
@@ -2179,6 +2187,7 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
   let composing = false;
 
   const insertText = (text: string): void => {
+    if (!canEditActive()) return;
     if (text.includes("\n")) {
       const lines = text.split(/\r?\n/);
       const paragraphs = lines.map((line) => ({
@@ -2203,6 +2212,7 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
   };
 
   const backspace = (word = false): void => {
+    if (!canEditActive()) return;
     active().editor.commands.command(({ state, dispatch }) => {
       const { selection } = state;
       if (!selection.empty) {
@@ -2279,6 +2289,7 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
   };
 
   const deleteForward = (word = false): void => {
+    if (!canEditActive()) return;
     active().editor.commands.command(({ state, dispatch }) => {
       const { selection } = state;
       if (!selection.empty) {
@@ -2312,6 +2323,7 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
   /** Delete from the caret to a boundary target (delete-to-line-edge family:
    *  the target is the same edge Home/End resolve to). */
   const deleteTo = (toEnd: boolean): void => {
+    if (!canEditActive()) return;
     const state = active().editor.state;
     const target = edgeTarget(state, state.selection.head, toEnd);
     if (target == null || target === state.selection.head) return;
@@ -2327,9 +2339,9 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
     // candidate navigation). Preventing insertCompositionText breaks that
     // management — the final text is taken from ta.value on compositionend.
     if (composing) return;
-    // Viewing mode refuses text entry (the bridge textarea is invisible but
+    // Viewing mode or forms protection refuses text entry (the bridge textarea is invisible but
     // focused — without this gate typing would still mutate the doc).
-    if (!active().editor.isEditable) {
+    if (!canEditActive()) {
       event.preventDefault();
       return;
     }
@@ -2682,7 +2694,7 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
     if (composing) return;
     // Viewing mode: caret moves and selection stay live (the READONLY_LIVE
     // ribbon set's keyboard counterpart), but nothing may mutate the doc.
-    const editable = active().editor.isEditable;
+    const editable = canEditActive();
     // A cell selection's delete: Word removes the table node itself when the
     // selection covers EVERY cell of it, and empties the selected cells
     // otherwise (the grid survives). The default join path would tear cell
@@ -3041,7 +3053,7 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
     composing = false;
     const data = ta.value;
     ta.value = "";
-    if (data) insertText(data);
+    if (data && canEditActive()) insertText(data);
   };
   // A cancelled composition (IME dismissed, focus stolen mid-composition —
   // paths where some browsers never fire compositionend) still must clear the
@@ -3097,6 +3109,7 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
 
   const onPaste = (event: ClipboardEvent): void => {
     event.preventDefault();
+    if (!canEditActive()) return;
     // The docen lane first (a copy from a docen editor round-trips losslessly);
     // then styled HTML through the schema's parse rules so external rich text
     // maps to its DOCX equivalents; RTF; plain text is the last resort.
@@ -3188,6 +3201,10 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
   };
 
   const onCut = (event: ClipboardEvent): void => {
+    if (!canEditActive()) {
+      event.preventDefault();
+      return;
+    }
     const copied = pinCopied();
     if (!copied) return;
     event.preventDefault();
@@ -3209,6 +3226,7 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
    *  system clipboard through the async API and pins the payload so a keyboard
    *  paste still recovers the marks. */
   const copySelection = async (cut: boolean): Promise<void> => {
+    if (cut && !canEditActive()) return;
     const copied = pinCopied();
     if (!copied) return;
     try {
@@ -3252,6 +3270,7 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
 
   const onDrop = async (event: DragEvent): Promise<void> => {
     event.preventDefault();
+    if (!canEditActive()) return;
     const pos = posAtClient(event.clientX, event.clientY, true);
     if (pos != null) setSel(pos);
     placeCaret();

@@ -66,26 +66,32 @@ const template = html<DocenSignatureLineDialog>`
     <div class="sig-body" slot="body">
       <div class="field-row">
         <label>${(x) => t("sig.suggestedSigner", x)}:</label>
-        <fluent-text-input ${ref("nameInput")} placeholder="e.g. John Doe"></fluent-text-input>
+        <fluent-text-input
+          ${ref("nameInput")}
+          placeholder="${(x) => t("sig.placeholderName", x)}"
+        ></fluent-text-input>
       </div>
 
       <div class="field-row">
         <label>${(x) => t("sig.suggestedTitle", x)}:</label>
-        <fluent-text-input ${ref("titleInput")} placeholder="e.g. Manager"></fluent-text-input>
+        <fluent-text-input
+          ${ref("titleInput")}
+          placeholder="${(x) => t("sig.placeholderTitle", x)}"
+        ></fluent-text-input>
       </div>
 
       <div class="field-row">
         <label>${(x) => t("sig.suggestedEmail", x)}:</label>
         <fluent-text-input
           ${ref("emailInput")}
-          placeholder="e.g. john@example.com"
+          placeholder="${(x) => t("sig.placeholderEmail", x)}"
         ></fluent-text-input>
       </div>
 
       <div class="field-row">
         <label>${(x) => t("sig.instructions", x)}:</label>
         <textarea ${ref("instructionsInput")} rows="2">
-Before signing this document, verify that the content you are signing is correct.</textarea>
+${(x) => t("sig.defaultInstructions", x)}</textarea>
       </div>
 
       <div class="checkboxes">

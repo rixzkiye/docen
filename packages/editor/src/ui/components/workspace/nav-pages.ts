@@ -1,6 +1,6 @@
 import { FASTElement, css, customElement, html, observable, repeat } from "@microsoft/fast-element";
 
-import { observeLang } from "../../i18n/localize";
+import { observeLang, t } from "../../i18n/localize";
 
 export interface NavPageItem {
   pageNumber: number;
@@ -78,7 +78,7 @@ const template = html<DocenNavPages>`
             <div class="thumb-line"></div>
             <div class="thumb-line short"></div>
           </div>
-          <span class="page-label">Page ${(x) => x.pageNumber}</span>
+          <span class="page-label">${(x, c) => c.parent.formatPageLabel(x.pageNumber)}</span>
         </div>
       `,
     )}
@@ -99,7 +99,16 @@ export class DocenNavPages extends FASTElement {
 
   override connectedCallback(): void {
     super.connectedCallback();
-    this.#unsubscribe = observeLang(() => {});
+    this.#unsubscribe = observeLang(() => {
+      this.pages = [...this.pages];
+    });
+  }
+
+  formatPageLabel(pageNumber: number): string {
+    const tpl = t("nav.page", this);
+    return tpl.includes("{page}")
+      ? tpl.replace("{page}", String(pageNumber))
+      : `${tpl} ${pageNumber}`;
   }
 
   override disconnectedCallback(): void {

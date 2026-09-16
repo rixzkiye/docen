@@ -3,6 +3,7 @@ import { FASTElement, css, customElement, html, observable, ref } from "@microso
 import { observeLang, t } from "../../i18n/localize";
 
 export interface CompareDialogSubmitPayload {
+  mode?: "compare" | "combine";
   originalFile?: File;
   revisedFile?: File;
   originalAuthor?: string;
@@ -84,7 +85,12 @@ const styles = css`
 `;
 
 const template = html<DocenCompareDialog>`
-  <docen-dialog ${ref("dialog")} modal heading="${(x) => t("compare.dialogTitle", x)}">
+  <docen-dialog
+    ${ref("dialog")}
+    modal
+    heading="${(x) =>
+      x.mode === "combine" ? t("compare.combineDialogTitle", x) : t("compare.dialogTitle", x)}"
+  >
     <div class="compare-body" slot="body">
       <div class="section-title">${(x) => t("compare.originalDocument", x)}</div>
       <div class="file-row">
@@ -141,9 +147,9 @@ const template = html<DocenCompareDialog>`
       </div>
     </div>
     <div class="footer" slot="footer">
-      <fluent-button appearance="primary" @click="${(x) => x.onCompare()}"
-        >${(x) => t("compare.compareButton", x)}</fluent-button
-      >
+      <fluent-button appearance="primary" @click="${(x) => x.onCompare()}">
+        ${(x) => (x.mode === "combine" ? t("compare.combineButton", x) : t("compare.compareButton", x))}
+      </fluent-button>
       <fluent-button @click="${(x) => x.close()}">${(x) => t("dialog.cancel", x)}</fluent-button>
     </div>
   </docen-dialog>
@@ -151,6 +157,7 @@ const template = html<DocenCompareDialog>`
 
 @customElement({ name: "docen-compare-dialog", template, styles })
 export class DocenCompareDialog extends FASTElement {
+  @observable mode: "compare" | "combine" = "compare";
   @observable dialog?: HTMLElement & { open: boolean };
   @observable originalFileInput?: HTMLInputElement;
   @observable revisedFileInput?: HTMLInputElement;
@@ -175,7 +182,8 @@ export class DocenCompareDialog extends FASTElement {
     super.disconnectedCallback();
   }
 
-  show(): void {
+  show(mode: "compare" | "combine" = "compare"): void {
+    this.mode = mode;
     if (this.dialog) this.dialog.open = true;
   }
 
@@ -188,6 +196,7 @@ export class DocenCompareDialog extends FASTElement {
     const revFile = this.revisedFileInput?.files?.[0];
 
     const payload: CompareDialogSubmitPayload = {
+      mode: this.mode,
       originalFile: origFile,
       revisedFile: revFile,
       originalAuthor: this.originalAuthorInput?.value || "Original",

@@ -98,19 +98,19 @@ const template = html<DocenRevealFormattingPane>`
     <div class="prop-row">
       <span class="prop-name">${(x) => t("reveal.styles", x)}</span>
       <span class="prop-val">
-        ${(x) =>
-          [
-            x.formatting?.font?.bold ? "Bold" : "",
-            x.formatting?.font?.italic ? "Italic" : "",
-            x.formatting?.font?.underline ? "Underline" : "",
-          ]
-            .filter(Boolean)
-            .join(", ") || "Regular"}
+        ${(x) => {
+          const parts = [
+            x.formatting?.font?.bold ? t("reveal.bold", x) : "",
+            x.formatting?.font?.italic ? t("reveal.italic", x) : "",
+            x.formatting?.font?.underline ? t("reveal.underline", x) : "",
+          ].filter(Boolean);
+          return parts.length > 0 ? parts.join(", ") : t("reveal.regular", x);
+        }}
       </span>
     </div>
     <div class="prop-row">
       <span class="prop-name">${(x) => t("reveal.color", x)}</span>
-      <span class="prop-val">${(x) => x.formatting?.font?.color ?? "Auto"}</span>
+      <span class="prop-val">${(x) => x.formatting?.font?.color ?? t("reveal.auto", x)}</span>
     </div>
   </div>
 
@@ -143,12 +143,30 @@ const template = html<DocenRevealFormattingPane>`
     </div>
     <div class="prop-row">
       <span class="prop-name">${(x) => t("reveal.orientation", x)}</span>
-      <span class="prop-val">${(x) => x.formatting?.section?.orientation ?? "Portrait"}</span>
+      <span class="prop-val"
+        >${(x) =>
+          x.formatting?.section?.orientation === "Landscape"
+            ? t("reveal.landscape", x)
+            : t("reveal.portrait", x)}</span
+      >
     </div>
+    ${(x) =>
+      x.formatting?.section?.paperSize
+        ? html<DocenRevealFormattingPane>`
+            <div class="prop-row">
+              <span class="prop-name">${(p) => t("reveal.paperSize", p)}</span>
+              <span class="prop-val">${(p) => p.formatting?.section?.paperSize}</span>
+            </div>
+          `
+        : ""}
   </div>
 
   <div class="compare-toggle">
-    <fluent-checkbox ${ref("compareCheckbox")}>
+    <fluent-checkbox
+      ${ref("compareCheckbox")}
+      ?checked="${(x) => x.compareWithSelection}"
+      @change="${(x, c) => x.onCompareToggle((c.event.target as HTMLInputElement).checked)}"
+    >
       ${(x) => t("reveal.compareToSelection", x)}
     </fluent-checkbox>
   </div>
@@ -162,6 +180,7 @@ const template = html<DocenRevealFormattingPane>`
 export class DocenRevealFormattingPane extends FASTElement {
   @observable formatting?: FormattingInfo;
   @observable compareCheckbox?: HTMLElement & { checked: boolean };
+  @observable compareWithSelection = false;
 
   #unsubscribe?: () => void;
 
@@ -177,5 +196,10 @@ export class DocenRevealFormattingPane extends FASTElement {
 
   setFormatting(info: FormattingInfo): void {
     this.formatting = { ...info };
+  }
+
+  onCompareToggle(checked: boolean): void {
+    this.compareWithSelection = checked;
+    this.$emit("reveal:compare-toggle", { enabled: checked });
   }
 }

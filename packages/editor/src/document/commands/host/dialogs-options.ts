@@ -85,9 +85,9 @@ export class DialogsOptionsHostCommands implements HostCommandDomain {
     if (event === "compare" || event === "combine") {
       (
         this.host.element().shadowRoot?.querySelector("docen-compare-dialog") as {
-          show(): void;
+          show(mode?: "compare" | "combine"): void;
         } | null
-      )?.show();
+      )?.show(event === "combine" ? "combine" : "compare");
       return true;
     }
     if (event === "signature-line") {

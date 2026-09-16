@@ -1555,6 +1555,7 @@ export const ribbonEn: AdditionalLanguage = {
 
     // Compare
     "compare.dialogTitle": "Compare Documents",
+    "compare.combineDialogTitle": "Combine Revisions",
     "compare.originalDocument": "Original document",
     "compare.revisedDocument": "Revised document",
     "compare.labelChangesWith": "Label changes with",
@@ -1569,6 +1570,10 @@ export const ribbonEn: AdditionalLanguage = {
     "compare.wordLevel": "Word level",
     "compare.characterLevel": "Character level",
     "compare.compareButton": "Compare",
+    "compare.combineButton": "Combine",
+
+    // Navigation
+    "nav.page": "Page {page}",
 
     // Protection
     "protect.formattingRestrictions": "Formatting restrictions",
@@ -1595,6 +1600,11 @@ export const ribbonEn: AdditionalLanguage = {
     "sig.instructions": "Instructions to the signer",
     "sig.allowComments": "Allow the signer to add comments in the Sign dialog",
     "sig.showDate": "Show sign date in signature line",
+    "sig.placeholderName": "e.g. John Doe",
+    "sig.placeholderTitle": "e.g. Manager",
+    "sig.placeholderEmail": "e.g. john@example.com",
+    "sig.defaultInstructions":
+      "Before signing this document, verify that the content you are signing is correct.",
 
     // Drop Cap
     "dropcap.dialogTitle": "Drop Cap",
@@ -1617,6 +1627,10 @@ export const ribbonEn: AdditionalLanguage = {
     "a11y.recheck": "Re-check",
     "a11y.noIssuesFound":
       "No accessibility issues found. People with disabilities should not have difficulty reading this document.",
+    "a11y.missingAltText": "Missing alternative text on image",
+    "a11y.headingJump": "Heading level jumped from H{from} to H{to}",
+    "a11y.missingTableHeader": "Table does not specify a header row",
+    "a11y.ambiguousLink": 'Ambiguous link text "{text}"',
 
     // Recipients Editor
     "recipients.editTitle": "Mail Merge Recipients",
@@ -1641,6 +1655,11 @@ export const ribbonEn: AdditionalLanguage = {
     "reveal.fontSize": "Font Size:",
     "reveal.styles": "Styles:",
     "reveal.color": "Color:",
+    "reveal.bold": "Bold",
+    "reveal.italic": "Italic",
+    "reveal.underline": "Underline",
+    "reveal.regular": "Regular",
+    "reveal.auto": "Auto",
     "reveal.paragraph": "Paragraph",
     "reveal.alignment": "Alignment:",
     "reveal.indents": "Indents:",
@@ -1649,6 +1668,9 @@ export const ribbonEn: AdditionalLanguage = {
     "reveal.section": "Section",
     "reveal.margins": "Margins:",
     "reveal.orientation": "Orientation:",
+    "reveal.portrait": "Portrait",
+    "reveal.landscape": "Landscape",
+    "reveal.paperSize": "Paper Size:",
     "reveal.compareToSelection": "Compare to another selection",
 
     // Protection alerts & placeholders
@@ -3196,6 +3218,7 @@ export const ribbonZhCN: AdditionalLanguage = {
 
     // Compare
     "compare.dialogTitle": "比较文档",
+    "compare.combineDialogTitle": "合并修订",
     "compare.originalDocument": "原文档",
     "compare.revisedDocument": "修订的文档",
     "compare.labelChangesWith": "修订标注来自",
@@ -3210,6 +3233,10 @@ export const ribbonZhCN: AdditionalLanguage = {
     "compare.wordLevel": "词级别",
     "compare.characterLevel": "字符级别",
     "compare.compareButton": "比较",
+    "compare.combineButton": "合并",
+
+    // Navigation
+    "nav.page": "第 {page} 页",
 
     // Protection
     "protect.formattingRestrictions": "格式设置限制",
@@ -3236,6 +3263,10 @@ export const ribbonZhCN: AdditionalLanguage = {
     "sig.instructions": "向签署人提供的说明",
     "sig.allowComments": "允许签署人在“签署”对话框中添加批注",
     "sig.showDate": "在签名行中显示签署日期",
+    "sig.placeholderName": "例如：张三",
+    "sig.placeholderTitle": "例如：经理",
+    "sig.placeholderEmail": "例如：zhangsan@example.com",
+    "sig.defaultInstructions": "在签署本文档之前，请验证您所签署的内容是否正确。",
 
     // Drop Cap
     "dropcap.dialogTitle": "首字下沉",
@@ -3257,6 +3288,10 @@ export const ribbonZhCN: AdditionalLanguage = {
     "a11y.checkerTitle": "辅助功能检查器",
     "a11y.recheck": "重新检查",
     "a11y.noIssuesFound": "未发现辅助功能问题。残障人士阅读此文档应该没有困难。",
+    "a11y.missingAltText": "图片缺少可选文字",
+    "a11y.headingJump": "标题级别从 H{from} 跳跃到 H{to}",
+    "a11y.missingTableHeader": "表格未指定标题行",
+    "a11y.ambiguousLink": '不明确的链接文字 "{text}"',
 
     // Recipients Editor
     "recipients.editTitle": "邮件合并收件人",
@@ -3281,6 +3316,11 @@ export const ribbonZhCN: AdditionalLanguage = {
     "reveal.fontSize": "字号:",
     "reveal.styles": "样式:",
     "reveal.color": "颜色:",
+    "reveal.bold": "加粗",
+    "reveal.italic": "倾斜",
+    "reveal.underline": "下划线",
+    "reveal.regular": "常规",
+    "reveal.auto": "自动",
     "reveal.paragraph": "段落",
     "reveal.alignment": "对齐方式:",
     "reveal.indents": "缩进:",
@@ -3289,6 +3329,9 @@ export const ribbonZhCN: AdditionalLanguage = {
     "reveal.section": "节",
     "reveal.margins": "页边距:",
     "reveal.orientation": "纸张方向:",
+    "reveal.portrait": "纵向",
+    "reveal.landscape": "横向",
+    "reveal.paperSize": "纸张大小:",
     "reveal.compareToSelection": "与另一所选内容进行比较",
 
     // Protection alerts & placeholders

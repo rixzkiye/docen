@@ -214,5 +214,121 @@ describe("Document Protection & Restrict Editing Lifecycle", () => {
       const docExtras = json.attrs?.documentExtras as any;
       expect(docExtras?.settings?.documentProtection).toBeUndefined();
     });
+
+    it("preserves hash and formatting when changing protection mode via settings update", () => {
+      const editor = makeTestEditor({
+        documentProtection: {
+          edit: "readOnly",
+          hash: "preserveHash123",
+          formatting: true,
+        },
+      });
+
+      const attrs = (editor.state.doc.attrs ?? {}) as { documentExtras?: Record<string, unknown> };
+      const extras = attrs.documentExtras ?? {};
+      const prevSettings = (extras.settings ?? {}) as Record<string, unknown>;
+      const prevProt = prevSettings.documentProtection as Record<string, unknown>;
+
+      // Simulating #applyDocumentSettings:
+      const newSettings = {
+        ...prevSettings,
+        documentProtection: {
+          ...prevProt,
+          edit: "comments",
+        },
+      };
+
+      editor.view.dispatch(
+        editor.state.tr.setDocAttribute("documentExtras", { ...extras, settings: newSettings }),
+      );
+
+      const json = editor.getJSON();
+      const docExtras = json.attrs?.documentExtras as any;
+      const loadedProt = docExtras?.settings?.documentProtection;
+
+      expect(loadedProt).toBeDefined();
+      expect(loadedProt.edit).toBe("comments");
+      expect(loadedProt.hash).toBe("preserveHash123");
+      expect(loadedProt.formatting).toBe(true);
+    });
+
+    it("verifies forms protection input gating inside and outside SDT", () => {
+      const editor = new Editor({
+        element: null,
+        extensions: docxExtensions,
+        content: {
+          type: "doc",
+          content: [
+            {
+              type: "paragraph",
+              content: [{ type: "text", text: "Outside text" }],
+            },
+            {
+              type: "sdtBlock",
+              attrs: {
+                properties: { title: "Test Field" },
+              },
+              content: [
+                {
+                  type: "paragraph",
+                  content: [{ type: "text", text: "Inside field" }],
+                },
+              ],
+            },
+            {
+              type: "sdtBlock",
+              attrs: {
+                properties: { title: "Locked Field", cannotEdit: true },
+              },
+              content: [
+                {
+                  type: "paragraph",
+                  content: [{ type: "text", text: "Locked content" }],
+                },
+              ],
+            },
+          ],
+        },
+      });
+
+      // Implement the same logic as #isInsideSdt
+      const isInsideSdt = (ed: Editor): boolean => {
+        const { $from, $to } = ed.state.selection;
+        for (let d = $from.depth; d > 0; d--) {
+          const node = $from.node(d);
+          if (
+            node.type.name === "sdtBlock" ||
+            node.type.name === "sdtInline" ||
+            node.attrs?.properties
+          ) {
+            if ($to.pos < $from.start(d) || $to.pos > $from.end(d)) return false;
+            const props = (node.attrs?.properties ?? {}) as Record<string, unknown>;
+            if (props.cannotEdit === true) return false;
+            return true;
+          }
+        }
+        return false;
+      };
+
+      // 1. Caret in outside paragraph (pos = 1)
+      editor.commands.setTextSelection(1);
+      expect(isInsideSdt(editor)).toBe(false);
+
+      // 2. Caret inside first SDT (pos = 16)
+      editor.commands.setTextSelection(16);
+      expect(isInsideSdt(editor)).toBe(true);
+
+      // 3. Caret inside locked SDT (cannotEdit: true)
+      // Find pos inside locked SDT
+      let lockedPos = -1;
+      editor.state.doc.descendants((node, pos) => {
+        if (node.isText && node.text === "Locked content") {
+          lockedPos = pos + 1;
+        }
+      });
+      expect(lockedPos).toBeGreaterThan(0);
+      editor.commands.setTextSelection(lockedPos);
+      expect(isInsideSdt(editor)).toBe(false);
+    });
   });
 });
