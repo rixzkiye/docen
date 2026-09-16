@@ -37,6 +37,7 @@ export type { AdditionalLanguage, LanguageOption, LocalizationInfo } from "./ui"
 // Persisted editor settings + the user identity store (localStorage-backed,
 // shared by every host element on the page).
 export {
+  AUTOCORRECT_TABLE_VERSION,
   SETTINGS_STORAGE_KEY,
   SETTINGS_VERSION,
   createSettingsStore,
@@ -48,7 +49,9 @@ export {
   updateSettings,
 } from "./document";
 export type {
+  AutocorrectReplacement,
   AutocorrectSettings,
+  AutocorrectTable,
   DocenSettings,
   IdentitySettings,
   SettingsListener,

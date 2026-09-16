@@ -234,6 +234,7 @@ export const documentTemplate = html`
        textarea's beforeinput (spaces and Enter silently dropped). -->
   <div class="input-layer" part="input-layer"></div>
   <docen-options-dialog part="options"></docen-options-dialog>
+  <docen-autocorrect-dialog part="autocorrect"></docen-autocorrect-dialog>
   <docen-word-count-dialog part="word-count"></docen-word-count-dialog>
   <docen-symbol-dialog part="symbol"></docen-symbol-dialog>
   <docen-paragraph-dialog part="paragraph"></docen-paragraph-dialog>

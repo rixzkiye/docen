@@ -181,6 +181,11 @@ const template = html<DocenOptionsDialog>`
           <fluent-checkbox ${ref("spellBox")}></fluent-checkbox>
           <span ${ref("spellLabelEl")}></span>
         </label>
+        <fluent-button
+          appearance="neutral"
+          ${ref("autocorrectBtn")}
+          @click="${(x) => x.onAutocorrect()}"
+        ></fluent-button>
       </div>
       <div class="opt-field">
         <div class="opt-heading" ${ref("markdownHeadingEl")}></div>
@@ -306,6 +311,7 @@ class DocenOptionsDialog extends FASTElement {
   @observable spellHeadingEl?: HTMLElement;
   @observable spellBox?: HTMLElement & { checked?: boolean };
   @observable spellLabelEl?: HTMLElement;
+  @observable autocorrectBtn?: HTMLElement;
   @observable markdownHeadingEl?: HTMLElement;
   @observable markdownBox?: HTMLElement & { checked?: boolean };
   @observable markdownLabelEl?: HTMLElement;
@@ -436,6 +442,13 @@ class DocenOptionsDialog extends FASTElement {
     if (value) this.#themeLocal = value;
   }
 
+  /** The Proofing section's AutoCorrect Options button — the host opens the
+   *  dedicated dialog over this one (Word: Options → Proofing → AutoCorrect
+   *  Options…); that dialog commits on its own OK, independent of this one. */
+  onAutocorrect(): void {
+    this.dispatchEvent(new CustomEvent("options:autocorrect", { bubbles: true, composed: true }));
+  }
+
   #computeThemeOptions(): ThemeOption[] {
     return [...builtinThemes.keys()].map((key) => ({ key, label: t(`theme.${key}`, this) }));
   }
@@ -449,6 +462,8 @@ class DocenOptionsDialog extends FASTElement {
     if (this.themeHeadingEl) this.themeHeadingEl.textContent = t("options.theme", this);
     if (this.spellHeadingEl) this.spellHeadingEl.textContent = t("options.proofing", this);
     if (this.spellLabelEl) this.spellLabelEl.textContent = t("options.spellAsYouType", this);
+    if (this.autocorrectBtn)
+      this.autocorrectBtn.textContent = t("options.autocorrectOptions", this);
     if (this.markdownHeadingEl) this.markdownHeadingEl.textContent = t("options.markdown", this);
     if (this.markdownLabelEl) this.markdownLabelEl.textContent = t("options.markdownInput", this);
     if (this.docHeadingEl) this.docHeadingEl.textContent = t("options.document", this);

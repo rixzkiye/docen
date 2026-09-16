@@ -10,6 +10,7 @@ export { default as DocenFindReplaceDialog } from "./find-replace-dialog";
 export { default as DocenStatusBar } from "./status-bar";
 export { default as DocenCommandSearch } from "./command-search";
 export { default as DocenOptionsDialog } from "./options-dialog";
+export { default as DocenAutocorrectDialog } from "./autocorrect-dialog";
 export { default as DocenWordCountDialog } from "./word-count-dialog";
 export { default as DocenSymbolDialog } from "./symbol-dialog";
 export { default as DocenMeasureInput } from "./measure-input";

@@ -41,7 +41,12 @@ import { DrawingGestures, type DrawingHit } from "../../drawing";
 import { t } from "../../ui/i18n/localize";
 import { collectListReferences, listLevelStepPatch } from "../extensions/commands";
 import { KEYBOARD_SHORTCUTS } from "../extensions/keymap";
-import { autocorrectOf } from "./autocorrect";
+import {
+  applyAutocorrect,
+  autocorrectOf,
+  hyperlinkFix,
+  type AutocorrectConfig,
+} from "./autocorrect";
 import { CaretMap, type TableZone } from "./caret-map";
 import { CellSelection, cellAt, inSameTable } from "./cell-selection";
 import { installChartHover, type ChartTip } from "./chart-hover";
@@ -250,6 +255,10 @@ export interface EditBridgeOptions {
    *  leg applies the markdown block/inline conversions before autocorrect
    *  sees the character. Read per keystroke, so the toggle lands mid-session. */
   markdown?: () => boolean;
+  /** The AutoCorrect rule config (Options → AutoCorrect Options: rule toggles
+   *  + the user replacement table/exceptions). Read per keystroke, so toggles
+   *  and table edits land mid-session; absent = built-in defaults. */
+  autocorrect?: () => AutocorrectConfig;
   /** A finished sweep — every crossed table edge (cell pos + side, both
    *  collapse halves of an interior line included) for the host to commit as
    *  one paint/erase command. */
@@ -2233,11 +2242,11 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
         } else if (md && event.data === "-" && isHyphenRun(textBefore)) {
           insertText(event.data);
         } else {
-          const fix = autocorrectOf(event.data, textBefore);
+          const fix = autocorrectOf(event.data, textBefore, opts.autocorrect?.());
           if (fix) {
             s.editor.commands.command(({ state, dispatch }) => {
               const { from, to } = state.selection;
-              dispatch?.(state.tr.insertText(fix.text, from - fix.back, to));
+              dispatch?.(applyAutocorrect(state.tr, from - fix.back, to, fix));
               return true;
             });
           } else {
@@ -2317,8 +2326,18 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
             }
           }
           if (dispatch) {
-            const tr = state.tr;
+            let tr = state.tr;
             if (!empty) tr.deleteSelection();
+            // A URL alone before the caret linkifies on Enter (Word's
+            // hyperlink autoformat) — marks stamp the paragraph text before
+            // the split carries it into the upper paragraph.
+            if (empty && $from.parentOffset === parent.content.size) {
+              const link = hyperlinkFix(
+                parent.textBetween(0, $from.parentOffset),
+                opts.autocorrect?.(),
+              );
+              if (link) tr = applyAutocorrect(tr, $from.pos, $from.pos, link);
+            }
             const carried = { ...attrs };
             delete carried.sectionProperties;
             delete carried.sectionHeaders;

@@ -69,6 +69,7 @@ import {
   type RibbonMenuItem,
   type RibbonTab,
 } from "../ui";
+import type { AutocorrectDialogValues } from "../ui/components/workspace/autocorrect-dialog";
 import type { DrawingPropertiesState } from "../ui/components/workspace/drawing-properties-dialog";
 import type { FontDialogPatch } from "../ui/components/workspace/font-dialog";
 import { proofingLanguageName } from "../ui/components/workspace/language-dialog";
@@ -80,6 +81,7 @@ import type {
 } from "../ui/components/workspace/note-settings-dialog";
 import type { WordCountStats } from "../ui/components/workspace/word-count-dialog";
 import { createDefaultAddin, textCounter, wordCounter } from "./addin";
+import { autocorrectConfigOf } from "./canvas/autocorrect";
 import {
   mountEditBridge,
   type EditBridge,
@@ -151,6 +153,7 @@ import {
   useCmUnits,
 } from "./ribbon";
 import {
+  AUTOCORRECT_TABLE_VERSION,
   getSettings,
   onSettingsChange,
   resolveIdentity,
@@ -1545,6 +1548,9 @@ class DocenDocument extends AddinHost<Editor> {
       content: initialDoc,
       onDoc: (json) => this.#renderDoc(json),
       markdown: () => this.#markdown,
+      // The AutoCorrect rules + user table are read per keystroke, so edits in
+      // the AutoCorrect Options dialog land mid-session.
+      autocorrect: () => autocorrectConfigOf(getSettings().writing.autocorrect),
       pageHost: (page) => this.#stage?.slotAt(page)?.parentElement ?? null,
       extensions: [...docxExtensions, ...(defaultAddin.extensions ?? [])],
       scale: () => this.#stage?.scale() ?? 1,
@@ -1756,6 +1762,16 @@ class DocenDocument extends AddinHost<Editor> {
     this.shadowRoot!.querySelector("docen-options-dialog")?.addEventListener(
       "options:ok",
       this.#onOptionsOk as EventListener,
+    );
+    // Options → Proofing → AutoCorrect Options: open the dedicated dialog
+    // (over the open Options modal) and commit its OK to the settings store.
+    this.shadowRoot!.querySelector("docen-options-dialog")?.addEventListener(
+      "options:autocorrect",
+      this.#openAutocorrectDialog as EventListener,
+    );
+    this.shadowRoot!.querySelector("docen-autocorrect-dialog")?.addEventListener(
+      "autocorrect:ok",
+      this.#onAutocorrectOk as EventListener,
     );
     // Footnote/endnote settings dialog — ok (document-level numbering).
     this.shadowRoot!.querySelector("docen-note-settings-dialog")?.addEventListener(
@@ -2867,6 +2883,12 @@ class DocenDocument extends AddinHost<Editor> {
     this.shadowRoot
       ?.querySelector("docen-options-dialog")
       ?.removeEventListener("options:ok", this.#onOptionsOk as EventListener);
+    this.shadowRoot
+      ?.querySelector("docen-options-dialog")
+      ?.removeEventListener("options:autocorrect", this.#openAutocorrectDialog as EventListener);
+    this.shadowRoot
+      ?.querySelector("docen-autocorrect-dialog")
+      ?.removeEventListener("autocorrect:ok", this.#onAutocorrectOk as EventListener);
     this.shadowRoot
       ?.querySelector("docen-note-settings-dialog")
       ?.removeEventListener("note-settings:ok", this.onNoteSettingsOk as EventListener);
@@ -5455,6 +5477,41 @@ class DocenDocument extends AddinHost<Editor> {
     if (docSettings) this.#applyDocumentSettings(docSettings);
   };
 
+  /** Options → Proofing → AutoCorrect Options: seed the dedicated dialog from
+   *  the effective settings (absent user table = the built-in defaults) and
+   *  open it over the Options modal. */
+  readonly #openAutocorrectDialog = (): void => {
+    const dialog = this.shadowRoot?.querySelector("docen-autocorrect-dialog") as {
+      show(values: AutocorrectDialogValues): void;
+    } | null;
+    dialog?.show(autocorrectConfigOf(getSettings().writing.autocorrect));
+  };
+
+  /** AutoCorrect Options 确定 — persist the rule toggles and the edited table;
+   *  the per-keystroke config reader picks the new values up immediately. */
+  readonly #onAutocorrectOk = (event: CustomEvent<AutocorrectDialogValues>): void => {
+    const values = event.detail;
+    if (!values) return;
+    updateSettings({
+      writing: {
+        autocorrect: {
+          smartQuotes: values.smartQuotes,
+          emDash: values.emDash,
+          ellipsis: values.ellipsis,
+          hyperlinkAutoformat: values.hyperlinkAutoformat,
+          capitalizeFirstLetter: values.capitalizeFirstLetter,
+          ordinalSuperscript: values.ordinalSuperscript,
+          table: {
+            version: AUTOCORRECT_TABLE_VERSION,
+            replacements: values.replacements.map(({ from, to }) => ({ from, to })),
+            exceptions: [...values.exceptions],
+          },
+        },
+      },
+    });
+    this.#bridge?.focus();
+  };
+
   /** Options → Document commit: fold the dialog's values into
    *  documentExtras.settings (the same channel every settings toggle uses) and
    *  re-derive editability. The tab stop rides the layout projection, so a
@@ -6256,9 +6313,10 @@ class DocenDocument extends AddinHost<Editor> {
   }
 }
 
-// Persisted settings + identity store — the same module later lanes (D1
-// autocorrect, B4 proofing, C1 hidden text) and host consumers import.
+// Persisted settings + identity store — the same module the autocorrect lane
+// (rule config + user table) and host consumers import.
 export {
+  AUTOCORRECT_TABLE_VERSION,
   SETTINGS_STORAGE_KEY,
   SETTINGS_VERSION,
   createSettingsStore,
@@ -6270,7 +6328,9 @@ export {
   updateSettings,
 } from "./settings";
 export type {
+  AutocorrectReplacement,
   AutocorrectSettings,
+  AutocorrectTable,
   DocenSettings,
   IdentitySettings,
   SettingsListener,
