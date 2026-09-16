@@ -34,6 +34,36 @@ const styles = css`
     box-sizing: border-box;
     font-size: 12px;
   }
+  .toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    padding: 8px 6px;
+    border-bottom: 1px solid var(--docen-color-divider, #e2e2e2);
+    background: var(--docen-color-bg, #fff);
+  }
+  .toolbar-select {
+    flex: 1;
+    min-width: 85px;
+    height: 24px;
+    font-size: 11px;
+    padding: 2px 4px;
+    border: 1px solid var(--docen-color-stroke, #d1d1d1);
+    border-radius: 4px;
+    background: var(--docen-color-bg, #fff);
+    color: var(--docen-color-text-1, #242424);
+  }
+  .toolbar-search {
+    width: 100%;
+    height: 24px;
+    box-sizing: border-box;
+    font-size: 11px;
+    padding: 2px 6px;
+    border: 1px solid var(--docen-color-stroke, #d1d1d1);
+    border-radius: 4px;
+    background: var(--docen-color-bg, #fff);
+    color: var(--docen-color-text-1, #242424);
+  }
   /* Card list — Word's comments pane: one card per comment, a rounded avatar
      with the author's initials, name + timestamp on one row, body under. */
   .list {
@@ -115,6 +145,32 @@ const styles = css`
     white-space: pre-wrap;
     overflow-wrap: anywhere;
   }
+  .mention {
+    color: var(--docen-color-accent, #0f6cbd);
+    font-weight: 600;
+    background: var(--docen-color-subtle-selected, #e8f0fb);
+    border-radius: 3px;
+    padding: 0 3px;
+  }
+  .mention-popup {
+    position: absolute;
+    background: var(--docen-color-bg, #fff);
+    border: 1px solid var(--docen-color-divider, #e2e2e2);
+    border-radius: 4px;
+    box-shadow: var(--shadow4, 0 4px 8px rgba(0, 0, 0, 0.14));
+    max-height: 120px;
+    overflow-y: auto;
+    z-index: 10;
+    width: 160px;
+  }
+  .mention-item {
+    padding: 4px 8px;
+    font-size: 11px;
+    cursor: pointer;
+  }
+  .mention-item:hover {
+    background: var(--docen-color-subtle-background-hover, #f5f5f5);
+  }
   /* Inline edit state — the card's body becomes a text area with
      Save / Cancel (Word edits in place, not through a dialog). */
   .edit {
@@ -123,6 +179,7 @@ const styles = css`
     flex-direction: column;
     gap: 6px;
     margin-top: 2px;
+    position: relative;
   }
   .edit fluent-textarea {
     width: 100%;
@@ -161,6 +218,7 @@ const styles = css`
     flex-direction: column;
     gap: 6px;
     margin-top: 2px;
+    position: relative;
   }
   .replybox fluent-textarea {
     width: 100%;
@@ -173,7 +231,47 @@ const styles = css`
   }
 `;
 
-const template = html<DocenCommentsPane>`<div class="list" ${ref("listEl")}></div>`;
+function renderCommentBody(text: string): DocumentFragment {
+  const frag = document.createDocumentFragment();
+  const parts = text.split(/(@[a-zA-Z0-9_\u4e00-\u9fa5]+)/g);
+  for (const part of parts) {
+    if (part.startsWith("@") && part.length > 1) {
+      const span = document.createElement("span");
+      span.className = "mention";
+      span.textContent = part;
+      frag.append(span);
+    } else if (part) {
+      frag.append(document.createTextNode(part));
+    }
+  }
+  return frag;
+}
+
+const template = html<DocenCommentsPane>`
+  <div class="toolbar" ${ref("toolbarEl")}>
+    <select class="toolbar-select" ${ref("statusFilterEl")} @change="${(x) => x.onFilterChange()}">
+      <option value="all">${(x) => t("comments.filter.all", x)}</option>
+      <option value="active">${(x) => t("comments.filter.active", x)}</option>
+      <option value="resolved">${(x) => t("comments.filter.resolved", x)}</option>
+    </select>
+    <select class="toolbar-select" ${ref("authorFilterEl")} @change="${(x) => x.onFilterChange()}">
+      <option value="all">${(x) => t("comments.filter.allAuthors", x)}</option>
+    </select>
+    <select class="toolbar-select" ${ref("sortEl")} @change="${(x) => x.onFilterChange()}">
+      <option value="doc">${(x) => t("comments.sort.doc", x)}</option>
+      <option value="newest">${(x) => t("comments.sort.newest", x)}</option>
+      <option value="oldest">${(x) => t("comments.sort.oldest", x)}</option>
+    </select>
+    <input
+      type="text"
+      class="toolbar-search"
+      ${ref("searchEl")}
+      placeholder="${(x) => t("comments.search", x)}"
+      @input="${(x) => x.onFilterChange()}"
+    />
+  </div>
+  <div class="list" ${ref("listEl")}></div>
+`;
 
 /** `<docen-comments-pane comments active-id>` — Word's comments sidebar: one
  *  card per comment (initials avatar, author, timestamp, body) and an inline
@@ -190,7 +288,13 @@ class DocenCommentsPane extends FASTElement {
   /** The comment id whose range covers the selection ("" = none). */
   @attr({ attribute: "active-id" }) activeId?: string;
 
+  @observable toolbarEl?: HTMLElement;
+  @observable statusFilterEl?: HTMLSelectElement;
+  @observable authorFilterEl?: HTMLSelectElement;
+  @observable sortEl?: HTMLSelectElement;
+  @observable searchEl?: HTMLInputElement;
   @observable listEl?: HTMLElement;
+
   #unsubscribe?: () => void;
 
   commentsChanged(): void {
@@ -211,6 +315,96 @@ class DocenCommentsPane extends FASTElement {
   disconnectedCallback(): void {
     this.#unsubscribe?.();
     super.disconnectedCallback();
+  }
+
+  onFilterChange(): void {
+    this.#renderList();
+  }
+
+  #updateAuthorFilterOptions(cards: CommentCard[]): void {
+    const select = this.authorFilterEl;
+    if (!select) return;
+    const authors = new Set<string>();
+    for (const c of cards) {
+      if (c.author) authors.add(c.author);
+      for (const r of c.replies ?? []) {
+        if (r.author) authors.add(r.author);
+      }
+    }
+    const currentVal = select.value || "all";
+    select.replaceChildren();
+    const allOpt = document.createElement("option");
+    allOpt.value = "all";
+    allOpt.textContent = t("comments.filter.allAuthors", this);
+    select.append(allOpt);
+
+    for (const author of [...authors].sort()) {
+      const opt = document.createElement("option");
+      opt.value = author;
+      opt.textContent = author;
+      select.append(opt);
+    }
+    if (authors.has(currentVal)) {
+      select.value = currentVal;
+    } else {
+      select.value = "all";
+    }
+  }
+
+  #setupMentionAutocomplete(area: HTMLElement & { value?: string }, wrap: HTMLElement): void {
+    let popup: HTMLElement | null = null;
+    const closePopup = () => {
+      popup?.remove();
+      popup = null;
+    };
+    area.addEventListener("input", () => {
+      const val = area.value ?? "";
+      const lastAt = val.lastIndexOf("@");
+      if (lastAt < 0 || (lastAt > 0 && !/\s/.test(val.charAt(lastAt - 1)))) {
+        closePopup();
+        return;
+      }
+      const query = val.slice(lastAt + 1).toLowerCase();
+      let cards: CommentCard[] = [];
+      try {
+        cards = this.comments ? (JSON.parse(this.comments) as CommentCard[]) : [];
+      } catch {
+        cards = [];
+      }
+      const authors = new Set<string>();
+      for (const c of cards) {
+        if (c.author) authors.add(c.author);
+        for (const r of c.replies ?? []) if (r.author) authors.add(r.author);
+      }
+      const matches = [...authors].filter((a) => a.toLowerCase().includes(query));
+      if (matches.length === 0) {
+        closePopup();
+        return;
+      }
+      if (!popup) {
+        popup = document.createElement("div");
+        popup.className = "mention-popup";
+        wrap.append(popup);
+      }
+      popup.replaceChildren();
+      for (const match of matches) {
+        const item = document.createElement("div");
+        item.className = "mention-item";
+        item.textContent = `@${match}`;
+        item.addEventListener("mousedown", (e) => {
+          e.preventDefault();
+          const before = val.slice(0, lastAt);
+          area.value = `${before}@${match} `;
+          closePopup();
+          const input = (area.shadowRoot?.querySelector("textarea") ?? area) as HTMLElement | null;
+          input?.focus();
+        });
+        popup.append(item);
+      }
+    });
+    area.addEventListener("blur", () => {
+      setTimeout(closePopup, 200);
+    });
   }
 
   /** One card (root or reply). The edit state swaps the body for a text area
@@ -270,7 +464,6 @@ class DocenCommentsPane extends FASTElement {
       resolve.setAttribute("appearance", "subtle");
       resolve.setAttribute("size", "small");
       resolve.className = "act";
-      // Resolving is a thread operation (Word resolves the conversation).
       resolve.textContent = t(comment.resolved ? "comments.reopen" : "comments.resolve", this);
       resolve.addEventListener("click", () => {
         this.dispatchEvent(
@@ -308,7 +501,7 @@ class DocenCommentsPane extends FASTElement {
 
     const body = document.createElement("div");
     body.className = "body";
-    body.textContent = comment.text;
+    body.append(renderCommentBody(comment.text));
     card.append(body);
 
     frag.append(card);
@@ -321,7 +514,6 @@ class DocenCommentsPane extends FASTElement {
     const wrap = document.createElement("div");
     wrap.className = "replybox";
     const area = document.createElement("fluent-textarea") as HTMLTextAreaElement & HTMLElement;
-    // `block` drops Fluent's fixed 18rem inline-size (see #beginEdit).
     area.setAttribute("block", "");
     area.setAttribute("rows", "2");
     area.setAttribute("placeholder", t("comments.placeholder", this));
@@ -358,6 +550,7 @@ class DocenCommentsPane extends FASTElement {
     });
     row.append(cancel, post);
     wrap.append(area, row);
+    this.#setupMentionAutocomplete(area, wrap);
     card.append(wrap);
     requestAnimationFrame(() => {
       const input = (area.shadowRoot?.querySelector("textarea") ?? area) as HTMLElement | null;
@@ -371,8 +564,6 @@ class DocenCommentsPane extends FASTElement {
     const wrap = document.createElement("div");
     wrap.className = "edit";
     const area = document.createElement("fluent-textarea") as HTMLTextAreaElement & HTMLElement;
-    // `block` drops Fluent's fixed 18rem inline-size — without it the inner
-    // root box overflows the card (see the floating compose box).
     area.setAttribute("block", "");
     area.setAttribute("rows", "3");
     area.value = comment.text;
@@ -411,8 +602,8 @@ class DocenCommentsPane extends FASTElement {
     });
     row.append(cancel, save);
     wrap.append(area, row);
+    this.#setupMentionAutocomplete(area, wrap);
     card.append(wrap);
-    // Focus the shadow <textarea> — the host itself is not focusable.
     requestAnimationFrame(() => {
       const input = (area.shadowRoot?.querySelector("textarea") ?? area) as HTMLElement | null;
       input?.focus();
@@ -429,7 +620,45 @@ class DocenCommentsPane extends FASTElement {
     } catch {
       cards = [];
     }
-    if (cards.length === 0) {
+
+    this.#updateAuthorFilterOptions(cards);
+
+    const status = this.statusFilterEl?.value ?? "all";
+    const authorFilter = this.authorFilterEl?.value ?? "all";
+    const search = (this.searchEl?.value ?? "").trim().toLowerCase();
+    const sort = this.sortEl?.value ?? "doc";
+
+    let filtered = cards.filter((card) => {
+      if (status === "active" && card.resolved) return false;
+      if (status === "resolved" && !card.resolved) return false;
+
+      if (authorFilter !== "all") {
+        const matchesAuthor =
+          card.author === authorFilter ||
+          (card.replies ?? []).some((r) => r.author === authorFilter);
+        if (!matchesAuthor) return false;
+      }
+
+      if (search) {
+        const textMatch =
+          card.text.toLowerCase().includes(search) ||
+          card.author.toLowerCase().includes(search) ||
+          (card.replies ?? []).some(
+            (r) => r.text.toLowerCase().includes(search) || r.author.toLowerCase().includes(search),
+          );
+        if (!textMatch) return false;
+      }
+
+      return true;
+    });
+
+    if (sort === "newest") {
+      filtered = [...filtered].sort((a, b) => b.date.localeCompare(a.date));
+    } else if (sort === "oldest") {
+      filtered = [...filtered].sort((a, b) => a.date.localeCompare(b.date));
+    }
+
+    if (filtered.length === 0) {
       const empty = document.createElement("div");
       empty.className = "empty";
       empty.textContent = t("comments.empty", this);
@@ -437,8 +666,7 @@ class DocenCommentsPane extends FASTElement {
       return;
     }
     const frag = document.createDocumentFragment();
-    for (const card of cards) {
-      // A thread = the root card plus its replies in one visual group.
+    for (const card of filtered) {
       const thread = document.createElement("div");
       thread.className = "thread";
       this.#renderCard(card, thread);
