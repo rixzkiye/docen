@@ -10,7 +10,6 @@
  * locale change.
  */
 
-import { pinImage } from "@docen/core";
 import {
   compileDocument,
   convertMillimetersToTwip,
@@ -105,6 +104,7 @@ import { ClipboardCommands } from "./commands/clipboard";
 import { CommentsCommands } from "./commands/comments";
 import { DesignCommands } from "./commands/design";
 import { DialogCommands } from "./commands/dialogs";
+import { hostCommands, type HostCommandRegistry } from "./commands/host";
 import { applyRecipientsRow, MailMergeCommands } from "./commands/mail-merge";
 import { NavigationCommands } from "./commands/navigation";
 import { ReferencesCommands } from "./commands/references";
@@ -132,7 +132,6 @@ import { collectRevisions } from "./extensions/track-changes";
 import { liveFieldResolver, resolvePageFieldsBounded } from "./field-resolve";
 import { customPropertiesOf, finiteNumber, type FieldContext, type FieldFrame } from "./fields";
 import { LOCAL_HANDLED, READONLY_LIVE, SAVE_FORMATS, detectOpenFormat } from "./file-formats";
-import { pageNumberInlinePreset, pageNumberStoryPreset } from "./page-number";
 import { mergeSectionProperties } from "./page-setup";
 import { compressPictureSrc, pickTransparentColor, type CropRect } from "./pixels";
 import {
@@ -198,30 +197,6 @@ const FIELD_RESOLVE_PASSES = 3;
 /** Double-click window (ms) — the format painter's sticky toggle and the
  *  bare-click stroke deferral both track the system double-click time. */
 const PAINTER_DOUBLE_CLICK_MS = 500;
-
-/** Scalar paragraph properties the Paragraph dialog consumes — the slots the
- *  prefill cascade picks up from the style chain and docDefaults when the
- *  paragraph's own attrs leave them unset. Mirrors the dialog's patch keys. */
-const PARAGRAPH_FLAG_KEYS = [
-  "alignment",
-  "outlineLevel",
-  "mirrorIndents",
-  "adjustRightInd",
-  "snapToGrid",
-  "contextualSpacing",
-  "widowControl",
-  "keepNext",
-  "keepLines",
-  "pageBreakBefore",
-  "suppressLineNumbers",
-  "suppressAutoHyphens",
-  "kinsoku",
-  "wordWrap",
-  "overflowPunct",
-  "autoSpaceDE",
-  "autoSpaceDN",
-  "textAlignment",
-] as const;
 
 /** The projection half's output — the flow inputs both the synchronous drain
  *  and the incremental walk lay. */
@@ -5036,6 +5011,213 @@ class DocenDocument extends AddinHost<Editor> {
     input.click();
   }
 
+  /** Event → handler tables for the extracted host-command domains. Built on
+   *  first dispatch (the adapter closures read live element state), then
+   *  cached. Each domain receives only the narrow view its bodies call. */
+  #hostRegistry?: HostCommandRegistry;
+
+  #hostCommandRegistry(): HostCommandRegistry {
+    return (this.#hostRegistry ??= hostCommands({
+      navigation: {
+        editor: () => this.editor,
+        togglePane: (id) => this.#togglePane(id),
+        goToPage: () => this.#goToPage(),
+        openSearch: () => this.#navigation.openSearch(),
+        openFindReplace: () => this.#navigation.openFindReplace(),
+        zoom: () => this.#zoom,
+        setZoom: (pct) => this.#setZoom(pct),
+        showZoomDialog: () => this.#showZoomDialog(),
+        zoomPreset: (preset) => this.#zoomPreset(preset),
+        docProtected: () => this.#docProtected,
+        syncEditModeMenu: () => this.#syncEditModeMenu(),
+        setShowMarks: (on) => this.setShowMarks(on),
+        getShowMarks: () => this.getShowMarks(),
+        showRuler: () => this.#stage?.showRuler ?? false,
+        setShowRuler: (on) => this.#stage?.setShowRuler(on),
+        showGridlines: () => this.#stage?.showGridlines ?? false,
+        setShowGridlines: (on) => this.#stage?.setShowGridlines(on),
+        setView: (view) => this.setAttribute("view", view),
+      },
+      sections: {
+        openPageSetup: () => this.#sections.openPageSetup(),
+        setPageSize: (value) => this.#sections.setPageSize(value),
+        setOrientation: (value) => this.#sections.setOrientation(value),
+        setMargins: (value) => this.#sections.setMargins(value),
+        openColumnsDialog: () => this.#sections.openColumnsDialog(),
+        setColumnCount: (count) => this.#sections.setColumnCount(count),
+        openLineNumbersOptions: () => this.#sections.openLineNumbersOptions(),
+        setLineNumbers: (mode) => this.#sections.setLineNumbers(mode),
+        openBordersDialog: (tab) => this.#sections.openBordersDialog(tab),
+        setPageBorders: (preset) => this.#sections.setPageBorders(preset),
+        insertCoverPage: () => this.#insertCoverPage(),
+        insertBlankPage: () => this.#insertBlankPage(),
+      },
+      references: {
+        editor: () => this.editor,
+        bridge: () => this.#bridge,
+        flow: () => this.#flow,
+        element: () => this,
+        openNoteSettings: () => this.#openNoteSettings(),
+        markIndexEntry: (target) => this.#references.markIndexEntry(target),
+        insertBibliography: () => this.#references.insertBibliography(),
+        bibliographySources: () => this.#references.bibliographySources(),
+        crossReferenceTargets: () => this.#dialogs.crossReferenceTargets(),
+        noteInsert: (kind) => this.#dialogs.noteInsert(kind),
+        noteEditAtSelection: () => this.#dialogs.noteEditAtSelection(),
+        noteDeleteAtSelection: () => this.#dialogs.noteDeleteAtSelection(),
+        jumpNextNote: () => this.#jumpNextNote(),
+        jumpPreviousNote: () => this.#jumpPreviousNote(),
+        insertBookmark: () => this.#insertBookmark(),
+      },
+      mailMerge: {
+        element: () => this,
+        recipients: () => this.#merge.recipients(),
+        insertAddressBlock: () => this.#merge.insertAddressBlock(),
+        insertGreetingLine: () => this.#merge.insertGreetingLine(),
+        togglePreview: () => this.#merge.togglePreview(),
+        firstRecord: () => this.#merge.firstRecord(),
+        lastRecord: () => this.#merge.lastRecord(),
+        setMergeType: (type) => this.#merge.setMergeType(type),
+        finishMerge: (mode) => void this.#finishMerge(mode),
+      },
+      comments: {
+        insertComment: () => this.#comments.insertComment(),
+        editComment: () => this.#comments.editComment(),
+        deleteComment: () => this.#comments.deleteComment(),
+        jumpComment: (direction) => this.#comments.jumpComment(direction),
+        togglePane: (id) => this.#togglePane(id),
+        setTaskpane: (id, open) => this.#setTaskpane(id, open),
+        getTaskpaneState: (id) => this.getTaskpaneState(id),
+      },
+      revisions: {
+        editor: () => this.editor,
+        togglePane: (id) => this.#togglePane(id),
+        setMarkupView: (view) => {
+          this.#markupView = view;
+        },
+        getMarkupAuthors: () => this.#markupAuthors,
+        setMarkupAuthors: (authors) => {
+          this.#markupAuthors = authors;
+        },
+        renderDoc: (doc) => this.#renderDoc(doc),
+        syncMarkupMenus: () => this.#syncMarkupMenus(),
+        getJSON: () => this.getJSON(),
+      },
+      proofing: {
+        editor: () => this.editor,
+        showWordCount: () => this.#showWordCount(),
+        spellingRun: () => this.#spelling.run(),
+        setTaskpane: (id, open) => this.#setTaskpane(id, open),
+        spellingIssues: () => this.#spelling.issues(),
+        spellingGoto: (index) => this.#spelling.goto(index),
+        spellingReplace: (replacement) => this.#spelling.replace(replacement),
+        spellingIgnore: (mode) => this.#spelling.ignore(mode),
+        openLanguageDialog: () => this.#onLanguageOpen(),
+      },
+      fields: {
+        fieldInsert: () => this.#dialogs.fieldInsert(),
+        fieldUpdateAtSelection: () => this.#dialogs.fieldUpdateAtSelection(),
+        updateAllFields: () => this.#dialogs.updateAllFields(),
+        fieldEditAtSelection: () => this.#dialogs.fieldEditAtSelection(),
+        fieldToggleCheckboxAtSelection: () => this.#dialogs.fieldToggleCheckboxAtSelection(),
+        toggleFieldCodes: () => this.toggleFieldCodes(),
+        insertEquation: (template) => this.#insertEquation(template),
+        insertEquationSymbol: (char) => this.#insertEquationSymbol(char),
+      },
+      clipboard: {
+        editor: () => this.editor,
+        activeEditor: () => this.#bridge?.activeEditor() ?? this.editor,
+        element: () => this,
+        copySelection: (cut) => this.#bridge?.copySelection(cut),
+        paste: (textOnly) => this.#clipboard.paste(textOnly),
+        togglePane: (id) => this.#togglePane(id),
+        showTaskpane: (id) => this.showTaskpane(id),
+        renderStylesPane: () => this.#renderStylesPane(),
+        toggleMarkdownInput: () => {
+          this.#markdown = !this.#markdown;
+        },
+        syncFormatButtons: () => this.#syncFormatButtons(),
+        insertLink: () => this.#insertLink(),
+        hrefAtCaret: () => this.#hrefAtCaret(),
+        jumpToBookmark: (name) => this.#jumpToBookmark(name),
+        select: (value) => this.#select(value),
+        toggleFormatPainter: () => this.#toggleFormatPainter(),
+      },
+      drawing: {
+        editor: () => this.editor,
+        activeEditor: () => this.#bridge?.activeEditor() ?? this.editor,
+        element: () => this,
+        showCompressPictures: () => this.#showCompressPictures(),
+        armTransparentPick: () => this.#armTransparentPick(),
+        drawingMulti: () => this.#bridge?.drawingMulti(),
+        pickImage: () => this.#imageInput?.click(),
+        pickPicture: () => this.#pictureInput?.click(),
+        focusBridge: () => this.#bridge?.focus(),
+        drawingState: () => this.#drawingStateOf(),
+        enterCropMode: () => {
+          this.#bridge?.enterCropMode();
+        },
+        insertShapeAt: (preset) => this.#insertShapeAt(preset),
+        armShapeDrawer: (preset) => this.#armShapeDrawer(preset),
+        insertWordArt: () => this.#insertWordArt(),
+      },
+      tables: {
+        element: () => this,
+        editor: () => this.editor,
+        activeEditor: () => this.#bridge?.activeEditor() ?? this.editor,
+        contentWidthPx: () => this.#flow?.contentWidthPx,
+        setPenStyle: (style) => {
+          this.#pen = { ...this.#pen, style };
+        },
+        setPenSize: (size) => {
+          this.#pen = { ...this.#pen, size };
+        },
+        setPenColor: (color) => {
+          this.#pen = { ...this.#pen, color };
+        },
+        borderPainting: () => this.#borderPainting,
+        borderErase: () => this.#borderErase,
+        stopBorderPainting: () => this.#stopBorderPainting(),
+        armBorderPainter: (erase) => this.#armBorderPainter(erase),
+      },
+      dialogs: {
+        element: () => this,
+        activeEditor: () => this.#bridge?.activeEditor() ?? this.editor,
+        docStyles: (editor) => this.#docStyles(editor),
+        runState: (state) => this.#runStateOf(state),
+        chartEditAtSelection: () => this.#dialogs.chartEditAtSelection(),
+        phoneticOpen: () => this.#dialogs.phoneticOpen(),
+        twoInOneOpen: () => this.#dialogs.twoInOneOpen(),
+        defineListOpen: () => this.#dialogs.defineListOpen(),
+      },
+      fileIo: {
+        emitCancelable: (name) => this.#emitCancelable(name),
+        saveAs: () => this.#saveAs(),
+        pickFile: () => this.#pickFile(),
+        print: () => this.#print(),
+        insertFileText: () => this.#insertFileText(),
+      },
+      headerFooter: {
+        editor: () => this.editor,
+        bridge: () => this.#bridge,
+        activeEditor: () => this.#bridge?.activeEditor() ?? this.editor,
+        storyPage: () => this.#storyPage,
+        toggleSectionFlag: (flag) => this.#sections.toggleSectionFlag(flag),
+        removeStory: (kind) => this.#removeStory(kind),
+        removePageNumbers: () => this.#removePageNumbers(),
+        openPageNumberFormat: () => this.#sections.openPageNumberFormat(),
+      },
+      design: {
+        setPageColor: (value) => this.#design.setPageColor(value),
+        setParagraphSpacing: (preset) => this.#design.setParagraphSpacing(preset),
+        openWatermarkDialog: () => this.#design.openWatermarkDialog(),
+        setWatermark: (preset) => this.#design.setWatermark(preset),
+        openFillEffectsDialog: () => this.#design.openFillEffectsDialog(),
+        restoreStylesSnapshot: () => this.#restoreStylesSnapshot(),
+      },
+    }));
+  }
+
   readonly #onCommand = (event: CustomEvent<{ event?: string; value?: string }>): void => {
     const { event: name, value } = event.detail ?? {};
     if (typeof name !== "string") return;
@@ -5046,987 +5228,17 @@ class DocenDocument extends AddinHost<Editor> {
     if (this.editor && !this.editor.isEditable && !READONLY_LIVE.has(name)) {
       return;
     }
-    // UI chrome actions are handled locally and need no Tiptap editor.
-    if (name === "toggle-navigation") {
-      this.#togglePane("navigation");
-      return;
-    }
-    // View → Outline: Word's outline view maps to the document-structure
-    // pane here (the same tree the navigation pane shows).
-    if (name === "outline") {
-      this.#togglePane("navigation");
-      return;
-    }
-    // Find (ribbon Home → Editing → Find, or Ctrl+F) → open the nav-pane search.
-    if (name === "search") {
-      // Find drop-down → Go To jumps to a page; the main button and Find
-      // open the nav-pane search box.
-      if (value === "go-to") this.#goToPage();
-      else this.#navigation.openSearch();
-      return;
-    }
-    // Replace (ribbon Home → Editing → Replace, or Ctrl+H) → Find & Replace dialog.
-    // The Editing group's dialog-box launcher opens the same dialog (Word).
-    if (name === "replace" || name === "find-dialog") {
-      this.#navigation.openFindReplace();
-      return;
-    }
-    // Word Count (ribbon Review → Proofing) → the statistics dialog.
-    if (name === "word-count") {
-      this.#showWordCount();
-      return;
-    }
-    // Compress Pictures (Picture Format → Adjust) → the compression dialog.
-    if (name === "compress-pictures") {
-      this.#showCompressPictures();
-      return;
-    }
-    // Set Transparent Color (Picture Format → Color menu): arm the canvas
-    // eyedropper — the next press on a picture samples its pixel.
-    if (name === "picture-transparent-pick") {
-      this.#armTransparentPick();
-      return;
-    }
-    // Table Design → Draw Border: the pen pickers stamp the host pen state;
-    // the painter split arms the sweep — the face toggles the pen, the
-    // drop-down's eraser toggles the erase half (one painter at a time).
-    if (name === "pen-style" && typeof value === "string") {
-      this.#pen = { ...this.#pen, style: value };
-      return;
-    }
-    if (name === "pen-size") {
-      const size = Number(value);
-      if (Number.isFinite(size) && size > 0) this.#pen = { ...this.#pen, size };
-      return;
-    }
-    if (name === "pen-color" && typeof value === "string") {
-      this.#pen = { ...this.#pen, color: value };
-      return;
-    }
-    if (name === "border-painter") {
-      const erase = value === "eraser";
-      if (this.#borderPainting && this.#borderErase === erase) {
-        this.#stopBorderPainting();
-      } else {
-        this.#armBorderPainter(erase);
-      }
-      return;
-    }
-    // Word's Group / Distribute act on the drawing multi-selection — the
-    // ribbon event carries no members, so the bridge's Shift+Click set (the
-    // primary plus the toggled members) assembles the payload here. Ungroup
-    // needs no payload and rides the wired command directly.
-    if (name === "drawing-group" || name === "drawing-distribute") {
-      const editor = this.#bridge?.activeEditor() ?? this.editor;
-      const members = this.#bridge?.drawingMulti();
-      if (editor && members) {
-        const payload = JSON.stringify({ members });
-        if (name === "drawing-group") editor.commands["drawing-group"](payload);
-        else editor.commands["drawing-distribute"](value, payload);
-      }
-      return;
-    }
-    // The QAT history flyout's entries arrive as undo/redo carrying their step
-    // count — batch-run that many commands (each its own transaction, stop at
-    // the first refusal); the value-less primary click falls through to the
-    // wired single-step command.
-    if ((name === "undo" || name === "redo") && value) {
-      const editor = this.#bridge?.activeEditor() ?? this.editor;
-      const steps = Number(value);
-      if (editor && Number.isInteger(steps) && steps > 0) {
-        for (let i = 0; i < steps; i++) {
-          if (!(name === "redo" ? editor.commands.redo() : editor.commands.undo())) break;
-        }
-      }
-      return;
-    }
-    // Repeat (QAT; F4 lives in the bridge) — retype the last plain-text
-    // insertion at the caret. The bridge records it on the editor's storage;
-    // both entry points read that single source.
-    if (name === "repeat") {
-      const editor = this.#bridge?.activeEditor() ?? this.editor;
-      const repeat = (editor?.storage as { repeat?: string } | undefined)?.repeat;
-      if (editor && repeat) {
-        const { from, to } = editor.state.selection;
-        editor.view.dispatch(editor.state.tr.insertText(repeat, from, to));
-      }
-      return;
-    }
-    // The Table button's face opens the hover grid; its dropdown's Insert
-    // Table opens the classic dialog shape (both insert via table-grid:insert).
-    if (name === "insert-table") {
-      (
-        this.shadowRoot?.querySelector("docen-table-dialog") as { show(m?: string): void } | null
-      )?.show("grid");
-      return;
-    }
-    if (name === "table-dialog") {
-      (
-        this.shadowRoot?.querySelector("docen-table-dialog") as { show(m?: string): void } | null
-      )?.show("form");
-      return;
-    }
-    // Page setup actions write sectionProperties; the transaction re-renders.
-    // "more"/"custom" open the Page Setup dialog instead of a preset; the
-    // Page Setup group's dialog-box launcher opens the same dialog.
-    if (name === "page-setup-dialog") {
-      this.#sections.openPageSetup();
-      return;
-    }
-    // References → footnotes group launcher: the Word Footnote and Endnote
-    // dialog (document-level numbering settings).
-    if (name === "note-settings-dialog") {
-      this.#openNoteSettings();
-      return;
-    }
-    if (name === "page-size") {
-      if (value === "more") this.#sections.openPageSetup();
-      else this.#sections.setPageSize(value);
-      return;
-    }
-    if (name === "orientation") {
-      this.#sections.setOrientation(value);
-      return;
-    }
-    if (name === "margins") {
-      if (value === "custom") this.#sections.openPageSetup();
-      else this.#sections.setMargins(value);
-      return;
-    }
-    // Columns presets (the Layout tab's Columns menu: one/two/three);
-    // More Columns opens the dialog prefilled from the current section.
-    if (name === "columns") {
-      if (value === "more") this.#sections.openColumnsDialog();
-      else {
-        const count = Number(value);
-        if (count >= 1 && count <= 9) this.#sections.setColumnCount(count);
-      }
-      return;
-    }
-    // Line Numbers menu (the Layout tab): the mode writes w:lnNumType's
-    // restart on the current section; "none" clears the numbering; the
-    // options entry opens the Line Numbering Options dialog.
-    if (name === "line-numbers") {
-      if (value === "options") this.#sections.openLineNumbersOptions();
-      else if (
-        value === "none" ||
-        value === "continuous" ||
-        value === "newPage" ||
-        value === "newSection"
-      )
-        this.#sections.setLineNumbers(value);
-      return;
-    }
-    // AutoFit Window needs the page's text width — a layout value the command
-    // layer can't see, so the host injects it as the twip value (px × 15 at
-    // the layout's 96 dpi).
-    if (name === "autofit-window") {
-      const flow = this.#flow;
-      const ed = this.editor;
-      if (ed && flow && flow.contentWidthPx > 0) {
-        (ed.commands as unknown as Record<string, (v?: string) => unknown>)["autofit-window"](
-          String(Math.round(flow.contentWidthPx * 15)),
-        );
-      }
-      return;
-    }
-    // Zoom is a canvas action (not a Tiptap command): step in, or apply a
-    // preset from the split menu (200/100/75/50/page-width); the split's
-    // main button sets 100%.
-    if (name === "zoom") {
-      this.#setZoom(this.#zoom + 10);
-      return;
-    }
-    if (name === "zoom-100") {
-      if (value === "zoom-dialog") this.#showZoomDialog();
-      else if (value) this.#zoomPreset(value);
-      else this.#setZoom(100);
-      return;
-    }
+    // Local host commands (chrome actions plus document actions the engine
+    // can't express) route through the per-domain registry — chrome handlers
+    // need no editor, the rest run once a document has opened. The wired
+    // Tiptap commands / add-in commands below stay in this element.
+    const host = this.#hostCommandRegistry();
+    const chrome = host.chrome.get(name);
+    if (chrome?.(value)) return;
     const editor = this.editor;
     if (!editor) return;
-    // Edit / View mode — toggle the editor's editable state (tab-row "Editing"
-    // menu); then re-stamp the menu so its label + checked item follow. A
-    // read-only protected document stays protected in Editing mode.
-    if (name === "edit-mode") {
-      editor.setEditable(value !== "view" && !this.#docProtected);
-      this.#syncEditModeMenu();
-      return;
-    }
-    // "save" is a document action, not a Tiptap command — handle locally,
-    // unless the host took over via docen:save (preventDefault).
-    if (name === "save") {
-      if (!this.#emitCancelable("docen:save")) void this.#saveAs();
-      return;
-    }
-    // The QAT buttons re-emit the filename menu's file actions as commands
-    // (those menu items ride change events instead) — same bodies as the
-    // matching #onChange cases.
-    if (name === "new") {
-      this.#emitCancelable("docen:new");
-      return;
-    }
-    if (name === "open") {
-      if (!this.#emitCancelable("docen:open")) this.#pickFile();
-      return;
-    }
-    if (name === "print") {
-      if (!this.#emitCancelable("docen:print")) void this.#print();
-      return;
-    }
-    // Picture needs a file picker — open it, then insert the chosen image.
-    if (name === "insert-picture") {
-      this.#imageInput?.click();
-      return;
-    }
-    // Change Picture — a picker over the selected image; the picked source
-    // replaces it at the same frame size (Picture Format > Adjust).
-    if (name === "change-picture") {
-      this.#pictureInput?.click();
-      return;
-    }
-    // Reset Picture and Size — the natural size is a decode only the
-    // browser-side painter can read (the paint's pin table), so resolve the
-    // selected picture's decoded dimensions here and pass them in. An
-    // unpinned or undecoded source degrades to the plain Reset Picture.
-    if (name === "reset-picture-size") {
-      const target = this.#bridge?.activeEditor() ?? editor;
-      const sel = target.state.selection;
-      const src =
-        sel instanceof NodeSelection && sel.node.type.name === "image"
-          ? (sel.node.attrs as { src?: unknown }).src
-          : undefined;
-      const image = typeof src === "string" && src ? pinImage(src) : undefined;
-      const natural =
-        image?.ready && image.width > 0 && image.height > 0
-          ? { width: image.width, height: image.height }
-          : undefined;
-      this.#bridge?.focus();
-      target.commands["reset-picture-size"](natural);
-      return;
-    }
-    // Formatting marks toggle — canvas-side marks are a later milestone; the
-    // host [show-marks] attribute stays the source of truth.
-    if (name === "show-marks") {
-      this.setShowMarks(!this.getShowMarks());
-      return;
-    }
-    // Markdown input mode toggle — the same flag the Options dialog writes;
-    // the bridge reads it per keystroke.
-    if (name === "markdown-input") {
-      this.#markdown = !this.#markdown;
-      // The click may land outside any transaction — re-stamp the lit state.
-      this.#syncFormatButtons();
-      return;
-    }
-    // TOC insert/update — commands take the bridge's pageOf (entry page
-    // numbers come from the canvas caret map; 0-based → Word's 1-based) and
-    // the content-width tab stop. Inserting repaginates, so insert re-runs
-    // the update once the fresh layout lands (Word's insert-then-update-
-    // fields behavior). remove-toc drops the block; update-toc-page is
-    // Word's "update page numbers only".
-    if (
-      name === "toc" ||
-      name === "update-toc" ||
-      name === "remove-toc" ||
-      name === "update-toc-page"
-    ) {
-      // Insert/update in the story the caret lives in (a header/footer story
-      // opening must not send the TOC into the stale main-doc selection).
-      const target = this.#bridge?.activeEditor() ?? editor;
-      const pageOf = (pos: number): number | null => {
-        const page = this.#bridge?.pageOf(pos);
-        return typeof page === "number" ? page + 1 : null;
-      };
-      const tabPositionTw = this.#flow
-        ? Math.round(this.#flow.contentWidthPx / twipToPx(1))
-        : undefined;
-      const ran =
-        name === "remove-toc"
-          ? target.commands["remove-toc"]()
-          : name === "update-toc-page"
-            ? target.commands["update-toc-page"](pageOf)
-            : target.commands[name](pageOf, tabPositionTw);
-      if (name === "toc" && ran) {
-        // Frame N re-flows (the bridge's raf-merged onDoc), frame N+1 the
-        // caret map carries the post-insert pagination.
-        requestAnimationFrame(() =>
-          requestAnimationFrame(() => target.commands["update-toc"](pageOf, tabPositionTw)),
-        );
-      }
-      return;
-    }
-    // Table of Figures — insert/update the caption directory (the TOC field's
-    // \c switch): same story routing and post-insert update pass as the TOC.
-    if (name === "table-of-figures" || name === "update-figures") {
-      const target = this.#bridge?.activeEditor() ?? editor;
-      const pageOf = (pos: number): number | null => {
-        const page = this.#bridge?.pageOf(pos);
-        return typeof page === "number" ? page + 1 : null;
-      };
-      const tabPositionTw = this.#flow
-        ? Math.round(this.#flow.contentWidthPx / twipToPx(1))
-        : undefined;
-      const ran = target.commands[name](pageOf, tabPositionTw);
-      if (name === "table-of-figures" && ran) {
-        requestAnimationFrame(() =>
-          requestAnimationFrame(() => target.commands["update-figures"](pageOf, tabPositionTw)),
-        );
-      }
-      return;
-    }
-    // Index — Mark Entry prompts for the entry text and seeds an XE field at
-    // the selection (the invisible marker Word hides from the page); insert
-    // and update collect the XE fields into the Index-styled entry block.
-    if (name === "mark-entry" || name === "insert-index" || name === "update-index") {
-      const target = this.#bridge?.activeEditor() ?? editor;
-      if (name === "mark-entry") {
-        this.#references.markIndexEntry(target);
-        return;
-      }
-      const pageOf = (pos: number): number | null => {
-        const page = this.#bridge?.pageOf(pos);
-        return typeof page === "number" ? page + 1 : null;
-      };
-      const tabPositionTw = this.#flow
-        ? Math.round(this.#flow.contentWidthPx / twipToPx(1))
-        : undefined;
-      const ran = target.commands[name](pageOf, tabPositionTw);
-      if (!ran) window.alert(t("index.empty", this));
-      return;
-    }
-    // Header/Footer — the split's main action opens the story on the caret's
-    // page; the drop-down carries remove + the slot-visibility flags.
-    if (name === "header" || name === "footer") {
-      if (value === "title-page" || value === "odd-even") {
-        this.#sections.toggleSectionFlag(
-          value === "title-page" ? "titlePage" : "evenAndOddHeaders",
-        );
-        return;
-      }
-      if (value === "remove-header" || value === "remove-footer") {
-        this.#removeStory(name);
-        return;
-      }
-      const page = this.#bridge?.pageOf(editor.state.selection.from);
-      if (page != null) this.#bridge?.enterStory(name, page);
-      return;
-    }
-    // The Header & Footer context tab — switch stories (the dirty close rides
-    // the normal exit path), flip the same slot flags, and close.
-    if (name === "goto-header" || name === "goto-footer") {
-      const page =
-        this.#storyPage >= 0 ? this.#storyPage : this.#bridge?.pageOf(editor.state.selection.from);
-      this.#bridge?.exitStory();
-      if (page != null)
-        this.#bridge?.enterStory(name === "goto-header" ? "header" : "footer", page);
-      return;
-    }
-    if (name === "close-header-footer") {
-      this.#bridge?.exitStory();
-      return;
-    }
-    if (name === "header-option") {
-      if (value === "title-page" || value === "odd-even")
-        this.#sections.toggleSectionFlag(
-          value === "title-page" ? "titlePage" : "evenAndOddHeaders",
-        );
-      return;
-    }
-    // Page Number — the split's main button is Word's default (bottom of
-    // page, centered). Top/bottom placements open the story and REPLACE its
-    // content with the preset paragraph (picking a placement states the
-    // intent outright; undo keeps the previous furniture reachable), and the
-    // normal exit persists the slots. Current-position presets splice into
-    // the caret's paragraph — the active story when one is open, else the
-    // body.
-    if (name === "page-number") {
-      const placement = value ?? "page-bottom-center";
-      if (placement === "remove-numbers") {
-        this.#removePageNumbers();
-        return;
-      }
-      if (placement === "format") {
-        this.#sections.openPageNumberFormat();
-        return;
-      }
-      if (placement.startsWith("cur-")) {
-        (this.#bridge?.activeEditor() ?? editor).commands.insertContent(
-          pageNumberInlinePreset(placement),
-        );
-        return;
-      }
-      const page = this.#bridge?.pageOf(editor.state.selection.from);
-      if (
-        page != null &&
-        this.#bridge?.enterStory(placement.startsWith("page-top") ? "header" : "footer", page)
-      ) {
-        (this.#bridge.activeEditor() ?? editor).commands.setContent(
-          pageNumberStoryPreset(placement),
-        );
-      }
-      return;
-    }
-    // Symbol — open the character grid dialog; the insertion arrives via the
-    // dialog's symbol:insert event (it stays open for several inserts).
-    if (name === "symbol") {
-      (this.shadowRoot?.querySelector("docen-symbol-dialog") as { show(): void } | null)?.show();
-      return;
-    }
-    // Paragraph — open the dialog prefilled from the caret paragraph's attrs;
-    // the commit arrives via paragraph:ok (stamped by paragraph-dialog-apply).
-    if (name === "paragraph-dialog") {
-      const target = this.#bridge?.activeEditor() ?? editor;
-      const node = target?.state.selection.$from.parent;
-      if (target && node?.type.name === "paragraph") {
-        // Effective values (direct attrs over the style chain over docDefaults
-        // — Word's cascade) drive the prefill: the unit boxes are never empty,
-        // and a blind commit must not overwrite an inherited indent or spacing
-        // (docDefaults' 8pt after) with an explicit 0.
-        const styles = this.#docStyles(target);
-        const byId = styles ? indexParagraphStyles(styles) : new Map();
-        const attrs = node.attrs as Record<string, unknown>;
-        const chain = mergeStyleChain(
-          byId,
-          (typeof attrs.style === "string" && attrs.style) || defaultParagraphStyleId(styles),
-        ).paragraph;
-        const ddParagraph = ((
-          styles?.default as { document?: { paragraph?: Record<string, unknown> } } | undefined
-        )?.document?.paragraph ?? {}) as Record<string, unknown>;
-        const effective = { ...attrs };
-        for (const key of ["indent", "spacing"] as const) {
-          const inherited = {
-            ...(typeof ddParagraph[key] === "object" && ddParagraph[key] ? ddParagraph[key] : {}),
-            ...(typeof chain[key] === "object" && chain[key] ? (chain[key] as object) : {}),
-          };
-          const direct = attrs[key];
-          effective[key] = Object.keys(inherited).length
-            ? {
-                ...inherited,
-                ...(typeof direct === "object" && direct ? direct : {}),
-              }
-            : direct;
-        }
-        // Scalar paragraph flags cascade the same way: a null attrs slot is the
-        // schema's "unset", so an explicit value on the style chain or in
-        // docDefaults must win over the dialog's spec-default fallback.
-        for (const key of PARAGRAPH_FLAG_KEYS) {
-          const direct = attrs[key];
-          effective[key] = direct ?? chain?.[key] ?? ddParagraph[key];
-        }
-        (
-          this.shadowRoot?.querySelector("docen-paragraph-dialog") as {
-            show(attrs?: Record<string, unknown>): void;
-          } | null
-        )?.show(effective);
-      }
-      return;
-    }
-    // Font — open the dialog prefilled from the selection's run marks; the
-    // commit arrives via font:ok (#onFontDialogOk).
-    if (name === "font-dialog") {
-      const target = this.#bridge?.activeEditor() ?? editor;
-      const dialog = this.shadowRoot?.querySelector("docen-font-dialog") as {
-        show(state: FontDialogPatch): void;
-      } | null;
-      if (target && dialog) dialog.show(this.#runStateOf(target.state));
-      return;
-    }
-    // Table Properties — open the dialog prefilled from the caret table's
-    // attrs; the commit arrives via table-properties:ok
-    // (table-properties-apply). No caret table → nothing to show.
-    if (name === "table-properties") {
-      const target = this.#bridge?.activeEditor() ?? editor;
-      const anchor = target ? tableAncestry(target.state) : null;
-      const dialog = this.shadowRoot?.querySelector("docen-table-properties-dialog") as {
-        show(attrs?: Record<string, unknown>): void;
-      } | null;
-      if (target && anchor && dialog) {
-        dialog.show(
-          target.state.selection.$from.node(anchor.tableAt).attrs as Record<string, unknown>,
-        );
-      }
-      return;
-    }
-    // Size and Position — open the drawing dialog prefilled from the selected
-    // floating drawing; the commit arrives via drawing-properties:ok
-    // (drawing-properties-apply).
-    if (name === "drawing-properties") {
-      const dialog = this.shadowRoot?.querySelector("docen-drawing-properties-dialog") as {
-        show(state: DrawingPropertiesState): void;
-      } | null;
-      const state = this.#drawingStateOf();
-      if (dialog && state) dialog.show(state);
-      return;
-    }
-    // Crop — the bridge enters crop mode on the selected image (the overlay
-    // previews the full source; Enter / a press outside commits, Esc cancels).
-    if (name === "drawing-crop") {
-      this.#bridge?.enterCropMode();
-      return;
-    }
-    // Bookmark — prompt for a name and wrap the selection with a
-    // bookmarkStart/bookmarkEnd pair (Word's Insert → Bookmark).
-    if (name === "bookmark") {
-      this.#insertBookmark();
-      return;
-    }
-    // Caption — open the dialog; the commit arrives via caption:ok
-    // (#dialogs.onCaptionOk, References → Captions → Insert Caption).
-    if (name === "insert-caption") {
-      (this.shadowRoot?.querySelector("docen-caption-dialog") as { show(): void } | null)?.show();
-      return;
-    }
-    // Cross-reference — open the dialog over the document's bookmarks; the
-    // commit arrives via cross-ref:ok (#dialogs.onCrossRefOk).
-    if (name === "cross-reference") {
-      (
-        this.shadowRoot?.querySelector("docen-cross-reference-dialog") as {
-          show(targets: { name: string; text: string; kind: string }[]): void;
-        } | null
-      )?.show(this.#dialogs.crossReferenceTargets());
-      return;
-    }
-    // Source Manager / Insert Citation — the same dialog in two modes (Word's
-    // References → Citations & Bibliography group); commits arrive via
-    // sources:ok / citation:ok (#references.onSourcesOk / onCitationOk).
-    if (name === "manage-sources" || name === "insert-citation") {
-      (
-        this.shadowRoot?.querySelector("docen-sources-dialog") as {
-          show(mode: "manage" | "cite", sources: unknown[]): void;
-        } | null
-      )?.show(
-        name === "insert-citation" ? "cite" : "manage",
-        this.#references.bibliographySources(),
-      );
-      return;
-    }
-    // Bibliography — insert (or rebuild) the Bibliography-styled block beside
-    // the caret from the document's sources (#references.insertBibliography).
-    if (name === "bibliography") {
-      this.#references.insertBibliography();
-      return;
-    }
-    // Mail merge — the recipients dialogs, the merge-field seeds, the preview
-    // pass, and the Finish & Merge document (#merge / #finishMerge).
-    if (name === "select-recipients" || name === "edit-recipients") {
-      (
-        this.shadowRoot?.querySelector("docen-recipients-dialog") as {
-          show(recipients: unknown): void;
-        } | null
-      )?.show(this.#merge.recipients());
-      return;
-    }
-    if (name === "merge-field") {
-      const recipients = this.#merge.recipients();
-      (
-        this.shadowRoot?.querySelector("docen-merge-field-dialog") as {
-          show(headers: string[]): void;
-        } | null
-      )?.show(recipients?.headers ?? []);
-      return;
-    }
-    if (name === "address-block") {
-      this.#merge.insertAddressBlock();
-      return;
-    }
-    if (name === "greeting-line") {
-      this.#merge.insertGreetingLine();
-      return;
-    }
-    if (name === "preview-results") {
-      this.#merge.togglePreview();
-      return;
-    }
-    if (name === "first-record") {
-      this.#merge.firstRecord();
-      return;
-    }
-    if (name === "last-record") {
-      this.#merge.lastRecord();
-      return;
-    }
-    if (name === "start-merge") {
-      // The menu picks record the document kind; the face opens the
-      // recipients dialog (the merge's first step).
-      if (value === "letters" || value === "directory") this.#merge.setMergeType(value);
-      else
-        (
-          this.shadowRoot?.querySelector("docen-recipients-dialog") as {
-            show(recipients: unknown): void;
-          } | null
-        )?.show(this.#merge.recipients());
-      return;
-    }
-    if (name === "finish-merge") {
-      void this.#finishMerge(value === "edit" || !value ? "edit" : (value as "print" | "email"));
-      return;
-    }
-    // Footnote / Endnote — open the note dialog; the commit arrives via
-    // note:ok (#dialogs.onNoteOk, References → Insert Footnote; the split's
-    // endnote item shares the event, and Next Footnote steps references).
-    if (name === "insert-footnote") {
-      if (value === "endnote") this.#dialogs.noteInsert("endnote");
-      else if (value === "next") this.#jumpNextNote();
-      else if (value === "prev") this.#jumpPreviousNote();
-      else this.#dialogs.noteInsert("footnote");
-      return;
-    }
-    if (name === "edit-note") {
-      this.#dialogs.noteEditAtSelection();
-      return;
-    }
-    if (name === "delete-note") {
-      this.#dialogs.noteDeleteAtSelection();
-      return;
-    }
-    // Field — open the Field dialog (Insert → Text → Explore Quick Parts →
-    // Field); the commit arrives via field:ok. The context-menu entries act
-    // on the field atom under the caret (update = Word's F9).
-    if (name === "insert-field") {
-      this.#dialogs.fieldInsert();
-      return;
-    }
-    if (name === "update-field") {
-      this.#dialogs.fieldUpdateAtSelection();
-      return;
-    }
-    if (name === "update-all-fields") {
-      this.#dialogs.updateAllFields();
-      return;
-    }
-    if (name === "toggle-field-codes") {
-      this.toggleFieldCodes();
-      return;
-    }
-    if (name === "edit-field") {
-      this.#dialogs.fieldEditAtSelection();
-      return;
-    }
-    // Chart — open the Edit Data grid (Chart Design tab → Data group); the
-    // commit arrives via chart:ok → the chart-data-apply command.
-    if (name === "chart-edit-data") {
-      this.#dialogs.chartEditAtSelection();
-      return;
-    }
-    if (name === "toggle-field-checkbox") {
-      this.#dialogs.fieldToggleCheckboxAtSelection();
-      return;
-    }
-    // Equation — insert one placeholder math template at the caret (Word's
-    // Insert → Symbols → Equation gallery).
-    if (name === "equation") {
-      this.#insertEquation(value ? String(value) : "fraction");
-      return;
-    }
-    if (name === "insert-symbol") {
-      this.#insertEquationSymbol(value ? String(value) : "");
-      return;
-    }
-    // Page Color — write/clear the doc-level w:background from the palette
-    // (Word's Design → Page Color).
-    if (name === "page-color") {
-      this.#design.setPageColor(
-        value as
-          | string
-          | { themeColor: string; val: string; themeTint?: string; themeShade?: string },
-      );
-      return;
-    }
-    // The Borders and Shading dialog entries — the border split's and the
-    // page-border split's last item carry the dialog value; the source split
-    // picks the tab (the remaining preset values fall through below).
-    if (value === "borders-shading" && (name === "border" || name === "page-border")) {
-      this.#sections.openBordersDialog(name === "page-border" ? "page" : "border");
-      return;
-    }
-    if (name === "page-border") {
-      this.#sections.setPageBorders(value);
-      return;
-    }
-    // Paragraph Spacing presets — stamp the styles' docDefaults paragraph
-    // spacing (Word's Design → Paragraph Spacing; the document-level default
-    // every paragraph without explicit spacing inherits).
-    if (name === "paragraph-spacing") {
-      this.#design.setParagraphSpacing(typeof value === "string" ? value : undefined);
-      return;
-    }
-    // View toggles — ruler and gridlines are paint-time view state (never in
-    // the document), so the stage flips the flag and repaints.
-    if (name === "toggle-ruler") {
-      this.#stage?.setShowRuler(!this.#stage.showRuler);
-      return;
-    }
-    if (name === "toggle-gridlines") {
-      this.#stage?.setShowGridlines(!this.#stage.showGridlines);
-      return;
-    }
-    // Watermark gallery — a preset id stamps the header shape, "remove"
-    // strips it; the custom entry opens Word's watermark dialog (Word's
-    // Design → Watermark split button).
-    if (name === "watermark") {
-      if (value === "custom") {
-        this.#design.openWatermarkDialog();
-        return;
-      }
-      this.#design.setWatermark(typeof value === "string" ? value : undefined);
-      return;
-    }
-    // Fill Effects — the page background's picture fill (Word's Design →
-    // Page Color → Fill Effects; the dialog commits via fill-effects:ok).
-    if (name === "fill-effects") {
-      this.#design.openFillEffectsDialog();
-      return;
-    }
-    // Link — prompt for an address and mark the selection (or insert fresh
-    // display text when the selection is empty).
-    if (name === "link") {
-      this.#insertLink();
-      return;
-    }
-    // Context menu → Remove Hyperlink: unset the link mark across the
-    // right-clicked link (extendMarkRange reaches past the caret's spot).
-    if (name === "unset-link") {
-      // The link mark spans the right-clicked range in whichever editor the
-      // caret lives in (a furniture story has its own links).
-      (this.#bridge?.activeEditor() ?? this.editor)
-        ?.chain()
-        .extendMarkRange("link")
-        .unsetLink()
-        .run();
-      return;
-    }
-    // Context menu → Open Hyperlink: `#name` jumps to its bookmark, anything
-    // else opens in a new window.
-    if (name === "open-link") {
-      const href = this.#hrefAtCaret();
-      if (!href) return;
-      if (href.startsWith("#")) this.#jumpToBookmark(href.slice(1));
-      else window.open(href, "_blank", "noopener,noreferrer");
-      return;
-    }
-    // Context menu → Copy Hyperlink: the address to the system clipboard.
-    if (name === "copy-link") {
-      const href = this.#hrefAtCaret();
-      if (href) void navigator.clipboard.writeText(href);
-      return;
-    }
-    // New Comment — anchor the selection (or the word at the caret) with a
-    // Word comment; Edit/Delete operate on the comment covering the selection.
-    if (name === "new-comment") {
-      this.#comments.insertComment();
-      return;
-    }
-    // The trailing title-bar "comment" button toggles the comments pane
-    // (Word's sidebar) — it lists every comment, it does not create one.
-    if (name === "comment") {
-      this.#togglePane("comments");
-      return;
-    }
-    if (name === "edit-comment") {
-      this.#comments.editComment();
-      return;
-    }
-    if (name === "delete-comment") {
-      this.#comments.deleteComment();
-      return;
-    }
-    if (name === "previous-comment") {
-      this.#comments.jumpComment("previous");
-      return;
-    }
-    if (name === "next-comment") {
-      this.#comments.jumpComment("next");
-      return;
-    }
-    // Review → Show Comments: toggle the comments pane (Word's sidebar).
-    if (name === "show-comments") {
-      this.#setTaskpane("comments", !this.getTaskpaneState("comments"));
-      return;
-    }
-    // Review → Reviewing Pane: toggle the revisions pane (Word's vertical
-    // reviewing pane listing every tracked change).
-    if (name === "reviewing-pane") {
-      this.#togglePane("revisions");
-      return;
-    }
-    // Word's Display for Review: switch the tracked-changes projection and
-    // re-render (the marks in the document are untouched — display only).
-    if (name === "display-for-review") {
-      if (value === "simple" || value === "all" || value === "none" || value === "original") {
-        this.#markupView = value;
-        this.#renderDoc(this.getJSON());
-        this.#syncMarkupMenus();
-      }
-      return;
-    }
-    // Word's Specific People: scope the display to one reviewer ("all" clears
-    // the filter). An author outside the filter renders as accepted (Word).
-    if (name === "review-specific-people" && value) {
-      this.#markupAuthors = value === "all" ? null : [value];
-      this.#renderDoc(this.getJSON());
-      this.#syncMarkupMenus();
-      return;
-    }
-    // The "…All Changes Shown" sweeps accept/reject exactly what the display
-    // filter shows (every revision when no filter is set).
-    if (name === "accept-all-changes-shown" || name === "reject-all-changes-shown") {
-      this.editor?.commands[name]?.(this.#markupAuthors ?? undefined);
-      return;
-    }
-    // Text Box — insert a centered floating wps text box. Shapes — arm the
-    // drawer with the picked preset (Word's drag-to-draw: the canvas commits
-    // the draw through applyShapeDraw, which disarms — one pick, one shape).
-    if (name === "text-box") {
-      this.#insertShapeAt(undefined);
-      return;
-    }
-    if (name === "shapes") {
-      this.#armShapeDrawer(value ?? "rect");
-      return;
-    }
-    // Insert → Pages menu: a cover block at the document start, or two page
-    // breaks (Word's Blank Page). WordArt inserts a preset-styled text box.
-    if (name === "cover-page") {
-      this.#insertCoverPage();
-      return;
-    }
-    if (name === "blank-page") {
-      this.#insertBlankPage();
-      return;
-    }
-    if (name === "wordart") {
-      this.#insertWordArt();
-      return;
-    }
-    // Date & Time — open the dialog; the commit arrives via date-time:insert
-    // (static text, or a DATE field when "update automatically" is checked).
-    if (name === "date-time") {
-      (this.shadowRoot?.querySelector("docen-date-time-dialog") as { show(): void } | null)?.show();
-      return;
-    }
-    // Custom Table of Contents — open the dialog; the commit arrives via
-    // toc:ok (#insertCustomToc).
-    if (name === "toc-dialog") {
-      (this.shadowRoot?.querySelector("docen-toc-dialog") as { show(): void } | null)?.show();
-      return;
-    }
-    // Object → Text from File — read a plain-text file at the caret (the
-    // Object… OLE entry is greyed: not built).
-    if (name === "insert-file-text") {
-      this.#insertFileText();
-      return;
-    }
-    // Clipboard — the selection is canvas-rendered (no DOM editor selection),
-    // so copy/cut route through the bridge's lane (it pins the slice payload
-    // exactly like a keyboard copy, keeping every paste entry lossless).
-    if (name === "copy" || name === "cut") {
-      void this.#bridge?.copySelection(name === "cut");
-      return;
-    }
-    if (name === "paste") {
-      if (value === "paste-special") {
-        (
-          this.shadowRoot?.querySelector("docen-paste-special-dialog") as unknown as {
-            show(): void;
-          } | null
-        )?.show();
-        return;
-      }
-      void this.#clipboard.paste(value === "keep-text-only");
-      return;
-    }
-    // Home → Clipboard group launcher — the Office Clipboard pane.
-    if (name === "clipboard-dialog") {
-      this.#togglePane("clipboard");
-      return;
-    }
-    // View → the four view buttons (Word's View tab): each selects a document
-    // view through the `view` attribute — #applyView restages the render.
-    const viewOf: Record<string, string> = {
-      "print-layout": "print",
-      "web-layout": "web",
-      "read-mode": "read",
-      draft: "draft",
-    };
-    if (viewOf[name]) {
-      this.setAttribute("view", viewOf[name]);
-      return;
-    }
-    // Styles group launcher (Home → Styles): the Styles task pane.
-    if (name === "styles-pane") {
-      this.showTaskpane("styles");
-      this.#renderStylesPane();
-      return;
-    }
-    // The style-set gallery's "document default" entry restores the styles
-    // model the document opened with (the preset values are written by the
-    // style-set command; only this entry needs the snapshot).
-    if (name === "style-set" && value === "default") {
-      this.#restoreStylesSnapshot();
-      return;
-    }
-    // Spelling (Review → Spelling & Grammar, F7, the status-bar book):
-    // re-check now, open the pane, and start at the first issue at/after the
-    // caret (Word starts checking from the insertion point).
-    if (name === "spell-check") {
-      this.#spelling.run();
-      this.#setTaskpane("proofing", true);
-      const from = this.editor?.state.selection.from ?? 0;
-      const issues = this.#spelling.issues();
-      if (issues.length) {
-        const first = issues.find((issue) => issue.from >= from) ?? issues[0];
-        this.#spelling.goto(issues.indexOf(first));
-      }
-      return;
-    }
-    // The context menu's spelling group: replace with the picked suggestion
-    // or apply one of the three ignore levels (the issue was activated when
-    // the menu was built).
-    if (name === "spell-pick") {
-      this.#spelling.replace(value ?? "");
-      return;
-    }
-    if (name === "spell-ignore-once" || name === "spell-ignore-all" || name === "spell-add") {
-      this.#spelling.ignore(
-        name === "spell-ignore-once" ? "once" : name === "spell-ignore-all" ? "ignore" : "add",
-      );
-      return;
-    }
-    // Language (Review → Language, the status-bar language item): the
-    // proofing-language dialog for the selection.
-    if (name === "language") {
-      this.#onLanguageOpen();
-      return;
-    }
-    // Phonetic guide (拼音指南, Home → Font): the per-character reading
-    // dialog over the selection.
-    if (name === "phonetic-guide") {
-      this.#dialogs.phoneticOpen();
-      return;
-    }
-    // Chinese Layout (中文版式, Home → Paragraph): the two-lines-in-one
-    // dialog over the selection (合并字符 rides the same dialog).
-    if (name === "two-lines-in-one") {
-      this.#dialogs.twoInOneOpen();
-      return;
-    }
-    // Multilevel List gallery (Home → Paragraph): the Define New Multilevel
-    // List dialog — its last entry.
-    if (name === "define-new-list") {
-      this.#dialogs.defineListOpen();
-      return;
-    }
-    // Editing → Select: selectAll() spans the whole document.
-    if (name === "select") {
-      this.#select(value);
-      return;
-    }
-    // Format Painter — toggle capture/apply of the current run's marks.
-    if (name === "format-painter") {
-      this.#toggleFormatPainter();
-      return;
-    }
+    const local = host.editor.get(name);
+    if (local?.(value)) return;
     // Built-in commands route to editor.commands.<event>(value) —
     // DocumentCommands registers every ribbon event as a native Tiptap command.
     // A user add-in overrides one by contributing a Tiptap extension whose
