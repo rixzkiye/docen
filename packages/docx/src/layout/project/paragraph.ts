@@ -307,6 +307,23 @@ export function projectParagraph(p: BodyParagraph, ctx: ProjectContext): LayoutP
       inlineIndex: -1,
     });
   }
+  const bidi = pPr.bidirectional === true || chainPPr.bidirectional === true;
+  const textDir = str(pPr.textDirection ?? chainPPr.textDirection);
+  const textDirection =
+    textDir === "tbRl" || textDir === "btLr" || textDir === "lrTb" ? textDir : undefined;
+  const kinsokuRaw = pick([pPr, chainPPr], "kinsoku");
+  const overflowRaw = pick([pPr, chainPPr], "overflowPunctuation");
+  const charSpacing = pick([pPr, chainPPr], "characterSpacingControl");
+  const wordWrapRaw = pick([pPr, chainPPr], "wordWrap");
+  const autoSpaceRaw = pick([pPr, chainPPr], "autoSpaceDE");
+  const textAlignment = (str(pick([pPr, chainPPr], "textAlignment")) ?? undefined) as
+    | "auto"
+    | "baseline"
+    | "bottom"
+    | "center"
+    | "top"
+    | undefined;
+
   return {
     kind: "paragraph",
     inline: markerInline.length ? markerInline.concat(inline) : inline,
@@ -326,6 +343,18 @@ export function projectParagraph(p: BodyParagraph, ctx: ProjectContext): LayoutP
     widowControl: pick([pPr, chainPPr], "widowControl") !== false,
     pageBreakBefore: pPr.pageBreakBefore === true || chainPPr.pageBreakBefore === true,
     suppressLineNumbers: pPr.suppressLineNumbers === true || chainPPr.suppressLineNumbers === true,
+    bidi: bidi || undefined,
+    textDirection,
+    ...(typeof kinsokuRaw === "boolean" ? { kinsoku: kinsokuRaw } : {}),
+    ...(typeof overflowRaw === "boolean" ? { overflowPunctuation: overflowRaw } : {}),
+    ...(charSpacing === "dontCompress"
+      ? { compressPunctuation: false }
+      : charSpacing != null
+        ? { compressPunctuation: true }
+        : {}),
+    ...(typeof wordWrapRaw === "boolean" ? { wordWrap: wordWrapRaw } : {}),
+    ...(typeof autoSpaceRaw === "boolean" ? { autoSpaceDE: autoSpaceRaw } : {}),
+    textAlignment,
     ...indicator,
     ...(anchors.length > 0 ? { balloons: anchors } : {}),
   };

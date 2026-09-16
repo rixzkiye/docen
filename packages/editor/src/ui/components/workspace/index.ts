@@ -51,6 +51,7 @@ export { default as DocenFillEffectsDialog } from "./fill-effects-dialog";
 export { default as DocenInspectDialog } from "./inspect-dialog";
 export { default as DocenTemplateDialog } from "./template-dialog";
 export { default as DocenModifyStyleDialog } from "./modify-style-dialog";
+export { default as DocenNewStyleDialog } from "./new-style-dialog";
 export { default as DocenHyphenationDialog } from "./hyphenation-dialog";
 export { default as DocenTabsDialog } from "./tabs-dialog";
 export { default as DocenBookmarkDialog } from "./bookmark-dialog";

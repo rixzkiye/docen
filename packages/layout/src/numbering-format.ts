@@ -90,6 +90,112 @@ const KATAKANA_HALF = "ｱｲｳｴｵｶｷｸｹｺｻｼｽｾｿﾀﾁﾂﾃ
 const KOREAN_COUNTING = "가나다라마바사아자차카타파하";
 const GANADA = "ㄱㄴㄷㄹㅁㅂㅅㅇㅈㅊㅋㅌㅍㅎ";
 
+const ARABIC_ALPHA = [
+  "أ",
+  "ب",
+  "ت",
+  "ث",
+  "ج",
+  "ح",
+  "خ",
+  "د",
+  "ذ",
+  "ر",
+  "ز",
+  "س",
+  "ش",
+  "ص",
+  "ض",
+  "ط",
+  "ظ",
+  "ع",
+  "غ",
+  "ف",
+  "ق",
+  "ك",
+  "ل",
+  "م",
+  "ن",
+  "هـ",
+  "و",
+  "ي",
+];
+const ARABIC_ABJAD = [
+  "أ",
+  "ب",
+  "ج",
+  "د",
+  "هـ",
+  "و",
+  "ز",
+  "ح",
+  "ط",
+  "ي",
+  "ك",
+  "ل",
+  "م",
+  "ن",
+  "س",
+  "ع",
+  "ف",
+  "ص",
+  "ق",
+  "ر",
+  "ش",
+  "ت",
+  "ث",
+  "خ",
+  "ذ",
+  "ض",
+  "ظ",
+  "غ",
+];
+const HEBREW_ALPHA = [
+  "א",
+  "ב",
+  "ג",
+  "ד",
+  "ה",
+  "ו",
+  "ז",
+  "ח",
+  "ט",
+  "י",
+  "כ",
+  "ל",
+  "מ",
+  "נ",
+  "ס",
+  "ע",
+  "פ",
+  "צ",
+  "ק",
+  "ר",
+  "ש",
+  "ת",
+];
+
+function hebrewNumeral(n: number): string {
+  if (n < 1 || n > 999) return String(n);
+  const H_HUNDREDS = ["", "ק", "ר", "ש", "ת", "תק", "תר", "תש", "תת", "תתק"];
+  const H_TENS = ["", "י", "כ", "ל", "מ", "נ", "ס", "ע", "פ", "צ"];
+  const H_ONES = ["", "א", "ב", "ג", "ד", "ה", "ו", "ז", "ח", "ט"];
+  let out = "";
+  const hundreds = Math.floor(n / 100);
+  const remainder = n % 100;
+  if (hundreds > 0) out += H_HUNDREDS[hundreds] ?? "";
+  if (remainder === 15) {
+    out += "טו";
+  } else if (remainder === 16) {
+    out += "טז";
+  } else {
+    const tens = Math.floor(remainder / 10);
+    const ones = remainder % 10;
+    out += (H_TENS[tens] ?? "") + (H_ONES[ones] ?? "");
+  }
+  return out;
+}
+
 /** Fixed-glyph run tokens (kana, jamo): the counter indexes the table, past
  *  its end the decimal digits return. */
 function glyphRun(table: string, n: number): string {
@@ -213,6 +319,14 @@ export function formatNumber(format: string | undefined, n: number): string {
       return glyphRun(KOREAN_COUNTING, n);
     case "ganada":
       return glyphRun(GANADA, n);
+    case "arabicAlpha":
+      return n >= 1 && n <= ARABIC_ALPHA.length ? ARABIC_ALPHA[n - 1]! : String(n);
+    case "arabicAbjad":
+      return n >= 1 && n <= ARABIC_ABJAD.length ? ARABIC_ABJAD[n - 1]! : String(n);
+    case "hebrew1":
+      return n >= 1 && n <= HEBREW_ALPHA.length ? HEBREW_ALPHA[n - 1]! : String(n);
+    case "hebrew2":
+      return hebrewNumeral(n);
     case "numberInDash":
       return `- ${n} -`;
     case "ordinal":

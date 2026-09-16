@@ -127,10 +127,10 @@ export interface FlowOptions {
    *  page reports its content bottom via {@link FlowPage.contentBottomPx}.
    *  `contentHeightPx` is ignored. */
   unbounded?: boolean;
-  /** Section vertical alignment (w:vAlign) — underfull pages shift their
-   *  content down (center) or to the bottom. Word's "both" (justified
-   *  stretch) is not modeled; the projection drops it to top. */
-  verticalAlign?: "top" | "center" | "bottom";
+  /** Section vertical alignment (w:vAlign) — center, bottom, or both (justified stretch). */
+  verticalAlign?: "top" | "center" | "bottom" | "both";
+  /** Mirror margins (w:mirrorMargins) — swap inside and outside margins on even pages. */
+  mirrorMargins?: boolean;
 }
 
 /** Lay a block flow into pages. Always returns at least one page (an empty
@@ -157,8 +157,17 @@ function alignPageVertical(page: FlowPage, opts: FlowOptions): FlowPage {
   if (!mode || mode === "top" || opts.unbounded) return page;
   let ink = 0;
   for (const item of page.items) ink = Math.max(ink, item.yPx + item.block.heightPx);
-  const offset = mode === "center" ? (opts.contentHeightPx - ink) / 2 : opts.contentHeightPx - ink;
-  if (offset <= 0) return page;
+  const slack = opts.contentHeightPx - ink;
+  if (slack <= 0) return page;
+  if (mode === "both") {
+    if (page.items.length <= 1) return page;
+    const step = slack / (page.items.length - 1);
+    for (let i = 1; i < page.items.length; i++) {
+      page.items[i]!.yPx += step * i;
+    }
+    return page;
+  }
+  const offset = mode === "center" ? slack / 2 : slack;
   for (const item of page.items) item.yPx += offset;
   return page;
 }
@@ -346,15 +355,28 @@ export function* layoutSectionsIncremental(
 ): Generator<IncrementalPage> {
   // Merge continuous sections into their predecessor up front: a run is one
   // Flow instance, so "keeps flowing" must stay a single layout pass.
-  const runs: { blocks: LayoutBlock[]; opts: FlowOptions }[] = [];
+  const runs: { blocks: LayoutBlock[]; opts: FlowOptions; type?: FlowSection["type"] }[] = [];
   for (const section of sections) {
     const prev = runs[runs.length - 1];
     if (section.type === "continuous" && prev) prev.blocks.push(...section.blocks);
-    else runs.push({ blocks: [...section.blocks], opts: section.opts });
+    else runs.push({ blocks: [...section.blocks], opts: section.opts, type: section.type });
   }
   let laid = 0;
   let accumulatedEndnoteIds: { id: number; ordinal: number }[] = [];
   for (const [i, run] of runs.entries()) {
+    if (run.type === "evenPage") {
+      const nextPgNum = laid + 1;
+      if (nextPgNum % 2 !== 0) {
+        yield { page: { items: [] }, section: Math.max(0, i - 1) };
+        laid++;
+      }
+    } else if (run.type === "oddPage") {
+      const nextPgNum = laid + 1;
+      if (nextPgNum % 2 === 0) {
+        yield { page: { items: [] }, section: Math.max(0, i - 1) };
+        laid++;
+      }
+    }
     const isFinalSection = i === runs.length - 1;
     const flow = new Flow(
       {
@@ -372,7 +394,7 @@ export function* layoutSectionsIncremental(
     }
     flow.finish();
     for (const page of flow.takeSealed()) yield { page, section: i };
-    laid = flow.pageCount;
+    laid += flow.pageCount;
     if (run.opts.endnotePlacement !== "sectEnd") {
       accumulatedEndnoteIds = flow.collectedEndnoteIds;
     }
@@ -570,10 +592,15 @@ class Flow {
    *  when the projection carried it. Paragraph self-zones re-derive with
    *  their own −startY translation (paragraph-local Y). */
   private get wrapPage(): WrapPageGeometry | undefined {
-    const { pageWidthPx, pageHeightPx, contentLeftPx, contentTopPx } = this.opts;
+    const { pageWidthPx, pageHeightPx, contentLeftPx, contentTopPx, mirrorMargins } = this.opts;
+    const globalIndex = this.pageIndex + (this.opts.pageOffset ?? 0);
+    const effContentLeftPx =
+      mirrorMargins && globalIndex % 2 === 1 && pageWidthPx != null && contentLeftPx != null
+        ? pageWidthPx - contentLeftPx - this.opts.contentWidthPx
+        : contentLeftPx;
     return pageWidthPx != null &&
       pageHeightPx != null &&
-      contentLeftPx != null &&
+      effContentLeftPx != null &&
       contentTopPx != null
       ? {
           flowZeroPx: 0,
@@ -581,7 +608,7 @@ class Flow {
           contentWidthPx: this.opts.contentWidthPx,
           pageWidthPx,
           pageHeightPx,
-          contentLeftPx,
+          contentLeftPx: effContentLeftPx,
           contentTopPx,
           columnLeftPx: this.col.xPx,
         }
@@ -1081,7 +1108,7 @@ class Flow {
    *  or no page geometry. */
   private packBalloons(items: readonly FlowItem[]): LaidOutBalloon[] | undefined {
     if (this.opts.unbounded || items.length === 0) return undefined;
-    const { pageWidthPx, contentLeftPx, contentWidthPx } = this.opts;
+    const { pageWidthPx, contentLeftPx, contentWidthPx, mirrorMargins } = this.opts;
     if (pageWidthPx == null || contentLeftPx == null || contentWidthPx == null) return undefined;
     const anchors: { yPx: number; anchor: LayoutBalloonAnchor }[] = [];
     for (const item of items) {
@@ -1092,8 +1119,13 @@ class Flow {
       }
     }
     if (anchors.length === 0) return undefined;
+    const globalIndex = this.pageIndex + (this.opts.pageOffset ?? 0);
+    const effContentLeftPx =
+      mirrorMargins && globalIndex % 2 === 1
+        ? pageWidthPx - contentLeftPx - contentWidthPx
+        : contentLeftPx;
     const available =
-      pageWidthPx - contentLeftPx - contentWidthPx - BALLOON_CONNECTOR_PX - BALLOON_EDGE_PX;
+      pageWidthPx - effContentLeftPx - contentWidthPx - BALLOON_CONNECTOR_PX - BALLOON_EDGE_PX;
     const widthPx = Math.max(BALLOON_MIN_WIDTH_PX, Math.min(BALLOON_MAX_WIDTH_PX, available));
     anchors.sort((a, b) => a.yPx - b.yPx);
     const balloons: LaidOutBalloon[] = [];

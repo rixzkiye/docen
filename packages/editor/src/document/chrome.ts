@@ -274,6 +274,7 @@ export const documentTemplate = html`
   <docen-inspect-dialog part="inspect"></docen-inspect-dialog>
   <docen-template-dialog part="template"></docen-template-dialog>
   <docen-modify-style-dialog part="modify-style"></docen-modify-style-dialog>
+  <docen-new-style-dialog part="new-style"></docen-new-style-dialog>
   <docen-hyphenation-dialog part="hyphenation"></docen-hyphenation-dialog>
   <docen-tabs-dialog part="tabs"></docen-tabs-dialog>
   <docen-find-replace-dialog></docen-find-replace-dialog>

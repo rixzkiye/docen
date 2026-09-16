@@ -69,6 +69,9 @@ declare module "@tiptap/core" {
       "justify-distribute": () => ReturnType;
       "indent-increase": () => ReturnType;
       "indent-decrease": () => ReturnType;
+      "direction-ltr": () => ReturnType;
+      "direction-rtl": () => ReturnType;
+      "set-paragraph-direction": (direction: "ltr" | "rtl") => ReturnType;
       "line-spacing": (mult?: string) => ReturnType;
       "paragraph-dialog-apply": (patch?: ParagraphDialogPatch) => ReturnType;
       "paragraph-dialog-default": (patch?: ParagraphDialogPatch) => ReturnType;
@@ -130,6 +133,7 @@ declare module "@tiptap/core" {
       link: (href?: string) => ReturnType;
       style: (styleId?: string) => ReturnType;
       "modify-style": (patch?: ModifyStylePatch) => ReturnType;
+      "new-style": (def?: NewStyleDefinition) => ReturnType;
       "style-set": (value?: string) => ReturnType;
       "add-text": (value?: string) => ReturnType;
       // Editing
@@ -226,6 +230,9 @@ export const WIRED_DISPATCH: ReadonlySet<string> = new Set([
   "justify-distribute",
   "indent-increase",
   "indent-decrease",
+  "direction-ltr",
+  "direction-rtl",
+  "set-paragraph-direction",
   "line-spacing",
   "shading",
   "font-color",
@@ -276,6 +283,7 @@ export const WIRED_DISPATCH: ReadonlySet<string> = new Set([
   "link",
   "style",
   "modify-style",
+  "new-style",
   "style-set",
   "add-text",
   "undo",
@@ -386,6 +394,17 @@ export interface ModifyStylePatch {
   quickFormat?: boolean;
   /** Re-define on direct format (w:autoRedefine); undefined = untouched. */
   autoRedefine?: boolean;
+}
+
+export interface NewStyleDefinition {
+  id?: string;
+  name: string;
+  type?: "paragraph" | "character";
+  basedOn?: string | null;
+  next?: string | null;
+  quickFormat?: boolean;
+  autoRedefine?: boolean;
+  patch?: ModifyStylePatch;
 }
 
 const ALIGN_VALUES = ["left", "center", "right", "both", "distribute"] as const;
@@ -852,6 +871,22 @@ function setParagraphAlignment(state: EditorState, tr: Transaction, alignment: s
   if (!paras.length) return false;
   for (const { pos, node } of paras) {
     tr.setNodeMarkup(pos, undefined, { ...node.attrs, alignment });
+  }
+  return true;
+}
+
+/** Stamp the reading/paragraph direction (LTR / RTL via bidirectional attribute)
+ *  onto every selected paragraph directly. */
+function setParagraphDirection(
+  state: EditorState,
+  tr: Transaction,
+  direction: "ltr" | "rtl",
+): boolean {
+  const paras = selectedParagraphs(state);
+  if (!paras.length) return false;
+  const bidi = direction === "rtl";
+  for (const { pos, node } of paras) {
+    tr.setNodeMarkup(pos, undefined, { ...node.attrs, bidirectional: bidi });
   }
   return true;
 }
@@ -2365,6 +2400,18 @@ export const DocumentCommands = Extension.create({
           }
           return touched;
         },
+      "direction-ltr":
+        () =>
+        ({ state, tr }) =>
+          setParagraphDirection(state, tr, "ltr"),
+      "direction-rtl":
+        () =>
+        ({ state, tr }) =>
+          setParagraphDirection(state, tr, "rtl"),
+      "set-paragraph-direction":
+        (direction: "ltr" | "rtl") =>
+        ({ state, tr }) =>
+          setParagraphDirection(state, tr, direction),
       // Line spacing as a multiple of single (1.0/1.15/1.5/2.0); preserves
       // existing before/after. The split's main click carries no value — it
       // applies single spacing (Word's default). The dropdown's trailing
@@ -3643,6 +3690,40 @@ export const DocumentCommands = Extension.create({
             defaults[key] = withModifyStylePatch(entry, patch);
             styles.default = defaults;
           }
+          tr.step(new DocAttrStep("styles", styles));
+          return true;
+        },
+      "new-style":
+        (def) =>
+        ({ tr }) => {
+          if (!def?.name) return false;
+          const name = def.name.trim();
+          if (!name) return false;
+          const styles = { ...((tr.doc.attrs.styles ?? {}) as Record<string, unknown>) };
+          const type = def.type ?? "paragraph";
+          const listProp = type === "character" ? "characterStyles" : "paragraphStyles";
+          const list = ((styles[listProp] ?? []) as Record<string, unknown>[]).slice();
+
+          const baseId = def.id || name.replace(/[^a-zA-Z0-9]/g, "") || "Style" + (list.length + 1);
+          let styleId = baseId;
+          let counter = 1;
+          while (list.some((s) => (s as Record<string, unknown>).id === styleId)) {
+            styleId = `${baseId}${counter++}`;
+          }
+
+          let entry: Record<string, unknown> = {
+            id: styleId,
+            name,
+            type,
+            ...(def.basedOn ? { basedOn: def.basedOn } : {}),
+            ...(type === "paragraph" && def.next ? { next: def.next } : {}),
+            ...(def.quickFormat ? { qFormat: true } : {}),
+          };
+          if (def.patch) {
+            entry = withModifyStylePatch(entry, def.patch);
+          }
+          list.push(entry);
+          styles[listProp] = list;
           tr.step(new DocAttrStep("styles", styles));
           return true;
         },

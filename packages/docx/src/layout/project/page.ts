@@ -173,9 +173,11 @@ export function projectFlowBox(properties: unknown): ProjectedFlowBox {
     contentLeftPx: left + gutter,
     contentTopPx: top,
     linePitchPx,
-    // Word's "both" (justified vertical stretch) is unmodeled — it flows as top.
     verticalAlign:
-      sp.verticalAlign === "center" || sp.verticalAlign === "bottom" ? sp.verticalAlign : undefined,
+      sp.verticalAlign === "center" || sp.verticalAlign === "bottom" || sp.verticalAlign === "both"
+        ? sp.verticalAlign
+        : undefined,
+    mirrorMargins: sp.mirrorMargins === true ? true : undefined,
   };
 }
 

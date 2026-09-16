@@ -128,6 +128,10 @@ function projectCell(c: TableCellOptions, ctx: ProjectContext, rowspan?: number)
     fill,
     verticalAlign:
       c.verticalAlign === "center" || c.verticalAlign === "bottom" ? c.verticalAlign : undefined,
+    textDirection:
+      c.textDirection === "tbRl" || c.textDirection === "btLr" || c.textDirection === "lrTb"
+        ? c.textDirection
+        : undefined,
     blocks: c.children
       .map((child) => projectChild(child, ctx))
       .filter((b): b is LayoutBlock => b !== null),

@@ -93,6 +93,13 @@ export function layoutParagraph(
     lineHeight: ({ naturalPx }) =>
       spec ? resolveLine(spec, naturalPx, pitch) : snapLine(naturalPx, pitch),
     startY: ctx?.startY,
+    bidi: para.bidi,
+    kinsoku: para.kinsoku,
+    overflowPunct: para.overflowPunctuation,
+    compressPunctuation: para.compressPunctuation,
+    wordWrap: para.wordWrap,
+    autoSpaceDE: para.autoSpaceDE,
+    textAlignment: para.textAlignment,
     // Absolute zones come from whoever stacks the blocks: the flow passes the
     // page's float zones, the table cell stacker accumulates the cell's own
     // (a cell's width is its column — page floats never reach it because the
@@ -199,6 +206,8 @@ export function layoutParagraph(
     markSizePx: para.markSizePx,
     preserveSpaces: true,
     sectionEnd: para.sectionEnd,
+    bidi: para.bidi,
+    textDirection: para.textDirection,
     formatChange: para.formatChange,
     balloons: para.balloons,
   };

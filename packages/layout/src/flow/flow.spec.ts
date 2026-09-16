@@ -246,6 +246,19 @@ describe("layoutFlow", () => {
     expect(pages[1].items[0].yPx).toBe(0);
   });
 
+  it("stretches items evenly when verticalAlign is both", () => {
+    // 100px content box; two 20px paragraphs (total height = 40px, slack = 60px).
+    // With verticalAlign: "both", item 0 is at y=0 and item 1 is pushed by 60px (from y=20 to y=80).
+    const pages = layoutFlow(
+      [para(1), para(1)],
+      { contentWidthPx: 300, contentHeightPx: 100, verticalAlign: "both" },
+      measurer,
+    );
+    expect(pages).toHaveLength(1);
+    expect(pages[0].items[0].yPx).toBe(0);
+    expect(pages[0].items[1].yPx).toBe(80);
+  });
+
   it("honors pageBreakBefore", () => {
     const pages = flow([para(1), para(1, { pageBreakBefore: true })], 300);
     expect(pages).toHaveLength(2);
@@ -1075,6 +1088,40 @@ describe("layoutFlowSections", () => {
     expect(run.pages).toHaveLength(2);
     expect(run.pages[0].items[0].yPx).toBe(30);
     expect(run.pages[1].items[0].yPx).toBe(30);
+  });
+
+  it("inserts a blank page for evenPage section break when previous ends on odd page", () => {
+    // Section 0 has 1 page (physical page 1, odd). Section 1 is evenPage -> should insert blank page 2, so section 1 starts on page 3?
+    // Wait: next page is page 2 (even). So NO blank page needed for evenPage after page 1!
+    // But if Section 0 has 2 pages (pages 1 and 2): next page is page 3 (odd).
+    // evenPage needs to start on even page (page 4), so blank page is inserted at page 3!
+    const run = layoutFlowSections(
+      [
+        { blocks: [para(6)], opts: opts(100) }, // 6 paras of 20px in 100px -> 2 pages (page 1: 5 paras, page 2: 1 para)
+        { blocks: [para(1)], opts: opts(100), type: "evenPage" },
+      ],
+      measurer,
+    );
+    // Section 0 = 2 pages, blank page = 1, Section 1 = 1 page -> total 4 pages.
+    expect(run.pages).toHaveLength(4);
+    expect(run.sectionOfPage).toEqual([0, 0, 0, 1]);
+    expect(run.pages[2].items).toHaveLength(0); // blank page
+  });
+
+  it("inserts a blank page for oddPage section break when previous ends on even page", () => {
+    // Section 0 has 1 page (page 1, odd). Next is page 2 (even).
+    // oddPage needs to start on odd page (page 3) -> blank page inserted at page 2.
+    const run = layoutFlowSections(
+      [
+        { blocks: [para(1)], opts: opts(100) }, // 1 page
+        { blocks: [para(1)], opts: opts(100), type: "oddPage" },
+      ],
+      measurer,
+    );
+    // Section 0 = 1 page, blank page = 1, Section 1 = 1 page -> total 3 pages.
+    expect(run.pages).toHaveLength(3);
+    expect(run.sectionOfPage).toEqual([0, 0, 1]);
+    expect(run.pages[1].items).toHaveLength(0); // blank page
   });
 });
 

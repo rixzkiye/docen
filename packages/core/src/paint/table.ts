@@ -1,5 +1,5 @@
 import { tableGridOf, type LaidOutTable, type LayoutBorderEdge } from "@docen/layout";
-import { Line, Rect, type IGroup } from "leafer-ui";
+import { Group, Line, Rect, type IGroup } from "leafer-ui";
 
 import { paintBlock } from "../painter";
 import type { PaintContext } from "./context";
@@ -20,6 +20,8 @@ export function paintTable(
   const nCols = table.columnWidthsPx.length;
 
   for (const p of cells) {
+    const cellW = colX[p.col + p.spanW]! - colX[p.col]!;
+    const cellH = rowY[p.row + p.spanH]! - rowY[p.row]!;
     // Shading covers the merged box; content anchors to the start row (the
     // engine measured it there).
     if (p.cell.fill) {
@@ -27,19 +29,52 @@ export function paintTable(
         new Rect({
           x: x + colX[p.col]!,
           y: y + rowY[p.row]!,
-          width: colX[p.col + p.spanW]! - colX[p.col]!,
-          height: rowY[p.row + p.spanH]! - rowY[p.row]!,
+          width: cellW,
+          height: cellH,
           fill: `#${p.cell.fill}`,
         }),
       );
     }
     const contentX = x + p.contentXPx;
     const contentY = y + p.contentYPx;
-    for (const stacked of p.cell.stack) {
-      paintBlock(tree, stacked.block, contentX, contentY + stacked.yPx, ctx, {
-        width: p.cell.innerWidthPx,
-        inCell: true,
+    const dir = p.cell.textDirection;
+    if (dir === "tbRl") {
+      const rIns = p.cell.insets?.right ?? 0;
+      const tIns = p.cell.insets?.top ?? 0;
+      const group = new Group({
+        x: x + colX[p.col]! + cellW - rIns,
+        y: y + rowY[p.row]! + tIns,
+        rotation: 90,
       });
+      for (const stacked of p.cell.stack) {
+        paintBlock(group, stacked.block, 0, stacked.yPx, ctx, {
+          width: p.cell.innerWidthPx,
+          inCell: true,
+        });
+      }
+      tree.add(group);
+    } else if (dir === "btLr") {
+      const lIns = p.cell.insets?.left ?? 0;
+      const bIns = p.cell.insets?.bottom ?? 0;
+      const group = new Group({
+        x: x + colX[p.col]! + lIns,
+        y: y + rowY[p.row]! + cellH - bIns,
+        rotation: -90,
+      });
+      for (const stacked of p.cell.stack) {
+        paintBlock(group, stacked.block, 0, stacked.yPx, ctx, {
+          width: p.cell.innerWidthPx,
+          inCell: true,
+        });
+      }
+      tree.add(group);
+    } else {
+      for (const stacked of p.cell.stack) {
+        paintBlock(tree, stacked.block, contentX, contentY + stacked.yPx, ctx, {
+          width: p.cell.innerWidthPx,
+          inCell: true,
+        });
+      }
     }
   }
 

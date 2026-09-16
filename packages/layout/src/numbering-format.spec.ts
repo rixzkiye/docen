@@ -55,6 +55,28 @@ describe("formatNumber", () => {
     expect(formatNumber("ordinalText", 100)).toBe("one hundredth");
   });
 
+  it("renders the Arabic and Hebrew sequences", () => {
+    expect(formatNumber("arabicAlpha", 1)).toBe("أ");
+    expect(formatNumber("arabicAlpha", 2)).toBe("ب");
+    expect(formatNumber("arabicAlpha", 28)).toBe("ي");
+    expect(formatNumber("arabicAlpha", 29)).toBe("29");
+
+    expect(formatNumber("arabicAbjad", 1)).toBe("أ");
+    expect(formatNumber("arabicAbjad", 3)).toBe("ج");
+    expect(formatNumber("arabicAbjad", 28)).toBe("غ");
+
+    expect(formatNumber("hebrew1", 1)).toBe("א");
+    expect(formatNumber("hebrew1", 22)).toBe("ת");
+    expect(formatNumber("hebrew1", 23)).toBe("23");
+
+    expect(formatNumber("hebrew2", 1)).toBe("א");
+    expect(formatNumber("hebrew2", 14)).toBe("יד");
+    expect(formatNumber("hebrew2", 15)).toBe("טו");
+    expect(formatNumber("hebrew2", 16)).toBe("טז");
+    expect(formatNumber("hebrew2", 18)).toBe("יח");
+    expect(formatNumber("hebrew2", 123)).toBe("קכג");
+  });
+
   it("keeps romanNumeral exported for the footnote ordinals", () => {
     expect(romanNumeral(9, false)).toBe("ix");
   });

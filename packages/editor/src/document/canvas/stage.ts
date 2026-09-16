@@ -243,7 +243,18 @@ export class CanvasStage {
   /** The section a page belongs to (its flow box + furniture). */
   private sectionAt(page: number): CanvasStageSection {
     const i = this.ctx.sectionOfPage[page] ?? 0;
-    return this.ctx.sections[i] ?? this.ctx.sections[0]!;
+    const sect = this.ctx.sections[i] ?? this.ctx.sections[0]!;
+    if (sect.flow.mirrorMargins && page % 2 === 1) {
+      const left = sect.flow.pageWidthPx - sect.flow.contentLeftPx - sect.flow.contentWidthPx;
+      return {
+        ...sect,
+        flow: {
+          ...sect.flow,
+          contentLeftPx: left,
+        },
+      };
+    }
+    return sect;
   }
 
   constructor(

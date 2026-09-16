@@ -31,6 +31,8 @@ export interface LayoutTableCell {
   fill?: string;
   /** w:vAlign — the content's placement when the row is taller than it. */
   verticalAlign?: "top" | "center" | "bottom";
+  /** w:textDirection — cell text flow direction (horizontal vs vertical). */
+  textDirection?: "lrTb" | "tbRl" | "btLr";
   blocks: LayoutBlock[];
 }
 

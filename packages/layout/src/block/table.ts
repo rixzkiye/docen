@@ -132,6 +132,7 @@ export function layoutTable(
         borders: cell.borders,
         fill: cell.fill,
         innerWidthPx,
+        textDirection: cell.textDirection,
         stack: stacked.stack,
       };
     });

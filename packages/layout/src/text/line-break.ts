@@ -120,6 +120,20 @@ export interface PackLinesOptions {
   /** The document's default tab-grid pitch in px (w:defaultTabStop); absent =
    *  720 twips, Word's default. */
   defaultTabStopPx?: number;
+  /** w:bidi — right-to-left line placement. */
+  bidi?: boolean;
+  /** w:kinsoku — enforce CJK line breaking rules (default true). */
+  kinsoku?: boolean;
+  /** w:overflowPunct — allow trailing closing punctuation to hang into margin (default true). */
+  overflowPunct?: boolean;
+  /** w:characterSpacingControl — compress CJK punctuation advances (default true). */
+  compressPunctuation?: boolean;
+  /** w:wordWrap — allow breaking CJK between any characters (default true). */
+  wordWrap?: boolean;
+  /** w:autoSpaceDE — automatically adjust space between Asian and Latin text (default true). */
+  autoSpaceDE?: boolean;
+  /** w:textAlignment — vertical font alignment on the line. */
+  textAlignment?: "auto" | "baseline" | "bottom" | "center" | "top";
 }
 
 /** Word's defaultTabStop: 720 twips = 0.5 inch = 48 px at 96 dpi. */
@@ -214,6 +228,7 @@ function groupOf(
   to: number,
   closer: { tab: FlowGroup["tab"]; hardBreak: boolean; closerIndex: number },
   measurer: TextMeasurer,
+  autoSpaceDE?: boolean,
 ): FlowGroup {
   const items: RichInlineItem[] = [];
   const itemInline: number[] = [];
@@ -276,17 +291,22 @@ function groupOf(
       const kern = kerningActive(item.style);
       const baseSize = vertAlignedSizePx(item.style);
       const { segments } = measurer.analyze(item.text, item.style);
-      for (const seg of segments) {
+      for (let sIdx = 0; sIdx < segments.length; sIdx++) {
+        const seg = segments[sIdx]!;
         const pieces = item.ruby
           ? [{ source: seg.text, display: displayTextOf(seg.text, item.style.caps), small: false }]
           : capsPiecesOf(seg.text, item.style.caps);
         for (const piece of pieces) {
           const sizePx = piece.small ? baseSize * SMALL_CAPS_SCALE : baseSize;
+          const isBoundary =
+            autoSpaceDE !== false && sIdx > 0 && segments[sIdx - 1]!.isCjk !== seg.isCjk;
+          const extraWidth = isBoundary ? Math.round(sizePx * 0.25) : undefined;
           push(
             {
               text: piece.display,
               font: cssFontAtSize(item.style, familyOfSlot(item.style.family, seg.isCjk), sizePx),
               letterSpacing: item.style.letterSpacingPx,
+              ...(extraWidth ? { extraWidth } : {}),
               ...(scale !== 1 ? { widthScale: scale } : {}),
               ...(kern ? { fontKerning: true } : {}),
             },
@@ -364,9 +384,11 @@ function sourceSliceOf(
 
 /** Split the inline flow at tab and break atoms into pretext-prepared
  *  groups; the final group (no closing atom) runs to the flow's end. */
-function buildGroups(inline: LayoutInline[], measurer: TextMeasurer): FlowGroup[] {
-  const cached = groupsCache.get(inline);
-  if (cached) return cached;
+function buildGroups(
+  inline: LayoutInline[],
+  measurer: TextMeasurer,
+  autoSpaceDE?: boolean,
+): FlowGroup[] {
   const groups: FlowGroup[] = [];
   let start = 0;
   for (let i = 0; i < inline.length; i++) {
@@ -384,6 +406,7 @@ function buildGroups(inline: LayoutInline[], measurer: TextMeasurer): FlowGroup[
               }
             : { tab: null, hardBreak: true, closerIndex: i },
           measurer,
+          autoSpaceDE,
         ),
       );
       start = i + 1;
@@ -396,6 +419,7 @@ function buildGroups(inline: LayoutInline[], measurer: TextMeasurer): FlowGroup[
       inline.length,
       { tab: null, hardBreak: false, closerIndex: inline.length - 1 },
       measurer,
+      autoSpaceDE,
     ),
   );
   // Right/decimal-stop lookahead: each tabbed group's following width is the natural
@@ -728,7 +752,7 @@ function overflowPunctAfter(
 export function packLines(inline: LayoutInline[], opts: PackLinesOptions): PackedLine[] {
   const { measurer } = opts;
   if (inline.length === 0) return [];
-  const groups = buildGroups(inline, measurer);
+  const groups = buildGroups(inline, measurer, opts.autoSpaceDE);
   const cursors: (RichInlineCursor | undefined)[] = groups.map(() => undefined);
   const done = groups.map(() => false);
   // Per prepared item consumption of its source slice (see sourceSliceOf) —
@@ -786,7 +810,7 @@ export function packLines(inline: LayoutInline[], opts: PackLinesOptions): Packe
         // width, so the re-query's break sits at or past the closer — but a
         // narrow glyph after it could still sneak in, so the hang is kept
         // only when the re-queried line really ends with a closer.
-        if (range && range.end.itemIndex < group.items.length) {
+        if (opts.overflowPunct !== false && range && range.end.itemIndex < group.items.length) {
           const hang = overflowPunctAfter(group, range);
           if (hang && hang.leadPx <= query - range.width + 0.01) {
             const re = layoutNextRichInlineLineRange(
@@ -810,7 +834,12 @@ export function packLines(inline: LayoutInline[], opts: PackLinesOptions): Packe
         }
         // The advance squeeze (see SQUEEZE_MAX): tried after the hang — a
         // hanging closer already fits its line, squeezing is moot there.
-        if (range && range.end.itemIndex < group.items.length && !squeeze) {
+        if (
+          opts.compressPunctuation !== false &&
+          range &&
+          range.end.itemIndex < group.items.length &&
+          !squeeze
+        ) {
           const probe = layoutNextRichInlineLineRange(group.prepared, 1e9, range.end);
           if (probe) {
             const probeFrags = materializeRichInlineLineRange(group.prepared, probe).fragments;
@@ -1021,6 +1050,12 @@ export function packLines(inline: LayoutInline[], opts: PackLinesOptions): Packe
     // middle), every group is consumed, and the line doesn't end at a hard
     // break — a soft-break line is a logical-line end, not the paragraph's.
     const final = !brokeMidGroup && done.every(Boolean) && inline[endInlineIndex]?.kind !== "break";
+
+    if (opts.bidi && lineItems.length > 0) {
+      for (const it of lineItems) {
+        it.xPx = maxWidth - (it.xPx + it.widthPx);
+      }
+    }
 
     lines.push({
       items: lineItems,

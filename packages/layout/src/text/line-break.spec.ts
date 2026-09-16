@@ -93,6 +93,25 @@ describe("packLines", () => {
     // A genuinely overflowing run still wraps — the 4% bound holds.
     const over = pack([text("测试机关名称、下级行政管理部门测试人员名单", cjk)], 269);
     expect(over.length).toBeGreaterThan(1);
+
+    // compressPunctuation: false disables squeeze and wraps onto two lines
+    const noSqueeze = pack([text("测试机关名称、下级行政管理部门测试", cjk)], 269, {
+      compressPunctuation: false,
+    });
+    expect(noSqueeze.length).toBeGreaterThan(1);
+    expect(noSqueeze[0].advanceScale).toBeUndefined();
+  });
+
+  it("respects overflowPunct: false by disabling margin hanging", () => {
+    const lines = pack([text("中文测试字、下一行", cjk)], 88, { overflowPunct: false });
+    expect(lines[0].hangPx).toBeUndefined();
+  });
+
+  it("positions items right-to-left when bidi is enabled", () => {
+    const lines = pack([text("Hello", latin)], 200, { bidi: true });
+    expect(lines).toHaveLength(1);
+    const item = lines[0].items[0]!;
+    expect(item.xPx).toBe(200 - item.widthPx);
   });
 
   it("shrinks only the first line by the first-line indent", () => {

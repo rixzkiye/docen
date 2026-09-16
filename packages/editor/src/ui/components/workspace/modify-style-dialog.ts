@@ -353,7 +353,7 @@ const template = html<DocenModifyStyleDialog>`
 type FluentCheckbox = HTMLElement & { checked?: boolean };
 
 /** Word's alignment single-pick group: patch value, icon, tooltip key. */
-const ALIGN_GROUP: ReadonlyArray<readonly [string, string, string]> = [
+export const ALIGN_GROUP: ReadonlyArray<readonly [string, string, string]> = [
   ["left", "align-left", "ribbon.cmd.align-left"],
   ["center", "align-center", "ribbon.cmd.align-center"],
   ["right", "align-right", "ribbon.cmd.align-right"],
@@ -362,7 +362,7 @@ const ALIGN_GROUP: ReadonlyArray<readonly [string, string, string]> = [
 
 /** The line-spacing single-pick group: twips-of-a-line, the three-bar glyph
  *  (wider bar gaps = the larger multiple), tooltip key. */
-const LINE_GROUP: ReadonlyArray<readonly [number, string, string]> = [
+export const LINE_GROUP: ReadonlyArray<readonly [number, string, string]> = [
   [240, "M2 4.5h12M2 8h12M2 11.5h12", "modifyStyleDialog.lineSingle"],
   [360, "M2 3.5h12M2 8h12M2 12.5h12", "modifyStyleDialog.line15"],
   [480, "M2 2.5h12M2 8h12M2 13.5h12", "modifyStyleDialog.lineDouble"],

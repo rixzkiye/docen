@@ -116,6 +116,22 @@ export interface LayoutParagraph {
   keepNext?: boolean;
   widowControl?: boolean;
   pageBreakBefore?: boolean;
+  /** w:bidi — right-to-left paragraph direction. */
+  bidi?: boolean;
+  /** w:textDirection — text flow direction (horizontal vs vertical). */
+  textDirection?: "lrTb" | "tbRl" | "btLr";
+  /** w:kinsoku — apply CJK line breaking rules (default true). */
+  kinsoku?: boolean;
+  /** w:overflowPunct — trailing closing punctuation hangs past right margin (default true). */
+  overflowPunctuation?: boolean;
+  /** w:characterSpacingControl — compress CJK punctuation advances (default true). */
+  compressPunctuation?: boolean;
+  /** w:wordWrap — CJK break between any characters, Latin break on word boundaries (default true). */
+  wordWrap?: boolean;
+  /** w:autoSpaceDE — automatically adjust space between Asian text and Latin (default true). */
+  autoSpaceDE?: boolean;
+  /** w:textAlignment — vertical alignment of runs with differing font sizes on line. */
+  textAlignment?: "auto" | "baseline" | "bottom" | "center" | "top";
   /** The paragraph closes its section (carries the sectPr): the painter swaps
    *  its ¶ for Word's "─────分节符(下一页)─────" mark row. The break type
    *  labels the mark ("连续"/"偶数页"/"奇数页" variants); true and absent both

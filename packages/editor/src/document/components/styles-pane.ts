@@ -110,6 +110,7 @@ const styles = css`
 const template = html<DocenStylesPane>`
   <div class="list" ${ref("listEl")} part="list"></div>
   <div class="footer">
+    <fluent-button ${ref("newBtn")} @click="${(x) => x.emitNew()}"></fluent-button>
     <fluent-button ${ref("modifyBtn")} @click="${(x) => x.emitModify()}"></fluent-button>
     <fluent-button ${ref("inspectorBtn")} @click="${(x) => x.toggleInspector()}"></fluent-button>
   </div>
@@ -130,6 +131,7 @@ const template = html<DocenStylesPane>`
 @customElement({ name: "docen-styles-pane", template, styles })
 class DocenStylesPane extends FASTElement {
   @observable listEl?: HTMLElement;
+  @observable newBtn?: HTMLElement;
   @observable modifyBtn?: HTMLElement;
   @observable inspectorBtn?: HTMLElement;
 
@@ -239,6 +241,10 @@ class DocenStylesPane extends FASTElement {
 
   /** Template-bound (public — the FAST template cannot reach a #private
    *  member): the footer buttons. */
+  emitNew(): void {
+    this.$emit("new-style");
+  }
+
   emitModify(): void {
     this.$emit("modify-style", this.#selectedId);
   }
@@ -249,6 +255,7 @@ class DocenStylesPane extends FASTElement {
   }
 
   #applyLabels(): void {
+    if (this.newBtn) this.newBtn.textContent = t("stylesPane.newStyle", this);
     if (this.modifyBtn) this.modifyBtn.textContent = t("stylesPane.modify", this);
     if (this.inspectorBtn)
       this.inspectorBtn.textContent =

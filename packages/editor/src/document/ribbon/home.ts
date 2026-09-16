@@ -184,6 +184,8 @@ export const homeTab = (styles?: StylesOptions | null): RibbonTab =>
             }),
             btn("indent-decrease", "indent-decrease", { iconOnly: true }),
             btn("indent-increase", "indent-increase", { iconOnly: true }),
+            btn("direction-ltr", "direction-ltr", { iconOnly: true }),
+            btn("direction-rtl", "direction-rtl", { iconOnly: true }),
             split("two-in-one", "two-lines-in-one", parsedItems(chineseLayoutItems()), {
               iconOnly: true,
             }),

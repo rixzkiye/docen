@@ -434,7 +434,7 @@ export function paintParagraph(
     if (changeColor) {
       tree.add(
         new Rect({
-          x: x - 5,
+          x: para.bidi ? boxRight + 3 : x - 5,
           y: lineY,
           width: 2,
           height: Math.max(1, line.heightPx),

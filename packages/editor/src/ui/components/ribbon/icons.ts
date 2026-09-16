@@ -134,6 +134,8 @@ import textIndentIncrease from "@fluentui/svg-icons/icons/text_indent_increase_2
 import textItalic from "@fluentui/svg-icons/icons/text_italic_24_regular.svg?raw";
 import textLineSpacing from "@fluentui/svg-icons/icons/text_line_spacing_24_regular.svg?raw";
 import textMore from "@fluentui/svg-icons/icons/text_more_24_regular.svg?raw";
+import textParagraphDirectionLeft from "@fluentui/svg-icons/icons/text_paragraph_direction_left_24_regular.svg?raw";
+import textParagraphDirectionRight from "@fluentui/svg-icons/icons/text_paragraph_direction_right_24_regular.svg?raw";
 import textProofingTools from "@fluentui/svg-icons/icons/text_proofing_tools_24_regular.svg?raw";
 import textStrikethrough from "@fluentui/svg-icons/icons/text_strikethrough_24_regular.svg?raw";
 import textSubscript from "@fluentui/svg-icons/icons/text_subscript_24_regular.svg?raw";
@@ -261,6 +263,10 @@ const RIBBON_ICONS: Record<string, string> = {
   "table-stack-left": tableStackLeft,
   "table-stack-right": tableStackRight,
   "text-direction": textDirectionVertical,
+  "direction-ltr": textParagraphDirectionRight,
+  "direction-rtl": textParagraphDirectionLeft,
+  "text-direction-ltr": textParagraphDirectionRight,
+  "text-direction-rtl": textParagraphDirectionLeft,
   picture: image,
   "insert-picture": imageAdd,
   shapes,

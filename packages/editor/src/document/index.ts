@@ -82,6 +82,7 @@ import type {
 import { proofingLanguageName } from "../ui/components/workspace/language-dialog";
 import type { LinkValues } from "../ui/components/workspace/link-dialog";
 import type { StyleChoice, ModifyStyleState } from "../ui/components/workspace/modify-style-dialog";
+import type { NewStyleState } from "../ui/components/workspace/new-style-dialog";
 import type {
   NoteKindSettings,
   NoteSettingsValues,
@@ -107,13 +108,13 @@ import {
   type LaidFurnitureSection,
   layFurnitureSections,
 } from "./canvas/stage";
+import { documentStyles, documentTemplate, escapeHtml } from "./chrome";
 // Side-effect: register the document-specific UI components moved out of the
 // shared ui/ barrel — <docen-format-pane> (properties fallback),
 // <docen-outline> (navigation Headings tab), <docen-styles-pane> (Styles).
 import "./components/format-pane";
 import "./components/outline";
 import "./components/styles-pane";
-import { documentStyles, documentTemplate, escapeHtml } from "./chrome";
 import { ClipboardCommands } from "./commands/clipboard";
 import { CommentsCommands } from "./commands/comments";
 import { DesignCommands } from "./commands/design";
@@ -127,6 +128,7 @@ import { SectionCommands } from "./commands/sections";
 import { SpellingCommands } from "./commands/spelling";
 import type { StylesInspectorData, StylesPaneState } from "./components/styles-pane";
 import { extractPdfPageLayers, pagesToPdf } from "./export-pdf";
+import type { NewStyleDefinition } from "./extensions/commands";
 import type { ModifyStylePatch, ParagraphDialogPatch } from "./extensions/commands";
 import {
   chartMenuValueOf,
@@ -1358,6 +1360,33 @@ class DocenDocument extends AddinHost<Editor> {
     dialog.show(state);
   }
 
+  /** Prefill and open the New Style dialog. */
+  #openNewStyle(): void {
+    const dialog = this.shadowRoot?.querySelector("docen-new-style-dialog") as
+      | (HTMLElement & { show(state: NewStyleState): void })
+      | null;
+    const editor = this.editor;
+    if (!dialog || !editor) return;
+    const styles = this.#docStyles(editor);
+    const byId = styles ? indexParagraphStyles(styles) : new Map();
+    const choices: StyleChoice[] = [...byId.entries()]
+      .map(([cid, cs]) => ({ id: cid, name: this.#styleDisplayName(cid, cs.name) }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+
+    let num = 1;
+    while ([...byId.values()].some((s) => s.name?.toLowerCase() === `style ${num}`.toLowerCase())) {
+      num++;
+    }
+
+    dialog.show({
+      choices,
+      defaultName: `Style ${num}`,
+      type: "paragraph",
+      basedOn: "Normal",
+      next: "Normal",
+    });
+  }
+
   /** The description under the preview — the style's own definition read out
    *  the way Word's description box does: the basedOn/next pointers, then the
    *  comma list of the formatting this dialog edits. */
@@ -1790,6 +1819,8 @@ class DocenDocument extends AddinHost<Editor> {
       this.editor?.commands.style(event.detail);
       this.#bridge?.focus();
     }) as EventListener);
+    this.shadowRoot!.querySelector("docen-styles-pane")?.addEventListener("new-style", (() =>
+      this.#openNewStyle()) as EventListener);
     this.shadowRoot!.querySelector("docen-styles-pane")?.addEventListener("modify-style", ((
       event: CustomEvent<string>,
     ) => this.#openModifyStyle(event.detail)) as EventListener);
@@ -1808,6 +1839,14 @@ class DocenDocument extends AddinHost<Editor> {
         this.#bridge?.focus();
       }) as EventListener,
     );
+    // New Style dialog — create a new paragraph or character style.
+    this.shadowRoot!.querySelector("docen-new-style-dialog")?.addEventListener("new-style:ok", ((
+      event: CustomEvent<NewStyleDefinition>,
+    ) => {
+      this.editor?.commands["new-style"](event.detail);
+      this.#renderStylesPane();
+      this.#bridge?.focus();
+    }) as EventListener);
     // Modify Style dialog's Format > Font/Paragraph — open that dialog
     // against the style being modified (the detail carries its id).
     this.shadowRoot!.querySelector("docen-modify-style-dialog")?.addEventListener(
@@ -2640,9 +2679,7 @@ class DocenDocument extends AddinHost<Editor> {
         : this.#pageInsets(section.flow, section.furniture, section.furnitureLaid);
       return {
         blocks: section.blocks,
-        // Continuous section breaks flow on (Word's Section Break Continuous)
-        // instead of opening a fresh page.
-        ...(section.type === "continuous" ? { type: section.type } : {}),
+        ...(section.type ? { type: section.type } : {}),
         opts: {
           ...section.flow,
           columns: section.columns,
@@ -2781,8 +2818,17 @@ class DocenDocument extends AddinHost<Editor> {
     sections: readonly (ProjectedSection & CanvasStageSection)[],
     sectionOfPage: readonly number[],
   ): (page: number) => { contentLeftPx: number; contentTopPx: number } {
-    return (page) =>
-      sections[sectionOfPage[page] ?? 0]?.flow ?? { contentLeftPx: 0, contentTopPx: 0 };
+    return (page) => {
+      const flow = sections[sectionOfPage[page] ?? 0]?.flow;
+      if (!flow) return { contentLeftPx: 0, contentTopPx: 0 };
+      if (flow.mirrorMargins && page % 2 === 1) {
+        return {
+          contentLeftPx: flow.pageWidthPx - flow.contentLeftPx - flow.contentWidthPx,
+          contentTopPx: flow.contentTopPx,
+        };
+      }
+      return flow;
+    };
   }
 
   /** The canvas pipeline — the single render entry the bridge's transactions

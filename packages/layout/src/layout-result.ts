@@ -195,6 +195,10 @@ export interface LaidOutParagraph {
   /** The paragraph closes its section — the painter's mark row reads it and
    *  names the break type (mirrors the input block's field). */
   sectionEnd?: boolean | "continuous" | "evenPage" | "oddPage";
+  /** w:bidi — right-to-left paragraph direction. */
+  bidi?: boolean;
+  /** w:textDirection — text flow direction (horizontal vs vertical). */
+  textDirection?: "lrTb" | "tbRl" | "btLr";
   /** Tracked paragraph format change (w:pPrChange) mirrored for the painter's
    *  change bar (the flow gives it no geometry). */
   formatChange?: { color: string };
@@ -232,6 +236,8 @@ export interface LaidOutCell {
   /** w:vAlign offset inside the row (the slack above the content when the row
    *  is taller — center/bottom placement). */
   contentOffsetYPx?: number;
+  /** w:textDirection — cell text flow direction (horizontal vs vertical). */
+  textDirection?: "lrTb" | "tbRl" | "btLr";
   stack: LaidOutStackItem[];
 }
 
