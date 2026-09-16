@@ -46,7 +46,11 @@ export {
   compileDocument,
   normalizeDocument,
   DocxManager,
+  formatMarkNames,
+  runPropsFromMarks,
+  runPropsToMarks,
   type DocxGenerateOptions,
+  type RunPropMark,
 } from "./converters/docx";
 
 // Converters: DOCX template patching (placeholder replacement via office-open patchDocument)

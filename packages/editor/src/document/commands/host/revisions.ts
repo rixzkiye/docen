@@ -14,6 +14,8 @@ export interface RevisionsHostView {
   /** The Specific People author filter (null = every author). */
   getMarkupAuthors(): string[] | null;
   setMarkupAuthors(authors: string[] | null): void;
+  /** Review → Markup Colors: "author" (By author, default) or "changeType". */
+  setMarkupColors(colors: "author" | "changeType"): void;
   /** Re-render the document projection (display-only markup changes). */
   renderDoc(doc: JSONContent): void;
   /** Re-stamp the markup menus to the live state. */
@@ -23,8 +25,8 @@ export interface RevisionsHostView {
 
 /**
  * Track-changes display commands split out of the host element: the reviewing
- * pane, Word's Display for Review projection, the Specific People filter, and
- * the "…All Changes Shown" sweeps.
+ * pane, Word's Display for Review projection, the Specific People filter, the
+ * Markup Colors palette, and the "…All Changes Shown" sweeps.
  */
 export class RevisionsHostCommands implements HostCommandDomain {
   constructor(private readonly host: RevisionsHostView) {}
@@ -35,6 +37,7 @@ export class RevisionsHostCommands implements HostCommandDomain {
     "reviewing-pane",
     "display-for-review",
     "review-specific-people",
+    "markup-colors",
     "accept-all-changes-shown",
     "reject-all-changes-shown",
   ];
@@ -64,6 +67,16 @@ export class RevisionsHostCommands implements HostCommandDomain {
       this.host.setMarkupAuthors(value === "all" ? null : [value]);
       this.host.renderDoc(this.host.getJSON());
       this.host.syncMarkupMenus();
+      return true;
+    }
+    // Review → Markup Colors: swap the revision palette (By author cycle vs
+    // Word's fixed per-change-type colors) and re-render — display only.
+    if (event === "markup-colors") {
+      if (value === "author" || value === "changeType") {
+        this.host.setMarkupColors(value);
+        this.host.renderDoc(this.host.getJSON());
+        this.host.syncMarkupMenus();
+      }
       return true;
     }
     // The "…All Changes Shown" sweeps accept/reject exactly what the display

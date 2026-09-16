@@ -102,6 +102,10 @@ export interface LayoutParagraph {
    *  mean the default next-page break. The last section's sectPr rides the
    *  body end and never sets this. */
   sectionEnd?: boolean | "continuous" | "evenPage" | "oddPage";
+  /** Tracked paragraph format change (w:pPrChange): the painter draws Word's
+   *  change bar beside every line of the paragraph, in `color` (hex). Pure
+   *  paint metadata — the flow and measurement ignore it. */
+  formatChange?: { color: string };
   /** Floating drawings anchored to this paragraph: wrap-none boxes paint at
    *  their offset; a `wrap` on the drawing also shrinks the anchor
    *  paragraph's own lines around the box and registers a float zone the

@@ -38,6 +38,15 @@ export const reviewerItems = (authors?: readonly string[]): string =>
     ...(authors ?? []).map((a) => ({ text: a, event: "review-specific-people", value: a })),
   ]);
 
+// Word's Track Changes markup colors: the By-author palette (default) vs the
+// legacy per-change-type colors. The host re-stamps the checked entry to the
+// live state (the displayItems pattern).
+export const markupColorItems = (): string =>
+  JSON.stringify([
+    { text: opt("by-author"), event: "markup-colors", value: "author", checked: true },
+    { text: opt("by-change-type"), event: "markup-colors", value: "changeType" },
+  ]);
+
 export const reviewTab = (authors?: readonly string[]): RibbonTab =>
   tabNode("review", [
     group("proofing", [
@@ -63,6 +72,7 @@ export const reviewTab = (authors?: readonly string[]): RibbonTab =>
       menu("people", "review-specific-people", parsedItems(reviewerItems(authors)), {
         size: "large",
       }),
+      menu("color", "markup-colors", parsedItems(markupColorItems()), { size: "large" }),
       col([grid([btn("align-left", "previous-change"), btn("align-right", "next-change")])]),
       btn("reviewing-pane", "reviewing-pane", { size: "large" }),
     ]),

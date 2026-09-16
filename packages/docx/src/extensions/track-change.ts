@@ -1,4 +1,4 @@
-import type { ParagraphChild } from "@office-open/docx";
+import type { ParagraphChild, RunOptions } from "@office-open/docx";
 
 import { mergeTextNodes } from "../converters/styles";
 import type { JSONContent } from "../core";
@@ -35,9 +35,11 @@ import type { ParseInlineRule, ResolveContext } from "./types";
  * is also matched by the base Strike mark, so only the classed tag is claimed
  * to avoid shadowing strike on a bare `<del>`.
  *
- * P1 scope: render + round-trip only. accept/reject commands, nested
- * revisions, block-level revisions, and format-revision (markChange) are out
- * of scope (office-open parses inline w:ins/w:del only).
+ * Format revisions (w:rPrChange) ride the `formatChange` mark below: the old
+ * run properties are stored verbatim (JSON, office-open keys) and compile back
+ * into the run's `revision` option, so a Word file's format changes round-trip
+ * and the editor's accept/reject can restore them. Block-level revisions
+ * (paragraph splits/joins) and move tracking stay out of scope.
  */
 
 // office-open ChangedProperties: { id:number; author:string; date:string }.
@@ -130,4 +132,71 @@ export const Deletion = Mark.create({
   },
 
   parseDocxInline: deletionRule,
+});
+
+/** Parse the stored old-rPr JSON into an options object; malformed entries
+ *  degrade to no props (the revision metadata still round-trips). */
+function parseRunProps(raw: unknown): Record<string, unknown> {
+  if (typeof raw !== "string") return {};
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    return parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : {};
+  } catch {
+    return {};
+  }
+}
+
+/**
+ * Format-change mark (w:rPrChange) — the run-level companion of the
+ * insertion/deletion containers.
+ *
+ * OOXML stores a run's previous properties in `<w:rPrChange>` (office-open:
+ * `RunOptions.revision` = `{ id, author, date, …oldRunProps }`). The mark holds
+ * the revision metadata plus the old props verbatim as a JSON string; compile
+ * merges them back into `revision` (renderDocx) and resolve extracts them from
+ * it (parseDocx), so a Word file's format changes survive the JSON round-trip.
+ * The current run properties stay on their own rPr marks — accept keeps them,
+ * reject restores the old ones from `props`.
+ *
+ * TextStyle declares a `revision` attr for its mirror guard but deliberately
+ * skips it in render/parse: this mark owns the field (one mapping, once).
+ */
+export const FormatChange = Mark.create({
+  name: "formatChange",
+  // Read-only render (no HTML route): a caret inside a format revision must
+  // not extend the mark onto newly typed text.
+  inclusive: false,
+  addAttributes() {
+    return {
+      id: { default: null, rendered: false },
+      author: { default: null, rendered: false },
+      date: { default: null, rendered: false },
+      /** The old run props (office-open rPr keys) as JSON — the rPrChange body
+       *  minus id/author/date. `null` for a bare revision with no old props. */
+      props: { default: null, rendered: false },
+    };
+  },
+  parseDocx(opts: RunOptions) {
+    const rev = opts.revision;
+    if (!rev || typeof rev !== "object") return null;
+    const { id, author, date, ...props } = rev;
+    return {
+      id: id ?? null,
+      author: author ?? null,
+      date: date ?? null,
+      props: JSON.stringify(props),
+    };
+  },
+  renderDocx(attrs: Record<string, unknown>) {
+    return {
+      revision: {
+        id: typeof attrs.id === "number" ? attrs.id : 0,
+        author: typeof attrs.author === "string" ? attrs.author : "",
+        date: typeof attrs.date === "string" ? attrs.date : "",
+        ...parseRunProps(attrs.props),
+      },
+    };
+  },
 });

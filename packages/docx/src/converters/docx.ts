@@ -189,6 +189,17 @@ interface HeaderFooterSlots {
 
 // ── DocxManager ──
 
+/** One rPr mark in JSONContent's shape (name + optional attrs) — the value
+ *  {@link DocxManager.runPropsToMarks} emits and `runPropsFromMarks` consumes. */
+export interface RunPropMark {
+  type: string;
+  attrs?: Record<string, unknown>;
+}
+
+/** The format-change revision carrier mark (w:rPrChange) — not an rPr mark
+ *  itself, so the format restore set excludes it. */
+const FORMAT_CHANGE_MARK = "formatChange";
+
 /**
  * Manages DOCX serialization (Tiptap JSON ↔ DocumentOptions).
  *
@@ -1307,6 +1318,43 @@ export class DocxManager {
 
     return marks.length > 0 ? marks : undefined;
   }
+
+  /**
+   * The marks a run's rPr options imply (name + attrs) — the reverse of
+   * {@link runPropsFromMarks}, reusing the same parse hooks `resolveMarks`
+   * walks. The editor's format-change reject uses it to restore the old rPr
+   * snapshot stored in a w:rPrChange.
+   */
+  runPropsToMarks(props: Record<string, unknown>): RunPropMark[] {
+    const marks: RunPropMark[] = [];
+    for (const { name, parse } of this.markParse) {
+      // The revision carrier is not an rPr mark — restore reset it separately.
+      if (name === FORMAT_CHANGE_MARK) continue;
+      const attrs = parse(props as RunOptions);
+      if (attrs === null) continue;
+      marks.push(Object.keys(attrs).length ? { type: name, attrs } : { type: name });
+    }
+    return marks;
+  }
+
+  /** Merge marks' renderDocx outputs into one rPr options object — the same
+   *  overlay compileTextRun performs for a run's marks. */
+  runPropsFromMarks(marks: readonly RunPropMark[]): Record<string, unknown> {
+    const props: Record<string, unknown> = {};
+    for (const mark of marks) {
+      const render = this.markRender.get(mark.type);
+      if (render) Object.assign(props, render(mark.attrs ?? {}));
+    }
+    return props;
+  }
+
+  /** Names of the marks carrying w:rPr run properties — the set a
+   *  format-change reject replaces wholesale (Word: the old rPr wins as a
+   *  whole, so a prop absent from it disappears). The formatChange revision
+   *  carrier is excluded — review commands remove it themselves. */
+  formatMarkNames(): string[] {
+    return this.markParse.filter((m) => m.name !== FORMAT_CHANGE_MARK).map((m) => m.name);
+  }
 }
 
 // ── Standalone functions (backward compat) ──
@@ -1318,6 +1366,30 @@ const defaultManager = new DocxManager(docxExtensions);
  *  so user-supplied marks/nodes plug into compile/resolve without a fork. */
 function getDocxManager(extensions?: Extensions): DocxManager {
   return extensions ? new DocxManager(extensions) : defaultManager;
+}
+
+/** The marks a run's rPr options imply (name + attrs). See
+ *  {@link DocxManager.runPropsToMarks} — the format-change restore helper. */
+export function runPropsToMarks(
+  props: Record<string, unknown>,
+  extensions?: Extensions,
+): RunPropMark[] {
+  return getDocxManager(extensions).runPropsToMarks(props);
+}
+
+/** Merge run-prop marks' renderDocx outputs into one rPr options object (the
+ *  inverse of {@link runPropsToMarks}). */
+export function runPropsFromMarks(
+  marks: readonly RunPropMark[],
+  extensions?: Extensions,
+): Record<string, unknown> {
+  return getDocxManager(extensions).runPropsFromMarks(marks);
+}
+
+/** Names of the marks carrying w:rPr run properties — the set a format-change
+ *  reject replaces. See {@link DocxManager.formatMarkNames}. */
+export function formatMarkNames(extensions?: Extensions): string[] {
+  return getDocxManager(extensions).formatMarkNames();
 }
 
 /**

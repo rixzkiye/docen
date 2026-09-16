@@ -218,6 +218,10 @@ export function projectPageFurniture(
     // keeps the furniture walk independent even if malformed input carries one.
     footnoteOrdinals: new Map(),
     endnoteOrdinals: new Map(),
+    // Furniture runs through its own walk: revision colors start fresh (the
+    // review chrome mirrors the body's authors; a header revision outside the
+    // body walk still gets a stable slot).
+    revisionAuthorColors: new Map(),
   };
   const projectSlots = (side: unknown): LayoutBlock[] | undefined => {
     if (!Array.isArray(side)) return undefined;

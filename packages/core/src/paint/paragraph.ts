@@ -153,6 +153,17 @@ function paintUnderlinePattern(
   }
 }
 
+/** The format-change bar color for one laid-out line: the paragraph-level
+ *  w:pPrChange wins (it covers every line), else the first run on the line
+ *  carrying an w:rPrChange marker. */
+function lineFormatColor(para: LaidOutParagraph, line: LaidOutLine): string | undefined {
+  for (const item of line.items) {
+    const inline = para.inline[item.inlineIndex];
+    if (inline?.kind === "text" && inline.formatChange) return inline.formatChange.color;
+  }
+  return undefined;
+}
+
 export function paintParagraph(
   tree: IGroup,
   para: LaidOutParagraph,
@@ -288,6 +299,24 @@ export function paintParagraph(
     // Line x origin — the shared sum (left indent + the line's own first-line
     // indent + a wrapSide float's shift) the caret map anchors by too.
     const lineX = x + lineOriginXPx(para, line);
+    // Tracked format change (w:pPrChange / w:rPrChange): Word's change bar in
+    // the left margin beside every line that carries the revision — the
+    // paragraph's own marker covers all its lines, a run's only the lines it
+    // lands on. The lane sits just outside the content box, clear of the
+    // text whatever the paragraph's indent.
+    const changeColor = para.formatChange?.color ?? lineFormatColor(para, line);
+    if (changeColor) {
+      tree.add(
+        new Rect({
+          x: x - 5,
+          y: lineY,
+          width: 2,
+          height: Math.max(1, line.heightPx),
+          fill: `#${changeColor}`,
+          hittable: false,
+        }),
+      );
+    }
     // A justified line stretches each text item to the next item's x (the
     // last one past the content width by the overflow-punct hang): Leafer's
     // textAlign "both-letter" spreads the slack as uniform letter spacing

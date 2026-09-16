@@ -27,6 +27,10 @@ const SKIP_KEYS = new Set([
   "children",
   "text",
   "break",
+  // w:rPrChange is owned by the FormatChange mark (track-change.ts) — leaving
+  // it out of TextStyle keeps one carrier for the revision, so compile emits
+  // exactly one w:rPrChange and resolve builds exactly one formatChange mark.
+  "revision",
   // subScript/superScript are OOXML vertAlign enums with no "false" state, so
   // they stay on dedicated marks. bold/italic/strike/doubleStrike are
   // three-state booleans (true/false/null) — they ride NATIVE_RUN_ATTRS so the
@@ -71,6 +75,8 @@ const NATIVE_RUN_ATTRS = {
   doubleStrike: attrNative(),
   emboss: attrNative(),
   imprint: attrNative(),
+  // Mirror-completeness only: w:rPrChange is parsed/compiled by the
+  // FormatChange mark (SKIP_KEYS above keeps TextStyle from carrying it).
   revision: attrNative(),
   language: attrNative(),
   border: attrNative(),

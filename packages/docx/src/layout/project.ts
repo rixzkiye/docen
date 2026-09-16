@@ -117,6 +117,7 @@ export function projectDocumentOptions(
     openComments: new Set(),
     footnoteOrdinals: new Map(),
     endnoteOrdinals: new Map(),
+    revisionAuthorColors: new Map(),
     ...(markup ? { markup } : {}),
     ...(showFieldCodes ? { showFieldCodes: true } : {}),
     // The document-wide tab grid (w:defaultTabStop, twips); Word's 720 default

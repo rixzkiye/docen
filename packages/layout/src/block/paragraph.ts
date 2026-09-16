@@ -198,6 +198,7 @@ export function layoutParagraph(
     markSizePx: para.markSizePx,
     preserveSpaces: true,
     sectionEnd: para.sectionEnd,
+    formatChange: para.formatChange,
   };
 }
 
