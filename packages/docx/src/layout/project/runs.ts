@@ -19,7 +19,7 @@ import type { MarkupDisplay, ProjectContext } from "./context";
 import { cropOf, outlineOf, pictureAdjustOf } from "./drawing";
 import { isRecord, measureEmu, num, str, unescapeXml, type Rec } from "./guards";
 import { metafileMembers, pictureSrc } from "./media";
-import { romanNumeral } from "./numbering";
+import { formatNumber } from "./numbering";
 import { fontAttr, normalizeScalePct, toFamily, runStyleOf } from "./styles";
 
 /** Word's "By author" revision palette — slot 0 is the red Word's first
@@ -159,10 +159,10 @@ function noteRefId(child: Rec, key: "footnoteReference" | "endnoteReference"): n
 
 /** The displayed ordinal for a note id — assign the next number on first
  *  reference, reuse it afterward (the Nth distinct note referenced shows N). */
-function noteOrdinal(ordinals: Map<number, number>, id: number): number {
+function noteOrdinal(ordinals: Map<number, number>, id: number, start = 1): number {
   let ordinal = ordinals.get(id);
   if (ordinal == null) {
-    ordinal = ordinals.size + 1;
+    ordinal = ordinals.size + start;
     ordinals.set(id, ordinal);
   }
   return ordinal;
@@ -584,20 +584,22 @@ export function projectRuns(
       // reference run's own rPr still applies.
       const fnRefId = noteRefId(child, "footnoteReference");
       if (fnRefId != null) {
-        const ordinal = noteOrdinal(ctx.footnoteOrdinals, fnRefId);
+        const ordinal = noteOrdinal(ctx.footnoteOrdinals, fnRefId, ctx.footnoteNumStart ?? 1);
+        const text = formatNumber(ctx.footnoteNumFmt ?? "decimal", ordinal);
         out.push({
           kind: "text",
-          text: String(ordinal),
+          text,
           style: { ...textStyleOf(rPr), verticalAlign: "superscript" },
           noteRef: { kind: "footnote", id: fnRefId, ordinal },
         });
       }
       const enRefId = noteRefId(child, "endnoteReference");
       if (enRefId != null) {
-        const ordinal = noteOrdinal(ctx.endnoteOrdinals, enRefId);
+        const ordinal = noteOrdinal(ctx.endnoteOrdinals, enRefId, ctx.endnoteNumStart ?? 1);
+        const text = formatNumber(ctx.endnoteNumFmt ?? "lowerRoman", ordinal);
         out.push({
           kind: "text",
-          text: romanNumeral(ordinal, false),
+          text,
           style: { ...textStyleOf(rPr), verticalAlign: "superscript" },
           noteRef: { kind: "endnote", id: enRefId, ordinal },
         });
@@ -605,14 +607,14 @@ export function projectRuns(
       if (child.footnoteRef === true) {
         out.push({
           kind: "text",
-          text: String(ctx.currentNoteOrdinal ?? 1),
+          text: formatNumber(ctx.footnoteNumFmt ?? "decimal", ctx.currentNoteOrdinal ?? 1),
           style: { ...textStyleOf(rPr), verticalAlign: "superscript" },
         });
       }
       if (child.endnoteRef === true) {
         out.push({
           kind: "text",
-          text: romanNumeral(ctx.currentNoteOrdinal ?? 1, false),
+          text: formatNumber(ctx.endnoteNumFmt ?? "lowerRoman", ctx.currentNoteOrdinal ?? 1),
           style: { ...textStyleOf(rPr), verticalAlign: "superscript" },
         });
       }

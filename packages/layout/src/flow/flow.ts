@@ -35,6 +35,7 @@ import type {
   LaidOutBalloon,
   LaidOutBlock,
   LaidOutCell,
+  LaidOutEndnoteArea,
   LaidOutFootnoteArea,
   LaidOutFootnoteNote,
   LaidOutLine,
@@ -60,6 +61,8 @@ export interface FlowPage {
   items: FlowItem[];
   /** Footnotes placed at the bottom of this page (absent when none). */
   footnotes?: LaidOutFootnoteArea;
+  /** Endnotes placed on this page (absent when none). */
+  endnotes?: LaidOutEndnoteArea;
   /** The right-margin balloon stack (absent when the section has no balloon
    *  anchors or the flow is unbounded) — packed after the page's items
    *  sealed, so body geometry is untouched. */
@@ -113,6 +116,12 @@ export interface FlowOptions {
   footnoteDefinitions?: Map<number, readonly LayoutBlock[]>;
   /** Endnote id → definition blocks (absent when document has no endnotes). */
   endnoteDefinitions?: Map<number, readonly LayoutBlock[]>;
+  /** Endnote placement (w:pos): 'sectEnd' (at section end) or 'docEnd' (at document end). Default 'docEnd'. */
+  endnotePlacement?: "sectEnd" | "docEnd";
+  /** Is this the document's final section? Used when endnotePlacement is 'docEnd'. */
+  isFinalSection?: boolean;
+  /** Initial endnotes carried from previous sections (for 'docEnd' accumulation). */
+  initialEndnoteIds?: { id: number; ordinal: number }[];
   /** Word's Web Layout / Read Mode: the content never pages — every block
    *  stacks onto one continuous page, explicit breaks are inert, and the
    *  page reports its content bottom via {@link FlowPage.contentBottomPx}.
@@ -344,8 +353,19 @@ export function* layoutSectionsIncremental(
     else runs.push({ blocks: [...section.blocks], opts: section.opts });
   }
   let laid = 0;
+  let accumulatedEndnoteIds: { id: number; ordinal: number }[] = [];
   for (const [i, run] of runs.entries()) {
-    const flow = new Flow({ ...run.opts, pageOffset: laid }, measurer);
+    const isFinalSection = i === runs.length - 1;
+    const flow = new Flow(
+      {
+        ...run.opts,
+        pageOffset: laid,
+        isFinalSection,
+        initialEndnoteIds:
+          run.opts.endnotePlacement === "sectEnd" ? undefined : accumulatedEndnoteIds,
+      },
+      measurer,
+    );
     for (const block of run.blocks) {
       flow.push(block);
       for (const page of flow.takeSealed()) yield { page, section: i };
@@ -353,6 +373,9 @@ export function* layoutSectionsIncremental(
     flow.finish();
     for (const page of flow.takeSealed()) yield { page, section: i };
     laid = flow.pageCount;
+    if (run.opts.endnotePlacement !== "sectEnd") {
+      accumulatedEndnoteIds = flow.collectedEndnoteIds;
+    }
   }
 }
 
@@ -362,14 +385,23 @@ export const FOOTNOTE_SEPARATOR_WIDTH_PX = 192;
  *  10px space before separator line, 1px line, 6px space after before first note. */
 export const FOOTNOTE_SEPARATOR_HEIGHT_PX = 17;
 
-function noteRefsInBlock(block: LaidOutBlock): { id: number; ordinal: number }[] {
+/** Endnote separator width in px (Word default: 2 inches = 144 pt = 192 px). */
+export const ENDNOTE_SEPARATOR_WIDTH_PX = 192;
+/** Height of the endnote separator stroke and spacing (px):
+ *  10px space before separator line, 1px line, 6px space after before first note. */
+export const ENDNOTE_SEPARATOR_HEIGHT_PX = 17;
+
+function noteRefsInBlock(
+  block: LaidOutBlock,
+  kind: "footnote" | "endnote" = "footnote",
+): { id: number; ordinal: number }[] {
   if (block.kind === "paragraph") {
     const refs: { id: number; ordinal: number }[] = [];
     const seen = new Set<number>();
     for (const line of block.lines) {
       for (const item of line.items) {
         const inl = block.inline[item.inlineIndex];
-        if (inl?.kind === "text" && inl.noteRef?.kind === "footnote") {
+        if (inl?.kind === "text" && inl.noteRef?.kind === kind) {
           if (!seen.has(inl.noteRef.id)) {
             seen.add(inl.noteRef.id);
             refs.push({ id: inl.noteRef.id, ordinal: inl.noteRef.ordinal });
@@ -385,7 +417,7 @@ function noteRefsInBlock(block: LaidOutBlock): { id: number; ordinal: number }[]
     for (const row of block.rows) {
       for (const cell of row.cells) {
         for (const item of cell.stack) {
-          for (const r of noteRefsInBlock(item.block)) {
+          for (const r of noteRefsInBlock(item.block, kind)) {
             if (!seen.has(r.id)) {
               seen.add(r.id);
               refs.push(r);
@@ -400,7 +432,7 @@ function noteRefsInBlock(block: LaidOutBlock): { id: number; ordinal: number }[]
     const refs: { id: number; ordinal: number }[] = [];
     const seen = new Set<number>();
     for (const child of block.children) {
-      for (const r of noteRefsInBlock(child.block)) {
+      for (const r of noteRefsInBlock(child.block, kind)) {
         if (!seen.has(r.id)) {
           seen.add(r.id);
           refs.push(r);
@@ -474,12 +506,28 @@ class Flow {
   private readonly pageFootnoteIds: number[] = [];
   /** Total height of the current page's footnote area (separator + notes). */
   private pageFootnoteHeight = 0;
+  /** Cached laid endnote stacks (id → stack, height, ordinal). */
+  private readonly laidEndnoteCache = new Map<
+    number,
+    { stack: LaidOutStackItem[]; heightPx: number; ordinal: number }
+  >();
+  /** Endnote IDs referenced in this flow in reference order. */
+  private readonly referencedEndnoteIds: { id: number; ordinal: number }[] = [];
+  /** Pending endnotes to emit on the next sealed page. */
+  private pendingEndnotes?: LaidOutFootnoteArea;
+
+  get collectedEndnoteIds(): { id: number; ordinal: number }[] {
+    return [...this.referencedEndnoteIds];
+  }
 
   constructor(
     private readonly opts: FlowOptions,
     private readonly measurer: TextMeasurer,
   ) {
     this.cols = columnBoxesOf(opts.contentWidthPx, opts.columns);
+    if (opts.initialEndnoteIds) {
+      this.referencedEndnoteIds.push(...opts.initialEndnoteIds);
+    }
     // The body starts below the header's push (first page / default slot).
     this.y = this.insets().topPx;
   }
@@ -628,6 +676,62 @@ class Flow {
     };
   }
 
+  private getLaidEndnote(
+    id: number,
+    ordinal: number,
+  ): { stack: LaidOutStackItem[]; heightPx: number; ordinal: number } | undefined {
+    const cached = this.laidEndnoteCache.get(id);
+    if (cached) return cached;
+    const blocks = this.opts.endnoteDefinitions?.get(id);
+    if (!blocks || blocks.length === 0) return undefined;
+    const stacked = stackBlocks(blocks, this.opts.contentWidthPx, undefined, this.measurer);
+    const entry = { stack: stacked.stack, heightPx: stacked.heightPx, ordinal };
+    this.laidEndnoteCache.set(id, entry);
+    return entry;
+  }
+
+  private registerEndnotes(laid: LaidOutBlock): void {
+    if (!this.opts.endnoteDefinitions || this.opts.endnoteDefinitions.size === 0) return;
+    const refs = noteRefsInBlock(laid, "endnote");
+    for (const ref of refs) {
+      if (!this.referencedEndnoteIds.some((r) => r.id === ref.id)) {
+        this.referencedEndnoteIds.push(ref);
+      }
+    }
+  }
+
+  private buildEndnotesArea(endnoteY: number): LaidOutFootnoteArea | undefined {
+    if (this.referencedEndnoteIds.length === 0) return undefined;
+    const notes: LaidOutFootnoteNote[] = [];
+    const items: LaidOutStackItem[] = [];
+    let curY = ENDNOTE_SEPARATOR_HEIGHT_PX;
+    for (const ref of this.referencedEndnoteIds) {
+      const laidNote = this.getLaidEndnote(ref.id, ref.ordinal);
+      if (!laidNote) continue;
+      notes.push({
+        id: ref.id,
+        ordinal: laidNote.ordinal,
+        stack: laidNote.stack,
+        heightPx: laidNote.heightPx,
+      });
+      for (const item of laidNote.stack) {
+        items.push({
+          yPx: curY + item.yPx,
+          block: item.block,
+        });
+      }
+      curY += laidNote.heightPx;
+    }
+    if (items.length === 0) return undefined;
+    return {
+      yPx: endnoteY,
+      separatorWidthPx: ENDNOTE_SEPARATOR_WIDTH_PX,
+      notes,
+      items,
+      totalHeightPx: curY,
+    };
+  }
+
   private remaining(): number {
     if (this.opts.unbounded) return Infinity;
     return this.opts.contentHeightPx - this.insets().bottomPx - this.pageFootnoteHeight - this.y;
@@ -669,9 +773,13 @@ class Flow {
    *  top), so pageIndex re-syncs to the emitted count — a no-op break must
    *  not skew the even/odd inset slots of every page after it. */
   private newPage(auto = false): void {
-    if (this.items.length > 0) {
+    if (this.items.length > 0 || this.pendingEndnotes) {
       const footnotes = this.buildPageFootnotes();
-      const page = alignPageVertical({ items: this.items.splice(0), footnotes }, this.opts);
+      const page = alignPageVertical(
+        { items: this.items.splice(0), footnotes, endnotes: this.pendingEndnotes },
+        this.opts,
+      );
+      this.pendingEndnotes = undefined;
       // Balloons pack after the vertical align shifted the items — their
       // anchor Ys must read the final page positions.
       const balloons = this.packBalloons(page.items);
@@ -719,6 +827,28 @@ class Flow {
   }
 
   finish(): FlowPage[] {
+    const isEndSection =
+      this.opts.endnotePlacement === "sectEnd" || this.opts.isFinalSection !== false;
+    if (isEndSection && this.referencedEndnoteIds.length > 0) {
+      let totalNoteHeight = ENDNOTE_SEPARATOR_HEIGHT_PX;
+      for (const ref of this.referencedEndnoteIds) {
+        const laidNote = this.getLaidEndnote(ref.id, ref.ordinal);
+        if (laidNote) totalNoteHeight += laidNote.heightPx;
+      }
+      const remaining = this.remaining();
+      if (this.opts.unbounded || totalNoteHeight <= remaining) {
+        const startY = this.items.length > 0 ? this.y : this.insets().topPx;
+        this.pendingEndnotes = this.buildEndnotesArea(startY);
+        this.y = startY + totalNoteHeight;
+      } else {
+        if (this.items.length > 0) {
+          this.newPage();
+        }
+        this.pendingEndnotes = this.buildEndnotesArea(this.insets().topPx);
+        this.y = this.insets().topPx + totalNoteHeight;
+      }
+    }
+
     if (this.opts.unbounded) {
       // Seal the one continuous page, reporting where the content ends
       // (footnote area included) — the host sizes the page from it.
@@ -726,10 +856,16 @@ class Flow {
       const footnotes = this.buildPageFootnotes();
       this.pages.push(
         alignPageVertical(
-          { items: this.items.splice(0), footnotes, contentBottomPx: bottom },
+          {
+            items: this.items.splice(0),
+            footnotes,
+            endnotes: this.pendingEndnotes,
+            contentBottomPx: bottom,
+          },
           this.opts,
         ),
       );
+      this.pendingEndnotes = undefined;
     } else {
       this.newPage();
     }
@@ -932,6 +1068,7 @@ class Flow {
     this.prevAfter = laid.kind === "paragraph" ? laid.afterPx : 0;
     this.firstOnPage = false;
     this.registerFootnotes(laid);
+    this.registerEndnotes(laid);
     if (laid.kind === "paragraph") this.registerFloats(laid, yPx);
   }
 

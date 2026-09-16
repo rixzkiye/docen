@@ -10,6 +10,7 @@ import type {
   FlowItem,
   LaidOutBalloon,
   LaidOutBlock,
+  LaidOutEndnoteArea,
   LaidOutFootnoteArea,
   LaidOutStackItem,
 } from "@docen/layout";
@@ -121,6 +122,37 @@ export function paintFootnotes(
       item.block,
       ctx.flow.contentLeftPx,
       ctx.flow.contentTopPx + footnotes.yPx + item.yPx,
+      ctx,
+    );
+  }
+}
+
+/** Paint this page's endnotes (at section end or document end):
+ *  the separator line (Word default: 2 inches = 192 px, 1px stroke) followed
+ *  by each laid endnote note. */
+export function paintEndnotes(
+  tree: IGroup,
+  endnotes: LaidOutEndnoteArea | undefined,
+  ctx: PaintContext,
+): void {
+  if (!endnotes || endnotes.items.length === 0) return;
+  // Endnote separator line: 10px below the top of the endnote area
+  const sepY = ctx.flow.contentTopPx + endnotes.yPx + 10;
+  const sepX = ctx.flow.contentLeftPx;
+  tree.add(
+    new Line({
+      points: [sepX, sepY, sepX + endnotes.separatorWidthPx, sepY],
+      stroke: "#000000",
+      strokeWidth: 1,
+      hittable: false,
+    }),
+  );
+  for (const item of endnotes.items) {
+    paintBlock(
+      tree,
+      item.block,
+      ctx.flow.contentLeftPx,
+      ctx.flow.contentTopPx + endnotes.yPx + item.yPx,
       ctx,
     );
   }

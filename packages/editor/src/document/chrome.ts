@@ -274,6 +274,9 @@ export const documentTemplate = html`
   <docen-hyphenation-dialog part="hyphenation"></docen-hyphenation-dialog>
   <docen-tabs-dialog part="tabs"></docen-tabs-dialog>
   <docen-find-replace-dialog></docen-find-replace-dialog>
+  <docen-bookmark-dialog part="bookmark"></docen-bookmark-dialog>
+  <docen-go-to-dialog part="go-to"></docen-go-to-dialog>
+  <docen-properties-dialog part="properties"></docen-properties-dialog>
   <input type="file" id="file-input" accept=".docx,.docm,.dotx,.dotm,.md,.markdown,.xml" hidden />
   <input type="file" id="image-input" accept="image/*" hidden />
   <input type="file" id="picture-input" accept="image/*" hidden />

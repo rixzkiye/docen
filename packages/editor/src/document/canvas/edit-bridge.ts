@@ -310,6 +310,12 @@ export interface EditBridge {
   pageOf(pos: number): number | null;
   /** The first doc position rendered on a page (null when unmappable). */
   firstPosOfPage(page: number): number | null;
+  /** The first doc position rendered on a line (null when unmappable). */
+  firstPosOfLine(lineIndex: number): number | null;
+  /** The line index containing pos (null when unmappable). */
+  lineIndexAtPos(pos: number): number | null;
+  /** Total rendered text lines. */
+  lineCount(): number;
   /** The PM position just inside the laid paragraph (null when the map
    *  cannot pair it — render-only or unmapped). */
   posOfPara(para: unknown): number | null;
@@ -3140,6 +3146,15 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
     /** The first doc position rendered on a page (null when unmappable). */
     firstPosOfPage(page: number): number | null {
       return main.map?.valid ? main.map.firstPosOfPage(page) : null;
+    },
+    firstPosOfLine(lineIndex: number): number | null {
+      return main.map?.valid ? main.map.firstPosOfLine(lineIndex) : null;
+    },
+    lineIndexAtPos(pos: number): number | null {
+      return main.map?.valid ? main.map.lineIndexAtPos(pos) : null;
+    },
+    lineCount(): number {
+      return main.map?.valid ? main.map.lineCount() : 0;
     },
     posOfPara(para): number | null {
       return main.map?.valid

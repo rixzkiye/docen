@@ -43,6 +43,7 @@ import {
   type FieldFrame,
   type FieldRef,
 } from "../fields";
+import type { BibliographySource } from "./references";
 
 /** One footnote/endnote body entry in documentExtras (`{ id, children }` with
  *  office-open's nested `paragraph`/run shapes — edited only as opaque text
@@ -1634,12 +1635,21 @@ export class DialogCommands {
         },
       ],
     };
+    this.#ensureContentTypeOverride(documentExtras, channel);
+    editor.view.dispatch(
+      editor.state.tr
+        .insert(editor.state.selection.from, ref)
+        .setDocAttribute("documentExtras", documentExtras),
+    );
+  }
+
+  #ensureContentTypeOverride(extras: NoteExtras, channel: "footnotes" | "endnotes"): void {
     const partName = `/word/${channel}.xml`;
     if (
       extras.contentTypes &&
       !extras.contentTypes.overrides?.some((o) => o.partName === partName)
     ) {
-      documentExtras.contentTypes = {
+      extras.contentTypes = {
         ...extras.contentTypes,
         overrides: [
           ...(extras.contentTypes.overrides ?? []),
@@ -1650,11 +1660,321 @@ export class DialogCommands {
         ],
       };
     }
-    editor.view.dispatch(
-      editor.state.tr
-        .insert(editor.state.selection.from, ref)
-        .setDocAttribute("documentExtras", documentExtras),
-    );
+  }
+
+  /** Convert children of a note between FootnoteText/footnoteRef and EndnoteText/endnoteRef. */
+  #convertNoteChildren(
+    children: unknown,
+    fromKind: "footnote" | "endnote",
+    toKind: "footnote" | "endnote",
+  ): unknown {
+    if (!Array.isArray(children)) return children;
+    const fromStyle = fromKind === "footnote" ? "FootnoteText" : "EndnoteText";
+    const toStyle = toKind === "footnote" ? "FootnoteText" : "EndnoteText";
+    const fromRef = `${fromKind}Ref`;
+    const toRef = `${toKind}Ref`;
+
+    return children.map((item) => {
+      if (!item || typeof item !== "object") return item;
+      const isPWrapper = "paragraph" in item;
+      const p = isPWrapper
+        ? ((item as { paragraph: Record<string, unknown> }).paragraph ?? {})
+        : (item as Record<string, unknown>);
+      if (!p || typeof p !== "object") return item;
+
+      const style = p.style === fromStyle ? toStyle : p.style;
+      const pChildren = Array.isArray(p.children)
+        ? p.children.map((child) => {
+            if (!child || typeof child !== "object") return child;
+            if ((child as Record<string, unknown>)[fromRef]) {
+              const { [fromRef]: _, ...rest } = child as Record<string, unknown>;
+              return { ...rest, [toRef]: true };
+            }
+            return child;
+          })
+        : p.children;
+
+      const updatedP = { ...p, ...(style != null ? { style } : {}), children: pChildren };
+      return isPWrapper ? { ...item, paragraph: updatedP } : updatedP;
+    });
+  }
+
+  /**
+   * Word's "Convert Notes" command (Footnote and Endnote dialog -> Convert...):
+   * Converts all footnotes to endnotes, all endnotes to footnotes, or swaps them.
+   * Remaps inline reference atoms in `doc` and note bodies in `documentExtras`.
+   */
+  convertNotes(mode: "allFootnotesToEndnotes" | "allEndnotesToFootnotes" | "swapNotes"): boolean {
+    const editor = this.host.editor();
+    if (!editor) return false;
+    const extras = this.#extras();
+    const footnotes = [...(extras.footnotes ?? [])];
+    const endnotes = [...(extras.endnotes ?? [])];
+
+    if (mode === "allFootnotesToEndnotes") {
+      if (footnotes.length === 0) return false;
+      const maxEnId = endnotes.reduce((max, n) => Math.max(max, Number(n.id ?? 0)), 0);
+      const idMap = new Map<number, number>();
+      const convertedFootnotes: NoteEntry[] = footnotes.map((fn, idx) => {
+        const oldId = typeof fn.id === "number" ? fn.id : idx + 1;
+        const newId = maxEnId + idx + 1;
+        idMap.set(oldId, newId);
+        return {
+          ...fn,
+          id: newId,
+          children: this.#convertNoteChildren(fn.children, "footnote", "endnote"),
+        };
+      });
+
+      const nextEndnotes = [...endnotes, ...convertedFootnotes];
+      const nextFootnotes: NoteEntry[] = [];
+      const tr = editor.state.tr;
+
+      editor.state.doc.descendants((node, pos) => {
+        if (node.type.name !== "inlinePassthrough") return true;
+        const dataStr = node.attrs.data;
+        if (typeof dataStr !== "string") return true;
+        try {
+          const branch = JSON.parse(dataStr) as Record<string, unknown>;
+          const ref = noteRefId(branch);
+          if (ref?.kind === "footnoteReference" && ref.id != null) {
+            const newId = idMap.get(ref.id) ?? ref.id;
+            const { footnoteReference: _, ...rest } = branch;
+            const nextBranch = { ...rest, endnoteReference: newId };
+            tr.setNodeAttribute(pos, "data", JSON.stringify(nextBranch));
+          }
+        } catch {
+          // malformed passthrough — skip
+        }
+        return true;
+      });
+
+      const nextExtras: NoteExtras = {
+        ...extras,
+        footnotes: nextFootnotes,
+        endnotes: nextEndnotes,
+      };
+      this.#ensureContentTypeOverride(nextExtras, "endnotes");
+      tr.setDocAttribute("documentExtras", nextExtras);
+      editor.view.dispatch(tr);
+      return true;
+    }
+
+    if (mode === "allEndnotesToFootnotes") {
+      if (endnotes.length === 0) return false;
+      const maxFnId = footnotes.reduce((max, n) => Math.max(max, Number(n.id ?? 0)), 0);
+      const idMap = new Map<number, number>();
+      const convertedEndnotes: NoteEntry[] = endnotes.map((en, idx) => {
+        const oldId = typeof en.id === "number" ? en.id : idx + 1;
+        const newId = maxFnId + idx + 1;
+        idMap.set(oldId, newId);
+        return {
+          ...en,
+          id: newId,
+          children: this.#convertNoteChildren(en.children, "endnote", "footnote"),
+        };
+      });
+
+      const nextFootnotes = [...footnotes, ...convertedEndnotes];
+      const nextEndnotes: NoteEntry[] = [];
+      const tr = editor.state.tr;
+
+      editor.state.doc.descendants((node, pos) => {
+        if (node.type.name !== "inlinePassthrough") return true;
+        const dataStr = node.attrs.data;
+        if (typeof dataStr !== "string") return true;
+        try {
+          const branch = JSON.parse(dataStr) as Record<string, unknown>;
+          const ref = noteRefId(branch);
+          if (ref?.kind === "endnoteReference" && ref.id != null) {
+            const newId = idMap.get(ref.id) ?? ref.id;
+            const { endnoteReference: _, ...rest } = branch;
+            const nextBranch = { ...rest, footnoteReference: newId };
+            tr.setNodeAttribute(pos, "data", JSON.stringify(nextBranch));
+          }
+        } catch {
+          // malformed passthrough — skip
+        }
+        return true;
+      });
+
+      const nextExtras: NoteExtras = {
+        ...extras,
+        footnotes: nextFootnotes,
+        endnotes: nextEndnotes,
+      };
+      this.#ensureContentTypeOverride(nextExtras, "footnotes");
+      tr.setDocAttribute("documentExtras", nextExtras);
+      editor.view.dispatch(tr);
+      return true;
+    }
+
+    if (mode === "swapNotes") {
+      if (footnotes.length === 0 && endnotes.length === 0) return false;
+      const convertedFootnotes: NoteEntry[] = footnotes.map((fn) => ({
+        ...fn,
+        children: this.#convertNoteChildren(fn.children, "footnote", "endnote"),
+      }));
+      const convertedEndnotes: NoteEntry[] = endnotes.map((en) => ({
+        ...en,
+        children: this.#convertNoteChildren(en.children, "endnote", "footnote"),
+      }));
+
+      const tr = editor.state.tr;
+      editor.state.doc.descendants((node, pos) => {
+        if (node.type.name !== "inlinePassthrough") return true;
+        const dataStr = node.attrs.data;
+        if (typeof dataStr !== "string") return true;
+        try {
+          const branch = JSON.parse(dataStr) as Record<string, unknown>;
+          const ref = noteRefId(branch);
+          if (ref?.kind === "footnoteReference" && ref.id != null) {
+            const { footnoteReference: _, ...rest } = branch;
+            const nextBranch = { ...rest, endnoteReference: ref.id };
+            tr.setNodeAttribute(pos, "data", JSON.stringify(nextBranch));
+          } else if (ref?.kind === "endnoteReference" && ref.id != null) {
+            const { endnoteReference: _, ...rest } = branch;
+            const nextBranch = { ...rest, footnoteReference: ref.id };
+            tr.setNodeAttribute(pos, "data", JSON.stringify(nextBranch));
+          }
+        } catch {
+          // malformed passthrough — skip
+        }
+        return true;
+      });
+
+      const nextExtras: NoteExtras = {
+        ...extras,
+        footnotes: convertedEndnotes,
+        endnotes: convertedFootnotes,
+      };
+      if (convertedFootnotes.length > 0) this.#ensureContentTypeOverride(nextExtras, "endnotes");
+      if (convertedEndnotes.length > 0) this.#ensureContentTypeOverride(nextExtras, "footnotes");
+      tr.setDocAttribute("documentExtras", nextExtras);
+      editor.view.dispatch(tr);
+      return true;
+    }
+
+    return false;
+  }
+
+  /** Collect all bookmark pairs currently in the document. */
+  documentBookmarks(): Array<{ name: string; from: number; to: number; id?: number }> {
+    const editor = this.#target();
+    if (!editor) return [];
+    const open = new Map<number, { id?: number; name: string; from: number }>();
+    const out: Array<{ name: string; from: number; to: number; id?: number }> = [];
+
+    editor.state.doc.descendants((node, pos) => {
+      if (node.type.name !== "inlinePassthrough") return true;
+      try {
+        const data = JSON.parse(String(node.attrs?.data ?? "{}")) as {
+          bookmarkStart?: { id?: number; name?: string };
+          bookmarkEnd?: { id?: number };
+        };
+        if (data.bookmarkStart?.name) {
+          open.set(data.bookmarkStart.id ?? 0, {
+            id: data.bookmarkStart.id,
+            name: data.bookmarkStart.name,
+            from: pos + node.nodeSize,
+          });
+        } else if (data.bookmarkEnd) {
+          const id = data.bookmarkEnd.id ?? 0;
+          const hit = open.get(id);
+          if (hit) {
+            out.push({ name: hit.name, from: hit.from, to: pos, id: hit.id });
+            open.delete(id);
+          }
+        }
+      } catch {
+        // skip
+      }
+      return true;
+    });
+    return out;
+  }
+
+  /** Delete a bookmark by name by removing its bookmarkStart and bookmarkEnd atoms. */
+  deleteBookmark(name: string): boolean {
+    const editor = this.#target();
+    if (!editor) return false;
+    const toDelete: Array<{ from: number; to: number }> = [];
+    let targetId: number | undefined;
+
+    editor.state.doc.descendants((node) => {
+      if (node.type.name !== "inlinePassthrough") return true;
+      try {
+        const data = JSON.parse(String(node.attrs?.data ?? "{}")) as {
+          bookmarkStart?: { id?: number; name?: string };
+        };
+        if (data.bookmarkStart?.name === name) {
+          targetId = data.bookmarkStart.id;
+          return false;
+        }
+      } catch {
+        // skip
+      }
+      return true;
+    });
+
+    if (targetId == null) {
+      editor.state.doc.descendants((node, pos) => {
+        if (node.type.name !== "inlinePassthrough") return true;
+        try {
+          const data = JSON.parse(String(node.attrs?.data ?? "{}")) as {
+            bookmarkStart?: { name?: string };
+          };
+          if (data.bookmarkStart?.name === name) {
+            toDelete.push({ from: pos, to: pos + node.nodeSize });
+          }
+        } catch {}
+        return true;
+      });
+    } else {
+      editor.state.doc.descendants((node, pos) => {
+        if (node.type.name !== "inlinePassthrough") return true;
+        try {
+          const data = JSON.parse(String(node.attrs?.data ?? "{}")) as {
+            bookmarkStart?: { id?: number };
+            bookmarkEnd?: { id?: number };
+          };
+          if (data.bookmarkStart?.id === targetId || data.bookmarkEnd?.id === targetId) {
+            toDelete.push({ from: pos, to: pos + node.nodeSize });
+          }
+        } catch {}
+        return true;
+      });
+    }
+
+    if (toDelete.length === 0) return false;
+    toDelete.sort((a, b) => b.from - a.from);
+    const tr = editor.state.tr;
+    for (const range of toDelete) {
+      tr.delete(range.from, range.to);
+    }
+    editor.view.dispatch(tr);
+    return true;
+  }
+
+  /** Add a bookmark around current selection. */
+  addBookmark(name: string): boolean {
+    const editor = this.#target();
+    if (!editor) return false;
+    if (!/^[A-Za-z一-鿿぀-ヿ_][^\s]*$/.test(name) || name.length > 40) return false;
+    this.deleteBookmark(name);
+    const id = this.nextBookmarkId(editor);
+    const { from, to } = editor.state.selection;
+    const seed = (data: object): JSONContent =>
+      ({
+        type: "inlinePassthrough",
+        attrs: { data: JSON.stringify(data) },
+      }) as JSONContent;
+    const start = editor.schema.nodeFromJSON(seed({ bookmarkStart: { id, name } }));
+    const end = editor.schema.nodeFromJSON(seed({ bookmarkEnd: { id } }));
+    const tr = editor.state.tr.insert(from, start);
+    tr.insert(tr.mapping.map(to), end);
+    editor.view.dispatch(tr);
+    return true;
   }
 
   // ── Fields (域) ──
@@ -1911,12 +2231,17 @@ export class DialogCommands {
     const attrs = (doc.attrs ?? {}) as {
       core?: Record<string, unknown>;
       documentExtras?: Record<string, unknown>;
+      bibliography?: { sources?: BibliographySource[]; style?: string };
     };
     const text = doc.textBetween(0, doc.content.size, "\n", "");
     const revision = finiteNumber(attrs.core?.revision);
     const filename = this.host.filename?.();
     const customProperties = customPropertiesOf(attrs.documentExtras);
     const captionSeparators = this.#captionSeparators(editor);
+    const biblioSourcesMap = new Map<string, BibliographySource>();
+    for (const s of attrs.bibliography?.sources ?? []) {
+      if (s.tag) biblioSourcesMap.set(s.tag, s);
+    }
     return {
       now: new Date(),
       core: attrs.core ?? {},
@@ -1926,6 +2251,8 @@ export class DialogCommands {
       ...(revision != null ? { revision } : {}),
       ...(customProperties ? { customProperties } : {}),
       ...(captionSeparators ? { captionSeparators } : {}),
+      ...(biblioSourcesMap.size > 0 ? { bibliographySources: biblioSourcesMap } : {}),
+      bibliographyStyle: attrs.bibliography?.style ?? "APA",
       positionTerms: this.#positionTerms(),
       bookmarks,
     };

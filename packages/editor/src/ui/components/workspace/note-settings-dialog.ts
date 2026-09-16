@@ -69,6 +69,33 @@ const styles = css`
     min-width: 0;
     flex: 1 1 auto;
   }
+  .convert-panel {
+    margin-top: 8px;
+    padding: 10px;
+    border: 1px solid var(--colorNeutralStroke2, #e0e0e0);
+    border-radius: 4px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    background: var(--colorNeutralBackground2, #f5f5f5);
+  }
+  .convert-options {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .radio-label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    cursor: pointer;
+    font-size: 13px;
+  }
+  .convert-actions {
+    display: flex;
+    justify-content: flex-end;
+    margin-top: 4px;
+  }
 `;
 
 const template = html<DocenNoteSettingsDialog>`
@@ -192,8 +219,44 @@ const template = html<DocenNoteSettingsDialog>`
           </fluent-dropdown>
         </div>
       </div>
+      <div class="convert-panel" ?hidden="${(x) => !x.showConvert}">
+        <div class="note-heading" ${ref("convertHeading")}></div>
+        <div class="convert-options">
+          <label class="radio-label">
+            <input
+              type="radio"
+              name="note-convert"
+              value="allFootnotesToEndnotes"
+              checked
+              ${ref("fnToEnRadio")}
+            />
+            <span ${ref("fnToEnLabel")}></span>
+          </label>
+          <label class="radio-label">
+            <input
+              type="radio"
+              name="note-convert"
+              value="allEndnotesToFootnotes"
+              ${ref("enToFnRadio")}
+            />
+            <span ${ref("enToFnLabel")}></span>
+          </label>
+          <label class="radio-label">
+            <input type="radio" name="note-convert" value="swapNotes" ${ref("swapLabel")} />
+            <span ${ref("swapNotesLabel")}></span>
+          </label>
+        </div>
+        <div class="convert-actions">
+          <fluent-button
+            appearance="accent"
+            ${ref("convertApplyBtn")}
+            @click="${(x) => x.applyConvert()}"
+          ></fluent-button>
+        </div>
+      </div>
     </div>
     <div slot="action">
+      <fluent-button ${ref("convertBtn")} @click="${(x) => x.toggleConvert()}"></fluent-button>
       <fluent-button ${ref("cancelBtn")} @click="${(x) => x.hide()}"></fluent-button>
       <fluent-button
         appearance="accent"
@@ -235,6 +298,16 @@ class DocenNoteSettingsDialog extends FASTElement {
   @observable endnoteRestartDropdown?: FluentDropdown;
   @observable okBtn?: HTMLElement;
   @observable cancelBtn?: HTMLElement;
+  @observable convertBtn?: HTMLElement;
+  @observable showConvert = false;
+  @observable convertHeading?: HTMLElement;
+  @observable fnToEnRadio?: HTMLInputElement;
+  @observable enToFnRadio?: HTMLInputElement;
+  @observable swapLabel?: HTMLInputElement;
+  @observable fnToEnLabel?: HTMLElement;
+  @observable enToFnLabel?: HTMLElement;
+  @observable swapNotesLabel?: HTMLElement;
+  @observable convertApplyBtn?: HTMLElement;
 
   #unobserveLang?: () => void;
 
@@ -250,6 +323,20 @@ class DocenNoteSettingsDialog extends FASTElement {
     super.disconnectedCallback();
   }
 
+  toggleConvert(): void {
+    this.showConvert = !this.showConvert;
+  }
+
+  applyConvert(): void {
+    let mode: "allFootnotesToEndnotes" | "allEndnotesToFootnotes" | "swapNotes" =
+      "allFootnotesToEndnotes";
+    if (this.enToFnRadio?.checked) mode = "allEndnotesToFootnotes";
+    else if (this.swapLabel?.checked) mode = "swapNotes";
+    this.$emit("note-settings:convert", { mode });
+    this.showConvert = false;
+    this.hide();
+  }
+
   /** Prefill from documentExtras.settings; absent fields fall back to Word's
    *  footnote (1,2,3 at page bottom) and endnote (i,ii,iii at section end)
    *  defaults. */
@@ -259,6 +346,7 @@ class DocenNoteSettingsDialog extends FASTElement {
       endnote?: Partial<NoteKindSettings>;
     } = {},
   ): void {
+    this.showConvert = false;
     const fn = values.footnote ?? {};
     const en = values.endnote ?? {};
     if (this.footnotePosDropdown)
@@ -347,6 +435,12 @@ class DocenNoteSettingsDialog extends FASTElement {
     ]);
     if (this.okBtn) this.okBtn.textContent = t("options.ok", this);
     if (this.cancelBtn) this.cancelBtn.textContent = t("options.cancel", this);
+    if (this.convertBtn) this.convertBtn.textContent = t("note.convert", this);
+    if (this.convertHeading) this.convertHeading.textContent = t("note.convert-title", this);
+    if (this.fnToEnLabel) this.fnToEnLabel.textContent = t("note.convert-fn-to-en", this);
+    if (this.enToFnLabel) this.enToFnLabel.textContent = t("note.convert-en-to-fn", this);
+    if (this.swapNotesLabel) this.swapNotesLabel.textContent = t("note.convert-swap", this);
+    if (this.convertApplyBtn) this.convertApplyBtn.textContent = t("options.ok", this);
   }
 }
 

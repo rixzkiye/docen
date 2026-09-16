@@ -2,7 +2,7 @@ import type { JSONContent } from "@docen/docx";
 import type { Editor } from "@docen/docx/core";
 import { DocAttrStep } from "@tiptap/pm/transform";
 
-import { t } from "../../ui";
+import { t } from "../../ui/i18n/localize";
 
 /** A bibliography source as the sources dialog edits it — office-open's
  *  SourceTypeOptions narrowed to the exposed fields (the document's own
@@ -16,6 +16,131 @@ export type BibliographySource = {
   author?: { authors?: { last?: string; first?: string; corporate?: string }[] };
 };
 
+/** Formats an in-text citation string per active citation style (APA, MLA, Chicago, IEEE). */
+export function formatInTextCitation(source: BibliographySource, style = "APA", index = 1): string {
+  const normStyle = style.toUpperCase();
+  if (normStyle === "IEEE") {
+    return `[${index}]`;
+  }
+  const authors = source.author?.authors ?? [];
+  let authorStr = "";
+  if (authors.length > 0) {
+    if (authors[0]?.corporate) {
+      authorStr = authors[0].corporate;
+    } else {
+      const lasts = authors.map((a) => a.last || a.first || "").filter(Boolean);
+      if (lasts.length === 1) {
+        authorStr = lasts[0]!;
+      } else if (lasts.length === 2) {
+        const joiner = normStyle === "APA" ? " & " : " and ";
+        authorStr = `${lasts[0]}${joiner}${lasts[1]}`;
+      } else if (lasts.length > 2) {
+        authorStr = `${lasts[0]} et al.`;
+      }
+    }
+  }
+  const head = authorStr || source.title || source.tag || "Unknown";
+  const year = source.year;
+
+  if (normStyle === "MLA") {
+    return `(${head})`;
+  }
+  if (normStyle === "CHICAGO") {
+    return `(${head}${year ? ` ${year}` : ""})`;
+  }
+  // Default APA 7th
+  return `(${head}${year ? `, ${year}` : ""})`;
+}
+
+/** Formats a full bibliography entry line per active citation style (APA, MLA, Chicago, IEEE). */
+export function formatBibliographyEntry(
+  source: BibliographySource,
+  style = "APA",
+  index = 1,
+): string {
+  const normStyle = style.toUpperCase();
+  const authors = source.author?.authors ?? [];
+  const year = source.year;
+  const title = source.title;
+  const publisher = source.publisher;
+
+  if (normStyle === "IEEE") {
+    const names = authors
+      .map((a) => {
+        if (a.corporate) return a.corporate;
+        const initial = a.first ? `${a.first[0]}. ` : "";
+        return `${initial}${a.last ?? ""}`.trim();
+      })
+      .filter(Boolean);
+    const authorText = names.length > 2 ? `${names[0]} et al.` : names.join(" and ");
+    const parts = [
+      `[${index}]`,
+      authorText ? `${authorText},` : "",
+      title ? `${title}.` : "",
+      [publisher, year].filter(Boolean).join(", ") + (publisher || year ? "." : ""),
+    ].filter(Boolean);
+    return parts.join(" ");
+  }
+
+  if (normStyle === "MLA") {
+    const names = authors
+      .map((a, i) => {
+        if (a.corporate) return a.corporate;
+        if (i === 0) return [a.last, a.first].filter(Boolean).join(", ");
+        return [a.first, a.last].filter(Boolean).join(" ");
+      })
+      .filter(Boolean);
+    const authorText = names.length > 2 ? `${names[0]}, et al.` : names.join(" and ");
+    const parts = [
+      authorText ? `${authorText}.` : "",
+      title ? `${title}.` : "",
+      [publisher, year].filter(Boolean).join(", ") + (publisher || year ? "." : ""),
+    ].filter(Boolean);
+    return parts.join(" ");
+  }
+
+  if (normStyle === "CHICAGO") {
+    const names = authors
+      .map((a, i) => {
+        if (a.corporate) return a.corporate;
+        if (i === 0) return [a.last, a.first].filter(Boolean).join(", ");
+        return [a.first, a.last].filter(Boolean).join(" ");
+      })
+      .filter(Boolean);
+    const authorText = names.length > 2 ? `${names[0]}, et al.` : names.join(" and ");
+    const parts = [
+      authorText ? `${authorText}.` : "",
+      year ? `${year}.` : "",
+      title ? `${title}.` : "",
+      publisher ? `${publisher}.` : "",
+    ].filter(Boolean);
+    return parts.join(" ");
+  }
+
+  // Default APA 7th: Authors (Year). Title. Publisher.
+  const names = authors
+    .map((a) => {
+      if (a.corporate) return a.corporate;
+      const initial = a.first ? ` ${a.first[0]}.` : "";
+      return `${a.last ?? ""},${initial}`.trim();
+    })
+    .filter(Boolean);
+  let authorText = "";
+  if (names.length === 1) authorText = names[0]!;
+  else if (names.length === 2) authorText = `${names[0]} & ${names[1]}`;
+  else if (names.length > 2)
+    authorText = `${names.slice(0, -1).join(", ")}, & ${names[names.length - 1]}`;
+  else if (authors[0]?.corporate) authorText = authors[0].corporate;
+
+  const parts = [
+    authorText ? `${authorText}` : "",
+    year ? `(${year}).` : "",
+    title ? `${title}.` : "",
+    publisher ? `${publisher}.` : "",
+  ].filter(Boolean);
+  return parts.join(" ");
+}
+
 /** The references commands' view of the host — resolved per call so the
  *  controller can be built before a document opens (the editor and the story
  *  bridge both arrive later). */
@@ -27,6 +152,8 @@ export interface ReferencesHost {
   bridge(): { activeEditor(): Editor; focus(): void } | undefined;
   /** The host element — the i18n language source for prompts. */
   element(): HTMLElement;
+  /** Host callback to update all fields after style changes. */
+  updateAllFields?(): void;
 }
 
 /**
@@ -87,9 +214,32 @@ export class ReferencesCommands {
    *  Manager's master list, word/bibliography.xml on save). */
   bibliographySources(): BibliographySource[] {
     const attrs = this.host.editor()?.state.doc.attrs as {
-      bibliography?: { sources?: BibliographySource[] } | null;
+      bibliography?: { sources?: BibliographySource[]; style?: string } | null;
     };
     return [...(attrs.bibliography?.sources ?? [])];
+  }
+
+  /** The document's active citation style ("APA" | "MLA" | "Chicago" | "IEEE"). */
+  citationStyle(): string {
+    const attrs = this.host.editor()?.state.doc.attrs as {
+      bibliography?: { sources?: BibliographySource[]; style?: string } | null;
+    };
+    return attrs.bibliography?.style || "APA";
+  }
+
+  /** Set active citation style and re-evaluate fields in the document. */
+  setCitationStyle(style: string): void {
+    const target = this.#target();
+    if (!target) return;
+    const attrs = target.state.doc.attrs as {
+      bibliography?: { sources?: BibliographySource[]; style?: string } | null;
+    };
+    const current = attrs.bibliography ?? {};
+    target.commands.command(({ tr }) => {
+      tr.step(new DocAttrStep("bibliography", { ...current, style }));
+      return true;
+    });
+    this.host.updateAllFields?.();
   }
 
   /** Sources dialog commit — replace the document's source list. An empty
@@ -98,25 +248,29 @@ export class ReferencesCommands {
     const { sources } = (event as CustomEvent<{ sources?: BibliographySource[] }>).detail ?? {};
     const target = this.#target();
     if (!target || !sources) return;
+    const current = (target.state.doc.attrs as { bibliography?: { style?: string } }).bibliography;
     target.commands.command(({ tr }) => {
-      tr.step(new DocAttrStep("bibliography", sources.length > 0 ? { sources } : null));
+      tr.step(
+        new DocAttrStep(
+          "bibliography",
+          sources.length > 0 || current?.style ? { ...current, sources } : null,
+        ),
+      );
       return true;
     });
   };
 
-  /** Citation dialog insert — seed a cached CITATION field at the caret in
-   *  Word's in-text shape "(Author, Year)" (the title stands in when the
-   *  source has no author). */
+  /** Citation dialog insert — seed a cached CITATION field at the caret formatted
+   *  per active citation style. */
   readonly onCitationOk = (event: Event): void => {
     const { tag } = (event as CustomEvent<{ tag?: string }>).detail ?? {};
     const target = this.#target();
     if (!target || !tag) return;
-    const source = this.bibliographySources().find((entry) => entry.tag === tag);
-    const authors = (source?.author?.authors ?? [])
-      .map((person) => [person.last, person.first].filter(Boolean).join(", "))
-      .join("; ");
-    const head = authors || source?.title || tag;
-    const cached = `(${head}${source?.year ? `, ${source.year}` : ""})`;
+    const sources = this.bibliographySources();
+    const sourceIndex = sources.findIndex((entry) => entry.tag === tag);
+    const source = sourceIndex >= 0 ? sources[sourceIndex]! : { tag };
+    const style = this.citationStyle();
+    const cached = formatInTextCitation(source, style, sourceIndex >= 0 ? sourceIndex + 1 : 1);
     const seed: JSONContent = {
       type: "inlinePassthrough",
       attrs: {
@@ -144,30 +298,17 @@ export class ReferencesCommands {
     }
     const { state } = target;
     if (state.selection.$from.parent.type.name !== "paragraph") return;
-    // A simplified APA entry line: Authors (Year). Title. Publisher.
-    const entryText = (source: BibliographySource): string => {
-      const authors = (source.author?.authors ?? [])
-        .map((person) => person.corporate ?? [person.last, person.first].filter(Boolean).join(", "))
-        .join("; ");
-      return [
-        authors,
-        source.year ? `(${source.year})` : "",
-        source.title ? `${source.title}.` : "",
-        source.publisher ? `${source.publisher}.` : "",
-      ]
-        .filter(Boolean)
-        .join(" ");
-    };
+    const style = this.citationStyle();
     const block: JSONContent[] = [
       {
         type: "paragraph",
         attrs: { style: "BibliographyHeading" },
         content: [{ type: "text", text: t("bibliography.heading", this.host.element()) }],
       },
-      ...sources.map((source) => ({
+      ...sources.map((source, i) => ({
         type: "paragraph",
         attrs: { style: "Bibliography" },
-        content: [{ type: "text", text: entryText(source) }],
+        content: [{ type: "text", text: formatBibliographyEntry(source, style, i + 1) }],
       })),
     ];
     const styles = { ...((state.doc.attrs.styles ?? {}) as Record<string, unknown>) };

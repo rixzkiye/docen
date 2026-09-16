@@ -52,3 +52,6 @@ export { default as DocenTemplateDialog } from "./template-dialog";
 export { default as DocenModifyStyleDialog } from "./modify-style-dialog";
 export { default as DocenHyphenationDialog } from "./hyphenation-dialog";
 export { default as DocenTabsDialog } from "./tabs-dialog";
+export { default as DocenBookmarkDialog } from "./bookmark-dialog";
+export { default as DocenGoToDialog } from "./go-to-dialog";
+export { default as DocenPropertiesDialog } from "./properties-dialog";

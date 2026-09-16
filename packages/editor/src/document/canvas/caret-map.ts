@@ -1308,6 +1308,25 @@ export class CaretMap {
     return line ? this.posOfChar(line.owner, line.startChar) : null;
   }
 
+  /** The first doc position rendered on a line (null when lineIndex out of range). */
+  firstPosOfLine(lineIndex: number): number | null {
+    const line = this.lines[lineIndex];
+    return line ? this.posOfChar(line.owner, line.startChar) : null;
+  }
+
+  /** The 0-based line index containing pos (null when unmappable). */
+  lineIndexAtPos(pos: number): number | null {
+    const located = this.locate(pos);
+    if (!located) return null;
+    const idx = this.lines.indexOf(located.line);
+    return idx >= 0 ? idx : null;
+  }
+
+  /** Total rendered text lines. */
+  lineCount(): number {
+    return this.lines.length;
+  }
+
   /** Doc position → collapsed-char offset in its paragraph. */
   private charOfPos(entry: ParaEntry, pos: number): number {
     let char = 0;

@@ -1,8 +1,14 @@
+// @vitest-environment happy-dom
 import { Document, InlinePassthrough, Paragraph, type JSONContent } from "@docen/docx";
 import { Editor, Node as TextNode, type Editor as EditorType } from "@docen/docx/core";
 import { describe, expect, it } from "vitest";
 
 import { DialogCommands, type DialogsHost } from "./dialogs";
+import {
+  formatBibliographyEntry,
+  formatInTextCitation,
+  type BibliographySource,
+} from "./references";
 
 const fieldAtom = (branch: object): JSONContent =>
   ({
@@ -225,5 +231,273 @@ describe("DialogCommands field commits", () => {
     expect(JSON.parse(String(editor.state.doc.nodeAt(1)?.attrs.data))).toEqual({
       formField: { checkBox: { checked: true, size: 20 } },
     });
+  });
+});
+
+describe("DialogCommands note conversion", () => {
+  it("converts all footnotes to endnotes with updated IDs and node references", () => {
+    const editor = new Editor({
+      element: null,
+      extensions: [Document, Paragraph, Text, InlinePassthrough],
+      content: {
+        type: "doc",
+        attrs: {
+          documentExtras: {
+            footnotes: [
+              {
+                id: 1,
+                children: [
+                  {
+                    style: "FootnoteText",
+                    children: [{ footnoteRef: true }, { text: "Note 1" }],
+                  },
+                ],
+              },
+            ],
+            endnotes: [
+              {
+                id: 1,
+                children: [
+                  { style: "EndnoteText", children: [{ endnoteRef: true }, { text: "End 1" }] },
+                ],
+              },
+            ],
+          },
+        },
+        content: [
+          {
+            type: "paragraph",
+            content: [
+              { type: "text", text: "text" },
+              {
+                type: "inlinePassthrough",
+                attrs: { data: JSON.stringify({ footnoteReference: 1 }) },
+              },
+            ],
+          },
+        ],
+      },
+    });
+    const dialogs = new DialogCommands(host(editor));
+    expect(dialogs.convertNotes("allFootnotesToEndnotes")).toBe(true);
+    const extras = editor.state.doc.attrs.documentExtras as {
+      footnotes: unknown[];
+      endnotes: Array<{ id: number; children: unknown[] }>;
+    };
+    expect(extras.footnotes).toHaveLength(0);
+    expect(extras.endnotes).toHaveLength(2);
+    expect(extras.endnotes[1].id).toBe(2);
+    const atomData = JSON.parse(String(editor.state.doc.nodeAt(5)?.attrs.data));
+    expect(atomData).toEqual({ endnoteReference: 2 });
+  });
+
+  it("converts all endnotes to footnotes with updated IDs and node references", () => {
+    const editor = new Editor({
+      element: null,
+      extensions: [Document, Paragraph, Text, InlinePassthrough],
+      content: {
+        type: "doc",
+        attrs: {
+          documentExtras: {
+            footnotes: [
+              {
+                id: 1,
+                children: [
+                  {
+                    style: "FootnoteText",
+                    children: [{ footnoteRef: true }, { text: "Note 1" }],
+                  },
+                ],
+              },
+            ],
+            endnotes: [
+              {
+                id: 1,
+                children: [
+                  { style: "EndnoteText", children: [{ endnoteRef: true }, { text: "End 1" }] },
+                ],
+              },
+            ],
+          },
+        },
+        content: [
+          {
+            type: "paragraph",
+            content: [
+              { type: "text", text: "text" },
+              {
+                type: "inlinePassthrough",
+                attrs: { data: JSON.stringify({ endnoteReference: 1 }) },
+              },
+            ],
+          },
+        ],
+      },
+    });
+    const dialogs = new DialogCommands(host(editor));
+    expect(dialogs.convertNotes("allEndnotesToFootnotes")).toBe(true);
+    const extras = editor.state.doc.attrs.documentExtras as {
+      footnotes: Array<{ id: number; children: unknown[] }>;
+      endnotes: unknown[];
+    };
+    expect(extras.endnotes).toHaveLength(0);
+    expect(extras.footnotes).toHaveLength(2);
+    expect(extras.footnotes[1].id).toBe(2);
+    const atomData = JSON.parse(String(editor.state.doc.nodeAt(5)?.attrs.data));
+    expect(atomData).toEqual({ footnoteReference: 2 });
+  });
+
+  it("swaps footnotes and endnotes", () => {
+    const editor = new Editor({
+      element: null,
+      extensions: [Document, Paragraph, Text, InlinePassthrough],
+      content: {
+        type: "doc",
+        attrs: {
+          documentExtras: {
+            footnotes: [
+              {
+                id: 1,
+                children: [
+                  { style: "FootnoteText", children: [{ footnoteRef: true }, { text: "FN" }] },
+                ],
+              },
+            ],
+            endnotes: [
+              {
+                id: 2,
+                children: [
+                  { style: "EndnoteText", children: [{ endnoteRef: true }, { text: "EN" }] },
+                ],
+              },
+            ],
+          },
+        },
+        content: [
+          {
+            type: "paragraph",
+            content: [
+              {
+                type: "inlinePassthrough",
+                attrs: { data: JSON.stringify({ footnoteReference: 1 }) },
+              },
+              {
+                type: "inlinePassthrough",
+                attrs: { data: JSON.stringify({ endnoteReference: 2 }) },
+              },
+            ],
+          },
+        ],
+      },
+    });
+    const dialogs = new DialogCommands(host(editor));
+    expect(dialogs.convertNotes("swapNotes")).toBe(true);
+    const extras = editor.state.doc.attrs.documentExtras as {
+      footnotes: Array<{ id: number; children: unknown[] }>;
+      endnotes: Array<{ id: number; children: unknown[] }>;
+    };
+    expect(extras.footnotes[0].id).toBe(2);
+    expect(extras.endnotes[0].id).toBe(1);
+    const atom1 = JSON.parse(String(editor.state.doc.nodeAt(1)?.attrs.data));
+    const atom2 = JSON.parse(String(editor.state.doc.nodeAt(2)?.attrs.data));
+    expect(atom1).toEqual({ endnoteReference: 1 });
+    expect(atom2).toEqual({ footnoteReference: 2 });
+  });
+});
+
+describe("DialogCommands bookmarks", () => {
+  it("adds, lists, and deletes bookmarks", () => {
+    const editor = new Editor({
+      element: null,
+      extensions: [Document, Paragraph, Text, InlinePassthrough],
+      content: {
+        type: "doc",
+        content: [
+          {
+            type: "paragraph",
+            content: [{ type: "text", text: "Hello world" }],
+          },
+        ],
+      },
+    });
+    const dialogs = new DialogCommands(host(editor));
+    editor.commands.setTextSelection({ from: 1, to: 6 });
+    expect(dialogs.addBookmark("myBookmark")).toBe(true);
+
+    const bms = dialogs.documentBookmarks();
+    expect(bms).toHaveLength(1);
+    expect(bms[0].name).toBe("myBookmark");
+    expect(bms[0].from).toBe(2);
+
+    expect(dialogs.deleteBookmark("myBookmark")).toBe(true);
+    expect(dialogs.documentBookmarks()).toHaveLength(0);
+  });
+
+  it("rejects invalid bookmark names", () => {
+    const editor = new Editor({
+      element: null,
+      extensions: [Document, Paragraph, Text, InlinePassthrough],
+      content: {
+        type: "doc",
+        content: [{ type: "paragraph", content: [{ type: "text", text: "Test" }] }],
+      },
+    });
+    const dialogs = new DialogCommands(host(editor));
+    expect(dialogs.addBookmark("123invalid")).toBe(false);
+    expect(dialogs.addBookmark("has space")).toBe(false);
+  });
+});
+
+describe("Citation and Bibliography formatters", () => {
+  const source: BibliographySource = {
+    tag: "Turing1936",
+    sourceType: "Book",
+    title: "On Computable Numbers",
+    year: "1936",
+    publisher: "London Mathematical Society",
+    author: {
+      authors: [{ first: "Alan", last: "Turing" }],
+    },
+  };
+
+  const multiAuthorSource: BibliographySource = {
+    tag: "KnuthEtAl",
+    sourceType: "Book",
+    title: "Concrete Mathematics",
+    year: "1994",
+    publisher: "Addison-Wesley",
+    author: {
+      authors: [
+        { first: "Ronald", last: "Graham" },
+        { first: "Donald", last: "Knuth" },
+        { first: "Oren", last: "Patashnik" },
+      ],
+    },
+  };
+
+  it("formats in-text citations per style", () => {
+    expect(formatInTextCitation(source, "APA")).toBe("(Turing, 1936)");
+    expect(formatInTextCitation(source, "MLA")).toBe("(Turing)");
+    expect(formatInTextCitation(source, "CHICAGO")).toBe("(Turing 1936)");
+    expect(formatInTextCitation(source, "IEEE", 3)).toBe("[3]");
+
+    expect(formatInTextCitation(multiAuthorSource, "APA")).toBe("(Graham et al., 1994)");
+    expect(formatInTextCitation(multiAuthorSource, "MLA")).toBe("(Graham et al.)");
+    expect(formatInTextCitation(multiAuthorSource, "CHICAGO")).toBe("(Graham et al. 1994)");
+    expect(formatInTextCitation(multiAuthorSource, "IEEE", 1)).toBe("[1]");
+  });
+
+  it("formats bibliography entries per style", () => {
+    const apa = formatBibliographyEntry(source, "APA", 1);
+    expect(apa).toBe("Turing, A. (1936). On Computable Numbers. London Mathematical Society.");
+
+    const mla = formatBibliographyEntry(source, "MLA", 1);
+    expect(mla).toBe("Turing, Alan. On Computable Numbers. London Mathematical Society, 1936.");
+
+    const chicago = formatBibliographyEntry(source, "CHICAGO", 1);
+    expect(chicago).toBe("Turing, Alan. 1936. On Computable Numbers. London Mathematical Society.");
+
+    const ieee = formatBibliographyEntry(source, "IEEE", 1);
+    expect(ieee).toBe("[1] A. Turing, On Computable Numbers. London Mathematical Society, 1936.");
   });
 });

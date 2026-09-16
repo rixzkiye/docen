@@ -53,6 +53,7 @@ export function dirtyPagesOf(
       same = pi[j]!.yPx === ni[j]!.yPx && deepEq(pi[j]!.block, ni[j]!.block);
     }
     if (same) same = deepEq(prev[i]!.footnotes, next[i]!.footnotes);
+    if (same) same = deepEq(prev[i]!.endnotes, next[i]!.endnotes);
     dirty[i] = !same;
   }
   return dirty;

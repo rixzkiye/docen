@@ -36,6 +36,14 @@ export const footnoteItems = (): string =>
     { text: opt("previous-footnote"), value: "prev" },
   ]);
 
+export const citationStyleItems = (): string =>
+  JSON.stringify([
+    { text: "APA", value: "citation-style:APA" },
+    { text: "MLA", value: "citation-style:MLA" },
+    { text: "Chicago", value: "citation-style:Chicago" },
+    { text: "IEEE", value: "citation-style:IEEE" },
+  ]);
+
 export const referencesTab = (): RibbonTab =>
   tabNode("references", [
     group("toc", [
@@ -51,6 +59,9 @@ export const referencesTab = (): RibbonTab =>
     group("citations", [
       btn("comment-add", "insert-citation", { size: "large" }),
       btn("people", "manage-sources", { size: "large" }),
+      split("text-edit-style", "citation-style", parsedItems(citationStyleItems()), {
+        size: "large",
+      }),
       btn("document-print", "bibliography", { size: "large" }),
     ]),
     group("captions", [

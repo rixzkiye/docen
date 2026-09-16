@@ -309,6 +309,9 @@ export interface LaidOutFootnoteArea {
   totalHeightPx: number;
 }
 
+/** The endnote area on a page (section-end or doc-end): separator line and notes. */
+export type LaidOutEndnoteArea = LaidOutFootnoteArea;
+
 /** One packed margin balloon on a page (content-box-local geometry — the
  *  painter adds the content-box origin). The flow packs the stack: cards sort
  *  by anchor Y, each starts at or below the previous card's bottom, and body

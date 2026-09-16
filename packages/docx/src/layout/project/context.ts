@@ -40,9 +40,15 @@ export interface ProjectContext {
    *  (Word's numbering: the Nth distinct note referenced shows N; the same id
    *  twice shows the same number). Lives across the whole projection walk. */
   footnoteOrdinals: Map<number, number>;
+  footnoteNumFmt?: string;
+  footnoteNumStart?: number;
+  footnoteNumRestart?: "continuous" | "eachSect" | "eachPage";
   /** Endnote id → displayed ordinal — same first-reference-order rule as the
    *  footnotes; painted as lowercase Roman (Word's endnote default numFmt). */
   endnoteOrdinals: Map<number, number>;
+  endnoteNumFmt?: string;
+  endnoteNumStart?: number;
+  endnoteNumRestart?: "continuous" | "eachSect" | "eachPage";
   /** The document's default tab-grid pitch in px (w:defaultTabStop, twips in
    *  settings.xml resolved once here) — every paragraph's tabs fall back to
    *  it past the last explicit stop. */

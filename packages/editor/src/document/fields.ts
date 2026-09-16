@@ -15,6 +15,12 @@
 
 import { formatNumber } from "@docen/layout";
 
+import {
+  type BibliographySource,
+  formatBibliographyEntry,
+  formatInTextCitation,
+} from "./commands/references";
+
 /** One insertable field: the OOXML name and its default instruction (what the
  *  dialog's field-code box prefills). Field names stay English — Word's field
  *  dialog shows the field codes verbatim in every UI language. */
@@ -75,6 +81,10 @@ export const FIELD_CATEGORIES: readonly FieldCategory[] = [
       plain("SECTION"),
       plain("SECTIONPAGES"),
     ],
+  },
+  {
+    key: "references",
+    fields: [plain("CITATION"), plain("BIBLIOGRAPHY")],
   },
 ];
 
@@ -164,6 +174,9 @@ export interface FieldContext {
   /** The rendered page frame (PAGE/NUMPAGES/SECTION/SECTIONPAGES/PAGEREF).
    *  Absent = no pagination at hand; page-dependent fields keep their cache. */
   frame?: FieldFrame;
+  /** Bibliography sources and active citation style for CITATION/BIBLIOGRAPHY. */
+  bibliographySources?: ReadonlyMap<string, BibliographySource>;
+  bibliographyStyle?: string;
 }
 
 /** One page slice of the pagination result, as the field evaluators read it. */
@@ -552,6 +565,33 @@ export const FIELD_EVALUATORS: Readonly<Record<string, FieldEvaluator>> = {
     const evaluator = alias ? FIELD_EVALUATORS[alias] : undefined;
     if (!evaluator) return null;
     return evaluator({ ...field, name: alias! }, ctx);
+  },
+  CITATION: (field, ctx) => {
+    const tag = field.args[0];
+    if (!tag || !ctx.bibliographySources) return null;
+    const source = ctx.bibliographySources.get(tag);
+    if (!source) return null;
+    let index = 1;
+    let idx = 1;
+    for (const [sTag] of ctx.bibliographySources) {
+      if (sTag === tag) {
+        index = idx;
+        break;
+      }
+      idx++;
+    }
+    const style = ctx.bibliographyStyle ?? "APA";
+    return formatInTextCitation(source, style, index);
+  },
+  BIBLIOGRAPHY: (_field, ctx) => {
+    if (!ctx.bibliographySources || ctx.bibliographySources.size === 0) return null;
+    const style = ctx.bibliographyStyle ?? "APA";
+    const entries: string[] = [];
+    let idx = 1;
+    for (const [, source] of ctx.bibliographySources) {
+      entries.push(formatBibliographyEntry(source, style, idx++));
+    }
+    return entries.join("\n");
   },
 };
 

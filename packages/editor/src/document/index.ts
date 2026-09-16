@@ -71,8 +71,10 @@ import {
   type RibbonTab,
 } from "../ui";
 import type { AutocorrectDialogValues } from "../ui/components/workspace/autocorrect-dialog";
+import type { BookmarkItem } from "../ui/components/workspace/bookmark-dialog";
 import type { DrawingPropertiesState } from "../ui/components/workspace/drawing-properties-dialog";
 import type { FontDialogPatch } from "../ui/components/workspace/font-dialog";
+import type { GoToKind, GoToPayload } from "../ui/components/workspace/go-to-dialog";
 import type {
   HyphenationDialogOptions,
   DocenHyphenationDialog,
@@ -84,6 +86,10 @@ import type {
   NoteKindSettings,
   NoteSettingsValues,
 } from "../ui/components/workspace/note-settings-dialog";
+import type {
+  DocumentPropertiesCore,
+  DocumentPropertiesStats,
+} from "../ui/components/workspace/properties-dialog";
 import type { DocenTabsDialog } from "../ui/components/workspace/tabs-dialog";
 import type { WordCountStats } from "../ui/components/workspace/word-count-dialog";
 import { createDefaultAddin, textCounter, wordCounter } from "./addin";
@@ -498,6 +504,7 @@ class DocenDocument extends AddinHost<Editor> {
     editor: () => this.editor,
     bridge: () => this.#bridge,
     element: () => this,
+    updateAllFields: () => this.#dialogs.updateAllFields(),
   });
   /** Mailings-tab merge commands (recipients/merge fields/preview), split out
    *  of this class — see commands/mail-merge.ts. */
@@ -818,6 +825,12 @@ class DocenDocument extends AddinHost<Editor> {
       this.#navigation.openFindReplace();
       return;
     }
+    // Ctrl+G opens Go To dialog (Word behavior).
+    if (event.key === "g" || event.key === "G") {
+      event.preventDefault();
+      this.#openGoToDialog();
+      return;
+    }
     // Ctrl+S saves (Word) — before the input gate, a save applies everywhere.
     if (event.key === "s" || event.key === "S") {
       event.preventDefault();
@@ -883,19 +896,9 @@ class DocenDocument extends AddinHost<Editor> {
     editor.commands.selectAll();
   }
 
-  /** Editing → Find drop-down → Go To: prompt for a page number and move the
-   *  caret to that page, scrolling it into view. */
+  /** Editing → Find drop-down → Go To: open the Go To dialog (Page tab). */
   #goToPage(): void {
-    const bridge = this.#bridge;
-    if (!bridge) return;
-    const input = window.prompt(t("ribbon.opt.go-to-prompt", this));
-    if (input == null) return;
-    const page = parseInt(input, 10);
-    if (!Number.isFinite(page) || page < 1 || page > this.#pages.length) return;
-    const pos = bridge.firstPosOfPage(page - 1);
-    if (pos == null) return;
-    this.#setTextSelection(pos);
-    bridge.scrollIntoView(pos);
+    this.#openGoToDialog("page");
   }
 
   /** Format Painter: a click captures the marks + paragraph formatting at the
@@ -1834,6 +1837,10 @@ class DocenDocument extends AddinHost<Editor> {
       "note-settings:ok",
       this.onNoteSettingsOk as EventListener,
     );
+    this.shadowRoot!.querySelector("docen-note-settings-dialog")?.addEventListener(
+      "note-settings:convert",
+      this.onNoteSettingsConvert as EventListener,
+    );
     // Line Numbering Options dialog — ok (current section's w:lnNumType).
     this.shadowRoot!.querySelector("docen-line-numbers-dialog")?.addEventListener(
       "line-numbers:ok",
@@ -1851,6 +1858,21 @@ class DocenDocument extends AddinHost<Editor> {
     this.shadowRoot!.querySelector("docen-tabs-dialog")?.addEventListener(
       "tabs:ok",
       this.#onTabsOk as EventListener,
+    );
+    // Bookmark dialog — add, delete, goto.
+    const bmEl = this.shadowRoot!.querySelector("docen-bookmark-dialog");
+    bmEl?.addEventListener("bookmark:add", this.onBookmarkAdd as EventListener);
+    bmEl?.addEventListener("bookmark:delete", this.onBookmarkDelete as EventListener);
+    bmEl?.addEventListener("bookmark:goto", this.onBookmarkGoTo as EventListener);
+    // Go To dialog — navigate.
+    this.shadowRoot!.querySelector("docen-go-to-dialog")?.addEventListener(
+      "goto:navigate",
+      this.onGoToNavigate as EventListener,
+    );
+    // Document Properties dialog — ok.
+    this.shadowRoot!.querySelector("docen-properties-dialog")?.addEventListener(
+      "properties:ok",
+      this.onPropertiesOk as EventListener,
     );
     // Document Inspector (检查问题) — the findings dialog's removal buttons.
     this.shadowRoot!.querySelector("docen-inspect-dialog")?.addEventListener(
@@ -2618,6 +2640,8 @@ class DocenDocument extends AddinHost<Editor> {
           columns: section.columns,
           footnoteDefinitions: section.footnoteDefinitions,
           endnoteDefinitions: section.endnoteDefinitions,
+          endnotePlacement: (section as { endnotePlacement?: "sectEnd" | "docEnd" })
+            .endnotePlacement,
           ...(continuous ? { unbounded: true, contentHeightPx: 1_000_000 } : {}),
           ...(pageInsets ? { pageInsets } : {}),
         },
@@ -3001,6 +3025,9 @@ class DocenDocument extends AddinHost<Editor> {
       ?.querySelector("docen-note-settings-dialog")
       ?.removeEventListener("note-settings:ok", this.onNoteSettingsOk as EventListener);
     this.shadowRoot
+      ?.querySelector("docen-note-settings-dialog")
+      ?.removeEventListener("note-settings:convert", this.onNoteSettingsConvert as EventListener);
+    this.shadowRoot
       ?.querySelector("docen-line-numbers-dialog")
       ?.removeEventListener("line-numbers:ok", this.#sections.onLineNumbersOk as EventListener);
     this.shadowRoot
@@ -3009,6 +3036,16 @@ class DocenDocument extends AddinHost<Editor> {
     this.shadowRoot
       ?.querySelector("docen-tabs-dialog")
       ?.removeEventListener("tabs:ok", this.#onTabsOk as EventListener);
+    const bmEl = this.shadowRoot?.querySelector("docen-bookmark-dialog");
+    bmEl?.removeEventListener("bookmark:add", this.onBookmarkAdd as EventListener);
+    bmEl?.removeEventListener("bookmark:delete", this.onBookmarkDelete as EventListener);
+    bmEl?.removeEventListener("bookmark:goto", this.onBookmarkGoTo as EventListener);
+    this.shadowRoot
+      ?.querySelector("docen-go-to-dialog")
+      ?.removeEventListener("goto:navigate", this.onGoToNavigate as EventListener);
+    this.shadowRoot
+      ?.querySelector("docen-properties-dialog")
+      ?.removeEventListener("properties:ok", this.onPropertiesOk as EventListener);
     this.shadowRoot
       ?.querySelector("docen-status-bar")
       ?.removeEventListener("language:open", this.#onLanguageOpen as EventListener);
@@ -4618,30 +4655,9 @@ class DocenDocument extends AddinHost<Editor> {
     target?.commands["insert-table"]?.({ rows, cols });
   };
 
-  /** Insert Bookmark — prompt for a name (Word's rules: starts with a letter
-   *  or CJK char, no spaces), then wrap the selection with a
-   *  bookmarkStart/bookmarkEnd passthrough pair in one transaction (the start
-   *  goes before `from`, the end after `to` — +1 shifts past the start atom
-   *  the first step added). Round-trips verbatim through DOCX. */
+  /** Insert Bookmark: open the Bookmark dialog. */
   #insertBookmark(): void {
-    const editor = this.editor;
-    if (!editor) return;
-    const name = window.prompt(t("bookmark.prompt", this))?.trim();
-    if (name == null) return;
-    if (!/^[A-Za-z一-鿿぀-ヿ][^\s]*$/.test(name) || name.length > 40) {
-      window.alert(t("bookmark.invalid", this));
-      return;
-    }
-    const id = this.#dialogs.nextBookmarkId(editor);
-    const seed = (data: object): JSONContent =>
-      ({
-        type: "inlinePassthrough",
-        attrs: { data: JSON.stringify(data) },
-      }) as JSONContent;
-    const { from, to } = editor.state.selection;
-    const start = editor.schema.nodeFromJSON(seed({ bookmarkStart: { id, name } }));
-    const end = editor.schema.nodeFromJSON(seed({ bookmarkEnd: { id } }));
-    editor.view.dispatch(editor.state.tr.insert(from, start).insert(to + 1, end));
+    this.#openBookmarkDialog();
   }
 
   /** Insert → Equation — drop one placeholder template (fraction / script /
@@ -5333,6 +5349,8 @@ class DocenDocument extends AddinHost<Editor> {
         editor: () => this.editor,
         togglePane: (id) => this.#togglePane(id),
         goToPage: () => this.#goToPage(),
+        openGoToDialog: (kind) => this.#openGoToDialog(kind as GoToKind | undefined),
+        openPropertiesDialog: () => this.#openPropertiesDialog(),
         openSearch: () => this.#navigation.openSearch(),
         openFindReplace: () => this.#navigation.openFindReplace(),
         zoom: () => this.#zoom,
@@ -5374,6 +5392,7 @@ class DocenDocument extends AddinHost<Editor> {
         openNoteSettings: () => this.#openNoteSettings(),
         markIndexEntry: (target) => this.#references.markIndexEntry(target),
         markCitation: (target) => this.#references.markCitation(target),
+        setCitationStyle: (style) => this.#references.setCitationStyle(style),
         insertBibliography: () => this.#references.insertBibliography(),
         bibliographySources: () => this.#references.bibliographySources(),
         crossReferenceTargets: () => this.#dialogs.crossReferenceTargets(),
@@ -5382,6 +5401,7 @@ class DocenDocument extends AddinHost<Editor> {
         noteDeleteAtSelection: () => this.#dialogs.noteDeleteAtSelection(),
         jumpNextNote: () => this.#jumpNextNote(),
         jumpPreviousNote: () => this.#jumpPreviousNote(),
+        openBookmarkDialog: () => this.#openBookmarkDialog(),
         insertBookmark: () => this.#insertBookmark(),
       },
       mailMerge: {
@@ -5945,6 +5965,318 @@ class DocenDocument extends AddinHost<Editor> {
     editor.view.dispatch(
       editor.state.tr.setDocAttribute("documentExtras", { ...extras, settings }),
     );
+  };
+
+  /** Word's Convert Notes: convert footnotes <-> endnotes or swap them. */
+  readonly onNoteSettingsConvert = (event: Event): void => {
+    const { mode } =
+      (
+        event as CustomEvent<{
+          mode?: "allFootnotesToEndnotes" | "allEndnotesToFootnotes" | "swapNotes";
+        }>
+      ).detail ?? {};
+    if (!mode) return;
+    this.#dialogs.convertNotes(mode);
+  };
+
+  /** Open Word's Bookmark dialog. */
+  #openBookmarkDialog(): void {
+    const bookmarks = this.#dialogs.documentBookmarks();
+    (
+      this.shadowRoot?.querySelector("docen-bookmark-dialog") as {
+        show(bookmarks?: BookmarkItem[]): void;
+      } | null
+    )?.show(bookmarks);
+  }
+
+  readonly onBookmarkAdd = (event: Event): void => {
+    const { name } = (event as CustomEvent<{ name?: string } | undefined>).detail ?? {};
+    if (!name) return;
+    this.#dialogs.addBookmark(name);
+  };
+
+  readonly onBookmarkDelete = (event: Event): void => {
+    const { name } = (event as CustomEvent<{ name?: string } | undefined>).detail ?? {};
+    if (!name) return;
+    this.#dialogs.deleteBookmark(name);
+  };
+
+  readonly onBookmarkGoTo = (event: Event): void => {
+    const { from, to } =
+      (event as CustomEvent<{ name?: string; from?: number; to?: number } | undefined>).detail ??
+      {};
+    if (from == null) return;
+    const bridge = this.#bridge;
+    if (!bridge) return;
+    this.#setTextSelection(from, to ?? from);
+    bridge.scrollIntoView(from);
+  };
+
+  /** Open Word's Go To dialog (Ctrl+G, Find dropdown). */
+  #openGoToDialog(initialKind: GoToKind = "page"): void {
+    (
+      this.shadowRoot?.querySelector("docen-go-to-dialog") as {
+        show(initialKind?: GoToKind): void;
+      } | null
+    )?.show(initialKind);
+  }
+
+  readonly onGoToNavigate = (event: Event): void => {
+    const payload = (event as CustomEvent<GoToPayload | undefined>).detail;
+    if (!payload) return;
+    const { kind, target, direction } = payload;
+    const editor = this.editor;
+    const bridge = this.#bridge;
+    if (!editor || !bridge) return;
+
+    const trimmed = target.trim();
+    const currentPos = editor.state.selection.from;
+
+    if (kind === "page") {
+      const totalPages = this.#pages.length;
+      if (totalPages === 0) return;
+      const currentPage = bridge.pageOf(currentPos) ?? 0;
+      let destPage = currentPage;
+      if (trimmed.startsWith("+") || trimmed.startsWith("-")) {
+        const delta = parseInt(trimmed, 10);
+        if (Number.isFinite(delta)) destPage = currentPage + delta;
+      } else if (trimmed) {
+        const num = parseInt(trimmed, 10);
+        if (Number.isFinite(num)) {
+          destPage = direction ? currentPage + direction * num : num - 1;
+        }
+      } else if (direction) {
+        destPage = currentPage + direction;
+      }
+      destPage = Math.max(0, Math.min(totalPages - 1, destPage));
+      const pos = bridge.firstPosOfPage(destPage);
+      if (pos != null) {
+        this.#setTextSelection(pos);
+        bridge.scrollIntoView(pos);
+      }
+      return;
+    }
+
+    if (kind === "section") {
+      const sectionStarts: number[] = [0];
+      editor.state.doc.descendants((node, pos) => {
+        if (
+          node.type.name === "paragraph" &&
+          (node.attrs as { sectionProperties?: unknown }).sectionProperties != null
+        ) {
+          sectionStarts.push(pos + node.nodeSize);
+        }
+      });
+      let curSectionIdx = 0;
+      for (let i = 0; i < sectionStarts.length; i++) {
+        if (currentPos >= sectionStarts[i]!) curSectionIdx = i;
+        else break;
+      }
+      let destSec = curSectionIdx;
+      if (trimmed.startsWith("+") || trimmed.startsWith("-")) {
+        const delta = parseInt(trimmed, 10);
+        if (Number.isFinite(delta)) destSec = curSectionIdx + delta;
+      } else if (trimmed) {
+        const num = parseInt(trimmed, 10);
+        if (Number.isFinite(num)) {
+          destSec = direction ? curSectionIdx + direction * num : num - 1;
+        }
+      } else if (direction) {
+        destSec = curSectionIdx + direction;
+      }
+      destSec = Math.max(0, Math.min(sectionStarts.length - 1, destSec));
+      const targetPos = Math.min(sectionStarts[destSec]!, editor.state.doc.content.size);
+      this.#setTextSelection(targetPos);
+      bridge.scrollIntoView(targetPos);
+      return;
+    }
+
+    if (kind === "line") {
+      const lineCount = bridge.lineCount();
+      if (lineCount === 0) return;
+      const curLine = bridge.lineIndexAtPos(currentPos) ?? 0;
+      let destLine = curLine;
+      if (trimmed.startsWith("+") || trimmed.startsWith("-")) {
+        const delta = parseInt(trimmed, 10);
+        if (Number.isFinite(delta)) destLine = curLine + delta;
+      } else if (trimmed) {
+        const num = parseInt(trimmed, 10);
+        if (Number.isFinite(num)) {
+          destLine = direction ? curLine + direction * num : num - 1;
+        }
+      } else if (direction) {
+        destLine = curLine + direction;
+      }
+      destLine = Math.max(0, Math.min(lineCount - 1, destLine));
+      const pos = bridge.firstPosOfLine(destLine);
+      if (pos != null) {
+        this.#setTextSelection(pos);
+        bridge.scrollIntoView(pos);
+      }
+      return;
+    }
+
+    if (kind === "bookmark") {
+      if (trimmed) {
+        const bookmarks = this.#dialogs.documentBookmarks();
+        const found = bookmarks.find((b) => b.name.toLowerCase() === trimmed.toLowerCase());
+        if (found) {
+          this.#setTextSelection(found.from, found.to);
+          bridge.scrollIntoView(found.from);
+        }
+      } else if (direction) {
+        const bookmarks = this.#dialogs.documentBookmarks();
+        if (bookmarks.length === 0) return;
+        bookmarks.sort((a, b) => a.from - b.from);
+        let nextIdx = 0;
+        if (direction > 0) {
+          const hit = bookmarks.find((b) => b.from > currentPos);
+          nextIdx = hit ? bookmarks.indexOf(hit) : 0;
+        } else {
+          const rev = [...bookmarks].reverse().find((b) => b.from < currentPos);
+          nextIdx = rev ? bookmarks.indexOf(rev) : bookmarks.length - 1;
+        }
+        const targetBm = bookmarks[nextIdx]!;
+        this.#setTextSelection(targetBm.from, targetBm.to);
+        bridge.scrollIntoView(targetBm.from);
+      }
+      return;
+    }
+
+    if (kind === "footnote" || kind === "endnote") {
+      const notePositions: number[] = [];
+      editor.state.doc.descendants((child, pos) => {
+        if (child.type.name !== "inlinePassthrough") return;
+        try {
+          const data = JSON.parse(String(child.attrs?.data ?? "{}")) as Record<string, unknown>;
+          if (kind === "footnote" && "footnoteReference" in data) notePositions.push(pos + 1);
+          if (kind === "endnote" && "endnoteReference" in data) notePositions.push(pos + 1);
+        } catch {}
+      });
+      if (notePositions.length === 0) return;
+      if (trimmed.startsWith("+") || trimmed.startsWith("-")) {
+        const delta = parseInt(trimmed, 10);
+        let curIdx = notePositions.findIndex((p) => p >= currentPos);
+        if (curIdx < 0) curIdx = notePositions.length - 1;
+        const destIdx = Math.max(0, Math.min(notePositions.length - 1, curIdx + delta));
+        const p = notePositions[destIdx]!;
+        this.#setTextSelection(p);
+        bridge.scrollIntoView(p);
+      } else if (trimmed) {
+        const num = parseInt(trimmed, 10);
+        if (Number.isFinite(num)) {
+          const idx = Math.max(0, Math.min(notePositions.length - 1, num - 1));
+          const p = notePositions[idx]!;
+          this.#setTextSelection(p);
+          bridge.scrollIntoView(p);
+        }
+      } else if (direction) {
+        let p: number | undefined;
+        if (direction > 0) {
+          p = notePositions.find((pos) => pos > currentPos);
+        } else {
+          p = [...notePositions].reverse().find((pos) => pos < currentPos);
+        }
+        if (p != null) {
+          this.#setTextSelection(p);
+          bridge.scrollIntoView(p);
+        }
+      }
+      return;
+    }
+
+    if (kind === "heading") {
+      const headingPositions: number[] = [];
+      editor.state.doc.descendants((node, pos) => {
+        if (node.type.name === "heading") {
+          headingPositions.push(pos + 1);
+        }
+      });
+      if (headingPositions.length === 0) return;
+      if (trimmed.startsWith("+") || trimmed.startsWith("-")) {
+        const delta = parseInt(trimmed, 10);
+        let curIdx = headingPositions.findIndex((p) => p >= currentPos);
+        if (curIdx < 0) curIdx = headingPositions.length - 1;
+        const destIdx = Math.max(0, Math.min(headingPositions.length - 1, curIdx + delta));
+        const p = headingPositions[destIdx]!;
+        this.#setTextSelection(p);
+        bridge.scrollIntoView(p);
+      } else if (trimmed) {
+        const num = parseInt(trimmed, 10);
+        if (Number.isFinite(num)) {
+          const idx = Math.max(0, Math.min(headingPositions.length - 1, num - 1));
+          const p = headingPositions[idx]!;
+          this.#setTextSelection(p);
+          bridge.scrollIntoView(p);
+        }
+      } else if (direction) {
+        let p: number | undefined;
+        if (direction > 0) {
+          p = headingPositions.find((pos) => pos > currentPos);
+        } else {
+          p = [...headingPositions].reverse().find((pos) => pos < currentPos);
+        }
+        if (p != null) {
+          this.#setTextSelection(p);
+          bridge.scrollIntoView(p);
+        }
+      }
+      return;
+    }
+  };
+
+  /** Open Word's Document Properties dialog. */
+  #openPropertiesDialog(): void {
+    const editor = this.editor;
+    if (!editor) return;
+    const attrs = (editor.state.doc.attrs ?? {}) as { core?: Record<string, unknown> };
+    const core = attrs.core ?? {};
+    let bodyText = "";
+    let bodyParas = 0;
+    const walk = (node: PMNode, inShape: boolean): void => {
+      const shape = inShape || node.type.name === "wpsShape" || node.type.name === "textbox";
+      if (node.type.name === "paragraph") {
+        if (!shape) {
+          bodyParas++;
+          bodyText += `${node.textContent}\n`;
+        }
+        return;
+      }
+      node.forEach((child) => walk(child, shape));
+    };
+    walk(editor.state.doc, false);
+    const stats: DocumentPropertiesStats = {
+      pages: this.#pages.length,
+      words: wordCounter(bodyText),
+      charsWithSpaces: textCounter(bodyText),
+      charsNoSpaces: textCounter(bodyText.replace(/\s+/g, "")),
+      paragraphs: bodyParas,
+      lines: this.#layoutLines(),
+      revision: typeof core.revision === "number" ? core.revision : 1,
+    };
+    (
+      this.shadowRoot?.querySelector("docen-properties-dialog") as {
+        show(core?: DocumentPropertiesCore, stats?: DocumentPropertiesStats): void;
+      } | null
+    )?.show(core as DocumentPropertiesCore, stats);
+  }
+
+  readonly onPropertiesOk = (event: Event): void => {
+    const { core } =
+      (event as CustomEvent<{ core?: DocumentPropertiesCore } | undefined>).detail ?? {};
+    if (!core) return;
+    const editor = this.editor;
+    if (!editor) return;
+    const attrs = (editor.state.doc.attrs ?? {}) as { core?: Record<string, unknown> };
+    const prevCore = attrs.core ?? {};
+    const nextCore: Record<string, unknown> = { ...prevCore };
+    if (core.title !== undefined) nextCore.title = core.title;
+    if (core.subject !== undefined) nextCore.subject = core.subject;
+    if (core.creator !== undefined) nextCore.creator = core.creator;
+    if (core.keywords !== undefined) nextCore.keywords = core.keywords;
+    if (core.description !== undefined) nextCore.description = core.description;
+    editor.view.dispatch(editor.state.tr.setDocAttribute("core", nextCore));
+    this.#dialogs.updateAllFields();
   };
 
   /** Notify external listeners (framework wrappers like @docen/vue) when the

@@ -28,6 +28,8 @@ export interface ReferencesHostView {
   markIndexEntry(target: Editor): void;
   /** Prompt for a citation entry and seed a TA field at the selection. */
   markCitation(target: Editor): void;
+  /** Set the active citation style (APA, MLA, Chicago, IEEE). */
+  setCitationStyle(style: string): void;
   insertBibliography(): void;
   bibliographySources(): unknown[];
   crossReferenceTargets(): CrossReferenceTarget[];
@@ -36,6 +38,8 @@ export interface ReferencesHostView {
   noteDeleteAtSelection(): void;
   jumpNextNote(): void;
   jumpPreviousNote(): void;
+  /** Open the Bookmark dialog. */
+  openBookmarkDialog(): void;
   /** Prompt for a name and wrap the selection with a bookmark pair. */
   insertBookmark(): void;
 }
@@ -69,6 +73,7 @@ export class ReferencesHostCommands implements HostCommandDomain {
     "cross-reference",
     "manage-sources",
     "insert-citation",
+    "citation-style",
     "bibliography",
     "insert-footnote",
     "edit-note",
@@ -185,10 +190,17 @@ export class ReferencesHostCommands implements HostCommandDomain {
       if (!ran) window.alert(t("toa.empty", this.host.element()));
       return true;
     }
-    // Bookmark — prompt for a name and wrap the selection with a
-    // bookmarkStart/bookmarkEnd pair (Word's Insert → Bookmark).
+    // Citation style — switch active style (APA, MLA, Chicago, IEEE).
+    if (event === "citation-style" || event.startsWith("citation-style:")) {
+      const style = value
+        ? value.replace("citation-style:", "")
+        : event.replace("citation-style:", "") || "APA";
+      this.host.setCitationStyle(style);
+      return true;
+    }
+    // Bookmark — open the Bookmark dialog.
     if (event === "bookmark") {
-      this.host.insertBookmark();
+      this.host.openBookmarkDialog();
       return true;
     }
     // Caption — open the dialog; the commit arrives via caption:ok

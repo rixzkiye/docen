@@ -1263,6 +1263,127 @@ describe("layoutFlow footnotes", () => {
   });
 });
 
+describe("layoutFlow endnotes", () => {
+  const endnotePara = (id: number, ordinal: number): LayoutParagraph => ({
+    kind: "paragraph",
+    inline: [
+      { kind: "text", text: "text", style: latin },
+      {
+        kind: "text",
+        text: String(ordinal),
+        style: latin,
+        noteRef: { kind: "endnote", id, ordinal },
+      },
+    ],
+    spacing: exact20,
+    defaultTextStyle: latin,
+    widowControl: false,
+  });
+
+  const noteBody = (text: string): LayoutBlock[] => [
+    {
+      kind: "paragraph",
+      inline: [{ kind: "text", text, style: latin }],
+      spacing: exact20,
+      defaultTextStyle: latin,
+      widowControl: false,
+    },
+  ];
+
+  it("places endnotes at the end of the document on the final page", () => {
+    const enDefs = new Map<number, readonly LayoutBlock[]>([
+      [1, noteBody("Endnote 1")],
+      [2, noteBody("Endnote 2")],
+    ]);
+    const pages = layoutFlow(
+      [endnotePara(1, 1), endnotePara(2, 2)],
+      { contentWidthPx: 300, contentHeightPx: 200, endnoteDefinitions: enDefs },
+      measurer,
+    );
+    expect(pages).toHaveLength(1);
+    expect(pages[0].endnotes).toBeDefined();
+    expect(pages[0].endnotes?.notes).toHaveLength(2);
+    expect(pages[0].endnotes?.notes[0].id).toBe(1);
+    expect(pages[0].endnotes?.notes[1].id).toBe(2);
+    expect(pages[0].endnotes?.totalHeightPx).toBe(57);
+  });
+
+  it("accumulates endnotes across sections to the final section in docEnd mode", () => {
+    const enDefs = new Map<number, readonly LayoutBlock[]>([
+      [1, noteBody("Endnote 1")],
+      [2, noteBody("Endnote 2")],
+    ]);
+    const run = layoutFlowSections(
+      [
+        {
+          blocks: [endnotePara(1, 1)],
+          opts: {
+            contentWidthPx: 300,
+            contentHeightPx: 200,
+            endnoteDefinitions: enDefs,
+            endnotePlacement: "docEnd",
+          },
+        },
+        {
+          blocks: [endnotePara(2, 2)],
+          opts: {
+            contentWidthPx: 300,
+            contentHeightPx: 200,
+            endnoteDefinitions: enDefs,
+            endnotePlacement: "docEnd",
+          },
+        },
+      ],
+      measurer,
+    );
+    expect(run.pages).toHaveLength(2);
+    // Section 1 (page 0) has NO endnotes in docEnd mode
+    expect(run.pages[0].endnotes).toBeUndefined();
+    // Final section (page 1) has BOTH endnotes
+    expect(run.pages[1].endnotes).toBeDefined();
+    expect(run.pages[1].endnotes?.notes).toHaveLength(2);
+  });
+
+  it("places endnotes at section end when endnotePlacement is sectEnd", () => {
+    const enDefs = new Map<number, readonly LayoutBlock[]>([
+      [1, noteBody("Endnote 1")],
+      [2, noteBody("Endnote 2")],
+    ]);
+    const run = layoutFlowSections(
+      [
+        {
+          blocks: [endnotePara(1, 1)],
+          opts: {
+            contentWidthPx: 300,
+            contentHeightPx: 200,
+            endnoteDefinitions: enDefs,
+            endnotePlacement: "sectEnd",
+          },
+        },
+        {
+          blocks: [endnotePara(2, 2)],
+          opts: {
+            contentWidthPx: 300,
+            contentHeightPx: 200,
+            endnoteDefinitions: enDefs,
+            endnotePlacement: "sectEnd",
+          },
+        },
+      ],
+      measurer,
+    );
+    expect(run.pages).toHaveLength(2);
+    // Each section gets its own endnotes in sectEnd mode
+    expect(run.pages[0].endnotes).toBeDefined();
+    expect(run.pages[0].endnotes?.notes).toHaveLength(1);
+    expect(run.pages[0].endnotes?.notes[0].id).toBe(1);
+
+    expect(run.pages[1].endnotes).toBeDefined();
+    expect(run.pages[1].endnotes?.notes).toHaveLength(1);
+    expect(run.pages[1].endnotes?.notes[0].id).toBe(2);
+  });
+});
+
 // A zone hanging ABOVE its anchor paragraph (negative offset) points at
 // lines the flow already laid — the page replays once with the float
 // registry seeded (W3C CSS Exclusions processing model: resolve exclusion

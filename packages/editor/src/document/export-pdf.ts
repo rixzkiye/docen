@@ -656,11 +656,17 @@ export function extractPdfPageLayers(
       walkBlock(item.block, flow.contentLeftPx + (item.xPx ?? 0), flow.contentTopPx + item.yPx);
     }
 
-    // 2. Footnotes
+    // 2. Footnotes & Endnotes
     if (page.footnotes) {
       const footY = flow.contentTopPx + page.footnotes.yPx;
       for (const item of page.footnotes.items) {
         walkBlock(item.block, flow.contentLeftPx, footY + item.yPx);
+      }
+    }
+    if (page.endnotes) {
+      const endY = flow.contentTopPx + page.endnotes.yPx;
+      for (const item of page.endnotes.items) {
+        walkBlock(item.block, flow.contentLeftPx, endY + item.yPx);
       }
     }
 

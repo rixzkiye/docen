@@ -6,7 +6,7 @@
 
 import { isRecord, measureTwip, num, str, type Rec } from "./guards";
 
-export { formatNumber as formatListNumber, romanNumeral } from "@docen/layout";
+export { formatNumber, formatNumber as formatListNumber, romanNumeral } from "@docen/layout";
 
 // ── numbering (list) resolution ──
 

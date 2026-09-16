@@ -33,6 +33,8 @@ export interface NavigationViewsHostView {
   setShowGridlines(on: boolean): void;
   /** Select a document view (Word's View tab buttons). */
   setView(view: string): void;
+  openGoToDialog?(kind?: string): void;
+  openPropertiesDialog?(): void;
 }
 
 /**
@@ -48,6 +50,10 @@ export class NavigationViewsHostCommands implements HostCommandDomain {
     "search",
     "replace",
     "find-dialog",
+    "go-to",
+    "goto",
+    "document-properties",
+    "properties",
     "zoom",
     "zoom-100",
   ];
@@ -79,8 +85,23 @@ export class NavigationViewsHostCommands implements HostCommandDomain {
     if (event === "search") {
       // Find drop-down → Go To jumps to a page; the main button and Find
       // open the nav-pane search box.
-      if (value === "go-to") this.host.goToPage();
-      else this.host.openSearch();
+      if (value === "go-to") {
+        if (this.host.openGoToDialog) this.host.openGoToDialog("page");
+        else this.host.goToPage();
+      } else {
+        this.host.openSearch();
+      }
+      return true;
+    }
+    // Go To (Ctrl+G or Find dropdown)
+    if (event === "go-to" || event === "goto") {
+      if (this.host.openGoToDialog) this.host.openGoToDialog(value || "page");
+      else this.host.goToPage();
+      return true;
+    }
+    // Document Properties
+    if (event === "document-properties" || event === "properties") {
+      this.host.openPropertiesDialog?.();
       return true;
     }
     // Replace (ribbon Home → Editing → Replace, or Ctrl+H) → Find & Replace dialog.

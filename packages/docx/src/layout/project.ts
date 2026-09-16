@@ -62,6 +62,8 @@ export interface ProjectedSection {
   footnoteDefinitions?: Map<number, readonly LayoutBlock[]>;
   /** Endnote id → definition blocks (absent when document has no endnotes). */
   endnoteDefinitions?: Map<number, readonly LayoutBlock[]>;
+  /** Endnote placement (w:pos): 'sectEnd' (at section end) or 'docEnd' (at document end). */
+  endnotePlacement?: "sectEnd" | "docEnd";
 }
 
 function projectNoteBlocks(
@@ -147,6 +149,13 @@ export function projectDocumentOptions(
       text: commentTextOf(comment.children ?? []),
     });
   }
+  const fnProps = (doc.settings?.footnoteProperties ?? {}) as Record<string, unknown>;
+  const enProps = (doc.settings?.endnoteProperties ?? {}) as Record<string, unknown>;
+  const fnStart =
+    typeof fnProps.numStart === "number" && fnProps.numStart >= 1 ? fnProps.numStart : undefined;
+  const enStart =
+    typeof enProps.numStart === "number" && enProps.numStart >= 1 ? enProps.numStart : undefined;
+
   const ctx: ProjectContext = {
     styles: doc.styles,
     characterStyles: indexCharacterStyles(doc.styles),
@@ -154,7 +163,17 @@ export function projectDocumentOptions(
     listCounters: new Map(),
     openComments: new Set(),
     footnoteOrdinals: new Map(),
+    footnoteNumFmt: typeof fnProps.numFmt === "string" ? fnProps.numFmt : undefined,
+    footnoteNumStart: fnStart,
+    footnoteNumRestart: (fnProps.numRestart === "eachSect" || fnProps.numRestart === "eachPage"
+      ? fnProps.numRestart
+      : "continuous") as "continuous" | "eachSect" | "eachPage",
     endnoteOrdinals: new Map(),
+    endnoteNumFmt: typeof enProps.numFmt === "string" ? enProps.numFmt : undefined,
+    endnoteNumStart: enStart,
+    endnoteNumRestart: (enProps.numRestart === "eachSect" || enProps.numRestart === "eachPage"
+      ? enProps.numRestart
+      : "continuous") as "continuous" | "eachSect" | "eachPage",
     revisionAuthorColors: new Map(),
     ...(commentMeta ? { commentMeta } : {}),
     ...(markup ? { markup } : {}),
@@ -183,7 +202,11 @@ export function projectDocumentOptions(
         ? doc.settings.consecutiveHyphenLimit
         : undefined),
   };
-  const sectionBlocks = (doc.sections ?? []).map((section) => {
+  const sectionBlocks = (doc.sections ?? []).map((section, sIdx) => {
+    if (sIdx > 0) {
+      if (ctx.footnoteNumRestart === "eachSect") ctx.footnoteOrdinals.clear();
+      if (ctx.endnoteNumRestart === "eachSect") ctx.endnoteOrdinals.clear();
+    }
     const blocks: LayoutBlock[] = [];
     for (const child of section.children ?? []) {
       const block = projectChild(child, ctx);
@@ -261,6 +284,10 @@ export function projectDocumentOptions(
       type: section.properties?.type,
       footnoteDefinitions: fnDefs,
       endnoteDefinitions: enDefs,
+      endnotePlacement:
+        enDefs || enProps.pos
+          ? ((enProps.pos === "sectEnd" ? "sectEnd" : "docEnd") as "sectEnd" | "docEnd")
+          : undefined,
     };
   });
   return {

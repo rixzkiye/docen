@@ -192,6 +192,7 @@ export function resolvePageFields(
     const seen = new Set<unknown>();
     for (const item of page.items) visit(item.block, pageIndex, context, seen);
     for (const item of page.footnotes?.items ?? []) visit(item.block, pageIndex, context, seen);
+    for (const item of page.endnotes?.items ?? []) visit(item.block, pageIndex, context, seen);
   });
 
   return { changedPages: [...changed].sort((a, b) => a - b), textChanged };

@@ -3,6 +3,7 @@ import {
   chartShapeHit,
   paintBalloons,
   paintColumnSeparators,
+  paintEndnotes,
   paintFootnotes,
   paintFurnitureStack,
   paintGridlines,
@@ -1361,6 +1362,7 @@ export class CanvasStage {
       paintLineNumbers(tree, ctx);
       paintColumnSeparators(tree, ctx);
       paintFootnotes(tree, this.pages[index]?.footnotes, ctx);
+      paintEndnotes(tree, this.pages[index]?.endnotes, ctx);
       // Under the story-edit veil like the rest of the body — the story being
       // edited paints above (opaque) on top.
       this.#flushDrawings(ctx);
@@ -1498,6 +1500,7 @@ export class CanvasStage {
     paintLineNumbers(layers.overlay, ctx);
     paintColumnSeparators(layers.overlay, ctx);
     paintFootnotes(layers.overlay, this.pages[ctx.pageIndex]?.footnotes, ctx);
+    paintEndnotes(layers.overlay, this.pages[ctx.pageIndex]?.endnotes, ctx);
     // Margin balloons repaint with the overlay (their geometry comes from the
     // page's packed stack) and register their click boxes + hover groups.
     const painted = paintBalloons(layers.overlay, this.pages[ctx.pageIndex]?.balloons, ctx);
