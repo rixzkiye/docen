@@ -1099,6 +1099,10 @@ export const ribbonEn: AdditionalLanguage = {
     "header.search.no-results": "No commands found",
     "header.close": "Close",
     "close.confirm": "Close this document? Unsaved changes will be lost.",
+    // --- Open refusals (alert surfaced by the file-picker change handler) ---
+    "open.flat-opc-unsupported":
+      "Flat OPC XML (.xml) documents are not supported yet — open the .docx or .docm version.",
+    "open.unsupported": "Unsupported file type: {name}",
     "header.lang.zh": "中文",
     "header.lang.en": "English",
     // --- Header/footer edit stories (the canvas story chrome tag) ---
@@ -2466,6 +2470,9 @@ export const ribbonZhCN: AdditionalLanguage = {
     "header.search.no-results": "未找到相关命令",
     "header.close": "关闭",
     "close.confirm": "要关闭此文档吗？未保存的更改将丢失。",
+    // --- 打开拒绝提示（文件选择 change 处理器弹出的警告） ---
+    "open.flat-opc-unsupported": "尚不支持 Flat OPC XML（.xml）文档——请改用 .docx 或 .docm 版本。",
+    "open.unsupported": "不支持的文件类型：{name}",
     "header.lang.zh": "中文",
     "header.lang.en": "English",
     // --- Header/footer edit stories (the canvas story chrome tag) ---

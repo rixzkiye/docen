@@ -138,6 +138,7 @@ import {
   LOCAL_HANDLED,
   READONLY_LIVE,
   SAVE_FORMATS,
+  OpenFormatError,
   detectOpenFormat,
   suggestedFileName,
   type SaveFormat,
@@ -5743,9 +5744,20 @@ class DocenDocument extends AddinHost<Editor> {
     // Surface the detection/parse refusal (unsupported type, Flat OPC XML)
     // instead of dropping it as an unhandled rejection.
     void this.open(file).catch((err: unknown) => {
-      window.alert(err instanceof Error ? err.message : String(err));
+      window.alert(this.#openRefusalMessage(err));
     });
   };
+
+  /** The alert text for an open refusal: the two detection refusals resolve
+   *  through the editor i18n table (en/zh), anything else surfaces its own
+   *  message. */
+  #openRefusalMessage(err: unknown): string {
+    if (err instanceof OpenFormatError) {
+      if (err.code === "flat-opc") return t("open.flat-opc-unsupported", this);
+      return t("open.unsupported", this).replace("{name}", err.file ?? "(unknown)");
+    }
+    return err instanceof Error ? err.message : String(err);
+  }
 
   /** Insert the picked image as a data URL. Width/height are left unset — the
    *  canvas renders the natural size, and prepareImages fills them on DOCX

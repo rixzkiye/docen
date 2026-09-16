@@ -20,11 +20,27 @@ export type SaveFormat = DocxVariant | "markdown" | "pdf";
 export const FLAT_OPC_UNSUPPORTED =
   "Flat OPC XML (.xml) documents are not supported yet — open the .docx or .docm version.";
 
+/** A refusal raised by {@link detectOpenFormat}. `code` lets the host localize
+ *  the surface (the English message stays for logs and programmatic callers);
+ *  `file` carries the picked file's name for the unsupported-type message. */
+export class OpenFormatError extends Error {
+  constructor(
+    readonly code: "flat-opc" | "unsupported",
+    message: string,
+    /** The picked file's name (unsupported-type refusals show it). */
+    readonly file?: string,
+  ) {
+    super(message);
+    this.name = "OpenFormatError";
+  }
+}
+
 /** Detect a document's format from its filename + MIME for open(). Extension
  *  first (the picker filters on it), MIME as a fallback for platforms that fill
- *  it in. Throws on Flat OPC XML (recognized, but no parser exists) and on an
- *  unrecognized type so the caller surfaces the error rather than silently
- *  parsing garbage. */
+ *  it in — the MIME's base type only, since browsers append params
+ *  (`application/xml;charset=utf-8`). Throws on Flat OPC XML (recognized, but
+ *  no parser exists) and on an unrecognized type so the caller surfaces the
+ *  error rather than silently parsing garbage. */
 export function detectOpenFormat(file: File): OpenFormat {
   const name = file.name.toLowerCase();
   if (name.endsWith(".docx")) return "docx";
@@ -32,15 +48,20 @@ export function detectOpenFormat(file: File): OpenFormat {
   if (name.endsWith(".dotx")) return "dotx";
   if (name.endsWith(".dotm")) return "dotm";
   if (name.endsWith(".md") || name.endsWith(".markdown")) return "markdown";
-  if (name.endsWith(".xml")) throw new Error(FLAT_OPC_UNSUPPORTED);
-  const type = file.type.toLowerCase();
+  if (name.endsWith(".xml")) throw new OpenFormatError("flat-opc", FLAT_OPC_UNSUPPORTED, name);
+  const type = (file.type.split(";")[0] ?? "").trim().toLowerCase();
   if (type.includes("ms-word.document.macroenabled")) return "docm";
   if (type.includes("wordprocessingml.template")) return "dotx";
   if (type.includes("ms-word.template.macroenabled")) return "dotm";
   if (type.includes("wordprocessingml.document")) return "docx";
   if (type === "text/markdown") return "markdown";
-  if (type === "application/xml" || type === "text/xml") throw new Error(FLAT_OPC_UNSUPPORTED);
-  throw new Error(`Unsupported file type: ${file.name || type || "(unknown)"}`);
+  if (type === "application/xml" || type === "text/xml")
+    throw new OpenFormatError("flat-opc", FLAT_OPC_UNSUPPORTED, file.name || type);
+  throw new OpenFormatError(
+    "unsupported",
+    `Unsupported file type: ${file.name || type || "(unknown)"}`,
+    file.name || type || "(unknown)",
+  );
 }
 
 /** Per-format metadata for #saveAs: the picker description, the MIME anchoring

@@ -1445,17 +1445,20 @@ const MAIN_DOCUMENT_CONTENT_TYPES: Record<DocxVariant, string> = {
  * Stamp a variant's main-part content type onto compiled options.
  *
  * office-open's content-type merge keeps a surviving source Override for a
- * part it rebuilds, so a `dotx` save of an opened `.docx` must REPLACE the
+ * part it rebuilds, so a save that requests a variant must REPLACE the
  * source's `/word/document.xml` override rather than add a second one — while
  * merging (not replacing) the rest keeps every other source declaration
- * (macro/ole parts, theme, footnotes) intact. `docx` is the no-op default:
- * parse→save of a standard document keeps its derived table untouched.
+ * (macro/ole parts, theme, footnotes) intact. An explicit `docx` request
+ * therefore flips a macro-enabled/template source back to the standard
+ * document main type (bytes must agree with a .docx name/MIME); only an
+ * absent `variant` leaves the source main type untouched (source-faithful
+ * round-trip — see the "no variant requested" case).
  */
 function applyVariant(
   compiled: DocumentOptions,
   variant: DocxVariant | undefined,
 ): DocumentOptions {
-  if (!variant || variant === "docx") return compiled;
+  if (!variant) return compiled;
   const source = compiled.contentTypes;
   return {
     ...compiled,
@@ -1477,8 +1480,10 @@ function applyVariant(
 export interface DocxGenerateOptions<T extends OutputType = "nodebuffer"> {
   /**
    * Package variant whose main document part content type is stamped on the
-   * output — `docx` (default), `docm`, `dotx`, or `dotm`. Macro parts carried
-   * in `documentExtras.rawParts` stay in every variant.
+   * output — `docx`, `docm`, `dotx`, or `dotm`. Requesting `docx` flips a
+   * macro-enabled/template source package back to the standard document main
+   * type. Omit it to keep the source's own main type (source-faithful save).
+   * Macro parts carried in `documentExtras.rawParts` stay in every variant.
    */
   variant?: DocxVariant;
   /**

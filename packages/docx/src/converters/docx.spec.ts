@@ -121,6 +121,45 @@ function contentTypesXml(bytes: Uint8Array): string {
   return new TextDecoder().decode(entry);
 }
 
+const VBA = new Uint8Array(Array.from({ length: 96 }, (_, i) => (i * 13 + 7) % 256));
+const UNKNOWN = new Uint8Array(Array.from({ length: 24 }, (_, i) => 255 - i));
+
+/** A source .docm whose package carries a dummy vbaProject plus an unknown
+ *  part, exactly the shape office-open passes through as rawParts. */
+function sourceDocm(): Uint8Array {
+  return generateDOCXSync(
+    {
+      type: "doc",
+      content: [{ type: "paragraph", content: [{ type: "text", text: "macro" }] }],
+      attrs: {
+        documentExtras: {
+          rawParts: [
+            {
+              path: "word/vbaProject.bin",
+              data: VBA,
+              contentType: "application/vnd.ms-office.vbaProject",
+            },
+            {
+              path: "customXml/unknown.dat",
+              data: UNKNOWN,
+              contentType: "application/octet-stream",
+            },
+          ],
+        },
+      },
+    },
+    {
+      variant: "docm",
+      document: {
+        contentTypes: {
+          defaults: [{ extension: "bin", contentType: "application/vnd.ms-office.vbaProject" }],
+          overrides: [],
+        },
+      },
+    },
+  );
+}
+
 describe("generateDOCX variants", () => {
   const emptyDoc: JSONContent = { type: "doc", content: [{ type: "paragraph" }] };
 
@@ -153,48 +192,42 @@ describe("generateDOCX variants", () => {
     expect(xml).toContain('ContentType="application/vnd.custom.styles+xml"');
     expect(xml).toContain('Extension="bin" ContentType="application/vnd.ms-office.vbaProject"');
   });
+
+  it("flips docx→dotx→docx back to the standard document main type", async () => {
+    const asDotx = generateDOCXSync(
+      await parseDOCX(generateDOCXSync(emptyDoc, { variant: "docx" })),
+      { variant: "dotx" },
+    );
+    expect(contentTypesXml(asDotx)).toContain(MAIN_DOCUMENT_CONTENT_TYPES.dotx);
+    const back = generateDOCXSync(await parseDOCX(asDotx), { variant: "docx" });
+    const xml = contentTypesXml(back);
+    expect(xml).toContain(
+      `<Override PartName="/word/document.xml" ContentType="${MAIN_DOCUMENT_CONTENT_TYPES.docx}"/>`,
+    );
+    expect(xml).not.toContain("template.main+xml");
+  });
+
+  it("flips an opened docm package when docx is requested explicitly", async () => {
+    const xml = contentTypesXml(
+      generateDOCXSync(await parseDOCX(sourceDocm()), { variant: "docx" }),
+    );
+    expect(xml).toContain(
+      `<Override PartName="/word/document.xml" ContentType="${MAIN_DOCUMENT_CONTENT_TYPES.docx}"/>`,
+    );
+    expect(xml).not.toContain("macroEnabled.main+xml");
+  });
+
+  it("flips a dotx input package when docx is requested explicitly", async () => {
+    const dotx = generateDOCXSync(emptyDoc, { variant: "dotx" });
+    const xml = contentTypesXml(generateDOCXSync(await parseDOCX(dotx), { variant: "docx" }));
+    expect(xml).toContain(
+      `<Override PartName="/word/document.xml" ContentType="${MAIN_DOCUMENT_CONTENT_TYPES.docx}"/>`,
+    );
+    expect(xml).not.toContain("template.main+xml");
+  });
 });
 
 describe("docm macro-part round-trip", () => {
-  const VBA = new Uint8Array(Array.from({ length: 96 }, (_, i) => (i * 13 + 7) % 256));
-  const UNKNOWN = new Uint8Array(Array.from({ length: 24 }, (_, i) => 255 - i));
-
-  /** A source .docm whose package carries a dummy vbaProject plus an unknown
-   *  part, exactly the shape office-open passes through as rawParts. */
-  function sourceDocm(): Uint8Array {
-    return generateDOCXSync(
-      {
-        type: "doc",
-        content: [{ type: "paragraph", content: [{ type: "text", text: "macro" }] }],
-        attrs: {
-          documentExtras: {
-            rawParts: [
-              {
-                path: "word/vbaProject.bin",
-                data: VBA,
-                contentType: "application/vnd.ms-office.vbaProject",
-              },
-              {
-                path: "customXml/unknown.dat",
-                data: UNKNOWN,
-                contentType: "application/octet-stream",
-              },
-            ],
-          },
-        },
-      },
-      {
-        variant: "docm",
-        document: {
-          contentTypes: {
-            defaults: [{ extension: "bin", contentType: "application/vnd.ms-office.vbaProject" }],
-            overrides: [],
-          },
-        },
-      },
-    );
-  }
-
   it("keeps vbaProject.bin and unknown parts byte-identical through open→save", async () => {
     const opened = await parseDOCX(sourceDocm());
     // The parse captured the macro part in the passthrough set.

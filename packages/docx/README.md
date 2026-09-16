@@ -66,6 +66,17 @@ const blob = await generateDOCX(json, { packer: { type: "blob" } }); // → Blob
 const sync = generateDOCXSync(json); // → Buffer (skips prepare)
 const stream = await generateDOCXStream(json); // → ReadableStream<Uint8Array>
 
+// Package variants: `variant` stamps the main document part's content type —
+// "docx" (standard), "docm", "dotx", or "dotm" (ECMA-376 / MS-OFFMACRO main
+// types). Office recognizes a template/macro package by that declaration, so
+// saving a `.dotx`/`.docm` needs the matching variant. Requesting "docx" flips
+// a macro-enabled/template source back to the standard document main type;
+// omitting the variant keeps the source's own declaration verbatim
+// (source-faithful round-trip). Macro and unknown parts carried in
+// `documentExtras.rawParts` stay in every variant, byte-identical.
+const template = await generateDOCX(json, { variant: "dotx" }); // → Buffer (Word Template)
+const docm = await generateDOCX(json, { variant: "docm" }); // → Buffer (macro-enabled document)
+
 // Markdown pipeline: Markdown string ↔ Tiptap JSON
 const json = parseMarkdown("# Hello"); // → JSONContent
 const md = generateMarkdown(json); // → string

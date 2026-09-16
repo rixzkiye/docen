@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   detectOpenFormat,
   FLAT_OPC_UNSUPPORTED,
+  OpenFormatError,
   SAVE_FORMATS,
   suggestedFileName,
 } from "./file-formats";
@@ -49,6 +50,31 @@ describe("detectOpenFormat", () => {
     expect(() => detectOpenFormat(file("Flat.xml"))).toThrow(FLAT_OPC_UNSUPPORTED);
     expect(() => detectOpenFormat(file("Flat", "application/xml"))).toThrow(FLAT_OPC_UNSUPPORTED);
     expect(() => detectOpenFormat(file("Flat", "text/xml"))).toThrow(FLAT_OPC_UNSUPPORTED);
+  });
+
+  it("parses the MIME base type (browsers append parameters)", () => {
+    expect(() => detectOpenFormat(file("Flat", "application/xml;charset=utf-8"))).toThrow(
+      FLAT_OPC_UNSUPPORTED,
+    );
+    expect(detectOpenFormat(file("download", "text/markdown;charset=utf-8"))).toBe("markdown");
+  });
+
+  it("carries a machine-readable code so the host can localize the refusal", () => {
+    const refusal = (picked: File): OpenFormatError | undefined => {
+      try {
+        detectOpenFormat(picked);
+        return undefined;
+      } catch (err) {
+        return err as OpenFormatError;
+      }
+    };
+    const flat = refusal(file("Flat.xml"));
+    expect(flat).toBeInstanceOf(OpenFormatError);
+    expect(flat?.code).toBe("flat-opc");
+    const unknown = refusal(file("Legacy.rtf"));
+    expect(unknown).toBeInstanceOf(OpenFormatError);
+    expect(unknown?.code).toBe("unsupported");
+    expect(unknown?.file).toBe("Legacy.rtf");
   });
 
   it("refuses unknown formats", () => {
