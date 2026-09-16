@@ -8,6 +8,7 @@ import {
   moveBlockDown,
   moveBlockUp,
   promoteHeadingAtCaret,
+  selectSimilarFormatting,
 } from "./outline";
 
 describe("Outline View Commands (D4b)", () => {
@@ -79,5 +80,31 @@ describe("Outline View Commands (D4b)", () => {
     const json = editor.getJSON() as Record<string, any>;
     expect(json.content?.[0]?.content?.[0]?.text).toBe("Para 2");
     expect(json.content?.[1]?.content?.[0]?.text).toBe("Para 1");
+  });
+
+  it("selects similar formatting across paragraphs", () => {
+    const editor = new Editor({
+      extensions: docxExtensions,
+      content: {
+        type: "doc",
+        content: [
+          {
+            type: "paragraph",
+            content: [
+              { type: "text", marks: [{ type: "bold" }], text: "Bold One" },
+              { type: "text", text: " Plain" },
+            ],
+          },
+          {
+            type: "paragraph",
+            content: [{ type: "text", marks: [{ type: "bold" }], text: "Bold Two" }],
+          },
+        ],
+      },
+    });
+
+    editor.commands.setTextSelection(2); // inside "Bold One"
+    const matched = selectSimilarFormatting(editor);
+    expect(matched).toBe(true);
   });
 });

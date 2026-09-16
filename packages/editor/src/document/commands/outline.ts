@@ -133,3 +133,44 @@ export function moveBlockDown(editor: Editor): boolean {
   editor.view.dispatch(tr);
   return true;
 }
+
+/**
+ * Select text with similar formatting (Word's "Select All Text With Similar Formatting"):
+ * Matches marks (bold, italic, font, color, etc.) of the current selection across the document.
+ */
+export function selectSimilarFormatting(editor: Editor): boolean {
+  const { from } = editor.state.selection;
+  const doc = editor.state.doc;
+  const $from = doc.resolve(from);
+  const currentMarks = $from.marks();
+  const currentMarkNames = new Set(currentMarks.map((m) => m.type.name));
+
+  let firstMatch = -1;
+  let lastMatch = -1;
+
+  doc.descendants((node, pos) => {
+    if (!node.isText) return;
+    const nodeMarkNames = new Set(node.marks.map((m) => m.type.name));
+    let matches = true;
+    for (const name of currentMarkNames) {
+      if (!nodeMarkNames.has(name)) {
+        matches = false;
+        break;
+      }
+    }
+    if (matches && currentMarkNames.size === nodeMarkNames.size) {
+      if (firstMatch === -1) firstMatch = pos;
+      lastMatch = pos + node.nodeSize;
+    }
+  });
+
+  if (firstMatch !== -1 && lastMatch > firstMatch) {
+    const TextSelection = (editor.state.selection as any).constructor;
+    if (TextSelection && typeof TextSelection.create === "function") {
+      const sel = TextSelection.create(doc, firstMatch, lastMatch);
+      editor.view.dispatch(editor.state.tr.setSelection(sel));
+      return true;
+    }
+  }
+  return false;
+}

@@ -52,15 +52,51 @@ export const paragraphSpacingItems = (): string =>
     { text: opt("wide"), value: "wide" },
   ]);
 
+export const themeItems = (): string =>
+  JSON.stringify([
+    { text: "Office", value: "office" },
+    { text: "Facet", value: "facet" },
+    { text: "Integral", value: "integral" },
+    { text: "Ion", value: "ion" },
+    { text: "Organic", value: "organic" },
+    { text: "Retrospect", value: "retrospect" },
+    { text: "Slice", value: "slice" },
+    { text: "Wisp", value: "wisp" },
+  ]);
+
+export const themeColorItems = (): string =>
+  JSON.stringify([
+    { text: "Office", value: "office" },
+    { text: "Facet", value: "facet" },
+    { text: "Integral", value: "integral" },
+    { text: "Ion", value: "ion" },
+    { text: "Organic", value: "organic" },
+    { text: "Retrospect", value: "retrospect" },
+    { text: "Slice", value: "slice" },
+    { text: "Wisp", value: "wisp" },
+  ]);
+
+export const themeFontItems = (): string =>
+  JSON.stringify([
+    { text: "Office (Calibri / Calibri Light)", value: "office" },
+    { text: "Facet (Trebuchet MS / Garamond)", value: "facet" },
+    { text: "Integral (Century Gothic)", value: "integral" },
+    { text: "Ion (Century Gothic)", value: "ion" },
+    { text: "Organic (Calibri / Arial)", value: "organic" },
+    { text: "Retrospect (Georgia / Arial)", value: "retrospect" },
+    { text: "Slice (Georgia / Garamond)", value: "slice" },
+    { text: "Wisp (Georgia / Segoe UI)", value: "wisp" },
+  ]);
+
 export const designTab = (): RibbonTab =>
   tabNode("design", [
     group("document-formatting", [
       // The paint-brush glyph doubles here: a style set is Word's "apply a
       // formatting theme to the document" action.
       split("format-painter", "style-set", parsedItems(styleSetItems()), { size: "large" }),
-      btn("theme", "theme", { size: "large" }),
-      btn("font-color", "colors", { size: "large" }),
-      btn("text-font", "fonts", { size: "large" }),
+      split("theme", "theme", parsedItems(themeItems()), { size: "large" }),
+      split("font-color", "theme-color", parsedItems(themeColorItems()), { size: "large" }),
+      split("text-font", "theme-font", parsedItems(themeFontItems()), { size: "large" }),
       btn("text-effects", "effects", { size: "large" }),
       col([
         grid([

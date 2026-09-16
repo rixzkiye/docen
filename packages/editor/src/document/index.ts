@@ -142,12 +142,14 @@ import {
   BuildingBlocksHostCommands,
   type BuildingBlocksHostView,
 } from "./commands/host/building-blocks";
+import { SdtCommands } from "./commands/host/sdt";
 import { applyRecipientsRow, MailMergeCommands } from "./commands/mail-merge";
 import { NavigationCommands } from "./commands/navigation";
 import { ReferencesCommands } from "./commands/references";
 import { RevisionsCommands } from "./commands/revisions";
 import { SectionCommands } from "./commands/sections";
 import { SpellingCommands } from "./commands/spelling";
+import { THEMES } from "./commands/themes";
 import type { StylesInspectorData, StylesPaneState } from "./components/styles-pane";
 import { extractPdfPageLayers, pagesToPdf } from "./export-pdf";
 import type { NewStyleDefinition } from "./extensions/commands";
@@ -5751,6 +5753,25 @@ class DocenDocument extends AddinHost<Editor> {
    *  first dispatch (the adapter closures read live element state), then
    *  cached. Each domain receives only the narrow view its bodies call. */
   #hostRegistry?: HostCommandRegistry;
+  #sdt?: SdtCommands;
+
+  #sdtCommand(): SdtCommands {
+    return (this.#sdt ??= new SdtCommands({
+      editor: () => this.editor,
+      bridge: () =>
+        this.#bridge
+          ? {
+              activeEditor: () => this.#bridge!.activeEditor(),
+              focus: () => this.#bridge!.focus(),
+            }
+          : undefined,
+      element: () => this,
+      rerender: () => {
+        this.#bridge?.replaceOverlays();
+      },
+    }));
+  }
+
   /** Quick Parts domain — its dialog commits (save/rename/delete) arrive as
    *  element events and route back into this instance. */
   #buildingBlocks?: BuildingBlocksHostCommands;
@@ -5780,6 +5801,8 @@ class DocenDocument extends AddinHost<Editor> {
           showGridlines: () => this.#stage?.showGridlines ?? false,
           setShowGridlines: (on) => this.#stage?.setShowGridlines(on),
           setView: (view) => this.setAttribute("view", view),
+          toggleSplitWindow: () => this.#toggleSplitWindow(),
+          toggleFocusMode: () => this.#toggleFocusMode(),
         },
         sections: {
           openPageSetup: () => this.#sections.openPageSetup(),
@@ -6024,9 +6047,54 @@ class DocenDocument extends AddinHost<Editor> {
     };
   }
 
+  #splitWindow = false;
+
+  #toggleSplitWindow(): void {
+    this.#splitWindow = !this.#splitWindow;
+    const docArea = this.shadowRoot?.querySelector("docen-document-area");
+    if (docArea) {
+      if (this.#splitWindow) docArea.setAttribute("split", "");
+      else docArea.removeAttribute("split");
+    }
+  }
+
+  #toggleFocusMode(): void {
+    const currentView = this.getAttribute("view");
+    this.setAttribute("view", currentView === "read" ? "print" : "read");
+  }
+
+  #applyDocumentTheme(kind: string, value?: string): void {
+    const themeId = value?.toLowerCase() || "office";
+    const themeDef = THEMES[themeId] ?? THEMES.office;
+    if (!themeDef) return;
+
+    const target = (this.shadowRoot?.querySelector("docen-workspace") ?? this) as HTMLElement;
+    if (kind === "theme" || kind === "theme-color") {
+      target.style.setProperty("--docen-theme-accent1", `#${themeDef.colors.accent1}`);
+      target.style.setProperty("--docen-theme-accent2", `#${themeDef.colors.accent2}`);
+      target.style.setProperty("--docen-theme-accent3", `#${themeDef.colors.accent3}`);
+      target.style.setProperty("--docen-theme-accent4", `#${themeDef.colors.accent4}`);
+      target.style.setProperty("--docen-theme-accent5", `#${themeDef.colors.accent5}`);
+      target.style.setProperty("--docen-theme-accent6", `#${themeDef.colors.accent6}`);
+    }
+    if (kind === "theme" || kind === "theme-font") {
+      target.style.setProperty("--docen-theme-font-major", themeDef.fonts.majorFont);
+      target.style.setProperty("--docen-theme-font-minor", themeDef.fonts.minorFont);
+    }
+    this.#bridge?.replaceOverlays();
+  }
+
   readonly #onCommand = (event: CustomEvent<{ event?: string; value?: string }>): void => {
     const { event: name, value } = event.detail ?? {};
     if (typeof name !== "string") return;
+    if (name === "theme" || name === "theme-color" || name === "theme-font") {
+      this.#applyDocumentTheme(name, value);
+      return;
+    }
+    if (name === "toggle-checkbox") {
+      this.#sdtCommand().toggleCheckboxAtCaret();
+      return;
+    }
     // Read-only documents (Viewing mode) reject document-changing commands —
     // the viewless editor has no DOM surface to refuse them, so the gate
     // lives here (Word's read-only ribbon). Chrome actions and clipboard

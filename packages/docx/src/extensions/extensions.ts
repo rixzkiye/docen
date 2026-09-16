@@ -7,6 +7,7 @@ import { Document } from "./document";
 import { Image } from "./image";
 import { Link } from "./link";
 import { Bold, Code, Highlight, Italic, Strike, Subscript, Superscript, Underline } from "./marks";
+import { MathInline } from "./math";
 import { PageBreak } from "./page-break";
 import { Paragraph } from "./paragraph";
 import { Passthrough, InlinePassthrough } from "./passthrough";
@@ -54,6 +55,7 @@ export const tiptapNodeExtensions: AnyExtension[] = [
   Passthrough,
   InlinePassthrough,
   TocField,
+  MathInline,
   SdtBlock,
   SdtInline,
   Textbox,
@@ -136,5 +138,6 @@ export { WpsShape } from "./wps-shape";
 export { Passthrough, InlinePassthrough } from "./passthrough";
 export { TocField } from "./toc-field";
 export { SdtBlock, SdtInline } from "./sdt";
+export { MathInline, convertLinearToOMML, convertOMMLToLinear } from "./math";
 export { Textbox } from "./textbox";
 export { Tab } from "./tab";

@@ -324,9 +324,10 @@ export function projectParagraph(p: BodyParagraph, ctx: ProjectContext): LayoutP
     | "top"
     | undefined;
 
-  const dropCapVal = str((pPr.dropCap as Rec)?.val ?? pPr.dropCap ?? (pPr.frame as Rec)?.dropCap);
-  const dropCapLines = num((pPr.dropCap as Rec)?.lines ?? (pPr.frame as Rec)?.lines) ?? 3;
-  const dropCapDist = num((pPr.dropCap as Rec)?.distance ?? (pPr.frame as Rec)?.space);
+  const frame = (pPr.framePr as Rec) ?? (pPr.frame as Rec);
+  const dropCapVal = str((pPr.dropCap as Rec)?.val ?? pPr.dropCap ?? frame?.dropCap);
+  const dropCapLines = num((pPr.dropCap as Rec)?.lines ?? frame?.lines) ?? 3;
+  const dropCapDist = num((pPr.dropCap as Rec)?.distance ?? frame?.space ?? frame?.hSpace);
   const dropCap =
     dropCapVal === "drop" || dropCapVal === "dropped"
       ? {

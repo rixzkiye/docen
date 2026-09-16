@@ -1,5 +1,6 @@
 import type { Editor } from "@docen/docx/core";
 
+import { demoteHeadingAtCaret, promoteHeadingAtCaret, selectSimilarFormatting } from "../outline";
 import type { HostCommandDomain } from "./registry";
 
 /** The navigation/views domain's view of the host — only what its command
@@ -35,6 +36,8 @@ export interface NavigationViewsHostView {
   setView(view: string): void;
   openGoToDialog?(kind?: string): void;
   openPropertiesDialog?(): void;
+  toggleSplitWindow?(): void;
+  toggleFocusMode?(): void;
 }
 
 /**
@@ -59,6 +62,8 @@ export class NavigationViewsHostCommands implements HostCommandDomain {
     "reveal-formatting",
     "restrict-editing",
     "check-accessibility",
+    "split-window",
+    "focus-mode",
   ];
 
   readonly editor: readonly string[] = [
@@ -70,6 +75,9 @@ export class NavigationViewsHostCommands implements HostCommandDomain {
     "web-layout",
     "read-mode",
     "draft",
+    "select-similar",
+    "promote-heading",
+    "demote-heading",
   ];
 
   run(event: string, value?: string): boolean {
@@ -88,6 +96,14 @@ export class NavigationViewsHostCommands implements HostCommandDomain {
     }
     if (event === "check-accessibility") {
       this.host.togglePane("a11y");
+      return true;
+    }
+    if (event === "split-window") {
+      this.host.toggleSplitWindow?.();
+      return true;
+    }
+    if (event === "focus-mode") {
+      this.host.toggleFocusMode?.();
       return true;
     }
     // View → Outline: Word's outline view maps to the document-structure
@@ -175,6 +191,15 @@ export class NavigationViewsHostCommands implements HostCommandDomain {
     if (viewOf[event]) {
       this.host.setView(viewOf[event]);
       return true;
+    }
+    if (event === "select-similar") {
+      return selectSimilarFormatting(editor);
+    }
+    if (event === "promote-heading") {
+      return promoteHeadingAtCaret(editor);
+    }
+    if (event === "demote-heading") {
+      return demoteHeadingAtCaret(editor);
     }
     return false;
   }
