@@ -1,3 +1,4 @@
+import { PART_REGISTRIES, type ContentTypeOverride } from "@office-open/core";
 import {
   generateDocument,
   generateDocumentStream,
@@ -1442,6 +1443,29 @@ const MAIN_DOCUMENT_CONTENT_TYPES: Record<DocxVariant, string> = {
 };
 
 /**
+ * Content-type overrides for the parts office-open's writer treats as present
+ * on a fresh compile (registry `presence.flag === "freshCompile"`).
+ *
+ * The writer reads `DocxWriteContext.hasNumbering` / `hasFootnotes` /
+ * `hasEndnotes` off the injected `[Content_Types].xml` table whenever one is
+ * present (`!options.contentTypes || sourceOverrides.some(...)`), so a variant
+ * stamp built from scratch must declare those parts — otherwise the model's
+ * `word/numbering.xml` / `word/footnotes.xml` / `word/endnotes.xml` are never
+ * emitted while `word/document.xml` keeps referencing them (dangling `w:numId`
+ * and note references). `/word/document.xml` is excluded: the variant's own
+ * main override is appended last.
+ */
+const FRESH_COMPILE_CONTENT_TYPES: readonly ContentTypeOverride[] =
+  PART_REGISTRIES.docx.parts.flatMap((part) =>
+    part.contentType !== undefined &&
+    part.path !== "word/document.xml" &&
+    part.presence.kind === "conditional" &&
+    part.presence.flag === "freshCompile"
+      ? [{ partName: `/${part.path}`, contentType: part.contentType }]
+      : [],
+  );
+
+/**
  * Stamp a variant's main-part content type onto compiled options.
  *
  * office-open's content-type merge keeps a surviving source Override for a
@@ -1453,6 +1477,13 @@ const MAIN_DOCUMENT_CONTENT_TYPES: Record<DocxVariant, string> = {
  * document main type (bytes must agree with a .docx name/MIME); only an
  * absent `variant` leaves the source main type untouched (source-faithful
  * round-trip — see the "no variant requested" case).
+ *
+ * A source-less compile (`compiled.contentTypes === undefined`) has no table
+ * to merge, and injecting a partial one disables office-open's fresh-compile
+ * defaults: its writer gates `word/numbering.xml` / `word/footnotes.xml` /
+ * `word/endnotes.xml` on the table declaring them, so the table is seeded with
+ * the registry's fresh-compile declarations first — the variant output then
+ * carries the same parts a plain (no-variant) fresh compile would.
  */
 function applyVariant(
   compiled: DocumentOptions,
@@ -1465,6 +1496,7 @@ function applyVariant(
     contentTypes: {
       defaults: source?.defaults ?? [],
       overrides: [
+        ...(source ? [] : FRESH_COMPILE_CONTENT_TYPES),
         ...(source?.overrides ?? []).filter(
           (o) => o.partName.toLowerCase() !== "/word/document.xml",
         ),

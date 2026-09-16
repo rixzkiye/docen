@@ -227,6 +227,110 @@ describe("generateDOCX variants", () => {
   });
 });
 
+describe("generateDOCX variants keep fresh-compile parts", () => {
+  /** A fresh two-item numbered list — the model's generated numbering
+   *  definitions must reach `word/numbering.xml` in every variant. */
+  const numberedDoc: JSONContent = {
+    type: "doc",
+    content: [
+      {
+        type: "paragraph",
+        attrs: { numbering: { reference: "docen-ordered-1", level: 0 } },
+        content: [{ type: "text", text: "one" }],
+      },
+      {
+        type: "paragraph",
+        attrs: { numbering: { reference: "docen-ordered-1", level: 0 } },
+        content: [{ type: "text", text: "two" }],
+      },
+    ],
+  };
+
+  /** A fresh note document with one referenced note, the shape the editor's
+   *  note dialog commits (inline passthrough reference + documentExtras). */
+  const noteDoc = (kind: "footnotes" | "endnotes"): JSONContent => ({
+    type: "doc",
+    content: [
+      {
+        type: "paragraph",
+        content: [
+          { type: "text", text: "body" },
+          {
+            type: "inlinePassthrough",
+            attrs: {
+              data: JSON.stringify({
+                [`${kind === "footnotes" ? "footnote" : "endnote"}Reference`]: 1,
+              }),
+            },
+          },
+        ],
+      },
+    ],
+    attrs: {
+      documentExtras: {
+        [kind]: [
+          {
+            id: 1,
+            children: [
+              {
+                paragraph: {
+                  children: [
+                    {
+                      text: "a note",
+                      style: kind === "footnotes" ? "FootnoteText" : "EndnoteText",
+                    },
+                  ],
+                },
+              },
+            ],
+          },
+        ],
+      },
+    },
+  });
+
+  for (const variant of ["docx", "docm", "dotx", "dotm"] as const) {
+    it(`${variant}: a fresh numbered list keeps word/numbering.xml with no dangling numId`, () => {
+      const bytes = generateDOCXSync(numberedDoc, { variant });
+      const zip = unzipSync(bytes);
+      const numberingXml = new TextDecoder().decode(zip["word/numbering.xml"]);
+      expect(numberingXml).toBeTruthy();
+      expect(contentTypesXml(bytes)).toContain('PartName="/word/numbering.xml"');
+      const documentXml = new TextDecoder().decode(zip["word/document.xml"]);
+      const numIds = [...documentXml.matchAll(/<w:numId w:val="(\d+)"/g)].map((match) => match[1]!);
+      expect(numIds.length).toBeGreaterThan(0);
+      for (const id of numIds) {
+        expect(numberingXml).toContain(`<w:num w:numId="${id}"`);
+      }
+    });
+
+    for (const kind of ["footnotes", "endnotes"] as const) {
+      it(`${variant}: a fresh ${kind.slice(0, -1)} document keeps word/${kind}.xml + declaration + relationship`, () => {
+        const bytes = generateDOCXSync(noteDoc(kind), { variant });
+        const zip = unzipSync(bytes);
+        const part = new TextDecoder().decode(zip[`word/${kind}.xml`]);
+        expect(part).toContain("a note");
+        expect(contentTypesXml(bytes)).toContain(`PartName="/word/${kind}.xml"`);
+        const rels = new TextDecoder().decode(zip["word/_rels/document.xml.rels"]);
+        expect(rels).toContain(`Target="${kind}.xml"`);
+        // The note reference in document.xml is backed by the emitted part.
+        const documentXml = new TextDecoder().decode(zip["word/document.xml"]);
+        expect(documentXml).toContain(
+          kind === "footnotes" ? "footnoteReference" : "endnoteReference",
+        );
+      });
+    }
+  }
+
+  it("matches the no-variant part set for a fresh document", () => {
+    const base = Object.keys(unzipSync(generateDOCXSync(numberedDoc))).sort();
+    for (const variant of ["docx", "docm", "dotx", "dotm"] as const) {
+      const parts = Object.keys(unzipSync(generateDOCXSync(numberedDoc, { variant }))).sort();
+      expect(parts).toEqual(base);
+    }
+  });
+});
+
 describe("docm macro-part round-trip", () => {
   it("keeps vbaProject.bin and unknown parts byte-identical through open→save", async () => {
     const opened = await parseDOCX(sourceDocm());

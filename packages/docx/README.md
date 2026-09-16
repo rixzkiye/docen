@@ -73,7 +73,9 @@ const stream = await generateDOCXStream(json); // → ReadableStream<Uint8Array>
 // a macro-enabled/template source back to the standard document main type;
 // omitting the variant keeps the source's own declaration verbatim
 // (source-faithful round-trip). Macro and unknown parts carried in
-// `documentExtras.rawParts` stay in every variant, byte-identical.
+// `documentExtras.rawParts` stay in every variant, byte-identical, and a
+// source-less document keeps its model-derived parts (numbering, footnotes,
+// endnotes) declared and emitted under every variant.
 const template = await generateDOCX(json, { variant: "dotx" }); // → Buffer (Word Template)
 const docm = await generateDOCX(json, { variant: "docm" }); // → Buffer (macro-enabled document)
 
