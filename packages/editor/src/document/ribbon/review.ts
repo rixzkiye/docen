@@ -47,6 +47,16 @@ export const markupColorItems = (): string =>
     { text: opt("by-change-type"), event: "markup-colors", value: "changeType" },
   ]);
 
+// Word's Show Markup → Balloons: which annotations project into the page
+// margin. "All" = comments + revisions, "None" keeps every mark inline.
+export const balloonItems = (): string =>
+  JSON.stringify([
+    { text: opt("balloons-all"), event: "show-markup", value: "all", checked: true },
+    { text: opt("balloons-comments"), event: "show-markup", value: "comments" },
+    { text: opt("balloons-revisions"), event: "show-markup", value: "revisions" },
+    { text: opt("balloons-none"), event: "show-markup", value: "none" },
+  ]);
+
 export const reviewTab = (authors?: readonly string[]): RibbonTab =>
   tabNode("review", [
     group("proofing", [
@@ -73,6 +83,7 @@ export const reviewTab = (authors?: readonly string[]): RibbonTab =>
         size: "large",
       }),
       menu("color", "markup-colors", parsedItems(markupColorItems()), { size: "large" }),
+      menu("comment", "show-markup", parsedItems(balloonItems()), { size: "large" }),
       col([grid([btn("align-left", "previous-change"), btn("align-right", "next-change")])]),
       btn("reviewing-pane", "reviewing-pane", { size: "large" }),
     ]),

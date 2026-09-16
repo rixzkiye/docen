@@ -5,6 +5,7 @@
 import {
   ptToPx,
   twipToPx,
+  type LayoutBalloonAnchor,
   type LayoutInline,
   type LayoutLineHeight,
   type LayoutParagraph,
@@ -27,7 +28,7 @@ import {
   type Rec,
 } from "./guards";
 import { BUILTIN_BULLET_LEVEL, formatListNumber } from "./numbering";
-import { projectRuns, formatIndicatorOf } from "./runs";
+import { formatIndicatorOf, projectRuns, balloonKinds } from "./runs";
 import {
   alignOf,
   docDefaultsOf,
@@ -276,10 +277,24 @@ export function projectParagraph(p: BodyParagraph, ctx: ProjectContext): LayoutP
 
   const runs: readonly unknown[] = childRunsOf(p);
   const drawings = projectDrawings(runs, ctx);
-  const inline = projectRuns(runs, chainRPr, docRPr, defaultTextStyle, ctx);
+  // Margin-balloon anchors: run-level ones come from the inline walk,
+  // paragraph-level ones from a pPrChange on this node.
+  const anchors: LayoutBalloonAnchor[] = [];
+  const inline = projectRuns(runs, chainRPr, docRPr, defaultTextStyle, ctx, anchors);
   // A tracked pPr change (w:pPrChange) marks the paragraph for the painter's
   // change bar — author-colored, or neutral in "By change type" mode.
   const revision = isRecord(pPr.revision) ? pPr.revision : undefined;
+  const indicator = revision ? formatIndicatorOf(ctx, revision) : {};
+  const change = (indicator as { formatChange?: { color: string } }).formatChange;
+  if (revision && change && balloonKinds(ctx).revisions) {
+    anchors.push({
+      id: num(revision.id) ?? 0,
+      kind: "revision",
+      color: change.color,
+      label: str(revision.author) ?? "",
+      inlineIndex: -1,
+    });
+  }
   return {
     kind: "paragraph",
     inline: markerInline.length ? markerInline.concat(inline) : inline,
@@ -299,6 +314,7 @@ export function projectParagraph(p: BodyParagraph, ctx: ProjectContext): LayoutP
     widowControl: pick([pPr, chainPPr], "widowControl") !== false,
     pageBreakBefore: pPr.pageBreakBefore === true || chainPPr.pageBreakBefore === true,
     suppressLineNumbers: pPr.suppressLineNumbers === true || chainPPr.suppressLineNumbers === true,
-    ...(revision ? formatIndicatorOf(ctx, revision) : {}),
+    ...indicator,
+    ...(anchors.length > 0 ? { balloons: anchors } : {}),
   };
 }

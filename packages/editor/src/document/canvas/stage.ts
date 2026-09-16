@@ -1,5 +1,7 @@
 import {
+  balloonAt as hitBalloonBox,
   chartShapeHit,
+  paintBalloons,
   paintColumnSeparators,
   paintFootnotes,
   paintFurnitureStack,
@@ -8,6 +10,7 @@ import {
   paintLineNumbers,
   paintScene,
   releasePinnedImages,
+  type BalloonHitBox,
   type DrawingHitBox,
   type LineNumberMark,
   type PaintContext,
@@ -61,6 +64,10 @@ export interface LaidFurnitureSlot {
   stack: readonly LaidOutStackItem[];
   heightPx: number;
 }
+
+/** A balloon card hit: the painted box plus its page — the bridge hands it to
+ *  the host's comment/revision routing. */
+export type BalloonHit = BalloonHitBox & { page: number };
 
 /** A page's persistent paint layers, in z-order. The two furniture groups
  *  survive body-only repaints — headers/footers are per-section constants in
@@ -1420,13 +1427,19 @@ export class CanvasStage {
   }
 
   /** The body overlay tail — line numbers, column separators, footnotes,
-   *  then the deferred floats (the flush draws them last, above everything
-   *  Word stacks them above). */
+   *  balloons, then the deferred floats (the flush draws them last, above
+   *  everything Word stacks them above). */
   #paintOverlay(layers: PageLayers, ctx: PaintContext): void {
     layers.overlay.clear();
     paintLineNumbers(layers.overlay, ctx);
     paintColumnSeparators(layers.overlay, ctx);
     paintFootnotes(layers.overlay, this.pages[ctx.pageIndex]?.footnotes, ctx);
+    // Margin balloons repaint with the overlay (their geometry comes from the
+    // page's packed stack) and register their click boxes + hover groups.
+    const painted = paintBalloons(layers.overlay, this.pages[ctx.pageIndex]?.balloons, ctx);
+    this.balloonBoxes.set(ctx.pageIndex, painted.boxes);
+    this.balloonGroups.set(ctx.pageIndex, painted.groups);
+    this.#applyBalloonHover(ctx.pageIndex);
     this.#flushDrawings(ctx);
   }
 
@@ -1459,6 +1472,12 @@ export class CanvasStage {
   /** The page's drawing boxes as the body pass painted them — the click
    *  hit table (empty until the page repaints at least once). */
   private readonly hitBoxes = new Map<number, DrawingHitBox[]>();
+
+  /** The pages' balloon card boxes / paint groups, keyed like
+   *  {@link hitBoxes} — the click scan and the hover tone. */
+  private readonly balloonBoxes = new Map<number, BalloonHitBox[]>();
+  private readonly balloonGroups = new Map<number, Map<string, IGroup>>();
+  private hoverBalloonKey: { page: number; key: string } | null = null;
 
   /** The pages' editable text-box stacks, keyed like {@link hitBoxes} — the
    *  bridge registers them with the caret map after each relayout. */
@@ -1498,6 +1517,43 @@ export class CanvasStage {
       if (px >= b.x && px <= b.x + b.width && py >= b.y && py <= b.y + b.height) return b;
     }
     return null;
+  }
+
+  /** The balloon card whose painted box contains the page-local point (null
+   *  when none does) — the bridge routes the click to the comment/revision
+   *  commands. */
+  balloonAt(page: number, lx: number, ly: number): BalloonHit | null {
+    const box = hitBalloonBox(this.balloonBoxes.get(page) ?? [], lx, ly);
+    return box ? { ...box, page } : null;
+  }
+
+  /** Tone the hovered card (opacity) and restore the previous one — a mouse
+   *  move only toggles groups, never repaints the page. */
+  hoverBalloon(hit: BalloonHit | null): void {
+    if (this.hoverBalloonKey) {
+      const previous = this.hoverBalloonKey;
+      const group = this.balloonGroups.get(previous.page)?.get(previous.key);
+      if (group) {
+        group.opacity = 1;
+        this.slots[previous.page]?.app?.forceRender();
+      }
+      this.hoverBalloonKey = null;
+    }
+    if (!hit) return;
+    const key = `${hit.kind}:${hit.id}`;
+    const group = this.balloonGroups.get(hit.page)?.get(key);
+    if (!group) return;
+    group.opacity = 0.72;
+    this.hoverBalloonKey = { page: hit.page, key };
+    this.slots[hit.page]?.app?.forceRender();
+  }
+
+  /** Re-apply the hover tone after a page repaint re-created the groups. */
+  #applyBalloonHover(page: number): void {
+    const hover = this.hoverBalloonKey;
+    if (!hover || hover.page !== page) return;
+    const group = this.balloonGroups.get(page)?.get(hover.key);
+    if (group) group.opacity = 0.72;
   }
 
   /** The painted box of a paragraph's index-th drawing across pages — the

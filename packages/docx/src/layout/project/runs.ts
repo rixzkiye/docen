@@ -7,6 +7,7 @@ import {
   emuToPx,
   ptToPx,
   twipToPx,
+  type LayoutBalloonAnchor,
   type LayoutCombine,
   type LayoutInline,
   type LayoutTextStyle,
@@ -41,12 +42,10 @@ export const REVISION_AUTHOR_COLORS = [
 const REVISION_CHANGE_TYPE_COLOR = "FF0000";
 const FORMAT_CHANGE_TYPE_COLOR = "808080";
 
-/** The revision's display color: the author's stable palette slot in
- *  "By author" mode (the default), the fixed revision red in "By change type"
- *  mode. `mark` is the w:ins/w:del/rPrChange record carrying w:author. */
-function revisionColor(ctx: ProjectContext, mark: Rec): string {
-  if (ctx.markup?.colors === "changeType") return REVISION_CHANGE_TYPE_COLOR;
-  const author = str(mark.author) ?? "";
+/** The author's stable "By author" palette slot — assigned on first encounter
+ *  (Word colors reviewers, not views), shared by revision marks, format bars
+ *  and comment balloons. */
+export function authorColorOf(ctx: ProjectContext, author: string): string {
   let slot = ctx.revisionAuthorColors.get(author);
   if (slot == null) {
     slot = ctx.revisionAuthorColors.size;
@@ -55,10 +54,55 @@ function revisionColor(ctx: ProjectContext, mark: Rec): string {
   return REVISION_AUTHOR_COLORS[slot % REVISION_AUTHOR_COLORS.length]!;
 }
 
+/** The revision's display color: the author's stable palette slot in
+ *  "By author" mode (the default), the fixed revision red in "By change type"
+ *  mode. `mark` is the w:ins/w:del/rPrChange record carrying w:author. */
+function revisionColor(ctx: ProjectContext, mark: Rec): string {
+  if (ctx.markup?.colors === "changeType") return REVISION_CHANGE_TYPE_COLOR;
+  return authorColorOf(ctx, str(mark.author) ?? "");
+}
+
 /** Word's format-change bar color: the author's palette slot, or the neutral
  *  change-type gray when the display is "By change type". */
 function formatChangeColor(ctx: ProjectContext, mark: Rec): string {
   return ctx.markup?.colors === "changeType" ? FORMAT_CHANGE_TYPE_COLOR : revisionColor(ctx, mark);
+}
+
+/** Which balloon kinds the display state asks for (comments / revisions /
+ *  deletions in the full view). Absent markup or "none" = all inline. */
+export function balloonKinds(ctx: ProjectContext): {
+  comments: boolean;
+  revisions: boolean;
+  deletions: boolean;
+} {
+  const mode = ctx.markup?.balloons;
+  const view = ctx.markup?.view ?? "all";
+  const shows = view !== "none" && view !== "original";
+  const revisions = shows && (mode === "all" || mode === "revisions");
+  return {
+    comments: shows && (mode === "all" || mode === "comments"),
+    revisions,
+    deletions: revisions && view === "all",
+  };
+}
+
+/** Flatten a container's child runs to plain text (a deletion balloon's
+ *  excerpt) — strings, run shapes and nested paragraph shapes all reduce. */
+function containerText(children: readonly unknown[]): string {
+  let text = "";
+  for (const child of children) {
+    if (typeof child === "string") {
+      text += child;
+      continue;
+    }
+    if (!isRecord(child)) continue;
+    if (typeof child.text === "string") {
+      text += child.text;
+      continue;
+    }
+    if (Array.isArray(child.children)) text += containerText(child.children);
+  }
+  return text;
 }
 
 /** One revision mark's effective view under the display state: a mark whose
@@ -191,9 +235,55 @@ export function projectRuns(
   docRPr: Rec,
   defRun: LayoutTextStyle,
   ctx: ProjectContext,
+  anchors?: LayoutBalloonAnchor[],
 ): LayoutInline[] {
   const { openComments } = ctx;
   const out: LayoutInline[] = [];
+  // ── Margin balloons (Word's Show Markup → Balloons) ──────────────────────
+  // Anchors ride the paragraph's atoms; the flow resolves them to lines and
+  // packs the page margin. Emission is display-only: measurement and wrapping
+  // never read the list, so body geometry is untouched.
+  const kinds = balloonKinds(ctx);
+  const wantsComments = anchors != null && kinds.comments;
+  const wantsRevisions = anchors != null && kinds.revisions;
+  const wantsDeletions = anchors != null && kinds.deletions;
+  /** Comment ids opened in this paragraph but not yet anchored. */
+  const pendingComments: number[] = [];
+  const pushCommentAnchors = (inlineIndex: number): void => {
+    if (!anchors || pendingComments.length === 0) return;
+    for (const id of pendingComments.splice(0)) {
+      const meta = ctx.commentMeta?.get(id);
+      if (ctx.markup?.authors && ctx.markup.authors.length > 0) {
+        const author = meta?.author ?? "";
+        if (author === "" || !ctx.markup.authors.includes(author)) continue;
+      }
+      anchors.push({
+        id,
+        kind: "comment",
+        color: authorColorOf(ctx, meta?.author ?? ""),
+        label: meta?.initials || meta?.author || "",
+        text: meta?.text,
+        inlineIndex,
+      });
+    }
+  };
+  const revisionBalloon = (
+    revision: Rec,
+    inlineIndex: number,
+    color: string,
+    text?: string,
+  ): void => {
+    if (!anchors || !wantsRevisions) return;
+    if (effectiveView(ctx.markup, revision) !== "all") return;
+    anchors.push({
+      id: num(revision.id) ?? 0,
+      kind: "revision",
+      color,
+      label: str(revision.author) ?? "",
+      ...(text ? { text } : {}),
+      inlineIndex,
+    });
+  };
   const textStyleOf = (rPr: Rec): LayoutTextStyle => {
     // A run's character style (w:rStyle, e.g. a body link's "Hyperlink") slots
     // between the paragraph-style chain and direct formatting: its props beat
@@ -268,16 +358,22 @@ export function projectRuns(
     // folded away for an even split.
     const combine = combineOf(rPr, text);
     // A run whose rPrChange is shown carries the format-change paint marker
-    // (Word's change bar rides the run's line — the painter draws it).
+    // (Word's change bar rides the run's line — the painter draws it) and,
+    // when balloons are on, a margin anchor.
     const revision = isRecord(rPr.revision) ? rPr.revision : undefined;
+    const indicator = revision ? formatIndicatorOf(ctx, revision) : {};
     out.push({
       kind: "text",
       text,
       style: textStyleOf(rPr),
       commentIds,
       ...(combine ? { combine } : {}),
-      ...(revision ? formatIndicatorOf(ctx, revision) : {}),
+      ...indicator,
     });
+    const inlineIndex = out.length - 1;
+    pushCommentAnchors(inlineIndex);
+    const change = (indicator as { formatChange?: { color: string } }).formatChange;
+    if (revision && change) revisionBalloon(revision, inlineIndex, change.color, text);
   };
   /** A field (w:fldSimple / complexField): PAGE/NUMPAGES become dynamic atoms
    *  (the painter resolves the number per page — `text` is a measuring
@@ -441,8 +537,13 @@ export function projectRuns(
       // Comment range markers are zero-width: a start opens tinting for every
       // text atom after it, an end closes it. The set lives across paragraphs
       // (the caller's walk), matching Word's range semantics.
-      if (isRecord(child.commentRangeStart) && num(child.commentRangeStart.id) != null)
-        openComments?.add(num(child.commentRangeStart.id)!);
+      if (isRecord(child.commentRangeStart) && num(child.commentRangeStart.id) != null) {
+        const commentId = num(child.commentRangeStart.id)!;
+        // The range's balloon anchors at the next atom pushed (Word pins the
+        // card to the range's first line).
+        if (wantsComments && !openComments?.has(commentId)) pendingComments.push(commentId);
+        openComments?.add(commentId);
+      }
       if (isRecord(child.commentRangeEnd) && num(child.commentRangeEnd.id) != null)
         openComments?.delete(num(child.commentRangeEnd.id)!);
       const rPr: Rec = { ...preset, ...child };
@@ -554,6 +655,16 @@ export function projectRuns(
         const color = revisionColor(ctx, child.deletion);
         const eff = effectiveView(ctx.markup, child.deletion);
         if (eff === "all") {
+          // Word moves a deletion's text into its balloon in the full markup
+          // view; the anchor rides the first atom the struck runs push.
+          if (wantsDeletions) {
+            revisionBalloon(
+              child.deletion,
+              out.length,
+              color,
+              containerText(child.deletion.children) || undefined,
+            );
+          }
           pushRuns(child.deletion.children, { ...preset, strike: true, color });
         } else if (eff === "original") pushRuns(child.deletion.children, preset);
       }
@@ -561,6 +672,11 @@ export function projectRuns(
     }
   };
   pushRuns(runs, {});
+  // A comment range that opened with no following text still gets its card,
+  // pinned to the paragraph's last atom (or its first line when empty).
+  if (pendingComments.length > 0) {
+    pushCommentAnchors(out.length > 0 ? out.length - 1 : -1);
+  }
   // Hidden formatting (w:vanish) with the host's Show Hidden Text off: the
   // text is neither measured nor painted, so every atom it projected is
   // suppressed — the atom keeps its source characters (the caret lattice

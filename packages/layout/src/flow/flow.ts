@@ -20,16 +20,19 @@
 import { layoutBlock, stackBlocks } from "../block/block";
 import { fitExtentPx } from "../block/geometry";
 import {
+  type LayoutBalloonAnchor,
   type LayoutBlock,
   type LayoutBlockContext,
   type LayoutDrawing,
   type LayoutFloatZone,
+  type LayoutTextStyle,
   type ProjectedColumns,
   type ProjectedPageNumbering,
   wrapEffectOf,
   type WrapPageGeometry,
 } from "../layout-doc";
 import type {
+  LaidOutBalloon,
   LaidOutBlock,
   LaidOutCell,
   LaidOutFootnoteArea,
@@ -57,6 +60,10 @@ export interface FlowPage {
   items: FlowItem[];
   /** Footnotes placed at the bottom of this page (absent when none). */
   footnotes?: LaidOutFootnoteArea;
+  /** The right-margin balloon stack (absent when the section has no balloon
+   *  anchors or the flow is unbounded) — packed after the page's items
+   *  sealed, so body geometry is untouched. */
+  balloons?: LaidOutBalloon[];
   /** Unbounded flows only: the y where the content ends (footnote area
    *  included) — the host sizes the continuous page from it. Absent on
    *  paginated pages (their height is the section's paper). */
@@ -240,6 +247,83 @@ export function layoutFlowSections(
 export interface IncrementalPage {
   page: FlowPage;
   section: number;
+}
+
+// ── Margin balloons ──────────────────────────────────────────────────────────
+// The flow owns the balloon stack: anchors ride laid-out paragraphs, resolve
+// to page-local line centers, and pack top-down in the right margin. Cards
+// live entirely outside the content box — body text geometry never changes.
+
+/** Balloon card metrics (Word-ish, px at 100% zoom). */
+const BALLOON_LINE_PX = 14;
+const BALLOON_PAD_PX = 8;
+const BALLOON_GAP_PX = 8;
+const BALLOON_CONNECTOR_PX = 12;
+const BALLOON_MIN_WIDTH_PX = 48;
+const BALLOON_MAX_WIDTH_PX = 200;
+/** Gutter kept clear at the page edge. */
+const BALLOON_EDGE_PX = 8;
+/** Body lines per balloon before the text ellipsizes. */
+const BALLOON_MAX_LINES = 8;
+const BALLOON_TEXT_STYLE: LayoutTextStyle = { family: "sans-serif", sizePx: 11 };
+
+/** The anchored line's center Y in paragraph-local coordinates. Anchors
+ *  resolve against the slice's own lines: a split head keeps the anchors its
+ *  lines cover and the tail re-resolves the rest (each slice carries the full
+ *  anchor list). */
+function balloonAnchorY(para: LaidOutParagraph, anchor: LayoutBalloonAnchor): number | undefined {
+  const lines = para.lines;
+  if (lines.length === 0) return undefined;
+  const first = lines[0]!;
+  const sliceStart = first.items[0]?.inlineIndex ?? 0;
+  // `endInlineIndex` is the line's LAST inline (inclusive) — a break line
+  // points at its break.
+  const sliceEnd = lines[lines.length - 1]!.endInlineIndex;
+  const index = anchor.inlineIndex;
+  if (index >= 0) {
+    if (index < sliceStart || index > sliceEnd) return undefined;
+    for (const line of lines) {
+      if (line.items.some((item) => item.inlineIndex === index)) {
+        return line.yPx + line.heightPx / 2;
+      }
+    }
+    const line =
+      lines.find((candidate) => index <= candidate.endInlineIndex) ?? lines[lines.length - 1]!;
+    return line.yPx + line.heightPx / 2;
+  }
+  // Paragraph-level anchor: only the slice owning the paragraph's first line.
+  return sliceStart === 0 ? first.yPx + first.heightPx / 2 : undefined;
+}
+
+/** Greedy wrap for a balloon body at `widthPx`; words wider than the line
+ *  hard-break. Text beyond {@link BALLOON_MAX_LINES} ellipsizes. */
+function wrapBalloonLines(text: string, widthPx: number, measurer: TextMeasurer): string[] {
+  const lines: string[] = [];
+  for (const paragraph of text.split(/\r?\n/)) {
+    let line = "";
+    for (const token of paragraph.split(/\s+/).filter(Boolean)) {
+      const candidate = line ? `${line} ${token}` : token;
+      if (measurer.widthOf(candidate, BALLOON_TEXT_STYLE) <= widthPx) {
+        line = candidate;
+        continue;
+      }
+      if (line) lines.push(line);
+      let rest = token;
+      while (rest.length > 1 && measurer.widthOf(rest, BALLOON_TEXT_STYLE) > widthPx) {
+        let cut = rest.length - 1;
+        while (cut > 1 && measurer.widthOf(rest.slice(0, cut), BALLOON_TEXT_STYLE) > widthPx) cut--;
+        lines.push(rest.slice(0, cut));
+        rest = rest.slice(cut);
+      }
+      line = rest;
+    }
+    if (line) lines.push(line);
+  }
+  if (lines.length > BALLOON_MAX_LINES) {
+    lines.length = BALLOON_MAX_LINES;
+    lines[BALLOON_MAX_LINES - 1] = `${lines[BALLOON_MAX_LINES - 1]!}…`;
+  }
+  return lines;
 }
 
 /** Lay a multi-section document one page seal at a time. The walk is strictly
@@ -587,7 +671,12 @@ class Flow {
   private newPage(auto = false): void {
     if (this.items.length > 0) {
       const footnotes = this.buildPageFootnotes();
-      this.pages.push(alignPageVertical({ items: this.items.splice(0), footnotes }, this.opts));
+      const page = alignPageVertical({ items: this.items.splice(0), footnotes }, this.opts);
+      // Balloons pack after the vertical align shifted the items — their
+      // anchor Ys must read the final page positions.
+      const balloons = this.packBalloons(page.items);
+      if (balloons) page.balloons = balloons;
+      this.pages.push(page);
     }
     this.pageIndex = this.pages.length;
     this.pageSeq++;
@@ -844,6 +933,57 @@ class Flow {
     this.firstOnPage = false;
     this.registerFootnotes(laid);
     if (laid.kind === "paragraph") this.registerFloats(laid, yPx);
+  }
+
+  /** Pack the sealed page's right-margin balloon stack from its placed items.
+   *  Cards sort by anchor Y and each starts at or below the previous card's
+   *  bottom — deterministic, never overlapping. The margin band's width
+   *  clamps to the page edge; a band narrower than a readable card takes the
+   *  minimum width into the text margin (Word's balloons do the same at
+   *  sub-balloon margins). Returns undefined when the section has no anchors
+   *  or no page geometry. */
+  private packBalloons(items: readonly FlowItem[]): LaidOutBalloon[] | undefined {
+    if (this.opts.unbounded || items.length === 0) return undefined;
+    const { pageWidthPx, contentLeftPx, contentWidthPx } = this.opts;
+    if (pageWidthPx == null || contentLeftPx == null || contentWidthPx == null) return undefined;
+    const anchors: { yPx: number; anchor: LayoutBalloonAnchor }[] = [];
+    for (const item of items) {
+      if (item.block.kind !== "paragraph") continue;
+      for (const anchor of item.block.balloons ?? []) {
+        const local = balloonAnchorY(item.block, anchor);
+        if (local != null) anchors.push({ yPx: item.yPx + local, anchor });
+      }
+    }
+    if (anchors.length === 0) return undefined;
+    const available =
+      pageWidthPx - contentLeftPx - contentWidthPx - BALLOON_CONNECTOR_PX - BALLOON_EDGE_PX;
+    const widthPx = Math.max(BALLOON_MIN_WIDTH_PX, Math.min(BALLOON_MAX_WIDTH_PX, available));
+    anchors.sort((a, b) => a.yPx - b.yPx);
+    const balloons: LaidOutBalloon[] = [];
+    let cursor = 0;
+    for (const { yPx: anchorYPx, anchor } of anchors) {
+      const lines = anchor.text
+        ? wrapBalloonLines(anchor.text, widthPx - BALLOON_PAD_PX * 2, this.measurer)
+        : [];
+      const headerPx = anchor.label ? BALLOON_LINE_PX : 0;
+      const heightPx = BALLOON_PAD_PX * 2 + headerPx + lines.length * BALLOON_LINE_PX;
+      const yPx = Math.max(anchorYPx - heightPx / 2, cursor);
+      balloons.push({
+        id: anchor.id,
+        kind: anchor.kind,
+        color: anchor.color,
+        label: anchor.label,
+        lines,
+        xPx: contentWidthPx + BALLOON_CONNECTOR_PX,
+        yPx,
+        widthPx,
+        heightPx,
+        anchorXPx: contentWidthPx,
+        anchorYPx,
+      });
+      cursor = yPx + heightPx + BALLOON_GAP_PX;
+    }
+    return balloons;
   }
 
   /** Turn the anchor paragraph's wrapped drawings into flow effects: a

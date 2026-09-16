@@ -334,6 +334,7 @@ export const LOCAL_HANDLED: ReadonlySet<string> = new Set([
   "display-for-review",
   "review-specific-people",
   "markup-colors",
+  "show-markup",
   "accept-all-changes-shown",
   "reject-all-changes-shown",
   // Table Design → Draw Border: the pen pickers stamp the host's pen state;

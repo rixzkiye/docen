@@ -199,6 +199,7 @@ export function layoutParagraph(
     preserveSpaces: true,
     sectionEnd: para.sectionEnd,
     formatChange: para.formatChange,
+    balloons: para.balloons,
   };
 }
 
