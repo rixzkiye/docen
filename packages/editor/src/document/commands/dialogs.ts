@@ -26,6 +26,7 @@ import {
   fieldRef,
   finiteNumber,
   parseFieldInstruction,
+  seqChapterLevel,
   SEQ_NUMBER_FORMATS,
   type FieldBookmark,
   type FieldContext,
@@ -546,26 +547,30 @@ export class DialogCommands {
   }
 
   /** The SEQ counters in one document-order walk. Word's rules: a heading
-   *  advances its level's chapter count (deeper levels reset), and a SEQ
-   *  field whose `\s <level>` switch matches the heading level restarts its
-   *  label's sequence — so captions renumber from the document itself, not
-   *  from their caches. `before` bounds the walk to atoms before a document
-   *  position (the caption commit's insertion point).
+   *  advances its level's chapter count (deeper levels reset), and a label
+   *  whose SEQ field carries `\s <level>` restarts its sequence at every
+   *  heading at or above that level — so captions renumber from the document
+   *  itself, not from their caches. The reset lands on the heading, before
+   *  any later field is visited: a `before` bound (the caption commit's
+   *  insertion point, F9's caret) must still see the pending reset of its
+   *  chapter, or the first caption of a new chapter would continue the
+   *  previous count.
    *
    *  The chapter number is the heading's occurrence ordinal: the runtime model
-   *  carries no heading number (list numbering is the projection's), and
-   *  occurrence counting matches continuous heading numbering. */
+   *  carries no heading number (list numbering is the projection's).
+   *  Continuous heading numbering matches Word; multilevel prefixes (`1.1`)
+   *  and unnumbered headings differ from Word's STYLEREF rendering. */
   #seqWalk(editor: Editor, before?: number): SeqWalk {
     const styles = (editor.state.doc.attrs as { styles?: StylesOptions }).styles;
     const ordinals = new Map<number, number>();
     const chapters = new Map<number, string>();
     const counts = new Map<string, number>();
     const chapterCounts = Array.from({ length: 10 }, () => 0);
-    // The most recent heading at or above each level, serialized: a label's
-    // sequence restarts when that serial moved past its last occurrence.
-    const seenAtOrAbove = Array.from({ length: 10 }, () => 0);
-    const lastSerial = new Map<string, number>();
-    let serial = 0;
+    // Label → the `\s` level of its most recent switched field: a heading at
+    // or above that level restarts the label's sequence. Recorded from the
+    // fields visited so far, so a heading resets every label whose sequence
+    // has already begun.
+    const resetLevels = new Map<string, number>();
     editor.state.doc.descendants((node, pos) => {
       if (before != null && pos >= before) return false;
       if (node.type.name === "paragraph") {
@@ -578,10 +583,11 @@ export class DialogCommands {
           styles,
         );
         if (level != null) {
-          serial += 1;
           chapterCounts[level] = (chapterCounts[level] ?? 0) + 1;
           for (let l = level + 1; l <= 9; l++) chapterCounts[l] = 0;
-          for (let l = level; l <= 9; l++) seenAtOrAbove[l] = serial;
+          for (const [label, resetLevel] of resetLevels) {
+            if (resetLevel >= level) counts.delete(label);
+          }
         }
         return true;
       }
@@ -600,12 +606,8 @@ export class DialogCommands {
       if (field.name !== "SEQ") return true;
       const label = field.args[0];
       if (!label) return true;
-      const level = finiteNumber(field.switches.s);
-      if (level != null && level >= 1 && level <= 9) {
-        const marker = seenAtOrAbove[level]!;
-        if ((lastSerial.get(label) ?? 0) !== marker) counts.delete(label);
-        lastSerial.set(label, marker);
-      }
+      const level = seqChapterLevel(field.switches.s);
+      if (level != null) resetLevels.set(label, level);
       const ordinal = (counts.get(label) ?? 0) + 1;
       counts.set(label, ordinal);
       ordinals.set(pos, ordinal);
@@ -718,9 +720,17 @@ export class DialogCommands {
    *  the picked number format (`\*`) and, with "Include chapter number", the
    *  heading level (`\s`); the separator lands in the document's caption
    *  settings (settings.xml `w:captions`), where the SEQ evaluator reads it —
-   *  Word's split between field code and document setting. The Caption style
-   *  definition joins the document styles when absent (compile passes
-   *  doc.attrs.styles straight through). */
+   *  Word's split between field code and document setting.
+   *
+   *  Word interop deviation: Word writes the chapter as a separate
+   *  `STYLEREF <level> \s` field and caches only the sequence number in the
+   *  SEQ result; docen folds the chapter prefix into the SEQ cache (the
+   *  projection paints a single field atom — see the SEQ evaluator). An
+   *  in-Word update therefore drops the prefix, and Update All cannot refresh
+   *  a real Word STYLEREF.
+   *
+   *  The Caption style definition joins the document styles when absent
+   *  (compile passes doc.attrs.styles straight through). */
   readonly onCaptionOk = (event: Event): void => {
     const { label, text, position, excludeLabel, chapterNumber, heading, sep, format } =
       (
@@ -742,7 +752,11 @@ export class DialogCommands {
     if ($from.parent.type.name !== "paragraph") return;
     const insertPos = position === "above" ? $from.before($from.depth) : $from.after($from.depth);
     const level =
-      chapterNumber && typeof heading === "number" && heading >= 1 && heading <= 9
+      chapterNumber &&
+      typeof heading === "number" &&
+      Number.isInteger(heading) &&
+      heading >= 1 &&
+      heading <= 9
         ? heading
         : undefined;
     const numberFormat = format && SEQ_NUMBER_FORMATS[format] ? format : "ARABIC";
@@ -1204,7 +1218,7 @@ export class DialogCommands {
         const label = field.args[0];
         const ordinal = label ? seq.ordinals.get(pos) : undefined;
         if (label && ordinal != null) context.sequences = new Map([[label, ordinal]]);
-        const level = finiteNumber(field.switches.s);
+        const level = seqChapterLevel(field.switches.s);
         const chapter = level != null ? seq.chapters.get(pos) : undefined;
         if (level != null && chapter != null) context.chapters = new Map([[level, chapter]]);
       }
@@ -1368,7 +1382,9 @@ export class DialogCommands {
    *  NUMWORDS/NUMCHARS (the status bar's counters; notes stay out, Word's
    *  default), the core properties the document attrs carry, and the host's
    *  pinned pagination for the page-dependent fields. With an instruction,
-   *  a SEQ field also gets its live ordinal and `\s` chapter number at `pos`. */
+   *  a SEQ field also gets its live ordinal and `\s` chapter number at `pos`
+   *  (the position-bound walk applies the chapter's pending reset, so F9 and
+   *  edit agree with Update All Fields). */
   #fieldContext(editor: Editor, pos?: number, instruction?: string): FieldContext {
     const context: FieldContext = {
       ...this.#fieldBase(editor),
@@ -1380,7 +1396,7 @@ export class DialogCommands {
     if (!label) return context;
     const walk = this.#seqWalk(editor, pos ?? editor.state.selection.from);
     context.sequences = new Map([[label, (walk.counts.get(label) ?? 0) + 1]]);
-    const level = finiteNumber(field.switches.s);
+    const level = seqChapterLevel(field.switches.s);
     if (level != null && walk.chapterCounts[level]! > 0)
       context.chapters = new Map([[level, String(walk.chapterCounts[level])]]);
     return context;

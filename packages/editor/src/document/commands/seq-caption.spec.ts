@@ -212,6 +212,28 @@ describe("caption commit", () => {
     ]);
     editor.destroy();
   });
+
+  it("starts a new chapter's first caption at 1 (pending \\s reset at the insert point)", () => {
+    const editor = build([
+      heading(1, "第一章"),
+      paragraph("第一节内容"),
+      heading(1, "第二章"),
+      paragraph("第二节内容"),
+    ]);
+    const dialogs = new DialogCommands(host(editor));
+    caretIn(editor, "第一节内容");
+    dialogs.onCaptionOk({
+      detail: { label: "Figure", text: "A", position: "below", chapterNumber: true, heading: 1 },
+    } as unknown as Event);
+    caretIn(editor, "第二节内容");
+    dialogs.onCaptionOk({
+      detail: { label: "Figure", text: "B", position: "below", chapterNumber: true, heading: 1 },
+    } as unknown as Event);
+    // The second insert must see the chapter-2 heading's reset even though no
+    // SEQ atom sits between the heading and the insertion point.
+    expect(fieldsOf(editor).map((f) => f.cached)).toEqual(["1-1", "2-1"]);
+    editor.destroy();
+  });
 });
 
 describe("updateAllFields SEQ numbering", () => {
@@ -298,6 +320,41 @@ describe("updateAllFields SEQ numbering", () => {
     expect(fieldsOf(editor)[0]!.cached).toBe("1");
     editor.destroy();
   });
+
+  it("F9 restarts a stale caption at its chapter boundary", () => {
+    const editor = build([
+      heading(1, "第一章"),
+      seqParagraph("SEQ Figure \\* ARABIC \\s 1", "1-1"),
+      heading(1, "第二章"),
+      seqParagraph("SEQ Figure \\* ARABIC \\s 1", "1-9"),
+    ]);
+    const dialogs = new DialogCommands(host(editor));
+    const atomPos = fieldsOf(editor)[1]!.pos;
+    editor.commands.setTextSelection(atomPos + 1);
+    dialogs.fieldUpdateAtSelection();
+    // The caret-bound walk applies the chapter heading's pending reset: the
+    // caption is the first of chapter 2, not the second of chapter 1.
+    expect(fieldsOf(editor).map((f) => f.cached)).toEqual(["1-1", "2-1"]);
+    editor.destroy();
+  });
+
+  it("insert-field seeds the chapter-prefixed value in a new chapter", () => {
+    const editor = build([
+      heading(1, "第一章"),
+      seqParagraph("SEQ Figure \\* ARABIC \\s 1", "1-1"),
+      heading(1, "第二章"),
+      paragraph("x"),
+    ]);
+    const dialogs = new DialogCommands(host(editor));
+    caretIn(editor, "x");
+    dialogs.onFieldOk({
+      detail: { instruction: "SEQ Figure \\* ARABIC \\s 1" },
+    } as unknown as Event);
+    const fields = fieldsOf(editor);
+    expect(fields).toHaveLength(2);
+    expect(fields[1]!.cached).toBe("2-1");
+    editor.destroy();
+  });
 });
 
 describe("chapter numbering (SEQ \\s)", () => {
@@ -362,6 +419,21 @@ describe("chapter numbering (SEQ \\s)", () => {
     expect(fieldsOf(editor).map((f) => f.cached)).toEqual(["1-1", "1"]);
     editor.destroy();
   });
+
+  it("ignores a non-integer \\s level (no reset, no chapter prefix)", () => {
+    const editor = build([
+      heading(1, "第一章"),
+      seqParagraph("SEQ Figure \\* ARABIC \\s 2.5"),
+      heading(1, "第二章"),
+      seqParagraph("SEQ Figure \\* ARABIC \\s 2.5"),
+    ]);
+    const dialogs = new DialogCommands(host(editor));
+    expect(dialogs.updateAllFields()).toBe(2);
+    // Word ignores the malformed switch: the sequence continues across the
+    // heading and no chapter prefix appears.
+    expect(fieldsOf(editor).map((f) => f.cached)).toEqual(["1", "2"]);
+    editor.destroy();
+  });
 });
 
 describe("format switches (SEQ \\*)", () => {
@@ -383,9 +455,28 @@ describe("format switches (SEQ \\*)", () => {
     ]);
     const dialogs = new DialogCommands(host(editor));
     expect(dialogs.updateAllFields()).toBe(7);
-    // One shared counter per label; the switch picks the glyphs and its case
-    // is significant (ALPHABETIC → A, alphabetic → b on the shared counter).
+    // One shared counter per label; the switch picks the glyphs.
     expect(fieldsOf(editor).map((f) => f.cached)).toEqual(["I", "II", "i", "A", "b", "1", "2"]);
+    editor.destroy();
+  });
+
+  it("reads the \\* switch case-insensitively; the casing picks the output case", () => {
+    const editor = build([
+      {
+        type: "paragraph",
+        content: [
+          field("SEQ Roman \\* Roman", "9"),
+          field("SEQ Roman \\* ROMAN", "9"),
+          field("SEQ Alpha \\* Alphabetic", "9"),
+          field("SEQ Alpha \\* ALPHABETIC", "9"),
+          field("SEQ Arabic \\* Arabic", "9"),
+          field("SEQ Arabic \\* arabic", "9"),
+        ],
+      },
+    ]);
+    const dialogs = new DialogCommands(host(editor));
+    expect(dialogs.updateAllFields()).toBe(6);
+    expect(fieldsOf(editor).map((f) => f.cached)).toEqual(["I", "II", "A", "B", "1", "2"]);
     editor.destroy();
   });
 });
