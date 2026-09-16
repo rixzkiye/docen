@@ -1002,6 +1002,28 @@ export function paintParagraph(
       paintLineMarks(tree, para, line, lineX, lineY, ctx, marks, boxRight);
   }
   paintBorders();
+  if (para.dropCap && para.lines.length > 0) {
+    const firstInline = para.inline[0];
+    if (firstInline && firstInline.kind === "text" && firstInline.text.length > 0) {
+      const char = firstInline.text[0];
+      const lines = para.dropCap.lines ?? 3;
+      const firstLineH = para.lines[0]?.heightPx ?? 16;
+      const capSize = Math.round(lines * firstLineH * 0.82);
+      const font = familyOfSlot(firstInline.style.family, isCjkCodeUnit(char, 0)) || "sans-serif";
+      const ink = firstInline.style.color ? `#${firstInline.style.color}` : "#1b1b1b";
+      tree.add(
+        new Text({
+          text: char,
+          x: x + (para.indent?.leftPx ?? 0),
+          y: y + (para.lines[0]?.yPx ?? 0),
+          fontSize: capSize,
+          fill: ink,
+          fontFamily: font,
+          fontWeight: "bold",
+        }),
+      );
+    }
+  }
   // Floating drawings anchored to this paragraph: wrap-none boxes painted
   // over the text — the flow reserved them no height. (behindDoc ones went
   // first, above.) In-front floats defer to the queue: Word paints them

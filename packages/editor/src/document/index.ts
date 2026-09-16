@@ -1006,16 +1006,26 @@ class DocenDocument extends AddinHost<Editor> {
     const parent = editor.state.selection.$from.parent;
     if (parent.type.name === "paragraph") {
       const pos = editor.state.selection.$from.before(1);
+      const dropCap =
+        position === "none"
+          ? null
+          : {
+              val: position,
+              lines: lines ?? 3,
+              distance: Math.round((distancePt ?? 0) * 20),
+            };
+      const frame =
+        position === "none"
+          ? null
+          : {
+              dropCap: position,
+              lines: lines ?? 3,
+              hSpace: Math.round((distancePt ?? 0) * 20),
+            };
       const attrs = {
         ...parent.attrs,
-        dropCap:
-          position === "none"
-            ? null
-            : {
-                val: position,
-                lines: lines ?? 3,
-                distance: Math.round((distancePt ?? 0) * 20),
-              },
+        dropCap,
+        frame,
       };
       editor.view.dispatch(editor.state.tr.setNodeMarkup(pos, undefined, attrs));
     }
@@ -4813,7 +4823,11 @@ class DocenDocument extends AddinHost<Editor> {
     }
     const navPages = root.querySelector("docen-nav-pages") as any;
     if (navPages && total > 0) {
-      navPages.setPageCount(total, page || 1);
+      const thumbs: (string | null)[] = [];
+      for (let i = 0; i < total; i++) {
+        thumbs.push(this.#stage?.pageThumbnail(i) ?? null);
+      }
+      navPages.setPageCount(total, page || 1, thumbs);
     }
     if (this.getTaskpaneState("reveal")) {
       this.#updateRevealFormatting();
@@ -6205,7 +6219,7 @@ class DocenDocument extends AddinHost<Editor> {
     this.setAttribute("view", currentView === "read" ? "print" : "read");
   }
 
-  #applyDocumentTheme(kind: string, value?: string): void {
+  #applyDocumentTheme(kind: string, value?: string, persist = true): void {
     const themeId = value?.toLowerCase() || "office";
     const themeDef = THEMES[themeId] ?? THEMES.office;
     if (!themeDef) return;
@@ -6226,6 +6240,19 @@ class DocenDocument extends AddinHost<Editor> {
         target.style.setProperty("--docen-theme-font-major", themeDef.fonts.majorFont);
         target.style.setProperty("--docen-theme-font-minor", themeDef.fonts.minorFont);
       }
+    }
+    if (persist && this.editor) {
+      const attrs = (this.editor.state.doc.attrs ?? {}) as {
+        documentExtras?: Record<string, unknown>;
+      };
+      const extras = attrs.documentExtras ?? {};
+      const settings = (extras.settings as Record<string, unknown>) ?? {};
+      this.editor.view.dispatch(
+        this.editor.state.tr.setDocAttribute("documentExtras", {
+          ...extras,
+          settings: { ...settings, theme: { id: themeId, kind } },
+        }),
+      );
     }
     this.#bridge?.replaceOverlays();
   }
@@ -7907,6 +7934,11 @@ class DocenDocument extends AddinHost<Editor> {
     // w:updateFields — Word updates fields when the document opens. Arm the
     // flag here; the first completed render consumes it (fresh page map).
     if (settings.updateFields === true) this.#updateFieldsOnOpen = true;
+    // Restore persisted document theme if present
+    const theme = settings.theme as { id?: string; kind?: string } | undefined;
+    if (theme?.id) {
+      this.#applyDocumentTheme(theme.kind || "theme", theme.id, false);
+    }
     this.#syncEditable();
   }
 
@@ -8025,9 +8057,15 @@ class DocenDocument extends AddinHost<Editor> {
       } else if (id === "navigation") {
         const navPages = this.shadowRoot?.querySelector("docen-nav-pages") as any;
         if (navPages && this.#pages.length > 0) {
+          const total = this.#pages.length;
+          const thumbs: (string | null)[] = [];
+          for (let i = 0; i < total; i++) {
+            thumbs.push(this.#stage?.pageThumbnail(i) ?? null);
+          }
           navPages.setPageCount(
-            this.#pages.length,
+            total,
             (this.#bridge?.pageOf(this.editor?.state.selection.from ?? 0) ?? 0) + 1,
+            thumbs,
           );
         }
       }

@@ -16,3 +16,4 @@ export {
   selectionSlicePayload,
   SECTION_ATTR_KEYS,
 } from "./utils";
+export { renderDocx as renderParagraphDocx, parseDocx as parseParagraphDocx } from "./paragraph";

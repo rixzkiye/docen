@@ -113,8 +113,18 @@ export function renderDocx(node: JSONContent): Record<string, unknown> {
     // docen-only round-trip data with no OOXML paragraph counterpart (the
     // markdown code-fence info string) — keeps the JSON lossless but must not
     // reach ParagraphOptions.
-    if (key === "codeLanguage") continue;
+    if (key === "codeLanguage" || key === "dropCap") continue;
     opts[key] = value;
+  }
+  if (attrs.dropCap && typeof attrs.dropCap === "object" && !opts.frame) {
+    const dc = attrs.dropCap as { val?: string; lines?: number; distance?: number };
+    if (dc.val && dc.val !== "none") {
+      opts.frame = {
+        dropCap: dc.val,
+        lines: dc.lines ?? 3,
+        hSpace: dc.distance ?? 0,
+      };
+    }
   }
   return opts;
 }
@@ -133,6 +143,16 @@ export function parseDocx(opts: ParagraphOptions | string): Record<string, unkno
   for (const [key, value] of Object.entries(resolved)) {
     if (SKIP_KEYS.has(key)) continue;
     attrs[key] = value ?? null;
+  }
+  const frame =
+    (resolved.frame as Record<string, unknown> | undefined) ??
+    ((resolved as Record<string, unknown>).framePr as Record<string, unknown> | undefined);
+  if (frame && frame.dropCap && !attrs.dropCap) {
+    attrs.dropCap = {
+      val: frame.dropCap,
+      lines: frame.lines ?? 3,
+      distance: (frame.hSpace as number) ?? (frame.space as number) ?? 0,
+    };
   }
   return attrs;
 }

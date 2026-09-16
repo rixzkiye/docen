@@ -1,5 +1,6 @@
 import { FASTElement, css, customElement, html, observable, ref } from "@microsoft/fast-element";
 
+import { resolveFontSubstitution } from "../../../document/commands/fonts";
 import {
   FONT_NAMES,
   FONT_SIZES_CN,
@@ -110,19 +111,28 @@ const template = html<DocenFontDialog>`
   <docen-dialog ${ref("dialogEl")}>
     <div class="body">
       <div class="row">
-        <div class="field">
-          <label ${ref("fontLabel")}></label>
-          <fluent-dropdown type="combobox" appearance="outline" ${ref("fontSel")}>
-            <fluent-listbox popover="manual" tabindex="-1"></fluent-listbox>
-            <input
-              slot="control"
-              role="combobox"
-              aria-haspopup="listbox"
-              type="combobox"
-              size="1"
-              style="width:100%;box-sizing:border-box"
-            />
-          </fluent-dropdown>
+        <div class="field" style="display:flex; flex-direction:column; align-items:flex-start;">
+          <div style="display:flex; align-items:center; gap:6px; width:100%;">
+            <label ${ref("fontLabel")}></label>
+            <fluent-dropdown type="combobox" appearance="outline" ${ref("fontSel")}>
+              <fluent-listbox popover="manual" tabindex="-1"></fluent-listbox>
+              <input
+                slot="control"
+                role="combobox"
+                aria-haspopup="listbox"
+                type="combobox"
+                size="1"
+                style="width:100%;box-sizing:border-box"
+              />
+            </fluent-dropdown>
+          </div>
+          ${(x) =>
+            x.fontFallbackHint
+              ? html`<span
+                  style="font-size:10px; color:var(--docen-color-text-muted, #666); margin-top:2px;"
+                  >${(x) => x.fontFallbackHint}</span
+                >`
+              : ""}
         </div>
         <div class="field">
           <label ${ref("styleLabel")}></label>
@@ -264,6 +274,7 @@ class DocenFontDialog extends FASTElement {
   @observable dialogEl?: HTMLElement & { heading?: string; show(): void; hide(): void };
   @observable fontLabel?: HTMLElement;
   @observable fontSel?: FluentDropdown;
+  @observable fontFallbackHint = "";
   @observable styleLabel?: HTMLElement;
   @observable styleSel?: FluentDropdown;
   @observable sizeLabel?: HTMLElement;
@@ -431,6 +442,10 @@ class DocenFontDialog extends FASTElement {
   #pick(sel: FluentDropdown | undefined, value: string): void {
     pickLadder(sel, value);
     if (sel) sel.dataset.picked = value;
+    if (sel === this.fontSel) {
+      const subst = resolveFontSubstitution(value);
+      this.fontFallbackHint = subst.length > 1 ? `Fallback: ${subst.slice(1).join(", ")}` : "";
+    }
   }
 
   #check(box: FluentCheckbox | undefined, value: boolean): void {

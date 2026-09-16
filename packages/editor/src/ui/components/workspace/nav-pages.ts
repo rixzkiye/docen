@@ -5,6 +5,7 @@ import { observeLang, t } from "../../i18n/localize";
 export interface NavPageItem {
   pageNumber: number;
   active?: boolean;
+  thumbnailUrl?: string | null;
 }
 
 const styles = css`
@@ -45,6 +46,15 @@ const styles = css`
     padding: 8px;
     box-sizing: border-box;
     gap: 4px;
+    overflow: hidden;
+  }
+  .thumb-img {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    background: #ffffff;
+    border-radius: 2px;
+    display: block;
   }
   .thumb-line {
     height: 3px;
@@ -72,11 +82,16 @@ const template = html<DocenNavPages>`
           @click="${(x, c) => c.parent.onPageClick(x.pageNumber)}"
         >
           <div class="page-thumb">
-            <div class="thumb-line"></div>
-            <div class="thumb-line"></div>
-            <div class="thumb-line short"></div>
-            <div class="thumb-line"></div>
-            <div class="thumb-line short"></div>
+            ${(x) =>
+              x.thumbnailUrl
+                ? html`<img class="thumb-img" src="${x.thumbnailUrl}" alt="Page thumbnail" />`
+                : html`
+                    <div class="thumb-line"></div>
+                    <div class="thumb-line"></div>
+                    <div class="thumb-line short"></div>
+                    <div class="thumb-line"></div>
+                    <div class="thumb-line short"></div>
+                  `}
           </div>
           <span class="page-label">${(x, c) => c.parent.formatPageLabel(x.pageNumber)}</span>
         </div>
@@ -116,14 +131,29 @@ export class DocenNavPages extends FASTElement {
     super.disconnectedCallback();
   }
 
-  setPageCount(count: number, current = 1): void {
+  setPageCount(count: number, current = 1, thumbnails?: (string | null)[]): void {
     const list: NavPageItem[] = [];
     const total = Math.max(1, count);
     for (let i = 1; i <= total; i++) {
-      list.push({ pageNumber: i, active: i === current });
+      list.push({
+        pageNumber: i,
+        active: i === current,
+        thumbnailUrl: thumbnails?.[i - 1] ?? this.pages[i - 1]?.thumbnailUrl,
+      });
     }
     this.pages = list;
     this.activePage = current;
+  }
+
+  setPageThumbnail(pageNumber: number, url: string): void {
+    const idx = pageNumber - 1;
+    if (idx >= 0 && idx < this.pages.length) {
+      const item = this.pages[idx];
+      if (item && item.thumbnailUrl !== url) {
+        this.pages[idx] = { ...item, thumbnailUrl: url };
+        this.pages = [...this.pages];
+      }
+    }
   }
 
   onPageClick(pageNumber: number): void {

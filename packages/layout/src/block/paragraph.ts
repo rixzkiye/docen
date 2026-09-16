@@ -61,6 +61,10 @@ export function layoutParagraph(
   } else {
     strutPx = para.markSizePx ?? strutNatural;
   }
+  if (strutPx <= 0) {
+    const firstText = para.inline.find((i) => i.kind === "text");
+    strutPx = firstText?.style.sizePx ?? 16;
+  }
 
   const usable = Math.max(0, width - (para.indent?.leftPx ?? 0) - (para.indent?.rightPx ?? 0));
 
@@ -82,6 +86,19 @@ export function layoutParagraph(
     inTable,
     ctx?.wrapPage && ctx.startY != null ? { ...ctx.wrapPage, flowZeroPx: -ctx.startY } : undefined,
   ).zones;
+
+  if (para.dropCap && para.inline.length > 0) {
+    const lines = para.dropCap.lines ?? 3;
+    const h = lines * strutPx;
+    const capWidth = Math.round(h * 0.75) + (para.dropCap.distancePx ?? 0);
+    selfZones.push({
+      x0Px: 0,
+      widthPx: capWidth,
+      topPx: 0,
+      bottomPx: h,
+      textAfter: true,
+    });
+  }
 
   const packed = packLines(para.inline, {
     measurer,
@@ -203,6 +220,7 @@ export function layoutParagraph(
     indent: para.indent,
     tabStops: para.tabStops,
     drawings: para.drawings,
+    dropCap: para.dropCap,
     markSizePx: para.markSizePx,
     preserveSpaces: true,
     sectionEnd: para.sectionEnd,

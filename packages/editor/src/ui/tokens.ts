@@ -35,8 +35,8 @@ export const OFFICE_TOKENS_CSS = `
   --docen-color-text-muted: var(--colorNeutralForeground3, #666666);
   --docen-color-divider: var(--colorNeutralStroke2, #e2e2e2);
   --docen-color-stroke-1: var(--colorNeutralStroke1, #c7c7c7);
-  --docen-color-brand: var(--colorBrandBackground, #0078d4);
-  --docen-color-accent: var(--colorBrandBackground, #0f6cbd);
+  --docen-color-brand: var(--docen-theme-accent1, var(--colorBrandBackground, #0078d4));
+  --docen-color-accent: var(--docen-theme-accent1, var(--colorBrandBackground, #0f6cbd));
   --docen-color-subtle-background-selected: var(--colorSubtleBackgroundSelected, #e8e8e8);
   --docen-color-subtle-selected: var(--colorBrandBackground2, #e8f0fb);
 

@@ -49,7 +49,7 @@ export const SECTION_ATTR_KEYS = new Set<string>(SECTION_CLOSE_KEYS);
  *  office-open paragraph property — including heading/style/bullet/numbering/
  *  thematicBreak, once owned by the deleted heading/list nodes — is mirrored
  *  verbatim. */
-type EditorParagraphAttrKey = (typeof SECTION_CLOSE_KEYS)[number] | "codeLanguage";
+type EditorParagraphAttrKey = (typeof SECTION_CLOSE_KEYS)[number] | "codeLanguage" | "dropCap";
 
 /** The full attr key set the paragraph node declares — ParagraphPropertiesOptions
  *  (the base mirror plus the `revision` w:pPrChange carrier). */
@@ -116,6 +116,7 @@ export function docxParagraphAttrs() {
       parseHTML: (el: HTMLElement) => bordersFromElement(el),
     },
     frame: attrNative(),
+    dropCap: attrNative(),
     // Paragraph-mark (¶) run properties (pPr/rPr): format ONLY the ¶ glyph.
     run: attrNative(),
     // Section properties carried on a section's LAST paragraph (OOXML sectPr

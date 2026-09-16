@@ -194,6 +194,8 @@ export interface LaidOutParagraph {
   /** Floating drawings anchored to this paragraph, mirrored for the painter
    *  (the flow gives them no height). */
   drawings?: LayoutDrawing[];
+  /** Drop cap configuration (w:dropCap / w:framePr). */
+  dropCap?: LayoutParagraph["dropCap"];
   /** The paragraph closes its section — the painter's mark row reads it and
    *  names the break type (mirrors the input block's field). */
   sectionEnd?: boolean | "continuous" | "evenPage" | "oddPage";

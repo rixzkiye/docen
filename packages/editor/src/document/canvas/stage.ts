@@ -1085,6 +1085,19 @@ export class CanvasStage {
     return this.slots[index]?.el ?? null;
   }
 
+  /** Quick thumbnail data URL of a rendered page slot canvas, or null if unrendered. */
+  pageThumbnail(index: number): string | null {
+    const slot = this.slots[index];
+    if (!slot) return null;
+    const canvas = slot.el.querySelector("canvas");
+    if (!canvas) return null;
+    try {
+      return canvas.toDataURL("image/png");
+    } catch {
+      return null;
+    }
+  }
+
   /** Rasterize every page for printing: pages the IntersectionObserver never
    *  reached get their App forced (a printout needs all pages, not just the
    *  scrolled-into-view ones), every slot repaints, then each canvas exports
