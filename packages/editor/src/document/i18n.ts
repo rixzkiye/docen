@@ -1623,11 +1623,44 @@ export const ribbonEn: AdditionalLanguage = {
     "recipients.filterPlaceholder": "Search recipients...",
     "recipients.selectAll": "Select All",
     "recipients.clearAll": "Clear All",
+    "recipients.selectedCount": "{0} of {1} recipients selected.",
 
     // Version History
     "history.dialogTitle": "Version History",
     "history.selectVersionToPreview": "Select a version to preview",
     "history.restoreBtn": "Restore this version",
+    "history.savedAt": "Saved at",
+    "history.autosave": "Autosave",
+    "history.manualSave": "Manual Save",
+
+    // Reveal Formatting
+    "reveal.title": "Reveal Formatting",
+    "reveal.selectedText": "Selected Text",
+    "reveal.font": "Font",
+    "reveal.fontFamily": "Font Family:",
+    "reveal.fontSize": "Font Size:",
+    "reveal.styles": "Styles:",
+    "reveal.color": "Color:",
+    "reveal.paragraph": "Paragraph",
+    "reveal.alignment": "Alignment:",
+    "reveal.indents": "Indents:",
+    "reveal.leftIndent": "Left:",
+    "reveal.lineSpacing": "Line Spacing:",
+    "reveal.section": "Section",
+    "reveal.margins": "Margins:",
+    "reveal.orientation": "Orientation:",
+    "reveal.compareToSelection": "Compare to another selection",
+
+    // Protection alerts & placeholders
+    "protect.passwordPlaceholder": "Password",
+    "protect.confirmPasswordPlaceholder": "Confirm password",
+    "protect.passwordsMismatch": "Passwords do not match!",
+    "protect.incorrectPassword": "Incorrect password!",
+
+    // Speech & Focus Ribbon
+    "ribbon.group.speech": "Speech",
+    "ribbon.cmd.read-aloud": "Read Aloud",
+    "ribbon.cmd.focus-mode": "Focus",
   },
 };
 
@@ -1680,6 +1713,7 @@ export const ribbonZhCN: AdditionalLanguage = {
     "ribbon.group.chart-data": "数据",
     "ribbon.group.wordart-styles": "艺术字样式",
     "ribbon.group.shape-size": "大小",
+    "ribbon.group.chart-size": "大小",
     // --- Groups: Design ---
     "ribbon.group.document-formatting": "文档格式",
     "ribbon.group.page-background": "页面背景",
@@ -3229,11 +3263,44 @@ export const ribbonZhCN: AdditionalLanguage = {
     "recipients.filterPlaceholder": "搜索收件人...",
     "recipients.selectAll": "全选",
     "recipients.clearAll": "全不选",
+    "recipients.selectedCount": "已选择 {0} / {1} 位收件人。",
 
     // Version History
     "history.dialogTitle": "版本历史记录",
     "history.selectVersionToPreview": "选择一个版本以预览",
     "history.restoreBtn": "还原此版本",
+    "history.savedAt": "保存于",
+    "history.autosave": "自动保存",
+    "history.manualSave": "手动保存",
+
+    // Reveal Formatting
+    "reveal.title": "显示格式",
+    "reveal.selectedText": "所选文字",
+    "reveal.font": "字体",
+    "reveal.fontFamily": "字体系列:",
+    "reveal.fontSize": "字号:",
+    "reveal.styles": "样式:",
+    "reveal.color": "颜色:",
+    "reveal.paragraph": "段落",
+    "reveal.alignment": "对齐方式:",
+    "reveal.indents": "缩进:",
+    "reveal.leftIndent": "左侧:",
+    "reveal.lineSpacing": "行距:",
+    "reveal.section": "节",
+    "reveal.margins": "页边距:",
+    "reveal.orientation": "纸张方向:",
+    "reveal.compareToSelection": "与另一所选内容进行比较",
+
+    // Protection alerts & placeholders
+    "protect.passwordPlaceholder": "密码",
+    "protect.confirmPasswordPlaceholder": "确认密码",
+    "protect.passwordsMismatch": "两次输入的密码不一致！",
+    "protect.incorrectPassword": "密码不正确！",
+
+    // Speech & Focus Ribbon
+    "ribbon.group.speech": "语音",
+    "ribbon.cmd.read-aloud": "大声朗读",
+    "ribbon.cmd.focus-mode": "专注模式",
   },
 };
 

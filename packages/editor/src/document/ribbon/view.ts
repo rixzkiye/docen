@@ -17,6 +17,7 @@ export const viewTab = (): RibbonTab =>
   tabNode("view", [
     group("views", [
       btn("document-print", "read-mode", { size: "large" }),
+      btn("eye", "focus-mode", { size: "large" }),
       btn("print", "print-layout", { size: "large" }),
       btn("document-print", "web-layout", { size: "large" }),
       btn("group-objects", "outline", { size: "large" }),

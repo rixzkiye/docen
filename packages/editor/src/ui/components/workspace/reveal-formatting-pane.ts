@@ -1,6 +1,6 @@
 import { FASTElement, css, customElement, html, observable, ref } from "@microsoft/fast-element";
 
-import { observeLang } from "../../i18n/localize";
+import { observeLang, t } from "../../i18n/localize";
 
 export interface FormattingInfo {
   sampleText?: string;
@@ -82,21 +82,21 @@ const styles = css`
 
 const template = html<DocenRevealFormattingPane>`
   <div class="sample-box" part="sample-box">
-    ${(x) => x.formatting?.sampleText || "Selected Text"}
+    ${(x) => x.formatting?.sampleText || t("reveal.selectedText", x)}
   </div>
 
   <div class="category">
-    <div class="cat-header">Font</div>
+    <div class="cat-header">${(x) => t("reveal.font", x)}</div>
     <div class="prop-row">
-      <span class="prop-name">Font Family:</span>
+      <span class="prop-name">${(x) => t("reveal.fontFamily", x)}</span>
       <span class="prop-val">${(x) => x.formatting?.font?.family ?? "Calibri"}</span>
     </div>
     <div class="prop-row">
-      <span class="prop-name">Font Size:</span>
+      <span class="prop-name">${(x) => t("reveal.fontSize", x)}</span>
       <span class="prop-val">${(x) => x.formatting?.font?.size ?? "11 pt"}</span>
     </div>
     <div class="prop-row">
-      <span class="prop-name">Styles:</span>
+      <span class="prop-name">${(x) => t("reveal.styles", x)}</span>
       <span class="prop-val">
         ${(x) =>
           [
@@ -109,23 +109,26 @@ const template = html<DocenRevealFormattingPane>`
       </span>
     </div>
     <div class="prop-row">
-      <span class="prop-name">Color:</span>
+      <span class="prop-name">${(x) => t("reveal.color", x)}</span>
       <span class="prop-val">${(x) => x.formatting?.font?.color ?? "Auto"}</span>
     </div>
   </div>
 
   <div class="category">
-    <div class="cat-header">Paragraph</div>
+    <div class="cat-header">${(x) => t("reveal.paragraph", x)}</div>
     <div class="prop-row">
-      <span class="prop-name">Alignment:</span>
+      <span class="prop-name">${(x) => t("reveal.alignment", x)}</span>
       <span class="prop-val">${(x) => x.formatting?.paragraph?.alignment ?? "Left"}</span>
     </div>
     <div class="prop-row">
-      <span class="prop-name">Indents:</span>
-      <span class="prop-val">Left: ${(x) => x.formatting?.paragraph?.indentLeft ?? "0 pt"}</span>
+      <span class="prop-name">${(x) => t("reveal.indents", x)}</span>
+      <span class="prop-val"
+        >${(x) => t("reveal.leftIndent", x)}
+        ${(x) => x.formatting?.paragraph?.indentLeft ?? "0 pt"}</span
+      >
     </div>
     <div class="prop-row">
-      <span class="prop-name">Line Spacing:</span>
+      <span class="prop-name">${(x) => t("reveal.lineSpacing", x)}</span>
       <span class="prop-val"
         >${(x) => x.formatting?.paragraph?.lineSpacing ?? "Multiple 1.15"}</span
       >
@@ -133,19 +136,21 @@ const template = html<DocenRevealFormattingPane>`
   </div>
 
   <div class="category">
-    <div class="cat-header">Section</div>
+    <div class="cat-header">${(x) => t("reveal.section", x)}</div>
     <div class="prop-row">
-      <span class="prop-name">Margins:</span>
+      <span class="prop-name">${(x) => t("reveal.margins", x)}</span>
       <span class="prop-val">${(x) => x.formatting?.section?.margins ?? "Normal (1 in)"}</span>
     </div>
     <div class="prop-row">
-      <span class="prop-name">Orientation:</span>
+      <span class="prop-name">${(x) => t("reveal.orientation", x)}</span>
       <span class="prop-val">${(x) => x.formatting?.section?.orientation ?? "Portrait"}</span>
     </div>
   </div>
 
   <div class="compare-toggle">
-    <fluent-checkbox ${ref("compareCheckbox")}> Compare to another selection </fluent-checkbox>
+    <fluent-checkbox ${ref("compareCheckbox")}>
+      ${(x) => t("reveal.compareToSelection", x)}
+    </fluent-checkbox>
   </div>
 `;
 

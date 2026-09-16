@@ -75,13 +75,14 @@ export class DialogsOptionsHostCommands implements HostCommandDomain {
     "two-lines-in-one",
     "define-new-list",
     "compare",
+    "combine",
     "signature-line",
     "drop-cap",
     "dropcap",
   ];
 
   run(event: string, _value?: string): boolean {
-    if (event === "compare") {
+    if (event === "compare" || event === "combine") {
       (
         this.host.element().shadowRoot?.querySelector("docen-compare-dialog") as {
           show(): void;

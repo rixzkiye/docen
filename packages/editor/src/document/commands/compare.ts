@@ -1,8 +1,4 @@
-import {
-  compareDocuments,
-  type DeduplicateOptions,
-  type DocumentComparison,
-} from "@docen/deduplicate";
+import type { DeduplicateOptions } from "@docen/deduplicate";
 import type { JSONContent } from "@docen/docx";
 
 export interface CompareOptions {
@@ -86,9 +82,90 @@ export function diffTokens(tokensA: string[], tokensB: string[]): DiffToken[] {
   return merged;
 }
 
+function getNodeText(node: JSONContent): string {
+  if (!node) return "";
+  if (node.type === "text" && node.text) return node.text;
+  if (Array.isArray(node.content)) {
+    return node.content.map(getNodeText).join("");
+  }
+  return "";
+}
+
+function isTextBlock(block: JSONContent): boolean {
+  return block.type === "paragraph" || block.type === "heading";
+}
+
+function blockSimilarity(a: JSONContent, b: JSONContent): number {
+  if (a.type !== b.type) return 0;
+  if (isTextBlock(a)) {
+    const textA = getNodeText(a);
+    const textB = getNodeText(b);
+    if (textA === textB) return 1.0;
+    if (!textA && !textB) return 1.0;
+    if (!textA || !textB) return 0;
+    const tokensA = tokenize(textA.toLowerCase()).filter((t) => /\S/.test(t));
+    const tokensB = tokenize(textB.toLowerCase()).filter((t) => /\S/.test(t));
+    if (tokensA.length === 0 && tokensB.length === 0) return 1.0;
+    if (tokensA.length === 0 || tokensB.length === 0) return 0;
+    const setA = new Set(tokensA);
+    let common = 0;
+    for (const t of tokensB) {
+      if (setA.has(t)) common++;
+    }
+    return (2 * common) / (tokensA.length + tokensB.length);
+  }
+  return JSON.stringify(a) === JSON.stringify(b) ? 1.0 : 0.8;
+}
+
+interface AlignmentStep {
+  type: "match" | "del" | "ins";
+  orig?: JSONContent;
+  rev?: JSONContent;
+}
+
+function alignBlocks(origBlocks: JSONContent[], revBlocks: JSONContent[]): AlignmentStep[] {
+  const m = origBlocks.length;
+  const n = revBlocks.length;
+  const dp: number[][] = Array.from({ length: m + 1 }, () => Array(n + 1).fill(0));
+
+  for (let i = 1; i <= m; i++) {
+    for (let j = 1; j <= n; j++) {
+      const sim = blockSimilarity(origBlocks[i - 1], revBlocks[j - 1]);
+      const matchScore = sim >= 0.2 ? sim * 2 : -1;
+      dp[i][j] = Math.max(dp[i - 1][j - 1] + matchScore, dp[i - 1][j] - 0.5, dp[i][j - 1] - 0.5);
+    }
+  }
+
+  let i = m;
+  let j = n;
+  const steps: AlignmentStep[] = [];
+
+  while (i > 0 || j > 0) {
+    if (i > 0 && j > 0) {
+      const sim = blockSimilarity(origBlocks[i - 1], revBlocks[j - 1]);
+      const matchScore = sim >= 0.2 ? sim * 2 : -1;
+      if (dp[i][j] === dp[i - 1][j - 1] + matchScore && sim >= 0.2) {
+        steps.push({ type: "match", orig: origBlocks[i - 1], rev: revBlocks[j - 1] });
+        i--;
+        j--;
+        continue;
+      }
+    }
+    if (j > 0 && (i === 0 || dp[i][j] === dp[i][j - 1] - 0.5 || dp[i][j - 1] >= dp[i - 1][j])) {
+      steps.push({ type: "ins", rev: revBlocks[j - 1] });
+      j--;
+    } else if (i > 0) {
+      steps.push({ type: "del", orig: origBlocks[i - 1] });
+      i--;
+    }
+  }
+
+  return steps.reverse();
+}
+
 /**
  * Compare two documents and return a new JSONContent document showing tracked changes
- * (insertions and deletions with author and date metadata).
+ * (insertions and deletions with author and date metadata), preserving all block types.
  */
 export function compareDocs(
   originalDoc: JSONContent,
@@ -99,58 +176,65 @@ export function compareDocs(
   const date = options.date || new Date().toISOString().replace(/\.\d+Z$/, "Z");
   let nextRevisionId = 1;
 
-  const originalParagraphs = (originalDoc.content ?? []).filter((n) => n.type === "paragraph");
-  const revisedParagraphs = (revisedDoc.content ?? []).filter((n) => n.type === "paragraph");
+  const origBlocks = originalDoc.content ?? [];
+  const revBlocks = revisedDoc.content ?? [];
 
-  const dedupResult: DocumentComparison = compareDocuments(
-    originalDoc,
-    revisedDoc,
-    options.dedupOptions,
-  );
-
-  const matchedDoc2Indices = new Set<number>();
+  const steps = alignBlocks(origBlocks, revBlocks);
   const outputContent: JSONContent[] = [];
 
-  // Iterate over comparisons
-  for (let idx = 0; idx < dedupResult.paragraphs.length; idx++) {
-    const pComp = dedupResult.paragraphs[idx];
-    const origText = pComp.fromDoc1.text;
-    let revMatch = pComp.fromDoc2;
-
-    // Fallback: if no match from dedup, look for the most similar unmatched paragraph in revised
-    if (!revMatch) {
-      let bestIdx = -1;
-      let bestScore = 0;
-      const tokensA = new Set(tokenize(origText.toLowerCase()).filter((t) => /\w/.test(t)));
-      for (let j = 0; j < revisedParagraphs.length; j++) {
-        if (matchedDoc2Indices.has(j)) continue;
-        const revP = revisedParagraphs[j];
-        const textB = (revP.content ?? []).map((c) => c.text ?? "").join("");
-        const tokensB = new Set(tokenize(textB.toLowerCase()).filter((t) => /\w/.test(t)));
-        let common = 0;
-        for (const t of tokensA) {
-          if (tokensB.has(t)) common++;
+  for (const step of steps) {
+    if (step.type === "match" && step.orig && step.rev) {
+      if (isTextBlock(step.orig) && isTextBlock(step.rev)) {
+        const textA = getNodeText(step.orig);
+        const textB = getNodeText(step.rev);
+        if (textA === textB) {
+          outputContent.push(structuredClone(step.rev));
+        } else {
+          const tokensA = tokenize(textA);
+          const tokensB = tokenize(textB);
+          const diffs = diffTokens(tokensA, tokensB);
+          const runs: JSONContent[] = [];
+          for (const token of diffs) {
+            if (token.type === "same") {
+              runs.push({ type: "text", text: token.text });
+            } else if (token.type === "del") {
+              runs.push({
+                type: "text",
+                text: token.text,
+                marks: [
+                  {
+                    type: "deletion",
+                    attrs: { id: nextRevisionId++, author, date },
+                  },
+                ],
+              });
+            } else if (token.type === "ins") {
+              runs.push({
+                type: "text",
+                text: token.text,
+                marks: [
+                  {
+                    type: "insertion",
+                    attrs: { id: nextRevisionId++, author, date },
+                  },
+                ],
+              });
+            }
+          }
+          outputContent.push({
+            ...step.rev,
+            content: runs,
+          });
         }
-        const score =
-          tokensA.size + tokensB.size > 0 ? (2 * common) / (tokensA.size + tokensB.size) : 0;
-        if (score > bestScore && score >= 0.2) {
-          bestScore = score;
-          bestIdx = j;
-        }
+      } else {
+        // Non-text blocks (table, bulletList, orderedList, etc.) preserved
+        outputContent.push(structuredClone(step.rev));
       }
-      if (bestIdx >= 0) {
-        const textB = (revisedParagraphs[bestIdx].content ?? []).map((c) => c.text ?? "").join("");
-        revMatch = { index: bestIdx, text: textB };
-      }
-    }
-
-    if (!revMatch) {
-      // Entire paragraph deleted from original
-      const origPara = originalParagraphs[pComp.fromDoc1.index];
-      if (origPara) {
-        const deletedPara: JSONContent = {
-          ...origPara,
-          content: (origPara.content ?? []).map((run) => ({
+    } else if (step.type === "del" && step.orig) {
+      if (isTextBlock(step.orig)) {
+        const deletedBlock: JSONContent = {
+          ...step.orig,
+          content: (step.orig.content ?? []).map((run) => ({
             ...run,
             marks: [
               ...(run.marks ?? []),
@@ -161,76 +245,29 @@ export function compareDocs(
             ],
           })),
         };
-        outputContent.push(deletedPara);
-      }
-    } else {
-      matchedDoc2Indices.add(revMatch.index);
-      const revText = revMatch.text;
-      const revPara = revisedParagraphs[revMatch.index] ?? { type: "paragraph", content: [] };
-
-      if (origText === revText) {
-        // Unmodified paragraph
-        outputContent.push(structuredClone(revPara));
+        outputContent.push(deletedBlock);
       } else {
-        // Text inside paragraph modified — compute diff
-        const tokensA = tokenize(origText);
-        const tokensB = tokenize(revText);
-        const diffs = diffTokens(tokensA, tokensB);
-
-        const runs: JSONContent[] = [];
-        for (const token of diffs) {
-          if (token.type === "same") {
-            runs.push({ type: "text", text: token.text });
-          } else if (token.type === "del") {
-            runs.push({
-              type: "text",
-              text: token.text,
-              marks: [
-                {
-                  type: "deletion",
-                  attrs: { id: nextRevisionId++, author, date },
-                },
-              ],
-            });
-          } else if (token.type === "ins") {
-            runs.push({
-              type: "text",
-              text: token.text,
-              marks: [
-                {
-                  type: "insertion",
-                  attrs: { id: nextRevisionId++, author, date },
-                },
-              ],
-            });
-          }
-        }
-
-        outputContent.push({
-          ...revPara,
-          content: runs,
-        });
+        outputContent.push(structuredClone(step.orig));
       }
-    }
-  }
-
-  // Handle any paragraphs in revisedDoc that were not matched to any paragraph in originalDoc (pure additions)
-  for (let j = 0; j < revisedParagraphs.length; j++) {
-    if (!matchedDoc2Indices.has(j)) {
-      const addedPara = revisedParagraphs[j];
-      outputContent.push({
-        ...addedPara,
-        content: (addedPara.content ?? []).map((run) => ({
-          ...run,
-          marks: [
-            ...(run.marks ?? []),
-            {
-              type: "insertion",
-              attrs: { id: nextRevisionId++, author, date },
-            },
-          ],
-        })),
-      });
+    } else if (step.type === "ins" && step.rev) {
+      if (isTextBlock(step.rev)) {
+        const insertedBlock: JSONContent = {
+          ...step.rev,
+          content: (step.rev.content ?? []).map((run) => ({
+            ...run,
+            marks: [
+              ...(run.marks ?? []),
+              {
+                type: "insertion",
+                attrs: { id: nextRevisionId++, author, date },
+              },
+            ],
+          })),
+        };
+        outputContent.push(insertedBlock);
+      } else {
+        outputContent.push(structuredClone(step.rev));
+      }
     }
   }
 

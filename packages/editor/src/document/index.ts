@@ -101,6 +101,8 @@ import type {
   DocumentPropertiesStats,
 } from "../ui/components/workspace/properties-dialog";
 import type { QuickPartValues } from "../ui/components/workspace/quick-part-dialog";
+import type { FormattingInfo } from "../ui/components/workspace/reveal-formatting-pane";
+import type { SdtPropertiesValues } from "../ui/components/workspace/sdt-dialog";
 import type { DocenTabsDialog } from "../ui/components/workspace/tabs-dialog";
 import type { WordCountStats } from "../ui/components/workspace/word-count-dialog";
 import { createDefaultAddin, textCounter, wordCounter } from "./addin";
@@ -119,18 +121,18 @@ import {
   type StorySlot,
 } from "./canvas/edit-bridge";
 import { deepEq, dirtyPagesOf } from "./canvas/page-eq";
-import {
-  CanvasStage,
-  type CanvasStageSection,
-  type LaidFurnitureSection,
-  layFurnitureSections,
-} from "./canvas/stage";
 // Side-effect: register the document-specific UI components moved out of the
 // shared ui/ barrel — <docen-format-pane> (properties fallback),
 // <docen-outline> (navigation Headings tab), <docen-styles-pane> (Styles).
 import "./components/format-pane";
 import "./components/outline";
 import "./components/styles-pane";
+import {
+  CanvasStage,
+  type CanvasStageSection,
+  type LaidFurnitureSection,
+  layFurnitureSections,
+} from "./canvas/stage";
 import { documentStyles, documentTemplate, escapeHtml } from "./chrome";
 import { ClipboardCommands } from "./commands/clipboard";
 import { CommentsCommands } from "./commands/comments";
@@ -142,9 +144,11 @@ import {
   BuildingBlocksHostCommands,
   type BuildingBlocksHostView,
 } from "./commands/host/building-blocks";
-import { SdtCommands } from "./commands/host/sdt";
+import { ReadAloudController } from "./commands/host/read-aloud";
+import { SdtCommands, SdtHostCommands } from "./commands/host/sdt";
 import { applyRecipientsRow, MailMergeCommands } from "./commands/mail-merge";
 import { NavigationCommands } from "./commands/navigation";
+import { selectSimilarFormatting } from "./commands/outline";
 import { ReferencesCommands } from "./commands/references";
 import { RevisionsCommands } from "./commands/revisions";
 import { SectionCommands } from "./commands/sections";
@@ -498,6 +502,8 @@ class DocenDocument extends AddinHost<Editor> {
    *  restriction (Options → Document). Folds into every editable
    *  computation — never a second setEditable writer. */
   #docProtected = false;
+  #protectionMode?: string;
+  readonly #readAloud = new ReadAloudController();
   /** References-tab commands (citations/bibliography/index marking), split
    *  out of this class — see commands/references.ts. */
   readonly #spelling = new SpellingCommands({
@@ -1028,20 +1034,56 @@ class DocenDocument extends AddinHost<Editor> {
   };
 
   readonly #onProtectionEnforce = (event: CustomEvent<any>): void => {
-    const { type } = event.detail ?? {};
-    if (type === "readOnly") {
-      this.editor?.setEditable(false);
-      this.#syncEditModeMenu();
-    } else if (type === "trackedChanges") {
-      const commands = this.editor?.commands as any;
-      if (typeof commands?.["track-changes"] === "function") {
-        commands["track-changes"](true);
+    const { type, formattingRestricted, passwordHash } = event.detail ?? {};
+    this.#protectionMode = type;
+    this.#docProtected = type === "readOnly" || type === "comments";
+
+    const editor = this.editor;
+    if (editor) {
+      const attrs = (editor.state.doc.attrs ?? {}) as { documentExtras?: Record<string, unknown> };
+      const extras = attrs.documentExtras ?? {};
+      const prevSettings = this.#documentSettings();
+      const settings: Record<string, unknown> = {
+        ...prevSettings,
+        documentProtection: {
+          edit: type,
+          hash: passwordHash,
+          formatting: formattingRestricted,
+        },
+      };
+      editor.view.dispatch(
+        editor.state.tr.setDocAttribute("documentExtras", { ...extras, settings }),
+      );
+
+      if (type === "trackedChanges") {
+        const commands = editor.commands as any;
+        if (typeof commands?.["track-changes"] === "function") {
+          commands["track-changes"](true);
+        }
       }
     }
+
+    this.#syncEditable();
+    this.#syncEditModeMenu();
   };
 
   readonly #onProtectionStop = (): void => {
-    this.editor?.setEditable(true);
+    this.#docProtected = false;
+    this.#protectionMode = undefined;
+
+    const editor = this.editor;
+    if (editor) {
+      const attrs = (editor.state.doc.attrs ?? {}) as { documentExtras?: Record<string, unknown> };
+      const extras = attrs.documentExtras ?? {};
+      const prevSettings = this.#documentSettings();
+      const settings: Record<string, unknown> = { ...prevSettings };
+      delete settings.documentProtection;
+      editor.view.dispatch(
+        editor.state.tr.setDocAttribute("documentExtras", { ...extras, settings }),
+      );
+    }
+
+    this.#syncEditable();
     this.#syncEditModeMenu();
   };
 
@@ -1049,6 +1091,49 @@ class DocenDocument extends AddinHost<Editor> {
     const issue = event.detail?.issue;
     if (!issue) return;
     this.#a11yMirror.announce(`Selected issue: ${issue.message}`);
+  };
+
+  readonly #onSdtDialogOk = (event: CustomEvent<any>): void => {
+    const props = event.detail?.properties;
+    const editor = this.#bridge?.activeEditor() ?? this.editor;
+    if (!props || !editor) return;
+    const { $from } = editor.state.selection;
+    for (let d = $from.depth; d > 0; d--) {
+      const node = $from.node(d);
+      if (
+        node.type.name === "sdtBlock" ||
+        node.type.name === "sdtInline" ||
+        node.attrs?.properties
+      ) {
+        const pos = $from.before(d);
+        const existing = (node.attrs.properties ?? {}) as Record<string, unknown>;
+        const updated = {
+          ...existing,
+          title: props.title,
+          tag: props.tag,
+          cannotDelete: props.cannotDelete,
+          cannotEdit: props.cannotEdit,
+        };
+        const tr = editor.state.tr.setNodeMarkup(pos, undefined, {
+          ...node.attrs,
+          properties: updated,
+        });
+        editor.view.dispatch(tr);
+        this.#bridge?.replaceOverlays();
+        break;
+      }
+    }
+  };
+
+  readonly #onNavPagesSelect = (event: CustomEvent<{ page: number }>): void => {
+    const pageNum = event.detail?.page;
+    if (typeof pageNum !== "number" || this.#pages.length === 0) return;
+    const destPage = Math.max(0, Math.min(this.#pages.length - 1, pageNum - 1));
+    const pos = this.#bridge?.firstPosOfPage(destPage);
+    if (pos != null) {
+      this.#setTextSelection(pos);
+      this.#bridge?.scrollIntoView(pos);
+    }
   };
 
   /** Set a text selection (or a range) on the viewless editor. Same runtime
@@ -1063,12 +1148,16 @@ class DocenDocument extends AddinHost<Editor> {
   }
 
   /** Editing → Select menu. "all" uses the official selectAll() command;
-   *  "objects"/"similar" are placeholders. */
+   *  "similar" selects similar formatting. */
   #select(value?: string): void {
     // The story the caret lives in — Ctrl+A selects the story text, the menu
     // command must agree with it (a stale main-doc range would be invisible).
     const editor = this.#bridge?.activeEditor() ?? this.editor;
     if (!editor) return;
+    if (value === "similar") {
+      selectSimilarFormatting(editor);
+      return;
+    }
     if ((value ?? "all") !== "all") return;
     this.#bridge?.focus();
     editor.commands.selectAll();
@@ -1714,6 +1803,7 @@ class DocenDocument extends AddinHost<Editor> {
     this.#imageInput = this.shadowRoot!.querySelector<HTMLInputElement>("#image-input")!;
     this.#pictureInput = this.shadowRoot!.querySelector<HTMLInputElement>("#picture-input")!;
     this.#renderChrome();
+    this.#loadPersistedHistory();
     // Once attributes: initial task-pane visibility (Office `setStartupBehavior`
     // equivalent). Absent → closed; present → open. Read once on connect —
     // runtime toggles go through showTaskpane/hideTaskpane.
@@ -2271,6 +2361,20 @@ class DocenDocument extends AddinHost<Editor> {
     this.shadowRoot!.querySelector("docen-a11y-checker-pane")?.addEventListener(
       "a11y:select-issue",
       this.#onA11ySelectIssue as EventListener,
+    );
+    this.shadowRoot!.querySelector("docen-a11y-checker-pane")?.addEventListener(
+      "a11y:refresh",
+      () => {
+        (this.shadowRoot?.querySelector("docen-a11y-checker-pane") as any)?.check(this.getJSON());
+      },
+    );
+    this.shadowRoot!.querySelector("docen-sdt-dialog")?.addEventListener(
+      "sdt-dialog:ok",
+      this.#onSdtDialogOk as EventListener,
+    );
+    this.shadowRoot!.querySelector("docen-nav-pages")?.addEventListener(
+      "nav-pages:select",
+      this.#onNavPagesSelect as EventListener,
     );
     // Paragraph dialog — stamp the committed patch onto the selection (or the
     // targeted style when opened through the Modify Style dialog's Format).
@@ -3258,6 +3362,9 @@ class DocenDocument extends AddinHost<Editor> {
       this.#dialogs.updateAllFields();
     }
     this.#updateStatus();
+    if (this.getTaskpaneState("a11y")) {
+      (this.shadowRoot?.querySelector("docen-a11y-checker-pane") as any)?.check(this.getJSON());
+    }
     this.#comments.syncCommentsPane();
     this.#revisions.syncRevisionsPane();
     this.#spelling.schedule();
@@ -3548,6 +3655,20 @@ class DocenDocument extends AddinHost<Editor> {
     return `docen:autosave:${this.getAttribute("filename") ?? "document"}`;
   }
 
+  #loadPersistedHistory(): void {
+    try {
+      const raw = localStorage.getItem(`${this.#autosaveKey()}:history`);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) {
+          this.#versionSnapshots = parsed.slice(0, 20);
+        }
+      }
+    } catch {
+      // Storage unavailable
+    }
+  }
+
   #scheduleAutosave(): void {
     if (!this.#autosaveEnabled() || !this.editor) return;
     clearTimeout(this.#autosaveTimer);
@@ -3565,6 +3686,12 @@ class DocenDocument extends AddinHost<Editor> {
             doc: curDoc,
           });
           if (this.#versionSnapshots.length > 20) this.#versionSnapshots.pop();
+          try {
+            localStorage.setItem(
+              `${this.#autosaveKey()}:history`,
+              JSON.stringify(this.#versionSnapshots),
+            );
+          } catch {}
         }
       } catch {
         // Quota exceeded — keep the last good backup, retry on the next change.
@@ -3647,6 +3774,7 @@ class DocenDocument extends AddinHost<Editor> {
                 <fluent-menu-item data-event="open">${t("header.open", this)}</fluent-menu-item>
                 <fluent-divider role="separator" aria-orientation="horizontal" orientation="horizontal"></fluent-divider>
                 <fluent-menu-item data-event="save-as">${t("header.save-as", this)}</fluent-menu-item>
+                <fluent-menu-item data-event="version-history">${t("header.version-history", this)}</fluent-menu-item>
                 <fluent-menu-item data-event="save-as-template">${t("header.save-as-template", this)}</fluent-menu-item>
                 <fluent-menu-item data-event="save-as-markdown">${t("header.save-as-markdown", this)}</fluent-menu-item>
                 <fluent-menu-item data-event="save-as-rtf">${t("header.save-as-rtf", this)}</fluent-menu-item>
@@ -4679,6 +4807,13 @@ class DocenDocument extends AddinHost<Editor> {
       root
         .querySelector(`docen-ribbon-split-button[data-history="${kind}"]`)
         ?.toggleAttribute("data-history-empty", depth === 0);
+    }
+    const navPages = root.querySelector("docen-nav-pages") as any;
+    if (navPages && total > 0) {
+      navPages.setPageCount(total, page || 1);
+    }
+    if (this.getTaskpaneState("reveal")) {
+      this.#updateRevealFormatting();
     }
   }
 
@@ -5892,6 +6027,7 @@ class DocenDocument extends AddinHost<Editor> {
           spellingIgnore: (mode) => this.#spelling.ignore(mode),
           openLanguageDialog: () => this.#onLanguageOpen(),
           openThesaurus: (word?: string) => this.#openThesaurus(word),
+          readAloud: () => this.#toggleReadAloud(),
         },
         fields: {
           fieldInsert: () => this.#dialogs.fieldInsert(),
@@ -5995,7 +6131,10 @@ class DocenDocument extends AddinHost<Editor> {
           restoreStylesSnapshot: () => this.#restoreStylesSnapshot(),
         },
       },
-      [this.#buildingBlocks],
+      [
+        this.#buildingBlocks,
+        new SdtHostCommands(this.#sdtCommand(), () => this.#openSdtPropertiesDialog()),
+      ],
     ));
   }
 
@@ -6084,11 +6223,127 @@ class DocenDocument extends AddinHost<Editor> {
     this.#bridge?.replaceOverlays();
   }
 
+  #openVersionHistory(): void {
+    const dialog = this.shadowRoot?.querySelector("docen-version-history-dialog") as {
+      show(versions: any[]): void;
+    } | null;
+    dialog?.show(this.#versionSnapshots);
+  }
+
+  #toggleReadAloud(): void {
+    if (this.#readAloud.isPlaying()) {
+      this.#readAloud.stop();
+      return;
+    }
+    const editor = this.#bridge?.activeEditor() ?? this.editor;
+    if (!editor) return;
+    const { $from, empty } = editor.state.selection;
+    const text = empty
+      ? $from.parent.textBetween(0, $from.parent.content.size, " ")
+      : editor.state.doc.textBetween(editor.state.selection.from, editor.state.selection.to, " ");
+    if (text.trim()) {
+      this.#readAloud.speak(text.trim());
+    }
+  }
+
+  #openSdtPropertiesDialog(): void {
+    const dialog = this.shadowRoot?.querySelector("docen-sdt-dialog") as {
+      show(initial?: SdtPropertiesValues): void;
+    } | null;
+    const editor = this.#bridge?.activeEditor() ?? this.editor;
+    let initialProps: SdtPropertiesValues | undefined;
+    if (editor) {
+      const { $from } = editor.state.selection;
+      for (let d = $from.depth; d > 0; d--) {
+        const node = $from.node(d);
+        if (node.attrs?.properties) {
+          const p = node.attrs.properties as Record<string, unknown>;
+          initialProps = {
+            title: (p.title as string) ?? "",
+            tag: (p.tag as string) ?? "",
+            cannotDelete: Boolean(p.cannotDelete),
+            cannotEdit: Boolean(p.cannotEdit),
+          };
+          break;
+        }
+      }
+    }
+    dialog?.show(initialProps);
+  }
+
+  #isInsideSdt(editor: Editor): boolean {
+    const { $from } = editor.state.selection;
+    for (let d = $from.depth; d > 0; d--) {
+      const node = $from.node(d);
+      if (
+        node.type.name === "sdtBlock" ||
+        node.type.name === "sdtInline" ||
+        node.attrs?.properties
+      ) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  #updateRevealFormatting(): void {
+    const pane = this.shadowRoot?.querySelector("docen-reveal-formatting-pane") as {
+      setFormatting?(info: FormattingInfo): void;
+    } | null;
+    if (!pane || !this.getTaskpaneState("reveal")) return;
+    const editor = this.#bridge?.activeEditor() ?? this.editor;
+    if (!editor) return;
+
+    const { $from, empty } = editor.state.selection;
+    const sampleText = empty
+      ? $from.parent.textBetween(
+          Math.max(0, $from.parentOffset - 15),
+          Math.min($from.parent.content.size, $from.parentOffset + 15),
+          " ",
+        )
+      : editor.state.doc.textBetween(editor.state.selection.from, editor.state.selection.to, " ");
+
+    const marks = $from.marks();
+    const markTypes = new Set(marks.map((m) => m.type.name));
+    const fontMark = marks.find((m) => m.type.name === "textStyle" || m.attrs?.fontFamily);
+    const colorMark = marks.find((m) => m.attrs?.color);
+
+    const para = $from.parent;
+    const paraAttrs = (para.attrs ?? {}) as Record<string, any>;
+
+    const info: FormattingInfo = {
+      sampleText: sampleText.trim() || "Selected text",
+      font: {
+        family: (fontMark?.attrs?.fontFamily as string) || "Calibri",
+        size: (fontMark?.attrs?.fontSize as string) || "11 pt",
+        bold: markTypes.has("bold"),
+        italic: markTypes.has("italic"),
+        underline: markTypes.has("underline"),
+        color: (colorMark?.attrs?.color as string) || "Auto",
+      },
+      paragraph: {
+        alignment: (paraAttrs.textAlign as string) || "Left",
+        indentLeft: paraAttrs.indentLeft != null ? `${paraAttrs.indentLeft} pt` : "0 pt",
+        lineSpacing: paraAttrs.lineSpacing ? String(paraAttrs.lineSpacing) : "1.15",
+      },
+      section: {
+        margins: "Normal (1 in)",
+        orientation: "Portrait",
+      },
+    };
+
+    pane.setFormatting?.(info);
+  }
+
   readonly #onCommand = (event: CustomEvent<{ event?: string; value?: string }>): void => {
     const { event: name, value } = event.detail ?? {};
     if (typeof name !== "string") return;
     if (name === "theme" || name === "theme-color" || name === "theme-font") {
       this.#applyDocumentTheme(name, value);
+      return;
+    }
+    if (name === "version-history") {
+      this.#openVersionHistory();
       return;
     }
     if (name === "toggle-checkbox") {
@@ -6100,7 +6355,31 @@ class DocenDocument extends AddinHost<Editor> {
     // lives here (Word's read-only ribbon). Chrome actions and clipboard
     // reads stay live.
     if (this.editor && !this.editor.isEditable && !READONLY_LIVE.has(name)) {
-      return;
+      if (
+        this.#protectionMode === "comments" &&
+        (name === "new-comment" ||
+          name === "delete-comment" ||
+          name === "resolve-comment" ||
+          name === "reopen-comment" ||
+          name === "show-comments" ||
+          name.includes("comment"))
+      ) {
+        // allow comment actions in comments protection mode
+      } else {
+        return;
+      }
+    }
+    // Forms protection mode: allow only content control interaction outside readonly live
+    if (
+      this.#protectionMode === "forms" &&
+      !READONLY_LIVE.has(name) &&
+      !name.startsWith("sdt-") &&
+      name !== "toggle-checkbox"
+    ) {
+      const active = this.#bridge?.activeEditor() ?? this.editor;
+      if (active && !this.#isInsideSdt(active)) {
+        return;
+      }
     }
     // Local host commands (chrome actions plus document actions the engine
     // can't express) route through the per-domain registry — chrome handlers
@@ -7510,10 +7789,31 @@ class DocenDocument extends AddinHost<Editor> {
     // re-derive editability. Word also forces revision tracking on when a
     // document opens under a tracked-changes restriction.
     const settings = this.#documentSettings();
-    const protection = (settings.documentProtection as { edit?: string } | undefined)?.edit;
-    this.#docProtected = protection === "readOnly";
+    const docProtection = settings.documentProtection as
+      | {
+          edit?: string;
+          hash?: string;
+          formatting?: boolean;
+        }
+      | undefined;
+    const protection = docProtection?.edit;
+    this.#docProtected = protection === "readOnly" || protection === "comments";
+    this.#protectionMode = protection;
     if (protection === "trackedChanges") {
       editor.commands["track-changes"](true);
+    }
+    const pane = this.shadowRoot?.querySelector("docen-restrict-editing-pane") as {
+      setProtectionState?(state: any, hash?: string): void;
+    } | null;
+    if (pane && protection && protection !== "none") {
+      pane.setProtectionState?.(
+        {
+          isEnforced: true,
+          type: protection,
+          formattingRestricted: Boolean(docProtection?.formatting),
+        },
+        docProtection?.hash,
+      );
     }
     // w:updateFields — Word updates fields when the document opens. Arm the
     // flag here; the first completed render consumes it (fresh page map).
@@ -7628,6 +7928,21 @@ class DocenDocument extends AddinHost<Editor> {
       }
     }
     pane.open = open;
+    if (open) {
+      if (id === "a11y") {
+        (this.shadowRoot?.querySelector("docen-a11y-checker-pane") as any)?.check(this.getJSON());
+      } else if (id === "reveal") {
+        this.#updateRevealFormatting();
+      } else if (id === "navigation") {
+        const navPages = this.shadowRoot?.querySelector("docen-nav-pages") as any;
+        if (navPages && this.#pages.length > 0) {
+          navPages.setPageCount(
+            this.#pages.length,
+            (this.#bridge?.pageOf(this.editor?.state.selection.from ?? 0) ?? 0) + 1,
+          );
+        }
+      }
+    }
     this.dispatchEvent(
       new CustomEvent("docen:taskpane-visibility-change", {
         bubbles: true,

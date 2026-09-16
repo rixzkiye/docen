@@ -44,11 +44,19 @@ export class MailMergeHostCommands implements HostCommandDomain {
     // Mail merge — the recipients dialogs, the merge-field seeds, the preview
     // pass, and the Finish & Merge document (#merge / #finishMerge).
     if (event === "select-recipients" || event === "edit-recipients") {
-      (
-        this.host.element().shadowRoot?.querySelector("docen-recipients-dialog") as {
-          show(recipients: unknown): void;
-        } | null
-      )?.show(this.host.recipients());
+      const root = this.host.element().shadowRoot;
+      const mergeDialog = root?.querySelector("docen-merge-recipients-dialog") as {
+        show(recipients: unknown): void;
+      } | null;
+      if (mergeDialog) {
+        mergeDialog.show(this.host.recipients());
+      } else {
+        (
+          root?.querySelector("docen-recipients-dialog") as {
+            show(recipients: unknown): void;
+          } | null
+        )?.show(this.host.recipients());
+      }
       return true;
     }
     if (event === "merge-field") {

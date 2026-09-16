@@ -61,6 +61,7 @@ export class NavigationViewsHostCommands implements HostCommandDomain {
     "zoom-100",
     "reveal-formatting",
     "restrict-editing",
+    "protect-document",
     "check-accessibility",
     "split-window",
     "focus-mode",
@@ -90,7 +91,7 @@ export class NavigationViewsHostCommands implements HostCommandDomain {
       this.host.togglePane("reveal");
       return true;
     }
-    if (event === "restrict-editing") {
+    if (event === "restrict-editing" || event === "protect-document") {
       this.host.togglePane("restrict");
       return true;
     }

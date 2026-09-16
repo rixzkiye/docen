@@ -173,7 +173,7 @@ export class DocenVersionHistoryDialog extends FASTElement {
 
       const tag = document.createElement("span");
       tag.className = "version-tag";
-      tag.textContent = v.isAutosave ? "AutoSave" : "Saved";
+      tag.textContent = v.isAutosave ? t("history.autosave", this) : t("history.manualSave", this);
       metaEl.appendChild(tag);
 
       card.appendChild(timeEl);
@@ -191,7 +191,7 @@ export class DocenVersionHistoryDialog extends FASTElement {
     if (!this.selectedVersion) {
       const empty = document.createElement("div");
       empty.className = "preview-empty";
-      empty.textContent = "No version selected";
+      empty.textContent = t("history.selectVersionToPreview", this);
       this.previewEl.appendChild(empty);
       return;
     }

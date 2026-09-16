@@ -1,6 +1,8 @@
 import type { JSONContent } from "@docen/docx";
 import type { Editor } from "@docen/docx/core";
 
+import type { HostCommandDomain } from "./registry";
+
 export type SdtType =
   | "plainText"
   | "richText"
@@ -215,7 +217,21 @@ export class SdtCommands {
   }
 }
 
-export class SdtHostCommands {
+export class SdtHostCommands implements HostCommandDomain {
+  readonly chrome: readonly string[] = ["sdt-properties"];
+  readonly editor: readonly string[] = [
+    "sdt-rich-text",
+    "sdt-plain-text",
+    "sdt-picture",
+    "sdt-checkbox",
+    "sdt-combo-box",
+    "sdt-dropdown",
+    "sdt-date",
+    "sdt-building-block",
+    "toggle-design-mode",
+    "sdt-properties",
+  ];
+
   readonly events = [
     "sdt-rich-text",
     "sdt-plain-text",
@@ -233,6 +249,10 @@ export class SdtHostCommands {
     private readonly sdt: SdtCommands,
     private readonly openProperties?: () => void,
   ) {}
+
+  run(event: string, _value?: string): boolean {
+    return this.dispatch(event);
+  }
 
   dispatch(event: string): boolean {
     switch (event) {

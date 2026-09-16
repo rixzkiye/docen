@@ -129,7 +129,7 @@ const template = html<DocenRestrictEditingPane>`
                 type="password"
                 class="password-input"
                 ${ref("stopPasswordInput")}
-                placeholder="Password"
+                placeholder="${(p) => t("protect.passwordPlaceholder", p)}"
               />
             </div>
             <fluent-button appearance="accent" @click="${(p) => p.onStopProtection()}">
@@ -143,13 +143,13 @@ const template = html<DocenRestrictEditingPane>`
                 type="password"
                 class="password-input"
                 ${ref("startPasswordInput")}
-                placeholder="Password"
+                placeholder="${(p) => t("protect.passwordPlaceholder", p)}"
               />
               <input
                 type="password"
                 class="password-input"
                 ${ref("startConfirmPasswordInput")}
-                placeholder="Confirm password"
+                placeholder="${(p) => t("protect.confirmPasswordPlaceholder", p)}"
               />
             </div>
             <fluent-button appearance="accent" @click="${(p) => p.onStartProtection()}">
@@ -159,6 +159,10 @@ const template = html<DocenRestrictEditingPane>`
   </div>
 `;
 
+/**
+ * `<docen-restrict-editing-pane>` — Task pane managing Word document protection
+ * (tracked changes, comments, forms, read-only) with optional password enforcement.
+ */
 @customElement({ name: "docen-restrict-editing-pane", template, styles })
 export class DocenRestrictEditingPane extends FASTElement {
   @observable isEnforced = false;
@@ -200,7 +204,7 @@ export class DocenRestrictEditingPane extends FASTElement {
     const p2 = this.startConfirmPasswordInput?.value ?? "";
 
     if (p1 && p1 !== p2) {
-      alert("Passwords do not match!");
+      alert(t("protect.passwordsMismatch", this));
       return;
     }
 
@@ -241,7 +245,7 @@ export class DocenRestrictEditingPane extends FASTElement {
         .join("");
 
       if (hash !== this.#passwordHash) {
-        alert("Incorrect password!");
+        alert(t("protect.incorrectPassword", this));
         return;
       }
     }

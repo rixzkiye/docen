@@ -226,6 +226,7 @@ export class DocenA11yCheckerPane extends FASTElement {
   }
 
   refresh(): void {
+    this.$emit("a11y:refresh");
     this.check(this.#doc);
   }
 

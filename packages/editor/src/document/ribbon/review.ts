@@ -64,6 +64,7 @@ export const reviewTab = (authors?: readonly string[]): RibbonTab =>
       col([grid([btn("word-count", "word-count"), btn("search", "thesaurus")])]),
     ]),
     group("accessibility", [btn("checkmark-circle", "check-accessibility", { size: "large" })]),
+    group("speech", [btn("text-font", "read-aloud", { size: "large" })]),
     group("language", [
       btn("link", "translate", { size: "large" }),
       btn("text-font", "language", { size: "large" }),

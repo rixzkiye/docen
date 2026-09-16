@@ -98,4 +98,109 @@ describe("compare and combine engine", () => {
     expect(combined.type).toBe("doc");
     expect(combined.content?.length).toBeGreaterThan(0);
   });
+
+  it("preserves non-paragraph blocks (headings, tables, lists) without dropping them", () => {
+    const docA = {
+      type: "doc",
+      content: [
+        {
+          type: "heading",
+          attrs: { level: 1 },
+          content: [{ type: "text", text: "Chapter 1: Overview" }],
+        },
+        {
+          type: "paragraph",
+          content: [{ type: "text", text: "Initial intro text." }],
+        },
+        {
+          type: "table",
+          attrs: { cols: 2 },
+          content: [
+            {
+              type: "tableRow",
+              content: [
+                {
+                  type: "tableCell",
+                  content: [{ type: "paragraph", content: [{ type: "text", text: "A1" }] }],
+                },
+                {
+                  type: "tableCell",
+                  content: [{ type: "paragraph", content: [{ type: "text", text: "B1" }] }],
+                },
+              ],
+            },
+          ],
+        },
+        {
+          type: "bulletList",
+          content: [
+            {
+              type: "listItem",
+              content: [{ type: "paragraph", content: [{ type: "text", text: "Bullet 1" }] }],
+            },
+          ],
+        },
+      ],
+    };
+
+    const docB = {
+      type: "doc",
+      content: [
+        {
+          type: "heading",
+          attrs: { level: 1 },
+          content: [{ type: "text", text: "Chapter 1: Detailed Overview" }],
+        },
+        {
+          type: "paragraph",
+          content: [{ type: "text", text: "Revised intro text." }],
+        },
+        {
+          type: "table",
+          attrs: { cols: 2 },
+          content: [
+            {
+              type: "tableRow",
+              content: [
+                {
+                  type: "tableCell",
+                  content: [{ type: "paragraph", content: [{ type: "text", text: "A1" }] }],
+                },
+                {
+                  type: "tableCell",
+                  content: [{ type: "paragraph", content: [{ type: "text", text: "B1" }] }],
+                },
+              ],
+            },
+          ],
+        },
+        {
+          type: "bulletList",
+          content: [
+            {
+              type: "listItem",
+              content: [{ type: "paragraph", content: [{ type: "text", text: "Bullet 1" }] }],
+            },
+          ],
+        },
+      ],
+    };
+
+    const compared = compareDocs(docA, docB, { author: "Editor" });
+    expect(compared.type).toBe("doc");
+    const blockTypes = (compared.content ?? []).map((b) => b.type);
+    expect(blockTypes).toEqual(["heading", "paragraph", "table", "bulletList"]);
+
+    // Heading should have tracked changes (Overview -> Detailed Overview)
+    const heading = compared.content?.[0];
+    expect(heading?.type).toBe("heading");
+    const hasHeadingIns = heading?.content?.some((r: any) =>
+      r.marks?.some((m: any) => m.type === "insertion"),
+    );
+    expect(hasHeadingIns).toBe(true);
+
+    // Table and list preserved intact
+    expect(compared.content?.[2].type).toBe("table");
+    expect(compared.content?.[3].type).toBe("bulletList");
+  });
 });

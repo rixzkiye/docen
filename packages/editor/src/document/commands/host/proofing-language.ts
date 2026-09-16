@@ -22,6 +22,8 @@ export interface ProofingLanguageHostView {
   openLanguageDialog(): void;
   /** Open the thesaurus pane with an optional initial word lookup. */
   openThesaurus(word?: string): void;
+  /** Toggle Read Aloud speech synthesis */
+  readAloud?(): void;
 }
 
 /**
@@ -43,6 +45,7 @@ export class ProofingLanguageHostCommands implements HostCommandDomain {
     "thesaurus",
     "thesaurus-replace",
     "language",
+    "read-aloud",
   ];
 
   run(event: string, value?: string): boolean {
@@ -99,6 +102,10 @@ export class ProofingLanguageHostCommands implements HostCommandDomain {
     // proofing-language dialog for the selection.
     if (event === "language") {
       this.host.openLanguageDialog();
+      return true;
+    }
+    if (event === "read-aloud") {
+      this.host.readAloud?.();
       return true;
     }
     return false;

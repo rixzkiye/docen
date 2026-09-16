@@ -115,7 +115,7 @@ export const selectItems = (): string =>
     { text: opt("select-all"), value: "all" },
     // Need a canvas selection model for objects / similar-format picks.
     { text: opt("select-objects"), value: "objects", disabled: true },
-    { text: opt("select-similar"), value: "similar", disabled: true },
+    { text: opt("select-similar"), value: "similar" },
   ]);
 
 export const homeTab = (styles?: StylesOptions | null): RibbonTab =>

@@ -302,7 +302,8 @@ export class DocenMergeRecipientsDialog extends FASTElement {
     if (!this.countBarEl || !this.#recipients) return;
     const total = this.#recipients.rows.length;
     const sel = this.#selectedIndices.size;
-    this.countBarEl.textContent = `${sel} of ${total} recipients selected.`;
+    const pattern = t("recipients.selectedCount", this);
+    this.countBarEl.textContent = pattern.replace("{0}", String(sel)).replace("{1}", String(total));
   }
 
   onOk(): void {
