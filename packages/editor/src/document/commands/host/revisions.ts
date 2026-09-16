@@ -16,6 +16,8 @@ export interface RevisionsHostView {
   setMarkupAuthors(authors: string[] | null): void;
   /** Review → Markup Colors: "author" (By author, default) or "changeType". */
   setMarkupColors(colors: "author" | "changeType"): void;
+  /** Review → Show Markup → Balloons: which annotations the margin shows. */
+  setBalloons(mode: "all" | "comments" | "revisions" | "none"): void;
   /** Re-render the document projection (display-only markup changes). */
   renderDoc(doc: JSONContent): void;
   /** Re-stamp the markup menus to the live state. */
@@ -38,6 +40,7 @@ export class RevisionsHostCommands implements HostCommandDomain {
     "display-for-review",
     "review-specific-people",
     "markup-colors",
+    "show-markup",
     "accept-all-changes-shown",
     "reject-all-changes-shown",
   ];
@@ -74,6 +77,17 @@ export class RevisionsHostCommands implements HostCommandDomain {
     if (event === "markup-colors") {
       if (value === "author" || value === "changeType") {
         this.host.setMarkupColors(value);
+        this.host.renderDoc(this.host.getJSON());
+        this.host.syncMarkupMenus();
+      }
+      return true;
+    }
+    // Review → Show Markup → Balloons: choose which annotations project into
+    // the page-margin balloon stack and re-render — display only; "none"
+    // keeps every revision inline as before.
+    if (event === "show-markup") {
+      if (value === "all" || value === "comments" || value === "revisions" || value === "none") {
+        this.host.setBalloons(value);
         this.host.renderDoc(this.host.getJSON());
         this.host.syncMarkupMenus();
       }

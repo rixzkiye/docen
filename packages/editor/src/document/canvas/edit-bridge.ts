@@ -52,6 +52,7 @@ import { CellSelection, cellAt, inSameTable } from "./cell-selection";
 import { installChartHover, type ChartTip } from "./chart-hover";
 import { followLink, installLinkHover, type LinkHit } from "./link-hover";
 import { blockRuleOf, enterRuleOf, inlineRuleOf, isHyphenRun } from "./markdown-input";
+import type { BalloonHit } from "./stage";
 import { sameChildPath } from "./stage";
 
 /** Word's format-painter cursor: the text I-beam with the paint brush riding
@@ -177,6 +178,15 @@ export interface EditBridgeOptions {
    *  selects the drawing (Word: clicking a picture grabs it) instead of
    *  placing the caret behind it; absent, every click is text. */
   drawingAt?: (page: number, lx: number, ly: number) => DrawingHit | null;
+  /** Balloon hit-test (page-local px) — the stage's painted card table. A hit
+   *  selects/opens the comment or reveals the revision (Word's balloon
+   *  click); absent, balloon clicks fall through to the text. */
+  balloonAt?: (page: number, lx: number, ly: number) => BalloonHit | null;
+  /** A balloon click — the host routes it to the comment/revision commands. */
+  onBalloonSelect?: (hit: BalloonHit) => void;
+  /** The balloon under the pointer, or null off every card — the host tones
+   *  it (Word's hover highlight). */
+  onBalloonHover?: (hit: BalloonHit | null) => void;
   /** The PM node selection for a drawing hit — resolves the host paragraph
    *  position and the index-th drawing node inside it (null when the map
    *  cannot pair the host, e.g. a furniture story paragraph). A hit with a
@@ -1382,6 +1392,9 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
   opts.host.addEventListener("mouseleave", linkHover.hide);
   const chartHover = installChartHover({ host: opts.inputHost });
   opts.host.addEventListener("mouseleave", chartHover.hide);
+  // Leaving the surface clears the balloon hover tone (the cursor resets with
+  // the same event's stylesheet fallback).
+  opts.host.addEventListener("mouseleave", () => opts.onBalloonHover?.(null));
 
   // The pointer cursor's single owner — Word's cursors per surface: a
   // floating drawing shows the four-headed move arrow, an inline picture the
@@ -1413,8 +1426,12 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
     }
     const hit = story ? null : hitPage(event.clientX, event.clientY);
     const drawHit = hit && opts.drawingAt ? opts.drawingAt(hit.page, hit.lx, hit.ly) : null;
+    const balloonHit = hit && opts.balloonAt ? opts.balloonAt(hit.page, hit.lx, hit.ly) : null;
     let want = "";
-    if (drawHit) {
+    if (balloonHit) {
+      // A balloon card is clickable chrome (Word's hand over markup cards).
+      want = "pointer";
+    } else if (drawHit) {
       // A chart sub-element reads as selectable content, not a movable
       // object — the plain arrow until the drag gestures reach it.
       want = drawHit.chartPart ? "default" : drawHit.kind === "drawing" ? "move" : "default";
@@ -1491,6 +1508,13 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
       hoverTableGrip(event);
       linkHover.onMove(event);
       chartHover.onMove(chartTipAt(event), event.clientX, event.clientY);
+      // Balloon hover tone — same hit pair as the cursor.
+      if (opts.onBalloonHover) {
+        const hit = story ? null : hitPage(event.clientX, event.clientY);
+        opts.onBalloonHover(
+          hit && opts.balloonAt ? opts.balloonAt(hit.page, hit.lx, hit.ly) : null,
+        );
+      }
       applyCursor(event);
       return;
     }
@@ -1740,6 +1764,17 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
     const storyCfg = opts.story;
     const hit = hitPage(event.clientX, event.clientY);
     const drawHit = hit && opts.drawingAt ? opts.drawingAt(hit.page, hit.lx, hit.ly) : null;
+    // A balloon press opens the annotation it carries (Word's balloon click);
+    // it wins over every text/object chain and never drops a caret behind the
+    // card. Story edit has no balloons.
+    const balloonHit =
+      !story && hit && opts.balloonAt ? opts.balloonAt(hit.page, hit.lx, hit.ly) : null;
+    if (balloonHit) {
+      opts.onBalloonSelect?.(balloonHit);
+      ta.focus();
+      ta.value = "";
+      return;
+    }
     // Set Transparent Color: the armed pick samples the clicked drawing's
     // pixel instead of running the select chains (Word's eyedropper press);
     // a press off any drawing disarms and falls through as a plain click.

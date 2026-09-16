@@ -29,6 +29,26 @@ export interface LayoutIndent {
   firstLinePx?: number;
 }
 
+/** One margin-balloon anchor: the annotation attaches to the paragraph's
+ *  inline atom at `inlineIndex` (−1 = the paragraph's first line — a
+ *  paragraph-level pPrChange). The flow resolves it to a page-local line
+ *  position and packs the balloon into the page's right margin; body text
+ *  geometry never changes. */
+export interface LayoutBalloonAnchor {
+  /** Selectable identity (w:comment/@w:id, w:ins|w:del|w:rPrChange @w:id). */
+  id: number;
+  kind: "comment" | "revision";
+  /** Accent color, hex without '#'. */
+  color: string;
+  /** Header text (author name/initials) — document data, never translated. */
+  label: string;
+  /** Balloon body text (comment body / revision excerpt); absent = a bare
+   *  author card. */
+  text?: string;
+  /** The anchored inline atom's index; −1 anchors the paragraph's first line. */
+  inlineIndex: number;
+}
+
 /** One w:tab stop, px from the content-box left edge. */
 export interface LayoutTabStop {
   positionPx: number;
@@ -106,6 +126,10 @@ export interface LayoutParagraph {
    *  change bar beside every line of the paragraph, in `color` (hex). Pure
    *  paint metadata — the flow and measurement ignore it. */
   formatChange?: { color: string };
+  /** Margin-balloon anchors riding this paragraph (comments, format changes,
+   *  deletions). The flow resolves each to its line and packs the balloon
+   *  stack — measurement and wrapping ignore them. */
+  balloons?: LayoutBalloonAnchor[];
   /** Floating drawings anchored to this paragraph: wrap-none boxes paint at
    *  their offset; a `wrap` on the drawing also shrinks the anchor
    *  paragraph's own lines around the box and registers a float zone the

@@ -479,6 +479,7 @@ class DocenDocument extends AddinHost<Editor> {
     editor: () => this.editor,
     bridge: () => this.#bridge,
     element: () => this,
+    togglePane: (id) => this.#togglePane(id),
   });
   readonly #references = new ReferencesCommands({
     editor: () => this.editor,
@@ -585,6 +586,11 @@ class DocenDocument extends AddinHost<Editor> {
   /** Review → Markup Colors: Word's By-author palette (default) or the fixed
    *  per-change-type colors. Display-only, like the view/filter above. */
   #markupColors: "author" | "changeType" = "author";
+  /** Review → Show Markup → Balloons: which annotations project into the
+   *  page-margin balloon stack (comments / revisions / both / none). The
+   *  default matches Word's fresh document — the margin shows what the
+   *  document carries. */
+  #balloons: "all" | "comments" | "revisions" | "none" = "all";
   /** Word's field-code display (Alt+F9): projects every field as its
    *  instruction text instead of the cached result. Pure display state — the
    *  document's field atoms are untouched. */
@@ -1624,6 +1630,11 @@ class DocenDocument extends AddinHost<Editor> {
       // NodeSelection (projectDrawings collects drawings in run order, the
       // same order the paragraph's content carries the nodes).
       drawingAt: (page, lx, ly) => this.#stage?.drawingAt(page, lx, ly) ?? null,
+      // Margin balloons: the stage's painted card table routes clicks to the
+      // comment/revision commands and the hover tone back to the stage.
+      balloonAt: (page, lx, ly) => this.#stage?.balloonAt(page, lx, ly) ?? null,
+      onBalloonSelect: (hit) => this.#revisions.onBalloonSelect(hit),
+      onBalloonHover: (hit) => this.#stage?.hoverBalloon(hit),
       drawingSelection: (hit, enter) =>
         this.#drawingNodePos(hit.para, hit.index, hit.kind, hit.childPath, enter),
       chartPartBoxes: (para, index, kind) => this.#stage?.chartPartBoxesOf(para, index, kind) ?? [],
@@ -2496,19 +2507,27 @@ class DocenDocument extends AddinHost<Editor> {
     // reaches the next render.
     const showHiddenText = getSettings().writing.showHiddenText;
     this.#hiddenTextShown = showHiddenText;
+    // Balloons are print-layout chrome: Draft/Web/Read project inline markup
+    // only (Word hides the markup area outside Print Layout / Web Layout has
+    // no margin at all).
+    const balloonsOn = this.#balloons !== "none" && this.#viewMode() === "print";
     const { sections, background } = projectDocumentOptions(
       compileDocument(this.#mergedView(doc)),
       // Word's Display for Review: "simple" is also the all-marks projection
       // minus the review chrome Word draws outside the flow, so only an
-      // actual filter (or the change-type palette) needs the non-default
-      // pass. "simple" maps to "all" inside that pass: the canvas has no
-      // simple-markup chrome, and simple must never hide the marks it is
-      // supposed to summarize.
-      this.#markupView !== "simple" || this.#markupAuthors || this.#markupColors !== "author"
+      // actual filter (or the change-type palette, or balloons) needs the
+      // non-default pass. "simple" maps to "all" inside that pass: the canvas
+      // has no simple-markup chrome of its own, and simple must never hide
+      // the marks it is supposed to summarize.
+      this.#markupView !== "simple" ||
+        this.#markupAuthors ||
+        this.#markupColors !== "author" ||
+        balloonsOn
         ? {
             view: this.#markupView === "simple" ? "all" : this.#markupView,
             authors: this.#markupAuthors ?? undefined,
             colors: this.#markupColors,
+            ...(balloonsOn ? { balloons: this.#balloons } : {}),
           }
         : undefined,
       // Alt+F9: every field projects its instruction instead of the result.
@@ -3718,6 +3737,29 @@ class DocenDocument extends AddinHost<Editor> {
             event: "markup-colors",
             value,
             checked: value === colors,
+          })),
+        ),
+      );
+    // Show Markup → Balloons: the four scope entries with their live check.
+    const balloons = this.#balloons;
+    display
+      .closest("docen-ribbon-group")
+      ?.querySelector<HTMLElement>('docen-ribbon-menu[event="show-markup"]')
+      ?.setAttribute(
+        "items",
+        JSON.stringify(
+          (
+            [
+              ["all", "balloons-all"],
+              ["comments", "balloons-comments"],
+              ["revisions", "balloons-revisions"],
+              ["none", "balloons-none"],
+            ] as const
+          ).map(([value, key]) => ({
+            text: t(`ribbon.opt.${key}`, this),
+            event: "show-markup",
+            value,
+            checked: value === balloons,
           })),
         ),
       );
@@ -5199,6 +5241,9 @@ class DocenDocument extends AddinHost<Editor> {
         },
         setMarkupColors: (colors) => {
           this.#markupColors = colors;
+        },
+        setBalloons: (mode) => {
+          this.#balloons = mode;
         },
         renderDoc: (doc) => this.#renderDoc(doc),
         syncMarkupMenus: () => this.#syncMarkupMenus(),

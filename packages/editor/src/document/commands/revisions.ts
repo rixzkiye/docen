@@ -12,6 +12,8 @@ export interface RevisionsHost {
   bridge(): { scrollIntoView(pos: number): void } | undefined;
   /** The host element — the shadow-DOM root for the revisions pane. */
   element(): HTMLElement;
+  /** Open/close a task pane — a balloon click reveals its annotation. */
+  togglePane(id: "comments" | "revisions"): void;
 }
 
 /**
@@ -92,6 +94,38 @@ export class RevisionsCommands {
 
   readonly onRevisionReject = (event: CustomEvent<{ index?: number }>): void => {
     this.#apply(event.detail?.index, "reject-change");
+  };
+
+  /** A margin-balloon click (Word's markup area): a comment balloon selects
+   *  the range and opens the comments pane, a revision balloon selects the
+   *  revision's range and reveals it in the reviewing pane. */
+  readonly onBalloonSelect = (hit: { kind: "comment" | "revision"; id: number }): void => {
+    const editor = this.host.editor();
+    if (!editor) return;
+    if (hit.kind === "comment") {
+      // The registered comment:select listener selects + scrolls the range.
+      this.host.element().dispatchEvent(
+        new CustomEvent("comment:select", {
+          bubbles: true,
+          composed: true,
+          detail: { id: hit.id },
+        }),
+      );
+      this.host.togglePane("comments");
+      return;
+    }
+    const index = collectRevisions(editor.state.doc).findIndex(
+      (revision) => String(revision.id) === String(hit.id),
+    );
+    if (index < 0) return;
+    this.host.element().dispatchEvent(
+      new CustomEvent("revision:select", {
+        bubbles: true,
+        composed: true,
+        detail: { index },
+      }),
+    );
+    this.host.togglePane("revisions");
   };
 
   #apply(index: number | undefined, command: "accept-change" | "reject-change"): void {

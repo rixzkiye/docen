@@ -5,6 +5,7 @@
 // content ends at (a coarse split-point for page breaking).
 
 import type {
+  LayoutBalloonAnchor,
   LayoutBorderEdge,
   LayoutCellInsets,
   LayoutCombine,
@@ -194,6 +195,9 @@ export interface LaidOutParagraph {
   /** Tracked paragraph format change (w:pPrChange) mirrored for the painter's
    *  change bar (the flow gives it no geometry). */
   formatChange?: { color: string };
+  /** Margin-balloon anchors mirrored for the flow's per-page packing (they
+   *  carry no geometry of their own). */
+  balloons?: LayoutBalloonAnchor[];
 }
 
 /** One stacked block with its content-box offset inside the stack (collapsed
@@ -300,4 +304,29 @@ export interface LaidOutFootnoteArea {
   notes: LaidOutFootnoteNote[];
   items: LaidOutStackItem[];
   totalHeightPx: number;
+}
+
+/** One packed margin balloon on a page (content-box-local geometry — the
+ *  painter adds the content-box origin). The flow packs the stack: cards sort
+ *  by anchor Y, each starts at or below the previous card's bottom, and body
+ *  text geometry is untouched. */
+export interface LaidOutBalloon {
+  id: number;
+  kind: "comment" | "revision";
+  /** Accent color, hex without '#'. */
+  color: string;
+  /** Header text (author name/initials) — document data, never translated. */
+  label: string;
+  /** Body lines, already wrapped/measured by the flow — the painter draws
+   *  them at a fixed line height and never measures. */
+  lines: string[];
+  /** The card box, content-box-local. */
+  xPx: number;
+  yPx: number;
+  widthPx: number;
+  heightPx: number;
+  /** The connector's text-edge end (content-box-local): the content box's
+   *  right edge at the anchor line's center. */
+  anchorXPx: number;
+  anchorYPx: number;
 }

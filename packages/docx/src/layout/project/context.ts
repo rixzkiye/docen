@@ -10,11 +10,14 @@ import type { NumberingIndex } from "./numbering";
  *  accepted regardless of the view (undefined/empty = every author).
  *  `colors` picks the revision palette: "author" (default, Word's By-author
  *  cycle) or "changeType" (Word's legacy fixed colors — insertions and
- *  deletions share the revision red; format-change bars go neutral gray). */
+ *  deletions share the revision red; format-change bars go neutral gray).
+ *  `balloons` is Word's Show Markup → Balloons: which annotations project
+ *  margin balloons ("none"/absent keeps every mark inline, the default). */
 export interface MarkupDisplay {
   view: "simple" | "all" | "none" | "original";
   authors?: readonly string[];
   colors?: "author" | "changeType";
+  balloons?: "all" | "comments" | "revisions" | "none";
 }
 
 /** Per-document projection context, resolved once and threaded down. */
@@ -55,6 +58,10 @@ export interface ProjectContext {
    *  appear). Stable for the whole projection walk, so an author keeps one
    *  color across every paragraph; cycles at the palette length. */
   revisionAuthorColors: Map<string, number>;
+  /** Comment id → balloon header/body data (word/comments.xml entries the
+   *  compile pass spreads into DocumentOptions). Missing ids still anchor —
+   *  the card just carries no author/text. */
+  commentMeta?: Map<number, { author: string; initials: string; text: string }>;
   /** Word's field-code display (Alt+F9): every field projects its instruction
    *  verbatim instead of its cached result — no dynamic page atoms, no
    *  re-hydrated result runs. */

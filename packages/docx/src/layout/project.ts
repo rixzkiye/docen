@@ -95,6 +95,28 @@ function projectNoteBlocks(
   return blocks;
 }
 
+/** Flatten a comment's children (office-open's CommentOptions) to plain text
+ *  for the balloon body; paragraphs separate with a newline. */
+function commentTextOf(children: readonly unknown[]): string {
+  const parts: string[] = [];
+  for (const child of children) {
+    if (typeof child === "string") {
+      parts.push(child);
+      continue;
+    }
+    if (!isRecord(child)) continue;
+    if (typeof child.text === "string") {
+      parts.push(child.text);
+      continue;
+    }
+    if (Array.isArray(child.children)) {
+      const nested = commentTextOf(child.children);
+      if (nested) parts.push(parts.length > 0 ? `\n${nested}` : nested);
+    }
+  }
+  return parts.join("");
+}
+
 /** Project a full DocumentOptions into the engine's input: one
  *  {@link ProjectedSection} per document section plus the page background
  *  (document-wide). Sections paginate in order — see
@@ -112,6 +134,18 @@ export function projectDocumentOptions(
   sections: ProjectedSection[];
   background?: ProjectedPageBackground;
 } {
+  // Comment balloon data: the compile pass spreads documentExtras.comments
+  // into DocumentOptions.comments (w:comment entries with author/initials and
+  // the thread body).
+  const commentMeta = new Map<number, { author: string; initials: string; text: string }>();
+  for (const comment of doc.comments ?? []) {
+    if (typeof comment.id !== "number") continue;
+    commentMeta.set(comment.id, {
+      author: comment.author ?? "",
+      initials: comment.initials ?? "",
+      text: commentTextOf(comment.children ?? []),
+    });
+  }
   const ctx: ProjectContext = {
     styles: doc.styles,
     characterStyles: indexCharacterStyles(doc.styles),
@@ -121,6 +155,7 @@ export function projectDocumentOptions(
     footnoteOrdinals: new Map(),
     endnoteOrdinals: new Map(),
     revisionAuthorColors: new Map(),
+    ...(commentMeta ? { commentMeta } : {}),
     ...(markup ? { markup } : {}),
     ...(showFieldCodes ? { showFieldCodes: true } : {}),
     ...(showHiddenText ? { showHiddenText: true } : {}),

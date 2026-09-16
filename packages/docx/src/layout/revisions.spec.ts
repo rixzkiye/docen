@@ -38,6 +38,21 @@ const atoms = (para: LayoutParagraph): Extract<LayoutInline, { kind: "text" }>[]
     return inline.kind === "text";
   });
 
+/** Project one paragraph carrying document-level comment entries. */
+function paraWithComments(
+  children: ParagraphChild[],
+  comments: DocumentOptions["comments"],
+  markup: MarkupDisplay,
+): LayoutParagraph {
+  const blocks = projectDocumentOptions(
+    { sections: [{ children: [{ paragraph: { children } }] }], comments },
+    markup,
+  ).sections[0]!.blocks;
+  const para = blocks[0];
+  if (para?.kind !== "paragraph") throw new Error("expected a projected paragraph");
+  return para;
+}
+
 describe("revision author colors", () => {
   it("assigns Word's By-author palette in reviewer order and keeps it stable", () => {
     const para = paraOf([
@@ -184,5 +199,169 @@ describe("format-change indicators", () => {
       authors: ["Bob"],
     });
     expect(atoms(para)[0]?.formatChange).toBeUndefined();
+  });
+});
+
+describe("balloon anchors", () => {
+  /** A w:comment entry as the compile pass spreads it into DocumentOptions. */
+  const comment: NonNullable<DocumentOptions["comments"]>[number] = {
+    id: 7,
+    author: "Alice",
+    initials: "AL",
+    date: REV_DATE,
+    children: [{ children: [{ text: "note body" }] }],
+  };
+
+  it("anchors a comment at its range's first atom with the author card", () => {
+    const para = paraWithComments(
+      [
+        { text: "before " },
+        { commentRangeStart: { id: 7 } },
+        { text: "marked" },
+        { commentRangeEnd: { id: 7 } },
+      ],
+      [comment],
+      { view: "all", balloons: "comments" },
+    );
+    expect(para.balloons).toEqual([
+      { id: 7, kind: "comment", color: "FF0000", label: "AL", text: "note body", inlineIndex: 1 },
+    ]);
+  });
+
+  it("anchors a run format change at its atom with the author label", () => {
+    const para = paraOf(
+      [{ text: "plain " }, { text: "styled", revision: { id: 5, author: "Ada", date: REV_DATE } }],
+      { view: "all", balloons: "revisions" },
+    );
+    expect(para.balloons).toEqual([
+      { id: 5, kind: "revision", color: "FF0000", label: "Ada", text: "styled", inlineIndex: 1 },
+    ]);
+  });
+
+  it("anchors a paragraph format change at the paragraph's first line", () => {
+    const blocks = projectDocumentOptions(
+      {
+        sections: [
+          {
+            children: [
+              {
+                paragraph: {
+                  children: [{ text: "body" }],
+                  revision: { id: 6, author: "Ada", date: REV_DATE, alignment: "left" },
+                },
+              },
+            ],
+          },
+        ],
+      },
+      { view: "all", balloons: "revisions" },
+    ).sections[0]!.blocks;
+    const para = blocks[0];
+    if (para?.kind !== "paragraph") throw new Error("expected a projected paragraph");
+    expect(para.balloons).toEqual([
+      { id: 6, kind: "revision", color: "FF0000", label: "Ada", inlineIndex: -1 },
+    ]);
+  });
+
+  it("anchors a deletion with its struck excerpt only in the full view", () => {
+    const full = paraOf([deletion(3, "Bob", "gone")], { view: "all", balloons: "revisions" });
+    expect(full.balloons).toEqual([
+      { id: 3, kind: "revision", color: "FF0000", label: "Bob", text: "gone", inlineIndex: 0 },
+    ]);
+    // Simple markup keeps deletions inline — B1's accepted rendering (the
+    // host remaps simple → all for the canvas).
+    const simple = paraOf([deletion(3, "Bob", "gone")], { view: "simple", balloons: "revisions" });
+    expect(simple.balloons).toBeUndefined();
+    expect(atoms(simple)[0]?.style.strikethrough).toBeUndefined();
+  });
+
+  it("scopes the balloon kinds by the Show Markup mode", () => {
+    const children: ParagraphChild[] = [
+      { commentRangeStart: { id: 7 } },
+      { text: "both", revision: { id: 5, author: "Ada", date: REV_DATE } },
+      { commentRangeEnd: { id: 7 } },
+    ];
+    const commentsOnly = paraWithComments(children, [comment], {
+      view: "all",
+      balloons: "comments",
+    });
+    expect(commentsOnly.balloons?.map((anchor) => anchor.kind)).toEqual(["comment"]);
+    const revisionsOnly = paraWithComments(children, [comment], {
+      view: "all",
+      balloons: "revisions",
+    });
+    expect(revisionsOnly.balloons?.map((anchor) => anchor.kind)).toEqual(["revision"]);
+    const both = paraWithComments(children, [comment], { view: "all", balloons: "all" });
+    expect(both.balloons?.map((anchor) => anchor.kind)).toEqual(["comment", "revision"]);
+    const none = paraWithComments(children, [comment], { view: "all", balloons: "none" });
+    expect(none.balloons).toBeUndefined();
+    // Absent markup keeps every annotation inline (the B1 default).
+    const plain = paraWithComments(children, [comment], { view: "all" });
+    expect(plain.balloons).toBeUndefined();
+  });
+
+  it("drops anchors for authors outside the Specific People filter", () => {
+    const para = paraWithComments(
+      [{ commentRangeStart: { id: 7 } }, { text: "marked" }, { commentRangeEnd: { id: 7 } }],
+      [comment],
+      { view: "all", authors: ["Bob"], balloons: "comments" },
+    );
+    expect(para.balloons).toBeUndefined();
+  });
+
+  it("drops every balloon outside the markup views", () => {
+    const children: ParagraphChild[] = [
+      { text: "x", revision: { id: 5, author: "Ada", date: REV_DATE } },
+    ];
+    for (const view of ["none", "original"] as const) {
+      const para = paraOf(children, { view, balloons: "all" });
+      expect(para.balloons).toBeUndefined();
+    }
+  });
+
+  it("anchors a multi-paragraph comment range once, at its start", () => {
+    const blocks = projectDocumentOptions(
+      {
+        sections: [
+          {
+            children: [
+              {
+                paragraph: {
+                  children: [{ commentRangeStart: { id: 7 } }, { text: "head" }],
+                },
+              },
+              { paragraph: { children: [{ text: "tail" }] } },
+            ],
+          },
+        ],
+        comments: [comment],
+      },
+      { view: "all", balloons: "comments" },
+    ).sections[0]!.blocks;
+    const [head, tail] = blocks;
+    if (head?.kind !== "paragraph" || tail?.kind !== "paragraph")
+      throw new Error("expected projected paragraphs");
+    expect(head.balloons?.map((anchor) => anchor.id)).toEqual([7]);
+    expect(tail.balloons).toBeUndefined();
+  });
+
+  it("keeps balloon anchors stable under the field-code view (Alt+F9)", () => {
+    const children: ParagraphChild[] = [
+      { text: "plain " },
+      { text: "styled", revision: { id: 5, author: "Ada", date: REV_DATE } },
+    ];
+    const normal = projectDocumentOptions(
+      { sections: [{ children: [{ paragraph: { children } }] }] },
+      { view: "all", balloons: "revisions" },
+      false,
+    ).sections[0]!.blocks[0];
+    const codes = projectDocumentOptions(
+      { sections: [{ children: [{ paragraph: { children } }] }] },
+      { view: "all", balloons: "revisions" },
+      true,
+    ).sections[0]!.blocks[0];
+    if (normal?.kind !== "paragraph" || codes?.kind !== "paragraph")
+      throw new Error("expected projected paragraphs");
+    expect(codes.balloons).toEqual(normal.balloons);
   });
 });

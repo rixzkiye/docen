@@ -6,9 +6,15 @@
  *
  * @module
  */
-import type { FlowItem, LaidOutBlock, LaidOutFootnoteArea, LaidOutStackItem } from "@docen/layout";
+import type {
+  FlowItem,
+  LaidOutBalloon,
+  LaidOutBlock,
+  LaidOutFootnoteArea,
+  LaidOutStackItem,
+} from "@docen/layout";
 import { columnBoxesOf } from "@docen/layout";
-import { Group, Line, Rect, Text, type IGroup } from "leafer-ui";
+import { Box, Group, Line, Rect, Text, type IGroup } from "leafer-ui";
 
 import type { PaintColumn, PaintContext } from "./paint/context";
 import { paintBreakRow, paintParagraph } from "./paint/paragraph";
@@ -251,4 +257,151 @@ function paintPlaceholder(
       }),
     );
   }
+}
+
+// ── Margin balloons ──────────────────────────────────────────────────────────
+
+/** One balloon card's hit rectangle, page-local semantic px — the stage's
+ *  click scan and hover routing. */
+export interface BalloonHitBox {
+  id: number;
+  kind: "comment" | "revision";
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+/** What {@link paintBalloons} produced: the click boxes and each card's paint
+ *  group (keyed `kind:id` — the stage toggles the group's opacity on hover). */
+export interface BalloonPaint {
+  boxes: BalloonHitBox[];
+  groups: Map<string, IGroup>;
+}
+
+/** Balloon card metrics — must match the flow's packing constants (the flow
+ *  measured the card; the painter draws inside that box and never measures). */
+const BALLOON_LINE_H = 14;
+const BALLOON_PAD = 8;
+const BALLOON_FONT = "Inter, sans-serif";
+
+/** The balloon a click's page-local point lands on: the topmost painted card
+ *  wins (the painter walks in order, so the last box drawn is checked first). */
+export function balloonAt(
+  boxes: readonly BalloonHitBox[],
+  lx: number,
+  ly: number,
+): BalloonHitBox | null {
+  for (let i = boxes.length - 1; i >= 0; i--) {
+    const box = boxes[i]!;
+    if (lx >= box.x && lx <= box.x + box.width && ly >= box.y && ly <= box.y + box.height) {
+      return box;
+    }
+  }
+  return null;
+}
+
+/** Paint one page's right-margin balloon stack: rounded cards in the page
+ *  margin (the connector meets the content edge at the anchor line), author
+ *  header in the revision color plus the wrapped body lines the flow already
+ *  measured. Cards paint into per-card groups so a hover can tone one without
+ *  a repaint. */
+export function paintBalloons(
+  tree: IGroup,
+  balloons: readonly LaidOutBalloon[] | undefined,
+  ctx: PaintContext,
+): BalloonPaint {
+  const boxes: BalloonHitBox[] = [];
+  const groups = new Map<string, IGroup>();
+  if (!balloons || balloons.length === 0) return { boxes, groups };
+  for (const balloon of balloons) {
+    const x = ctx.flow.contentLeftPx + balloon.xPx;
+    const y = ctx.flow.contentTopPx + balloon.yPx;
+    const edge = `#${balloon.color}`;
+    // The connector: card's left edge (at its vertical center) back to the
+    // anchored line on the content box's right edge.
+    tree.add(
+      new Line({
+        points: [
+          ctx.flow.contentLeftPx + balloon.anchorXPx,
+          ctx.flow.contentTopPx + balloon.anchorYPx,
+          x,
+          y + balloon.heightPx / 2,
+        ],
+        stroke: edge,
+        strokeWidth: 1,
+        hittable: false,
+      }),
+    );
+    const group = new Group({ x, y });
+    tree.add(group);
+    group.add(
+      new Box({
+        width: balloon.widthPx,
+        height: balloon.heightPx,
+        fill: "#ffffff",
+        stroke: edge,
+        strokeWidth: 1,
+        cornerRadius: 3,
+        hittable: false,
+      }),
+    );
+    // Accent rail down the card's left edge (Word's colored markup bar).
+    group.add(
+      new Box({
+        width: 3,
+        height: Math.max(1, balloon.heightPx - 2),
+        y: 1,
+        fill: edge,
+        cornerRadius: [2, 0, 0, 2],
+        hittable: false,
+      }),
+    );
+    let cursor = BALLOON_PAD;
+    if (balloon.label) {
+      group.add(
+        new Text({
+          x: BALLOON_PAD,
+          y: cursor - 2,
+          width: Math.max(1, balloon.widthPx - BALLOON_PAD * 2),
+          height: BALLOON_LINE_H,
+          text: balloon.label,
+          fill: edge,
+          fontFamily: BALLOON_FONT,
+          fontSize: 11,
+          fontWeight: 700,
+          textWrap: "none",
+          hittable: false,
+        }),
+      );
+      cursor += BALLOON_LINE_H;
+    }
+    for (const line of balloon.lines) {
+      group.add(
+        new Text({
+          x: BALLOON_PAD,
+          y: cursor - 2,
+          width: Math.max(1, balloon.widthPx - BALLOON_PAD * 2),
+          height: BALLOON_LINE_H,
+          text: line,
+          fill: "#3b3b3b",
+          fontFamily: BALLOON_FONT,
+          fontSize: 11,
+          textWrap: "none",
+          hittable: false,
+        }),
+      );
+      cursor += BALLOON_LINE_H;
+    }
+    boxes.push({
+      id: balloon.id,
+      kind: balloon.kind,
+      x,
+      y,
+      width: balloon.widthPx,
+      height: balloon.heightPx,
+    });
+    groups.set(`${balloon.kind}:${balloon.id}`, group);
+  }
+  return { boxes, groups };
 }
