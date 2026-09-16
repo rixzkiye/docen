@@ -19,7 +19,9 @@ import {
   customPropertiesOf,
   evaluateField,
   fieldRef,
+  finiteNumber,
   parseFieldInstruction,
+  type FieldBookmark,
   type FieldContext,
   type FieldFrame,
   type FieldRef,
@@ -997,7 +999,13 @@ export class DialogCommands {
    *  SEQ occurrences take their own ordinal per label (the caption sequence),
    *  REF/PAGEREF resolve through the bookmark table, and page-dependent fields
    *  use the host's pinned pagination when it exists. Returns the number of
-   *  fields whose cache changed. */
+   *  fields whose cache changed.
+   *
+   *  Limitation: a complex field whose result is structured (`resultRunsXml`
+   *  — TOC entries and nested fields) is patched on its flat `result` only;
+   *  paint keeps the structured runs, so such fields must be refreshed through
+   *  their own commands (the TOC updaters). Rewriting result XML here would
+   *  mean regenerating runs, not patching a cache. */
   updateAllFields(): number {
     const editor = this.#target();
     if (!editor) return 0;
@@ -1125,7 +1133,7 @@ export class DialogCommands {
       documentExtras?: Record<string, unknown>;
     };
     const text = doc.textBetween(0, doc.content.size, "\n", "");
-    const revision = attrs.core?.revision;
+    const revision = finiteNumber(attrs.core?.revision);
     const filename = this.host.filename?.();
     const customProperties = customPropertiesOf(attrs.documentExtras);
     return {
@@ -1134,26 +1142,27 @@ export class DialogCommands {
       words: wordCounter(text),
       chars: textCounter(text),
       ...(filename != null ? { filename } : {}),
-      ...(typeof revision === "number"
-        ? { revision }
-        : typeof revision === "string" && revision !== ""
-          ? { revision: Number(revision) }
-          : {}),
+      ...(revision != null ? { revision } : {}),
       ...(customProperties ? { customProperties } : {}),
-      bookmarks: this.#bookmarks(),
+      bookmarks: this.#bookmarks(editor),
     };
   }
 
-  /** REF/PAGEREF targets: each bookmark's inner text plus the page its start
-   *  sits on (the bridge's pinned pagination; absent = the bookmark keeps its
-   *  cached value). */
-  #bookmarks(): ReadonlyMap<string, { text?: string; page?: number }> {
-    const map = new Map<string, { text?: string; page?: number }>();
+  /** REF/PAGEREF targets: each bookmark's inner text plus the DISPLAYED page
+   *  its start sits on (the host's page frame — restart and numFmt applied)
+   *  with that page's section format. Falls back to the bridge's physical page
+   *  only when no frame is available (headless); absent = the bookmark keeps
+   *  its cached value. */
+  #bookmarks(editor: Editor): ReadonlyMap<string, FieldBookmark> {
+    const map = new Map<string, FieldBookmark>();
     for (const target of this.crossReferenceTargets()) {
-      const page = this.host.bridge()?.pageOf(target.pos);
+      const frame = this.#frameAt(editor, target.pos);
+      const physical = this.host.bridge()?.pageOf(target.pos);
+      const page = frame?.page ?? (typeof physical === "number" ? physical + 1 : undefined);
       map.set(target.name, {
         ...(target.text ? { text: target.text } : {}),
-        ...(typeof page === "number" ? { page: page + 1 } : {}),
+        ...(page != null ? { page } : {}),
+        ...(frame?.pageFormat ? { pageFormat: frame.pageFormat } : {}),
       });
     }
     return map;

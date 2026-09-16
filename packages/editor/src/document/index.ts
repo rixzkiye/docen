@@ -129,15 +129,8 @@ import {
 // Side-effect import: registers the ribbon/header translation tables.
 import "./i18n";
 import { collectRevisions } from "./extensions/track-changes";
-import { resolvePageFieldsBounded, type PageFieldContext } from "./field-resolve";
-import {
-  customPropertiesOf,
-  evaluateField,
-  instructionName,
-  LIVE_FIELD_NAMES,
-  type FieldContext,
-  type FieldFrame,
-} from "./fields";
+import { liveFieldResolver, resolvePageFieldsBounded } from "./field-resolve";
+import { customPropertiesOf, finiteNumber, type FieldContext, type FieldFrame } from "./fields";
 import { LOCAL_HANDLED, READONLY_LIVE, SAVE_FORMATS, detectOpenFormat } from "./file-formats";
 import { pageNumberInlinePreset, pageNumberStoryPreset } from "./page-number";
 import { mergeSectionProperties } from "./page-setup";
@@ -440,15 +433,6 @@ const FLOATING_OR_INLINE = new Set(["wrap", "position"]);
 /** Rotate also serves an inline picture; inline shapes and charts don't
  *  rotate. */
 const FLOATING_OR_INLINE_IMAGE = new Set(["rotate"]);
-
-/** One page of the resolve walk as the evaluator's FieldFrame. */
-const frameOfPage = (page: PageFieldContext): FieldFrame => ({
-  page: page.pageNumber,
-  pageCount: page.pageCount,
-  section: page.section,
-  sectionPages: page.sectionPages,
-  ...(page.pageFormat ? { pageFormat: page.pageFormat } : {}),
-});
 
 @customElement({ name: "docen-document", template: documentTemplate, styles: documentStyles })
 class DocenDocument extends AddinHost<Editor> {
@@ -2602,17 +2586,13 @@ class DocenDocument extends AddinHost<Editor> {
       documentExtras?: Record<string, unknown>;
     };
     const core = attrs.core ?? {};
-    const revision = core.revision;
+    const revision = finiteNumber(core.revision);
     const custom = customPropertiesOf(attrs.documentExtras);
     return {
       now: new Date(),
       core,
       ...(this.filename != null && this.filename !== "" ? { filename: this.filename } : {}),
-      ...(typeof revision === "number"
-        ? { revision }
-        : typeof revision === "string" && revision !== ""
-          ? { revision: Number(revision) }
-          : {}),
+      ...(revision != null ? { revision } : {}),
       ...(custom ? { customProperties: custom } : {}),
     };
   }
@@ -2622,21 +2602,18 @@ class DocenDocument extends AddinHost<Editor> {
    *  (the resolved value changes where a field breaks). Bounded by
    *  {@link FIELD_RESOLVE_PASSES}; returns the final pages plus the pages
    *  whose painted field values changed (the incremental path repaints just
-   *  those). */
+   *  those). In field-code view (Alt+F9) the resolver resolves nothing, so
+   *  code atoms stay untouched and no re-layout rides the toggle. */
   #resolveFields(
     projected: ProjectedFlowInputs,
     laid: { pages: FlowPage[]; sectionOfPage: number[] },
     doc: JSONContent,
   ): { pages: FlowPage[]; sectionOfPage: number[]; dirty?: number[] } {
-    const base = this.#renderFieldBase(doc);
     return resolvePageFieldsBounded(
       laid.pages,
       projected.sections,
       laid.sectionOfPage,
-      (instruction, page) => {
-        if (!LIVE_FIELD_NAMES.has(instructionName(instruction))) return null;
-        return evaluateField(instruction, { ...base, frame: frameOfPage(page) });
-      },
+      liveFieldResolver(this.#renderFieldBase(doc), this.#fieldCodes),
       () => this.#laySections(projected),
       FIELD_RESOLVE_PASSES,
     );

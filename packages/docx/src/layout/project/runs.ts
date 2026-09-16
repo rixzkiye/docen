@@ -229,13 +229,15 @@ export function projectRuns(
       out.push({ kind: "text", text: "0", style, field: "page", ...descriptor });
     } else if (instr.startsWith("NUMPAGES")) {
       out.push({ kind: "text", text: "0", style, field: "numPages", ...descriptor });
+    } else if (typeof field.resultRunsXml === "string") {
+      // A structured result (TOC entry, nested field) re-hydrates item by
+      // item and outranks the flat-result placeholder branches.
+      pushFieldResultRuns(field.resultRunsXml, rPr);
     } else if (/^SECTION(PAGES)?\b/.test(instr)) {
       // The render pass re-resolves the section numbering live; keep a
       // measuring placeholder when the document cached no result so the atom
       // stays on a line the resolve walk visits.
       out.push({ kind: "text", text: cached || "0", style, ...descriptor });
-    } else if (typeof field.resultRunsXml === "string") {
-      pushFieldResultRuns(field.resultRunsXml, rPr);
     } else if (raw) {
       // Emit the atom even for an empty cache: the render pass and the update
       // commands resolve the field from its descriptor, and Word keeps the

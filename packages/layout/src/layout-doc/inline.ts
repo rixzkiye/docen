@@ -1,4 +1,5 @@
 import type { FontSlots } from "../font";
+import { formatNumber } from "../numbering-format";
 import type { LayoutDrawingLine, LayoutDrawingMember, LayoutDrawingShadow } from "./drawing";
 
 export interface LayoutTextStyle {
@@ -170,3 +171,28 @@ export type LayoutInline =
       /** The picture's outline stroke (pic:spPr a:ln) — Word's picture border. */
       line?: LayoutDrawingLine;
     };
+
+/** A text atom's painted label — the shared field-display contract the
+ *  projection, the render resolve pass and the painter all read: the render
+ *  pass's `resolved` value wins, then the live page-number value for the
+ *  dynamic markers (furniture atoms the page flow never resolved), else the
+ *  measured text (the cached result, or the instruction under Alt+F9 — code
+ *  atoms carry neither `resolved` nor a marker). */
+export function fieldLabelOf(
+  inline: LayoutInline & { kind: "text" },
+  page: {
+    pageIndex: number;
+    pageCount: number;
+    pageNumber?: { fmt?: string; offset?: number };
+  },
+  measured: string,
+): string {
+  return (
+    inline.resolved ??
+    (inline.field === "page"
+      ? formatNumber(page.pageNumber?.fmt, page.pageIndex + 1 + (page.pageNumber?.offset ?? 0))
+      : inline.field === "numPages"
+        ? String(page.pageCount)
+        : measured)
+  );
+}

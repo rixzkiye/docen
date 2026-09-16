@@ -23,6 +23,14 @@ import {
   type ProjectedPageNumbering,
 } from "@docen/layout";
 
+import {
+  evaluateField,
+  instructionName,
+  LIVE_FIELD_NAMES,
+  type FieldContext,
+  type FieldFrame,
+} from "./fields";
+
 /** One page slice of the pagination result handed to the resolver. */
 export interface PageFieldContext {
   /** 0-based physical page index. */
@@ -44,6 +52,30 @@ export interface PageFieldResolution {
   changedPages: number[];
   /** Whether any measured text was rewritten (the caller re-lays). */
   textChanged: boolean;
+}
+
+/** One page of the resolve walk as the evaluator's FieldFrame. */
+export const frameOfPage = (page: PageFieldContext): FieldFrame => ({
+  page: page.pageNumber,
+  pageCount: page.pageCount,
+  section: page.section,
+  sectionPages: page.sectionPages,
+  ...(page.pageFormat ? { pageFormat: page.pageFormat } : {}),
+});
+
+/** The render pass's resolver policy: only the live numbering fields resolve,
+ *  and nothing resolves under the field-code display (Alt+F9) — code atoms
+ *  must keep their instruction text so paint shows the code, and the pass must
+ *  not churn layouts for a view that is pure presentation. */
+export function liveFieldResolver(
+  base: Omit<FieldContext, "frame" | "sequences">,
+  showFieldCodes: boolean,
+): (instruction: string, page: PageFieldContext) => string | null {
+  if (showFieldCodes) return () => null;
+  return (instruction, page) =>
+    LIVE_FIELD_NAMES.has(instructionName(instruction))
+      ? evaluateField(instruction, { ...base, frame: frameOfPage(page) })
+      : null;
 }
 
 export interface BoundedPageFieldResolution {

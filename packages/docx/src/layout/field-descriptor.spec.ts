@@ -1,4 +1,4 @@
-import type { DocumentOptions, SectionChild } from "@office-open/docx";
+import type { DocumentOptions, ParagraphChild, SectionChild } from "@office-open/docx";
 import { describe, expect, it } from "vitest";
 
 import { projectDocumentOptions } from "./project";
@@ -107,5 +107,21 @@ describe("field descriptor projection", () => {
     });
     // A non-empty cache stays the measuring text (Word measures the result).
     expect(section).toMatchObject({ kind: "text", text: "3", instruction: "SECTION" });
+  });
+
+  it("prefers a SECTION field's structured result runs over the placeholder", () => {
+    const children = [
+      {
+        complexField: {
+          instruction: "SECTION",
+          result: "3",
+          resultRunsXml: "<w:r><w:t>II</w:t></w:r>",
+        },
+      },
+    ] as unknown as ParagraphChild[];
+    const inline = inlineOf([{ paragraph: { children } }]);
+    // The structured run re-hydrates; the flat cache must not leak beside it.
+    expect(inline).toHaveLength(1);
+    expect(inline[0]).toMatchObject({ kind: "text", text: "II" });
   });
 });

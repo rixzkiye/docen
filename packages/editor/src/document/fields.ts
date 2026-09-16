@@ -164,11 +164,14 @@ export interface FieldFrame {
   pageFormat?: string;
 }
 
-/** One REF/PAGEREF target: the bookmark's inner text (REF) and the page its
- *  bookmark start sits on (PAGEREF). */
+/** One REF/PAGEREF target: the bookmark's inner text (REF) and the displayed
+ *  page its bookmark start sits on (PAGEREF). `page` is the section-numbering
+ *  number (restart applied), `pageFormat` the target section's w:numFmt token
+ *  — a bookmark crossing into another section formats with its own. */
 export interface FieldBookmark {
   text?: string;
   page?: number;
+  pageFormat?: string;
 }
 
 /** A parsed instruction: the field name plus its positional arguments and
@@ -275,6 +278,18 @@ export function formatDate(d: Date, picture: string): string {
  *  object may carry numbers/strings; anything else is absent). */
 const str = (v: unknown): string | null =>
   typeof v === "string" ? v : typeof v === "number" ? String(v) : null;
+
+/** A numeric context value as a finite number, or null when absent/malformed
+ *  (a garbage revision must not paint "NaN"). Strings must parse to a finite
+ *  number; booleans/null/objects/NaN/Infinity are absent. */
+export function finiteNumber(v: unknown): number | null {
+  if (typeof v === "number") return Number.isFinite(v) ? v : null;
+  if (typeof v === "string" && v.trim() !== "") {
+    const n = Number(v);
+    return Number.isFinite(n) ? n : null;
+  }
+  return null;
+}
 
 /** A core-property date as a Date, or null when absent/malformed. */
 function coreDate(v: unknown): Date | null {
@@ -387,7 +402,10 @@ export const FIELD_EVALUATORS: Readonly<Record<string, FieldEvaluator>> = {
   KEYWORDS: (_field, ctx) => str(ctx.core?.keywords),
   COMMENTS: (_field, ctx) => str(ctx.core?.description),
   FILENAME: (_field, ctx) => ctx.filename ?? null,
-  REVNUM: (_field, ctx) => (ctx.revision != null ? String(ctx.revision) : str(ctx.core?.revision)),
+  REVNUM: (_field, ctx) => {
+    const revision = finiteNumber(ctx.revision) ?? finiteNumber(ctx.core?.revision);
+    return revision != null ? String(revision) : null;
+  },
   NUMWORDS: (_field, ctx) => (ctx.words != null ? String(ctx.words) : null),
   NUMCHARS: (_field, ctx) => (ctx.chars != null ? String(ctx.chars) : null),
   REF: (field, ctx) => {
@@ -396,7 +414,10 @@ export const FIELD_EVALUATORS: Readonly<Record<string, FieldEvaluator>> = {
   },
   PAGEREF: (field, ctx) => {
     const bookmark = field.args[0] ? ctx.bookmarks?.get(field.args[0]) : undefined;
-    return bookmark?.page != null ? formatNumber(ctx.frame?.pageFormat, bookmark.page) : null;
+    if (bookmark?.page == null) return null;
+    // The bookmark's own section numbering wins — a cross-section reference
+    // formats with the target page's numFmt, not the field's.
+    return formatNumber(bookmark.pageFormat ?? ctx.frame?.pageFormat, bookmark.page);
   },
   SEQ: (field, ctx) => {
     const ordinal = field.args[0] ? ctx.sequences?.get(field.args[0]) : undefined;

@@ -124,6 +124,36 @@ describe("field evaluator registry", () => {
     expect(resolveField("REF 不存在", base)).toBeNull();
   });
 
+  it("formats PAGEREF with the target bookmark's own section numbering", () => {
+    // The bookmark sits on a section whose pages restart at 5 in lowercase
+    // Roman; the field itself is on a decimal page 1. The target's display
+    // number and format win.
+    const ctx = {
+      ...base,
+      frame: { page: 1, pageCount: 9 },
+      bookmarks: new Map([["目标", { text: "第三章", page: 5, pageFormat: "lowerRoman" }]]),
+    };
+    expect(resolveField("PAGEREF 目标 \\h", ctx)).toBe("v");
+    // No bookmark format → the field's own section format is the fallback.
+    const fallback = {
+      ...ctx,
+      frame: { page: 1, pageCount: 9, pageFormat: "upperRoman" },
+      bookmarks: new Map([["目标", { text: "第三章", page: 5 }]]),
+    };
+    expect(resolveField("PAGEREF 目标 \\h", fallback)).toBe("V");
+  });
+
+  it("guards malformed revision numbers", () => {
+    expect(resolveField("REVNUM", { ...base, revision: Number.NaN, core: {} })).toBeNull();
+    expect(resolveField("REVNUM", { ...base, revision: undefined, core: {} })).toBeNull();
+    expect(
+      resolveField("REVNUM", { ...base, revision: undefined, core: { revision: "abc" } }),
+    ).toBeNull();
+    expect(resolveField("REVNUM", { ...base, revision: undefined, core: { revision: "12" } })).toBe(
+      "12",
+    );
+  });
+
   it("resolves SEQ per occurrence ordinal", () => {
     expect(resolveField("SEQ 图 \\* ARABIC", base)).toBe("3");
     expect(resolveField("SEQ 表", base)).toBeNull();
