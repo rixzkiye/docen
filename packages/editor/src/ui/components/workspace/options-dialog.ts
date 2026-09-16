@@ -31,6 +31,13 @@ export interface DocumentSettings {
   compatVersion?: number;
 }
 
+/** The General/User section's seed/commit shape — the host owns the settings
+ *  store; the dialog just carries the pair through its OK commit. */
+export interface UserIdentity {
+  name?: string;
+  initials?: string;
+}
+
 // Per-instance CSS anchor names so each dropdown's listbox popover floats
 // under its own control — without it, Fluent's default strands the popover at
 // the viewport corner (same race as <docen-ribbon-combobox>).
@@ -102,6 +109,17 @@ const themeOptionTemplate = html<ThemeOption, DocenOptionsDialog>`
 const template = html<DocenOptionsDialog>`
   <docen-dialog ${ref("dialogEl")}>
     <div class="opt-body">
+      <div class="opt-field">
+        <div class="opt-heading" ${ref("userHeadingEl")}></div>
+        <div class="opt-row">
+          <label ${ref("userNameLabelEl")}></label>
+          <fluent-text-input ${ref("userNameInput")}></fluent-text-input>
+        </div>
+        <div class="opt-row">
+          <label ${ref("initialsLabelEl")}></label>
+          <fluent-text-input ${ref("initialsInput")}></fluent-text-input>
+        </div>
+      </div>
       <div class="opt-field">
         <div class="opt-heading" ${ref("headingEl")}></div>
         <fluent-dropdown
@@ -235,7 +253,9 @@ type ComboboxLike = {
 
 /**
  * `<docen-options-dialog locale="…" theme="…" proofing="…">` — MS Office
- * "Options" dialog. v1 carries the host-level prefs: UI language (over
+ * "Options" dialog. v1 carries the host-level prefs: the user identity (Word's
+ * General tab user name/initials, seeded via the `identity` property), UI
+ * language (over
  * {@link availableLanguages},
  * so a locale added via `registerTranslation` or an add-in's `localizationInfo`
  * appears here with no further wiring), theme (the built-in Fluent web /
@@ -248,8 +268,8 @@ type ComboboxLike = {
  * the modal shell (backdrop / Esc / show).
  *
  * The host seeds the current values via `locale` / `theme` / `proofing` /
- * `markdown` / `document`, calls `show()`, and listens for
- * `options:ok { lang, theme, spellcheck, markdown, document }` (确定).
+ * `markdown` / `identity` / `document`, calls `show()`, and listens for
+ * `options:ok { lang, theme, spellcheck, markdown, identity, document }` (确定).
  * Cancel / Esc just close.
  * State commits atomically on OK (Office behavior — not live).
  *
@@ -270,6 +290,11 @@ class DocenOptionsDialog extends FASTElement {
   @attr markdown?: string;
 
   @observable dialogEl?: HTMLElement & { heading?: string; show(): void; hide(): void };
+  @observable userHeadingEl?: HTMLElement;
+  @observable userNameLabelEl?: HTMLElement;
+  @observable userNameInput?: HTMLInputElement & { value: string };
+  @observable initialsLabelEl?: HTMLElement;
+  @observable initialsInput?: HTMLInputElement & { value: string };
   @observable headingEl?: HTMLElement;
   @observable dropdown?: HTMLElement;
   @observable listbox?: HTMLElement;
@@ -286,6 +311,8 @@ class DocenOptionsDialog extends FASTElement {
   @observable markdownLabelEl?: HTMLElement;
   /** The document settings seed — the host assigns it before show(). */
   @observable document?: DocumentSettings;
+  /** The General/User seed — the host assigns it before show(). */
+  @observable identity?: UserIdentity;
   @observable docHeadingEl?: HTMLElement;
   @observable tabLabelEl?: HTMLElement;
   @observable tabInput?: HTMLInputElement & { value: string };
@@ -347,6 +374,8 @@ class DocenOptionsDialog extends FASTElement {
     // never renders (the prefill/read-back rule).
     if (this.spellBox) this.spellBox.checked = this.proofing !== "false";
     if (this.markdownBox) this.markdownBox.checked = this.markdown !== "false";
+    if (this.userNameInput) this.userNameInput.value = this.identity?.name ?? "";
+    if (this.initialsInput) this.initialsInput.value = this.identity?.initials ?? "";
     const d = this.document;
     if (this.tabInput)
       this.tabInput.value = d?.defaultTabStop != null ? String(d.defaultTabStop) : "";
@@ -381,6 +410,10 @@ class DocenOptionsDialog extends FASTElement {
           theme: this.#themeLocal,
           spellcheck: this.spellBox?.checked !== false,
           markdown: this.markdownBox?.checked !== false,
+          identity: {
+            name: this.userNameInput?.value.trim() ?? "",
+            initials: this.initialsInput?.value.trim() ?? "",
+          } satisfies UserIdentity,
           document: {
             defaultTabStop: Number.isFinite(tab) ? tab : undefined,
             updateFields: this.updateFieldsBox?.checked === true,
@@ -409,6 +442,9 @@ class DocenOptionsDialog extends FASTElement {
 
   #applyLabels(): void {
     if (this.dialogEl) this.dialogEl.heading = t("options.title", this);
+    if (this.userHeadingEl) this.userHeadingEl.textContent = t("options.user", this);
+    if (this.userNameLabelEl) this.userNameLabelEl.textContent = t("options.userName", this);
+    if (this.initialsLabelEl) this.initialsLabelEl.textContent = t("options.initials", this);
     if (this.headingEl) this.headingEl.textContent = t("options.uiLanguage", this);
     if (this.themeHeadingEl) this.themeHeadingEl.textContent = t("options.theme", this);
     if (this.spellHeadingEl) this.spellHeadingEl.textContent = t("options.proofing", this);

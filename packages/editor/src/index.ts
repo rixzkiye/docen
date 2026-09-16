@@ -34,6 +34,30 @@ export type { AddinHost } from "./ui/addin/host";
 export type { DocenHost, DocenAddin, RibbonTab } from "./ui/addin/types";
 export type { AdditionalLanguage, LanguageOption, LocalizationInfo } from "./ui";
 
+// Persisted editor settings + the user identity store (localStorage-backed,
+// shared by every host element on the page).
+export {
+  SETTINGS_STORAGE_KEY,
+  SETTINGS_VERSION,
+  createSettingsStore,
+  defaultSettings,
+  getSettings,
+  initialsFromName,
+  onSettingsChange,
+  resolveIdentity,
+  updateSettings,
+} from "./document";
+export type {
+  AutocorrectSettings,
+  DocenSettings,
+  IdentitySettings,
+  SettingsListener,
+  SettingsPatch,
+  SettingsStore,
+  SettingsStorage,
+  WritingSettings,
+} from "./document";
+
 // Fluent theme factories re-exported so registerTheme() callers build brand
 // themes (createLightTheme/createDarkTheme) from @docen/editor alone — no need
 // to depend on @fluentui/tokens directly. Mirrors how an Office.js host hands

@@ -148,6 +148,15 @@ import {
   tableContextTabs,
   useCmUnits,
 } from "./ribbon";
+import {
+  getSettings,
+  onSettingsChange,
+  resolveIdentity,
+  updateSettings,
+  type DocenSettings,
+  type IdentitySettings,
+  type SettingsPatch,
+} from "./settings";
 import { spellSuggestions } from "./spelling";
 
 /** Split buttons whose face carries no command of its own — the handler only
@@ -529,6 +538,9 @@ class DocenDocument extends AddinHost<Editor> {
   #lastDocSize = -1;
   #lastWords = 0;
   #unobserveLang?: () => void;
+  /** Tears down the shared settings-store subscription (header re-stamp +
+   *  `docen:settings-change` forwarding). */
+  #settingsOff?: () => void;
   /** Watches the host's `lang` attribute and forwards it to the internal
    *  <docen-workspace> + notifies locale observers. MutationObserver because
    *  @attr `lang` clashes with HTMLElement.lang (TS2416); manual
@@ -1970,6 +1982,20 @@ class DocenDocument extends AddinHost<Editor> {
     // Re-render header + ribbon when the page locale (<html lang>) changes.
     this.#unobserveLang = observeLang(() => this.#renderChrome());
 
+    // Persisted settings (identity + writing toggles) — any store change
+    // (this element's Options commit / setSettings, another <docen-document>,
+    // an add-in) re-stamps the chrome and bubbles out as `docen:settings-change`.
+    this.#settingsOff = onSettingsChange((settings) => {
+      this.#renderChrome();
+      this.dispatchEvent(
+        new CustomEvent("docen:settings-change", {
+          bubbles: true,
+          composed: true,
+          detail: { settings },
+        }),
+      );
+    });
+
     // Ribbon Display Options → drive browser fullscreen + status-bar hide.
     // auto-hide = Full Screen (Office); any other mode exits it.
     const ribbon = this.shadowRoot!.querySelector("docen-ribbon");
@@ -2854,6 +2880,8 @@ class DocenDocument extends AddinHost<Editor> {
       ?.removeEventListener("ribbon-mode-change", this.#onRibbonModeChange);
     this.#fontSyncCleanup?.();
     this.#fontSyncCleanup = undefined;
+    this.#settingsOff?.();
+    this.#settingsOff = undefined;
     clearTimeout(this.#autosaveTimer);
     this.#stopFormatPainter();
     this.#stopBorderPainting();
@@ -2948,14 +2976,17 @@ class DocenDocument extends AddinHost<Editor> {
   }
 
   #renderHeader(): string {
-    const user = this.getAttribute("user") ?? "";
+    // The store is the identity source; an explicit `user` attribute overrides
+    // it for display (Options edits the store, the attribute remains a host knob).
+    const identity = this.settings.identity;
+    const user = identity.name;
     const avatar = this.getAttribute("avatar") ?? "";
     const filename = this.getAttribute("filename") ?? t("header.doc-name", this);
-    const initial = user.trim().charAt(0).toUpperCase();
+    const initial = identity.initials || user.trim().charAt(0).toUpperCase();
     const avatarMarkup = avatar
       ? `<img class="avatar avatar-img" src="${escapeHtml(avatar)}" alt="" />`
       : initial
-        ? `<span class="avatar">${initial}</span>`
+        ? `<span class="avatar">${escapeHtml(initial)}</span>`
         : "";
     const autosave = t("header.autosave", this);
     const qatIds = this.#qatIds();
@@ -5972,6 +6003,10 @@ class DocenDocument extends AddinHost<Editor> {
             protection: (s.documentProtection as { edit?: string } | undefined)?.edit ?? "none",
             compatVersion: (s.compatibility as { version?: number } | undefined)?.version ?? 15,
           };
+          // General/User section — the store is the source of truth (the
+          // `user` attribute only overrides the rendered header).
+          (optionsEl as unknown as { identity?: IdentitySettings }).identity =
+            getSettings().identity;
           (optionsEl as unknown as { show?: () => void }).show?.();
         }
         break;
@@ -6021,14 +6056,15 @@ class DocenDocument extends AddinHost<Editor> {
       ?.setAttribute("language", proofingLanguageName(this.#caretLanguage().value));
   }
 
-  /** Options dialog 确定 — commit the UI language + theme + the document
-   *  settings. */
+  /** Options dialog 确定 — commit the UI language + theme + the user identity
+   *  + the document settings. */
   readonly #onOptionsOk = (event: Event): void => {
     const {
       lang,
       theme,
       spellcheck,
       markdown,
+      identity,
       document: docSettings,
     } = (
       event as CustomEvent<{
@@ -6036,6 +6072,7 @@ class DocenDocument extends AddinHost<Editor> {
         theme?: string;
         spellcheck?: boolean;
         markdown?: boolean;
+        identity?: { name?: string; initials?: string };
         document?: {
           defaultTabStop?: number;
           updateFields?: boolean;
@@ -6058,6 +6095,7 @@ class DocenDocument extends AddinHost<Editor> {
       // No transaction rides an options commit — re-stamp the ribbon toggle.
       this.#syncFormatButtons();
     }
+    if (identity) updateSettings({ identity });
     if (docSettings) this.#applyDocumentSettings(docSettings);
   };
 
@@ -6841,6 +6879,46 @@ class DocenDocument extends AddinHost<Editor> {
   getShowMarks(): boolean {
     return this.hasAttribute("show-marks");
   }
+
+  // ── Persisted settings (identity + writing toggles) ────────────────────────
+
+  /** The effective settings: the shared persisted store with the `user`
+   *  attribute's identity projection applied (the attribute wins while set). */
+  get settings(): DocenSettings {
+    const stored = getSettings();
+    return { ...stored, identity: resolveIdentity(this.getAttribute("user"), stored.identity) };
+  }
+
+  /** Merge a settings patch into the shared persisted store. A real change
+   *  persists, re-renders the chrome, and bubbles `docen:settings-change`
+   *  (`detail: { settings }`) out of the element. */
+  setSettings(patch: SettingsPatch): void {
+    updateSettings(patch);
+  }
 }
+
+// Persisted settings + identity store — the same module later lanes (D1
+// autocorrect, B4 proofing, C1 hidden text) and host consumers import.
+export {
+  SETTINGS_STORAGE_KEY,
+  SETTINGS_VERSION,
+  createSettingsStore,
+  defaultSettings,
+  getSettings,
+  initialsFromName,
+  onSettingsChange,
+  resolveIdentity,
+  updateSettings,
+} from "./settings";
+export type {
+  AutocorrectSettings,
+  DocenSettings,
+  IdentitySettings,
+  SettingsListener,
+  SettingsPatch,
+  SettingsStore,
+  SettingsStorage,
+  WritingSettings,
+} from "./settings";
 
 export default DocenDocument;
