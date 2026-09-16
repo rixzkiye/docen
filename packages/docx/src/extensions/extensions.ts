@@ -20,7 +20,7 @@ import { TableRow } from "./table-row";
 import { TextStyle } from "./text-style";
 import { Textbox } from "./textbox";
 import { TocField } from "./toc-field";
-import { Insertion, Deletion } from "./track-change";
+import { FormatChange, Insertion, Deletion } from "./track-change";
 import { WpgGroup } from "./wpg-group";
 import { WpsShape } from "./wps-shape";
 
@@ -71,6 +71,7 @@ export const tiptapMarkExtensions: AnyExtension[] = [
   Bold,
   Code,
   Deletion,
+  FormatChange,
   Highlight,
   Insertion,
   Italic,
@@ -120,7 +121,14 @@ export { Image } from "./image";
 export { Link } from "./link";
 export { Ruby } from "./ruby";
 export { TextStyle } from "./text-style";
-export { Insertion, Deletion } from "./track-change";
+export {
+  FormatChange,
+  Insertion,
+  Deletion,
+  parseFormatRecords,
+  parseRunMarks,
+} from "./track-change";
+export type { RunFormatEdit, RunFormatRecord } from "./track-change";
 export { PageBreak } from "./page-break";
 export { WpgGroup } from "./wpg-group";
 export { WpsShape } from "./wps-shape";

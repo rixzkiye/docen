@@ -14,7 +14,7 @@ import { observeLang, t } from "../../i18n/localize";
  *  shape (index = the entry the accept/reject events refer to). */
 export interface RevisionCard {
   index: number;
-  type: "insertion" | "deletion";
+  type: "insertion" | "deletion" | "format";
   author: string;
   date: string;
   text: string;
@@ -80,6 +80,12 @@ const styles = css`
   .kind.deletion {
     background: var(--docen-color-status-warning-background, #fdf6e6);
     color: var(--docen-color-status-warning, #8a5b00);
+  }
+  /* Format changes (w:rPrChange/w:pPrChange): a neutral tag — the change is a
+     property edit, not an addition or removal. */
+  .kind.format {
+    background: var(--docen-color-subtle-background, #f0f0f0);
+    color: var(--docen-color-text-2, #616161);
   }
   .author {
     font-weight: 600;

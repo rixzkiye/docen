@@ -20,14 +20,46 @@ import { metafileMembers, pictureSrc } from "./media";
 import { romanNumeral } from "./numbering";
 import { fontAttr, toFamily, runStyleOf } from "./styles";
 
-/** Word display presets merged UNDER a container's runs (explicit run props
- *  win per field): tracked insertions underline and tracked deletions strike
- *  in the first author's revision red — Word's "By author" palette starts at
- *  red, and a single default author sees red for every revision. Hyperlinks
- *  carry no preset: Word styles them only via the run's "Hyperlink" character
- *  style (w:rStyle), which the cascade resolves per run. */
-const INSERTION_DISPLAY = { underline: { type: "single" }, color: "FF0000" } as const;
-const DELETION_DISPLAY = { strike: true, color: "FF0000" } as const;
+/** Word's "By author" revision palette — slot 0 is the red Word's first
+ *  reviewer gets (the canvas default before per-author colors existed, so
+ *  single-author documents render exactly as before). Word assigns colors in
+ *  reviewer order; the projection does the same on first encounter. Colors
+ *  are OOXML bare hex (no #). */
+export const REVISION_AUTHOR_COLORS = [
+  "FF0000",
+  "2E74B5",
+  "2F7D32",
+  "9C27B0",
+  "E36C0A",
+  "00838F",
+  "C2185B",
+  "6D4C41",
+] as const;
+
+/** "By change type" mode: insertions and deletions share Word's legacy
+ *  revision red; format-change bars stay neutral. */
+const REVISION_CHANGE_TYPE_COLOR = "FF0000";
+const FORMAT_CHANGE_TYPE_COLOR = "808080";
+
+/** The revision's display color: the author's stable palette slot in
+ *  "By author" mode (the default), the fixed revision red in "By change type"
+ *  mode. `mark` is the w:ins/w:del/rPrChange record carrying w:author. */
+function revisionColor(ctx: ProjectContext, mark: Rec): string {
+  if (ctx.markup?.colors === "changeType") return REVISION_CHANGE_TYPE_COLOR;
+  const author = str(mark.author) ?? "";
+  let slot = ctx.revisionAuthorColors.get(author);
+  if (slot == null) {
+    slot = ctx.revisionAuthorColors.size;
+    ctx.revisionAuthorColors.set(author, slot);
+  }
+  return REVISION_AUTHOR_COLORS[slot % REVISION_AUTHOR_COLORS.length]!;
+}
+
+/** Word's format-change bar color: the author's palette slot, or the neutral
+ *  change-type gray when the display is "By change type". */
+function formatChangeColor(ctx: ProjectContext, mark: Rec): string {
+  return ctx.markup?.colors === "changeType" ? FORMAT_CHANGE_TYPE_COLOR : revisionColor(ctx, mark);
+}
 
 /** One revision mark's effective view under the display state: a mark whose
  *  author sits outside the filter renders as accepted ("none") no matter the
@@ -39,6 +71,18 @@ function effectiveView(markup: MarkupDisplay | undefined, mark: Rec): "all" | "n
   if (!authors || authors.length === 0) return view;
   const author = str(mark.author) ?? "";
   return author !== "" && authors.includes(author) ? view : "none";
+}
+
+/** The paint metadata for a run carrying w:rPrChange (formatChange mark in the
+ *  runtime model), or undefined when the run has no shown format change. The
+ *  author's palette slot is assigned even when the mark is filtered out, so
+ *  toggling Specific People never recolors the remaining authors. */
+export function formatIndicatorOf(
+  ctx: ProjectContext,
+  mark: Rec,
+): { formatChange: { color: string } } | Record<string, never> {
+  const color = formatChangeColor(ctx, mark);
+  return effectiveView(ctx.markup, mark) === "all" ? { formatChange: { color } } : {};
 }
 
 /** Memo for complex-field result XML tokenization, keyed by the verbatim
@@ -193,12 +237,16 @@ export function projectRuns(
     // half-size lines; the dialog's spaces mark the split in Word, here
     // folded away for an even split.
     const combine = combineOf(rPr, text);
+    // A run whose rPrChange is shown carries the format-change paint marker
+    // (Word's change bar rides the run's line — the painter draws it).
+    const revision = isRecord(rPr.revision) ? rPr.revision : undefined;
     out.push({
       kind: "text",
       text,
       style: textStyleOf(rPr),
       commentIds,
       ...(combine ? { combine } : {}),
+      ...(revision ? formatIndicatorOf(ctx, revision) : {}),
     });
   };
   /** A field (w:fldSimple / complexField): PAGE/NUMPAGES become dynamic atoms
@@ -218,17 +266,21 @@ export function projectRuns(
     const descriptor = raw
       ? { instruction: raw, ...(typeof cached === "string" ? { result: cached } : {}) }
       : {};
+    // A run carrying rPrChange keeps the format-change marker on every atom
+    // it emits (field results included).
+    const revision = isRecord(rPr.revision) ? rPr.revision : undefined;
+    const format = revision ? formatIndicatorOf(ctx, revision) : {};
     if (ctx.showFieldCodes && raw) {
       // Alt+F9: the instruction verbatim in place of every result.
-      out.push({ kind: "text", text: raw, style, ...descriptor });
+      out.push({ kind: "text", text: raw, style, ...descriptor, ...format });
     } else if (
       instr.startsWith("PAGE") &&
       !instr.startsWith("PAGES") &&
       !instr.startsWith("PAGEREF")
     ) {
-      out.push({ kind: "text", text: "0", style, field: "page", ...descriptor });
+      out.push({ kind: "text", text: "0", style, field: "page", ...descriptor, ...format });
     } else if (instr.startsWith("NUMPAGES")) {
-      out.push({ kind: "text", text: "0", style, field: "numPages", ...descriptor });
+      out.push({ kind: "text", text: "0", style, field: "numPages", ...descriptor, ...format });
     } else if (typeof field.resultRunsXml === "string") {
       // A structured result (TOC entry, nested field) re-hydrates item by
       // item and outranks the flat-result placeholder branches.
@@ -237,12 +289,12 @@ export function projectRuns(
       // The render pass re-resolves the section numbering live; keep a
       // measuring placeholder when the document cached no result so the atom
       // stays on a line the resolve walk visits.
-      out.push({ kind: "text", text: cached || "0", style, ...descriptor });
+      out.push({ kind: "text", text: cached || "0", style, ...descriptor, ...format });
     } else if (raw) {
       // Emit the atom even for an empty cache: the render pass and the update
       // commands resolve the field from its descriptor, and Word keeps the
       // (empty) field mark too.
-      out.push({ kind: "text", text: cached ?? "", style, ...descriptor });
+      out.push({ kind: "text", text: cached ?? "", style, ...descriptor, ...format });
     } else if (cached) {
       pushText(cached, rPr);
     }
@@ -457,19 +509,23 @@ export function projectRuns(
       if (isRecord(child.insertion) && Array.isArray(child.insertion.children)) {
         // Word's Display for Review: a revision outside the author filter (or
         // in simple/no-markup view) shows as accepted — plain text; the
-        // original view drops shown insertions entirely.
+        // original view drops shown insertions entirely. The author's palette
+        // slot is assigned regardless (Word colors reviewers, not views).
+        const color = revisionColor(ctx, child.insertion);
         const eff = effectiveView(ctx.markup, child.insertion);
         if (eff !== "original") {
           pushRuns(
             child.insertion.children,
-            eff === "all" ? { ...preset, ...INSERTION_DISPLAY } : preset,
+            eff === "all" ? { ...preset, underline: { type: "single" }, color } : preset,
           );
         }
       }
       if (isRecord(child.deletion) && Array.isArray(child.deletion.children)) {
+        const color = revisionColor(ctx, child.deletion);
         const eff = effectiveView(ctx.markup, child.deletion);
-        if (eff === "all") pushRuns(child.deletion.children, { ...preset, ...DELETION_DISPLAY });
-        else if (eff === "original") pushRuns(child.deletion.children, preset);
+        if (eff === "all") {
+          pushRuns(child.deletion.children, { ...preset, strike: true, color });
+        } else if (eff === "original") pushRuns(child.deletion.children, preset);
       }
       if (Array.isArray(child.children)) pushRuns(child.children, preset);
     }

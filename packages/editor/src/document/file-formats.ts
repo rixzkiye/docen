@@ -260,10 +260,12 @@ export const LOCAL_HANDLED: ReadonlySet<string> = new Set([
   "reviewing-pane",
   // Word's Display for Review: the four markup views re-project the document
   // (the host carries the state and passes it to the layout projection);
-  // Specific People scopes the view to one reviewer's revisions. The two
+  // Specific People scopes the view to one reviewer's revisions, Markup
+  // Colors swaps the revision palette (By author / By change type). The two
   // "…All Changes Shown" sweeps need the same filter as their argument.
   "display-for-review",
   "review-specific-people",
+  "markup-colors",
   "accept-all-changes-shown",
   "reject-all-changes-shown",
   // Table Design → Draw Border: the pen pickers stamp the host's pen state;

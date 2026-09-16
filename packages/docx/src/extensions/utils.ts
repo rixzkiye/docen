@@ -3,7 +3,7 @@ import type {
   BorderOptions,
   BordersOptions,
   IndentProperties,
-  ParagraphPropertiesOptionsBase,
+  ParagraphPropertiesOptions,
   ShadingProperties,
   SpacingProperties,
   TableCellOptions,
@@ -51,8 +51,9 @@ export const SECTION_ATTR_KEYS = new Set<string>(SECTION_CLOSE_KEYS);
  *  verbatim. */
 type EditorParagraphAttrKey = (typeof SECTION_CLOSE_KEYS)[number] | "codeLanguage";
 
-/** The full attr key set the paragraph node declares. */
-type ParagraphAttrKey = EditorParagraphAttrKey | keyof ParagraphPropertiesOptionsBase;
+/** The full attr key set the paragraph node declares — ParagraphPropertiesOptions
+ *  (the base mirror plus the `revision` w:pPrChange carrier). */
+type ParagraphAttrKey = EditorParagraphAttrKey | keyof ParagraphPropertiesOptions;
 
 /** The attr spec shape every mirror table uses (attrNative plus HTML-paste
  *  parseHTML keys). Shared by the paragraph/table-family/run satisfies guards. */
@@ -155,6 +156,10 @@ export function docxParagraphAttrs() {
     // Markdown code-fence info string (```ts) riding the JSON — docen-only,
     // no OOXML paragraph counterpart; renderDocx skips it.
     codeLanguage: attrNative(),
+    // w:pPrChange carrier — the paragraph's complete previous pPr (office-open
+    // ParagraphPropertiesChangeOptions: id/author/date + old properties). The
+    // tracked-format-change workflow records it; compile passes it through.
+    revision: attrNative(),
     // Mirror contract: every office-open paragraph property + editor key
     // declared, nothing else (see ParagraphAttrKey).
   } satisfies Record<ParagraphAttrKey, DocxAttrSpec>;

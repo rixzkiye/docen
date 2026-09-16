@@ -129,6 +129,10 @@ export type LayoutInline =
       /** Two-lines-in-one (w:eastAsianLayout): the atom packs its whole text
        *  into two half-size lines — an unbreakable box of the combined width. */
       combine?: LayoutCombine;
+      /** Tracked format change (w:rPrChange): the painter draws Word's change
+       *  bar beside the line this run appears on, in the author's revision
+       *  color. Pure paint metadata — measuring and wrapping ignore it. */
+      formatChange?: { color: string };
     }
   | { kind: "break" }
   | { kind: "tab"; toPx?: number }

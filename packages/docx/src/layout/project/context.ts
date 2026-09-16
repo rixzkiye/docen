@@ -7,10 +7,14 @@ import type { NumberingIndex } from "./numbering";
  *  "simple"/"none" show the accepted result (marks hidden), "all" shows every
  *  mark, "original" shows the pre-revision text. `authors` limits mark
  *  display to the listed reviewers — other authors' revisions render as
- *  accepted regardless of the view (undefined/empty = every author). */
+ *  accepted regardless of the view (undefined/empty = every author).
+ *  `colors` picks the revision palette: "author" (default, Word's By-author
+ *  cycle) or "changeType" (Word's legacy fixed colors — insertions and
+ *  deletions share the revision red; format-change bars go neutral gray). */
 export interface MarkupDisplay {
   view: "simple" | "all" | "none" | "original";
   authors?: readonly string[];
+  colors?: "author" | "changeType";
 }
 
 /** Per-document projection context, resolved once and threaded down. */
@@ -46,6 +50,11 @@ export interface ProjectContext {
   /** The tracked-changes display state (Word's Display for Review); absent =
    *  every mark projects (the round-trip-faithful default). */
   markup?: MarkupDisplay;
+  /** Revision author → "By author" palette slot, assigned on first encounter
+   *  in document order (Word assigns reviewer colors in the order reviewers
+   *  appear). Stable for the whole projection walk, so an author keeps one
+   *  color across every paragraph; cycles at the palette length. */
+  revisionAuthorColors: Map<string, number>;
   /** Word's field-code display (Alt+F9): every field projects its instruction
    *  verbatim instead of its cached result — no dynamic page atoms, no
    *  re-hydrated result runs. */

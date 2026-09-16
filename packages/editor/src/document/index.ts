@@ -563,6 +563,9 @@ class DocenDocument extends AddinHost<Editor> {
    *  Pure display state — the marks in the document are untouched. */
   #markupView: "simple" | "all" | "none" | "original" = "simple";
   #markupAuthors: string[] | null = null;
+  /** Review → Markup Colors: Word's By-author palette (default) or the fixed
+   *  per-change-type colors. Display-only, like the view/filter above. */
+  #markupColors: "author" | "changeType" = "author";
   /** Word's field-code display (Alt+F9): projects every field as its
    *  instruction text instead of the cached result. Pure display state — the
    *  document's field atoms are untouched. */
@@ -2457,9 +2460,16 @@ class DocenDocument extends AddinHost<Editor> {
       compileDocument(this.#mergedView(doc)),
       // Word's Display for Review: "simple" is also the all-marks projection
       // minus the review chrome Word draws outside the flow, so only an
-      // actual filter needs the non-default pass.
-      this.#markupView !== "simple" || this.#markupAuthors
-        ? { view: this.#markupView, authors: this.#markupAuthors ?? undefined }
+      // actual filter (or the change-type palette) needs the non-default
+      // pass. "simple" maps to "all" inside that pass: the canvas has no
+      // simple-markup chrome, and simple must never hide the marks it is
+      // supposed to summarize.
+      this.#markupView !== "simple" || this.#markupAuthors || this.#markupColors !== "author"
+        ? {
+            view: this.#markupView === "simple" ? "all" : this.#markupView,
+            authors: this.#markupAuthors ?? undefined,
+            colors: this.#markupColors,
+          }
         : undefined,
       // Alt+F9: every field projects its instruction instead of the result.
       this.#fieldCodes,
@@ -3644,6 +3654,27 @@ class DocenDocument extends AddinHost<Editor> {
             checked: filtered?.includes(a) ?? false,
           })),
         ]),
+      );
+    // Markup Colors: the two palette entries with their live check.
+    const colors = this.#markupColors;
+    display
+      .closest("docen-ribbon-group")
+      ?.querySelector<HTMLElement>('docen-ribbon-menu[event="markup-colors"]')
+      ?.setAttribute(
+        "items",
+        JSON.stringify(
+          (
+            [
+              ["author", "by-author"],
+              ["changeType", "by-change-type"],
+            ] as const
+          ).map(([value, key]) => ({
+            text: t(`ribbon.opt.${key}`, this),
+            event: "markup-colors",
+            value,
+            checked: value === colors,
+          })),
+        ),
       );
   }
 
@@ -5121,6 +5152,9 @@ class DocenDocument extends AddinHost<Editor> {
         setMarkupAuthors: (authors) => {
           this.#markupAuthors = authors;
         },
+        setMarkupColors: (colors) => {
+          this.#markupColors = colors;
+        },
         renderDoc: (doc) => this.#renderDoc(doc),
         syncMarkupMenus: () => this.#syncMarkupMenus(),
         getJSON: () => this.getJSON(),
@@ -5853,7 +5887,8 @@ class DocenDocument extends AddinHost<Editor> {
   }
 
   /** The Document Inspector's scan: comment cards in documentExtras and the
-   *  distinct revision records (w:ins/w:del ids) in the doc. */
+   *  distinct revision records (w:ins/w:del/w:rPrChange ids, paragraph
+   *  w:pPrChange records included) in the doc. */
   #inspectFindings(): { comments: number; revisions: number } {
     const comments = (
       (this.editor?.state.doc.attrs ?? {}) as {
@@ -5861,16 +5896,11 @@ class DocenDocument extends AddinHost<Editor> {
       }
     ).documentExtras?.comments?.length;
     const ids = new Set<string>();
-    this.editor?.state.doc.descendants((node) => {
-      if (!node.isText) return true;
-      for (const mark of node.marks) {
-        const name = mark.type.name;
-        if (name === "insertion" || name === "deletion") {
-          ids.add(`${name}:${String((mark.attrs as { id?: unknown }).id)}`);
-        }
+    if (this.editor) {
+      for (const revision of collectRevisions(this.editor.state.doc)) {
+        ids.add(`${revision.type}:${String(revision.id)}`);
       }
-      return true;
-    });
+    }
     return { comments: comments ?? 0, revisions: ids.size };
   }
 

@@ -9,4 +9,10 @@ export { HIGHLIGHT_PALETTE_RGB, HighlightColor } from "@office-open/docx";
 // (packages/docx layout/project.ts consumes resolvePageSize internally).
 // DOCEN_CLIP_MIME + selectionSlicePayload: the docen-lossless clipboard lane
 // (a PM slice JSON payload that survives copy/cut → paste with all marks).
-export { resolvePageSize, resolveFontName, DOCEN_CLIP_MIME, selectionSlicePayload } from "./utils";
+export {
+  resolvePageSize,
+  resolveFontName,
+  DOCEN_CLIP_MIME,
+  selectionSlicePayload,
+  SECTION_ATTR_KEYS,
+} from "./utils";

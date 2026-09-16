@@ -203,10 +203,13 @@ export function inheritFurnitureSlots(
 
 /** Project a section's headers/footers. An absent slot stays undefined (the
  *  painter falls back per OOXML: page 1 without titlePage and even pages
- *  without evenAndOddHeaders both use `default`). */
+ *  without evenAndOddHeaders both use `default`). `revisionAuthorColors` is
+ *  the document-wide By-author palette slot map the body projection uses —
+ *  shared so one author keeps one color across body, headers and footers. */
 export function projectPageFurniture(
   section: SectionOptions | undefined,
   doc: DocumentOptions,
+  revisionAuthorColors?: Map<string, number>,
 ): ProjectedPageFurniture {
   const ctx: ProjectContext = {
     styles: doc.styles,
@@ -218,6 +221,8 @@ export function projectPageFurniture(
     // keeps the furniture walk independent even if malformed input carries one.
     footnoteOrdinals: new Map(),
     endnoteOrdinals: new Map(),
+    // The document-wide author palette (fresh only for a standalone call).
+    revisionAuthorColors: revisionAuthorColors ?? new Map(),
   };
   const projectSlots = (side: unknown): LayoutBlock[] | undefined => {
     if (!Array.isArray(side)) return undefined;
