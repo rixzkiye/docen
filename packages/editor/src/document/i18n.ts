@@ -1081,10 +1081,12 @@ export const ribbonEn: AdditionalLanguage = {
     "header.history-item": "Edit {0}",
     "header.doc-name": "Document.docx",
     "header.new": "New",
+    "header.new-from-template": "New from Template…",
     "header.open": "Open…",
     "header.save-as": "Save As…",
     "header.save-as-markdown": "Save As Markdown…",
     "header.save-as-pdf": "Export as PDF",
+    "header.save-as-template": "Save as Template",
     "header.print": "Print",
     "header.properties": "Properties",
     "header.inspect": "Inspect Document",
@@ -1097,6 +1099,10 @@ export const ribbonEn: AdditionalLanguage = {
     "header.search.no-results": "No commands found",
     "header.close": "Close",
     "close.confirm": "Close this document? Unsaved changes will be lost.",
+    // --- Open refusals (alert surfaced by the file-picker change handler) ---
+    "open.flat-opc-unsupported":
+      "Flat OPC XML (.xml) documents are not supported yet — open the .docx or .docm version.",
+    "open.unsupported": "Unsupported file type: {name}",
     "header.lang.zh": "中文",
     "header.lang.en": "English",
     // --- Header/footer edit stories (the canvas story chrome tag) ---
@@ -1297,6 +1303,15 @@ export const ribbonEn: AdditionalLanguage = {
     "tocDialog.leader.underscore": "Underscores",
     "tocDialog.leader.middleDot": "Middle dots",
     "tocDialog.leader.none": "None",
+    // --- New from Template dialog + built-in template names ---
+    "templateDialog.title": "New from Template",
+    "templateDialog.create": "Create",
+    "template.name.blank": "Blank document",
+    "template.desc.blank": "Start from a blank page.",
+    "template.name.report": "Report",
+    "template.desc.report": "Title, heading outline, and a table-of-contents placeholder.",
+    "template.name.letter": "Letter",
+    "template.desc.letter": "Sender, recipient, and letter-body placeholders.",
     // --- Mail merge (recipients + merge fields) ---
     "recipients.title": "Mail Merge Recipients",
     "recipients.hint": "Paste a CSV/TSV data source — the first row names the merge fields.",
@@ -2437,10 +2452,12 @@ export const ribbonZhCN: AdditionalLanguage = {
     "header.history-item": "编辑 {0}",
     "header.doc-name": "文档.docx",
     "header.new": "新建",
+    "header.new-from-template": "从模板新建…",
     "header.open": "打开…",
     "header.save-as": "另存为…",
     "header.save-as-markdown": "另存为 Markdown…",
     "header.save-as-pdf": "导出为 PDF",
+    "header.save-as-template": "另存为模板",
     "header.print": "打印",
     "header.properties": "属性",
     "header.inspect": "检查问题",
@@ -2453,6 +2470,9 @@ export const ribbonZhCN: AdditionalLanguage = {
     "header.search.no-results": "未找到相关命令",
     "header.close": "关闭",
     "close.confirm": "要关闭此文档吗？未保存的更改将丢失。",
+    // --- 打开拒绝提示（文件选择 change 处理器弹出的警告） ---
+    "open.flat-opc-unsupported": "尚不支持 Flat OPC XML（.xml）文档——请改用 .docx 或 .docm 版本。",
+    "open.unsupported": "不支持的文件类型：{name}",
     "header.lang.zh": "中文",
     "header.lang.en": "English",
     // --- Header/footer edit stories (the canvas story chrome tag) ---
@@ -2653,6 +2673,15 @@ export const ribbonZhCN: AdditionalLanguage = {
     "tocDialog.leader.underscore": "下划线",
     "tocDialog.leader.middleDot": "中间点",
     "tocDialog.leader.none": "无",
+    // --- 从模板新建对话框 + 内置模板名称 ---
+    "templateDialog.title": "从模板新建",
+    "templateDialog.create": "创建",
+    "template.name.blank": "空白文档",
+    "template.desc.blank": "从空白页开始。",
+    "template.name.report": "报告",
+    "template.desc.report": "标题、标题大纲和目录占位符。",
+    "template.name.letter": "信函",
+    "template.desc.letter": "寄件人、收件人和信函正文占位符。",
     // --- 邮件合并（收件人 + 合并域） ---
     "recipients.title": "邮件合并收件人",
     "recipients.hint": "粘贴 CSV/TSV 数据源——第一行为合并域字段名。",

@@ -1,3 +1,4 @@
+import { PART_REGISTRIES, type ContentTypeOverride } from "@office-open/core";
 import {
   generateDocument,
   generateDocumentStream,
@@ -1425,9 +1426,98 @@ export function parseDOCXSync(
 }
 
 /**
+ * DOCX package variants — the macro-enabled and template siblings that share
+ * the OOXML part layout but declare a different main document part content
+ * type (ECMA-376 Part 1 §11.3.10 + the MS-OFFMACRO main types). Word keeps the
+ * document part at `word/document.xml` in every variant; only the
+ * `[Content_Types].xml` Override changes.
+ */
+export type DocxVariant = "docx" | "docm" | "dotx" | "dotm";
+
+/** `[Content_Types].xml` Override for `/word/document.xml`, per variant. */
+const MAIN_DOCUMENT_CONTENT_TYPES: Record<DocxVariant, string> = {
+  docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml",
+  docm: "application/vnd.ms-word.document.macroEnabled.main+xml",
+  dotx: "application/vnd.openxmlformats-officedocument.wordprocessingml.template.main+xml",
+  dotm: "application/vnd.ms-word.template.macroEnabled.main+xml",
+};
+
+/**
+ * Content-type overrides for the parts office-open's writer treats as present
+ * on a fresh compile (registry `presence.flag === "freshCompile"`).
+ *
+ * The writer reads `DocxWriteContext.hasNumbering` / `hasFootnotes` /
+ * `hasEndnotes` off the injected `[Content_Types].xml` table whenever one is
+ * present (`!options.contentTypes || sourceOverrides.some(...)`), so a variant
+ * stamp built from scratch must declare those parts — otherwise the model's
+ * `word/numbering.xml` / `word/footnotes.xml` / `word/endnotes.xml` are never
+ * emitted while `word/document.xml` keeps referencing them (dangling `w:numId`
+ * and note references). `/word/document.xml` is excluded: the variant's own
+ * main override is appended last.
+ */
+const FRESH_COMPILE_CONTENT_TYPES: readonly ContentTypeOverride[] =
+  PART_REGISTRIES.docx.parts.flatMap((part) =>
+    part.contentType !== undefined &&
+    part.path !== "word/document.xml" &&
+    part.presence.kind === "conditional" &&
+    part.presence.flag === "freshCompile"
+      ? [{ partName: `/${part.path}`, contentType: part.contentType }]
+      : [],
+  );
+
+/**
+ * Stamp a variant's main-part content type onto compiled options.
+ *
+ * office-open's content-type merge keeps a surviving source Override for a
+ * part it rebuilds, so a save that requests a variant must REPLACE the
+ * source's `/word/document.xml` override rather than add a second one — while
+ * merging (not replacing) the rest keeps every other source declaration
+ * (macro/ole parts, theme, footnotes) intact. An explicit `docx` request
+ * therefore flips a macro-enabled/template source back to the standard
+ * document main type (bytes must agree with a .docx name/MIME); only an
+ * absent `variant` leaves the source main type untouched (source-faithful
+ * round-trip — see the "no variant requested" case).
+ *
+ * A source-less compile (`compiled.contentTypes === undefined`) has no table
+ * to merge, and injecting a partial one disables office-open's fresh-compile
+ * defaults: its writer gates `word/numbering.xml` / `word/footnotes.xml` /
+ * `word/endnotes.xml` on the table declaring them, so the table is seeded with
+ * the registry's fresh-compile declarations first — the variant output then
+ * carries the same parts a plain (no-variant) fresh compile would.
+ */
+function applyVariant(
+  compiled: DocumentOptions,
+  variant: DocxVariant | undefined,
+): DocumentOptions {
+  if (!variant) return compiled;
+  const source = compiled.contentTypes;
+  return {
+    ...compiled,
+    contentTypes: {
+      defaults: source?.defaults ?? [],
+      overrides: [
+        ...(source ? [] : FRESH_COMPILE_CONTENT_TYPES),
+        ...(source?.overrides ?? []).filter(
+          (o) => o.partName.toLowerCase() !== "/word/document.xml",
+        ),
+        { partName: "/word/document.xml", contentType: MAIN_DOCUMENT_CONTENT_TYPES[variant] },
+      ],
+    },
+  };
+}
+
+/**
  * Options for {@link generateDOCX} / {@link generateDOCXStream}.
  */
 export interface DocxGenerateOptions<T extends OutputType = "nodebuffer"> {
+  /**
+   * Package variant whose main document part content type is stamped on the
+   * output — `docx`, `docm`, `dotx`, or `dotm`. Requesting `docx` flips a
+   * macro-enabled/template source package back to the standard document main
+   * type. Omit it to keep the source's own main type (source-faithful save).
+   * Macro parts carried in `documentExtras.rawParts` stay in every variant.
+   */
+  variant?: DocxVariant;
   /**
    * Pre-compilation steps run on the JSON in place (default: `prepareImages()`).
    * - `true` / `undefined`: default image pre-fetch (http(s) → embedded data URL)
@@ -1488,12 +1578,12 @@ export async function generateDOCX<T extends OutputType = "nodebuffer">(
   json: JSONContent,
   options?: DocxGenerateOptions<T>,
 ): Promise<OutputByType[T]> {
-  const { prepare = true, packer, document, extensions } = options ?? {};
+  const { prepare = true, packer, document, extensions, variant } = options ?? {};
   if (prepare !== false) {
     await prepareDocument(json, prepare === true ? undefined : prepare);
   }
   return generateDocument(
-    applyDocumentOptions(compileDocument(json, extensions), document),
+    applyVariant(applyDocumentOptions(compileDocument(json, extensions), document), variant),
     packer,
   );
 }
@@ -1509,9 +1599,9 @@ export function generateDOCXSync<T extends OutputType = "nodebuffer">(
   json: JSONContent,
   options?: DocxGenerateOptions<T>,
 ): OutputByType[T] {
-  const { packer, document, extensions } = options ?? {};
+  const { packer, document, extensions, variant } = options ?? {};
   return generateDocumentSync(
-    applyDocumentOptions(compileDocument(json, extensions), document),
+    applyVariant(applyDocumentOptions(compileDocument(json, extensions), document), variant),
     packer,
   );
 }
@@ -1527,12 +1617,12 @@ export async function generateDOCXStream(
   json: JSONContent,
   options?: DocxGenerateOptions,
 ): Promise<ReadableStream<Uint8Array>> {
-  const { prepare = true, packer, document, extensions } = options ?? {};
+  const { prepare = true, packer, document, extensions, variant } = options ?? {};
   if (prepare !== false) {
     await prepareDocument(json, prepare === true ? undefined : prepare);
   }
   return generateDocumentStream(
-    applyDocumentOptions(compileDocument(json, extensions), document),
+    applyVariant(applyDocumentOptions(compileDocument(json, extensions), document), variant),
     packer,
   );
 }

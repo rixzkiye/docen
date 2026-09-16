@@ -50,6 +50,7 @@ export {
   runPropsFromMarks,
   runPropsToMarks,
   type DocxGenerateOptions,
+  type DocxVariant,
   type RunPropMark,
 } from "./converters/docx";
 
