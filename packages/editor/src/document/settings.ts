@@ -4,9 +4,9 @@
  * One small typed document under a versioned localStorage key
  * ({@link SETTINGS_STORAGE_KEY}), shared by every host element on the page:
  * identity (the Word Options → General "User name"/"Initials" pair) and the
- * writing toggles later lanes consume — D1 autocorrect, B4 proofing language,
- * C1 hidden-text display. This module only stores the toggles; nothing here
- * changes document behavior.
+ * writing toggles the lanes consume — D1 autocorrect (its options + the user
+ * replacement table), B4 proofing language, C1 hidden-text display. This
+ * module only stores the options; the document behavior rides the engine.
  *
  * Storage is treated as a cache: a corrupt entry, a foreign version, blocked
  * storage (private mode / SecurityError) or a throwing write all fall back to
@@ -26,7 +26,26 @@ export interface IdentitySettings {
   initials: string;
 }
 
-/** AutoCorrect options (stored for D1 — no behavior is wired here). */
+/** One user-editable replacement-table entry (AutoCorrect Options → table). */
+export interface AutocorrectReplacement {
+  from: string;
+  to: string;
+}
+
+/** The table shape version — a stored table with another version is ignored
+ *  and the built-in defaults apply. */
+export const AUTOCORRECT_TABLE_VERSION = 1;
+
+/** The versioned user table behind AutoCorrect Options: the complete
+ *  replacement list (deleting an entry removes it — absent `table` means the
+ *  built-in defaults) plus the no-correct exceptions list. */
+export interface AutocorrectTable {
+  version: number;
+  replacements: AutocorrectReplacement[];
+  exceptions: string[];
+}
+
+/** AutoCorrect options (D1) — persisted; the rule engine consumes them. */
 export interface AutocorrectSettings {
   smartQuotes: boolean;
   emDash: boolean;
@@ -34,6 +53,8 @@ export interface AutocorrectSettings {
   hyperlinkAutoformat: boolean;
   capitalizeFirstLetter: boolean;
   ordinalSuperscript: boolean;
+  /** User-edited table; absent = the built-in defaults. */
+  table?: AutocorrectTable;
 }
 
 /** Writing options (stored for B4/C1 — no behavior is wired here). */
@@ -126,6 +147,28 @@ function pickBoolean(value: unknown, fallback: boolean): boolean {
   return typeof value === "boolean" ? value : fallback;
 }
 
+/** Defensive parse of the user AutoCorrect table: a wrong/missing version or a
+ *  non-array replacement list drops the whole table (built-in defaults apply);
+ *  malformed entries/words within a valid table are skipped. */
+function parseAutocorrectTable(value: unknown): AutocorrectTable | undefined {
+  if (!isRecord(value) || value.version !== AUTOCORRECT_TABLE_VERSION) return undefined;
+  if (!Array.isArray(value.replacements)) return undefined;
+  const replacements: AutocorrectReplacement[] = [];
+  for (const entry of value.replacements) {
+    if (!isRecord(entry)) continue;
+    const from = typeof entry.from === "string" ? entry.from.trim() : "";
+    const to = typeof entry.to === "string" ? entry.to.trim() : "";
+    if (from && to) replacements.push({ from, to });
+  }
+  const exceptions = Array.isArray(value.exceptions)
+    ? value.exceptions.flatMap((word) => {
+        const trimmed = typeof word === "string" ? word.trim() : "";
+        return trimmed ? [trimmed] : [];
+      })
+    : [];
+  return { version: AUTOCORRECT_TABLE_VERSION, replacements, exceptions };
+}
+
 /** Defensive parse: any malformed entry — bad JSON, wrong shape, foreign
  *  version — yields the defaults for the offending fields (never throws). */
 function parseSettings(raw: string | null): DocenSettings {
@@ -141,6 +184,7 @@ function parseSettings(raw: string | null): DocenSettings {
   const identity = isRecord(data.identity) ? data.identity : {};
   const writing = isRecord(data.writing) ? data.writing : {};
   const autocorrect = isRecord(writing.autocorrect) ? writing.autocorrect : {};
+  const table = parseAutocorrectTable(autocorrect.table);
   return {
     version: SETTINGS_VERSION,
     identity: {
@@ -165,6 +209,7 @@ function parseSettings(raw: string | null): DocenSettings {
           autocorrect.ordinalSuperscript,
           base.writing.autocorrect.ordinalSuperscript,
         ),
+        ...(table ? { table } : {}),
       },
       markdownInput: pickBoolean(writing.markdownInput, base.writing.markdownInput),
       proofingLanguage: pickString(writing.proofingLanguage, base.writing.proofingLanguage),
@@ -180,6 +225,7 @@ function mergeSettings(current: DocenSettings, patch: SettingsPatch): DocenSetti
   const initials = (patch.identity?.initials ?? current.identity.initials).trim();
   const w = patch.writing ?? {};
   const a = w.autocorrect ?? {};
+  const table = a.table ?? current.writing.autocorrect.table;
   return {
     version: SETTINGS_VERSION,
     identity: {
@@ -197,6 +243,7 @@ function mergeSettings(current: DocenSettings, patch: SettingsPatch): DocenSetti
         capitalizeFirstLetter:
           a.capitalizeFirstLetter ?? current.writing.autocorrect.capitalizeFirstLetter,
         ordinalSuperscript: a.ordinalSuperscript ?? current.writing.autocorrect.ordinalSuperscript,
+        ...(table ? { table } : {}),
       },
       markdownInput: w.markdownInput ?? current.writing.markdownInput,
       proofingLanguage: w.proofingLanguage ?? current.writing.proofingLanguage,
