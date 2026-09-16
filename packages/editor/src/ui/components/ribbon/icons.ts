@@ -276,6 +276,7 @@ const RIBBON_ICONS: Record<string, string> = {
   "text-box": textField,
   wordart: textEffects,
   "insert-field": code,
+  "quick-parts": cube,
   "text-effects": textEffects,
   equation: calculator,
   symbol: symbolOmega,

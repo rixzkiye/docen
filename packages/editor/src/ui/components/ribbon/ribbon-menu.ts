@@ -26,6 +26,8 @@ export interface RibbonMenuItem {
   disabled?: boolean;
   /** Mutually-exclusive pick (Edit/View): renders a Fluent radio checkmark. */
   checked?: boolean;
+  /** Non-clickable group heading (Quick Parts gallery groups). */
+  header?: boolean;
 }
 
 // Per-instance CSS anchor name so each menu's popover aligns to its own

@@ -10,7 +10,7 @@ import { MailMergeHostCommands, type MailMergeHostView } from "./mail-merge";
 import { NavigationViewsHostCommands, type NavigationViewsHostView } from "./navigation-views";
 import { ProofingLanguageHostCommands, type ProofingLanguageHostView } from "./proofing-language";
 import { ReferencesHostCommands, type ReferencesHostView } from "./references";
-import { hostRegistry, type HostCommandRegistry } from "./registry";
+import { hostRegistry, type HostCommandDomain, type HostCommandRegistry } from "./registry";
 import { RevisionsHostCommands, type RevisionsHostView } from "./revisions";
 import { SectionsHostCommands, type SectionsHostView } from "./sections-page-setup";
 import { TablesHostCommands, type TablesHostView } from "./tables";
@@ -40,8 +40,13 @@ export interface HostCommandViews {
 }
 
 /** Assemble the per-domain host commands into the event → handler registry
- *  `#onCommand` consults before the wired Tiptap dispatch. */
-export function hostCommands(views: HostCommandViews): HostCommandRegistry {
+ *  `#onCommand` consults before the wired Tiptap dispatch. `extra` carries
+ *  host-owned domain instances the element needs a handle on (their dialog
+ *  commits arrive as separate events, e.g. Quick Parts). */
+export function hostCommands(
+  views: HostCommandViews,
+  extra: readonly HostCommandDomain[] = [],
+): HostCommandRegistry {
   return hostRegistry([
     new NavigationViewsHostCommands(views.navigation),
     new SectionsHostCommands(views.sections),
@@ -58,5 +63,6 @@ export function hostCommands(views: HostCommandViews): HostCommandRegistry {
     new FileIoHostCommands(views.fileIo),
     new HeaderFooterHostCommands(views.headerFooter),
     new DesignHostCommands(views.design),
+    ...extra,
   ]);
 }

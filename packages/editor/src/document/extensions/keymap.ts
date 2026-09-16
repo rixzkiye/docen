@@ -54,6 +54,10 @@ export const KEYBOARD_SHORTCUTS: Readonly<Record<string, string>> = {
   "Mod-Alt-1": "style:Heading1",
   "Mod-Alt-2": "style:Heading2",
   "Mod-Alt-3": "style:Heading3",
+  // Word's F3 = AutoText / Quick Parts: the building-block name typed before
+  // the caret expands to its content (no modifier; the bridge matches the
+  // plain-key entry itself, DocenKeymap covers a DOM route).
+  F3: "autotext-f3",
   // A value rides after ":" — `line-spacing:2` calls the command with "2".
 };
 

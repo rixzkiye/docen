@@ -11,6 +11,18 @@ export { docxExtensions, type JSONContent, type AnyExtension } from "./core";
 // document grid) so the editor layer can type section geometry without a direct
 // @office-open/docx dependency.
 export type { SectionPropertiesOptions } from "@office-open/docx";
+// Glossary / building-blocks model (word/glossary/document.xml): the parsed
+// part shape plus the gallery/type/behavior token enums. office-open parses
+// and stringifies the part natively, so real Word Quick Parts round-trip
+// through documentExtras.glossary — same no-direct-dependency rationale.
+export {
+  DocPartBehavior,
+  DocPartGallery,
+  DocPartType,
+  type DocPartOptions,
+  type DocPartSectionOptions,
+  type GlossaryDocumentOptions,
+} from "@office-open/docx";
 // Re-export the chart payload type: the chart node's attrs.chart IS a
 // ChartOptions verbatim (extensions/chart.ts), and the editor's command layer
 // edits it as one — same rationale as SectionPropertiesOptions above. The

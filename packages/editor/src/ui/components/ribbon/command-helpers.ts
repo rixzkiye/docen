@@ -99,6 +99,9 @@ interface MenuItemLike {
   icon?: string;
   checked?: boolean;
   disabled?: boolean;
+  /** A non-clickable group heading — the Quick Parts gallery groups (Word's
+   *  "Explore Quick Parts" lists AutoText / Cover Pages / … as headings). */
+  header?: boolean;
 }
 
 /** A menu list wired by `appendMenuItems` (the wiring is idempotent across
@@ -151,6 +154,20 @@ export function appendMenuItems<T extends MenuItemLike>(
   list.replaceChildren();
   const pickList = items.some((item) => item.checked);
   for (const item of items) {
+    if (item.header) {
+      // Group heading (Word's Quick Parts: the blocks listed under their
+      // gallery). Styled inline — every menu surface (ribbon menu, split,
+      // context menu, modify-style dialog) renders it through this one helper
+      // and none of their stylesheets could share a class.
+      const head = document.createElement("div");
+      head.className = "rb-menu-header";
+      head.setAttribute("role", "presentation");
+      head.textContent = item.text;
+      head.style.cssText =
+        "padding:6px 10px 2px;font-size:11px;font-weight:600;color:var(--docen-color-secondary,#595959);";
+      list.append(head);
+      continue;
+    }
     if (item.text === "-") {
       const divider = document.createElement("fluent-divider");
       divider.setAttribute("role", "separator");
