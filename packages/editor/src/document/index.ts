@@ -5199,6 +5199,7 @@ class DocenDocument extends AddinHost<Editor> {
         element: () => this,
         openNoteSettings: () => this.#openNoteSettings(),
         markIndexEntry: (target) => this.#references.markIndexEntry(target),
+        markCitation: (target) => this.#references.markCitation(target),
         insertBibliography: () => this.#references.insertBibliography(),
         bibliographySources: () => this.#references.bibliographySources(),
         crossReferenceTargets: () => this.#dialogs.crossReferenceTargets(),

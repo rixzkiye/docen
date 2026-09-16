@@ -26,6 +26,8 @@ export interface ReferencesHostView {
   openNoteSettings(): void;
   /** Prompt for an index entry and seed an XE field at the selection. */
   markIndexEntry(target: Editor): void;
+  /** Prompt for a citation entry and seed a TA field at the selection. */
+  markCitation(target: Editor): void;
   insertBibliography(): void;
   bibliographySources(): unknown[];
   crossReferenceTargets(): CrossReferenceTarget[];
@@ -56,8 +58,12 @@ export class ReferencesHostCommands implements HostCommandDomain {
     "table-of-figures",
     "update-figures",
     "mark-entry",
+    "mark-entry-all",
     "insert-index",
     "update-index",
+    "mark-citation",
+    "insert-toa",
+    "update-toa",
     "bookmark",
     "insert-caption",
     "cross-reference",
@@ -136,10 +142,19 @@ export class ReferencesHostCommands implements HostCommandDomain {
     // Index — Mark Entry prompts for the entry text and seeds an XE field at
     // the selection (the invisible marker Word hides from the page); insert
     // and update collect the XE fields into the Index-styled entry block.
-    if (event === "mark-entry" || event === "insert-index" || event === "update-index") {
+    if (
+      event === "mark-entry" ||
+      event === "mark-entry-all" ||
+      event === "insert-index" ||
+      event === "update-index"
+    ) {
       const target = this.host.bridge()?.activeEditor() ?? editor;
       if (event === "mark-entry") {
         this.host.markIndexEntry(target);
+        return true;
+      }
+      if (event === "mark-entry-all") {
+        target.commands["mark-entry-all"]();
         return true;
       }
       const pageOf = (pos: number): number | null => {
@@ -150,6 +165,24 @@ export class ReferencesHostCommands implements HostCommandDomain {
       const tabPositionTw = flow ? Math.round(flow.contentWidthPx / twipToPx(1)) : undefined;
       const ran = target.commands[event](pageOf, tabPositionTw);
       if (!ran) window.alert(t("index.empty", this.host.element()));
+      return true;
+    }
+    // Table of Authorities — Mark Citation seeds a TA field; insert/update TOA
+    // collect the TA citations into TOAHeading/TableOfAuthorities paragraphs.
+    if (event === "mark-citation" || event === "insert-toa" || event === "update-toa") {
+      const target = this.host.bridge()?.activeEditor() ?? editor;
+      if (event === "mark-citation") {
+        this.host.markCitation(target);
+        return true;
+      }
+      const pageOf = (pos: number): number | null => {
+        const page = this.host.bridge()?.pageOf(pos);
+        return typeof page === "number" ? page + 1 : null;
+      };
+      const flow = this.host.flow();
+      const tabPositionTw = flow ? Math.round(flow.contentWidthPx / twipToPx(1)) : undefined;
+      const ran = target.commands[event](pageOf, tabPositionTw);
+      if (!ran) window.alert(t("toa.empty", this.host.element()));
       return true;
     }
     // Bookmark — prompt for a name and wrap the selection with a

@@ -67,5 +67,6 @@ export const referencesTab = (): RibbonTab =>
     group("toa", [
       btn("comment-add", "mark-citation", { size: "large" }),
       btn("document-print", "insert-toa", { size: "large" }),
+      btn("sync", "update-toa", { size: "large" }),
     ]),
   ]);
