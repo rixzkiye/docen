@@ -1091,9 +1091,21 @@ export class CaretMap {
     // Initialized via a cast so TS keeps the declared union at the read site
     // (closure writes aren't tracked and a plain null narrows to never).
     let bestOffset = undefined as { pos: number; dist: number } | undefined;
+    // A hidden run the host does not display (Show Hidden Text off) paints
+    // zero width, so the boundary before and after it collapse onto its x.
+    // A click there must resolve to a VISIBLE boundary — Word skips hidden
+    // text, so the boundary after the run wins the tie against the boundary
+    // before it.
+    let hiddenX: number | null = null;
     const push = (xAt: number, pos: number): void => {
       const dist = Math.abs(xAt - x);
-      if (!bestOffset || dist < bestOffset.dist) bestOffset = { pos, dist };
+      if (
+        !bestOffset ||
+        dist < bestOffset.dist ||
+        (hiddenX != null && xAt === hiddenX && dist === bestOffset.dist)
+      ) {
+        bestOffset = { pos, dist };
+      }
     };
     push(entry.xPx, this.posOfChar(entry.owner, char));
     for (const [itemIndex, item] of entry.line.items.entries()) {
@@ -1103,6 +1115,16 @@ export class CaretMap {
       // glyphs sit outside the offset space, so skip both its gap and its
       // grapheme boundaries.
       if (item.kind === "text" && item.synthetic) continue;
+      // Hidden text owns no click boundaries: it is not painted, and a click
+      // in its collapsed span belongs to the visible text on one side. Its
+      // characters still advance the offset lattice (they exist in the PM
+      // document), so every visible boundary after it keeps its position.
+      const src = entry.para.inline[item.inlineIndex];
+      if (item.kind === "text" && src?.kind === "text" && src.suppressed) {
+        char += entry.spaces[itemIndex]! + item.text.length;
+        hiddenX = entry.xPx + item.xPx;
+        continue;
+      }
       // The trimmed gap ahead of the item: its characters' left boundaries
       // share the gap the space dots center in (the previous item's laid end
       // → this item's x, evenly split), so a click inside the gap lands on
@@ -1164,6 +1186,19 @@ export class CaretMap {
     if (item.kind !== "text") return null;
     const inline = entry.para.inline[item.inlineIndex];
     if (inline?.kind !== "text") return null;
+    // Hidden text not displayed paints zero width: every grapheme boundary
+    // collapses to the run's left edge. The click walk skips these items
+    // outright (no boundaries at all); this zero-geometry shape is the
+    // defensive contract for any consumer that still asks.
+    if (inline.suppressed) {
+      const { lens } = itemGlyphLayoutOf(item, inline.style);
+      const base = entry.xPx + item.xPx;
+      return {
+        layout: { xs: lens.map(() => 0), widths: lens.map(() => 0), lens, endX: 0 },
+        base,
+        end: base,
+      };
+    }
     const end =
       entry.intervals?.[itemIndex] ??
       (entry.line.advanceScale != null ? item.xPx + item.widthPx : undefined);
@@ -1332,6 +1367,17 @@ export class CaretMap {
       // glyphs paint before the paragraph's own characters and never answer
       // a boundary query.
       if (item.kind === "text" && item.synthetic) continue;
+      // Hidden text not displayed has no painted extent: every offset inside
+      // the run (its gap and characters included) collapses to the run's
+      // left edge — the same x the following visible content starts at.
+      // Skipping it also keeps the caret lattice monotonic.
+      const src = line.para.inline[item.inlineIndex];
+      if (item.kind === "text" && src?.kind === "text" && src.suppressed) {
+        const gap = line.spaces[itemIndex]!;
+        if (offset <= char + gap + item.text.length) return line.xPx + item.xPx;
+        char += gap + item.text.length;
+        continue;
+      }
       // The trimmed gap ahead of the item: the boundary rides the gap's even
       // split — the same lattice the space dots center in. Boxed inlines
       // share it (their gap is the collapsed run before the box).

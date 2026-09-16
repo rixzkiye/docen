@@ -97,17 +97,29 @@ export interface CapsPiece {
   small: boolean;
 }
 
+/** Grapheme cluster segmenter — a combining mark must ride its base
+ *  character: splitting `"e\u0301"` into e + U+0301 would render the mark as
+ *  a full-size standalone piece. */
+const GRAPHEME_SEGMENTER = new Intl.Segmenter(undefined, { granularity: "grapheme" });
+
 /** Split a run's text into the pieces a caps transform measures and paints:
  *  allCaps is one piece (the whole run uppercased at its own size); smallCaps
  *  splits at case boundaries so the lowercase pieces can render as reduced
  *  capitals while the run's own capitals, digits, spaces and punctuation keep
- *  the full size. No caps = one untouched piece.
+ *  the full size. No caps = one untouched piece. The split walks grapheme
+ *  clusters, so a combining mark never separates from its base.
+ *
+ *  Hot spot: every case transition becomes its own rich-inline item, and the
+ *  per-line probe walks items one by one — smallCaps-heavy content (an
+ *  alternating-case run per word) lays 5-10× slower than the same text
+ *  without caps. The split is already minimal (a case-uniform run produces
+ *  exactly one piece), so a deeper fix — per-grapheme glyph selection inside
+ *  one prepared item — is a pretext capability to add later.
  *
  *  Known approximation: the rich-inline packer treats item boundaries as
  *  potential wrap points, and a case boundary is not one in Word — a
  *  smallCaps word ending exactly at the margin can therefore wrap at the
- *  case change instead of moving whole. Per-grapheme glyph selection inside
- *  one atomic word is a pretext capability we do not have yet. */
+ *  case change instead of moving whole. */
 export function capsPiecesOf(text: string, caps: LayoutTextStyle["caps"]): CapsPiece[] {
   if (!text) return [];
   if (caps === "all") return [{ source: text, display: displayTextOf(text, "all"), small: false }];
@@ -120,11 +132,11 @@ export function capsPiecesOf(text: string, caps: LayoutTextStyle["caps"]): CapsP
     pieces.push({ source, display: displayTextOf(source, "small"), small });
     source = "";
   };
-  for (const ch of text) {
-    const lower = ch.toLowerCase() === ch && ch.toUpperCase() !== ch;
+  for (const { segment: grapheme } of GRAPHEME_SEGMENTER.segment(text)) {
+    const lower = grapheme.toLowerCase() === grapheme && grapheme.toUpperCase() !== grapheme;
     if (source && lower !== small) flush();
     small = lower;
-    source += ch;
+    source += grapheme;
   }
   flush();
   return pieces;

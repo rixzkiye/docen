@@ -604,6 +604,10 @@ function measureAnalysis(
   );
   const segLevels =
     segStarts === null ? null : computeSegmentLevels(analysis.normalized, segStarts);
+  // The stored letter spacing is the SCALED one: every walk site
+  // (getBreakableGraphemeAdvance, finalizeLinePaintWidth, …) adds it to the
+  // already-scaled segment/glyph widths, so the raw value would double-count
+  // differently at whole-segment vs grapheme breaks.
   if (segments !== null) {
     return {
       widths,
@@ -614,7 +618,7 @@ function measureAnalysis(
       segLevels,
       breakableFitAdvances,
       breakablePreferredBreaks,
-      letterSpacing,
+      letterSpacing: letterSpacing * scale,
       spacingGraphemeCounts,
       discretionaryHyphenWidth,
       tabStopAdvance,
@@ -631,7 +635,7 @@ function measureAnalysis(
     segLevels,
     breakableFitAdvances,
     breakablePreferredBreaks,
-    letterSpacing,
+    letterSpacing: letterSpacing * scale,
     spacingGraphemeCounts,
     discretionaryHyphenWidth,
     tabStopAdvance,

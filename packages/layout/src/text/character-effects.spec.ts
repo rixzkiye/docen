@@ -16,14 +16,19 @@ import { TextMeasurer } from "./measure";
 
 // The spec's own deterministic canvas: advance fractions are derived from the
 // font shorthand's px size (lowercase .5em, uppercase .625em, space .25em,
-// CJK 1em).
+// CJK 1em — CJK punctuation and kana included, like the engine's own ranges).
 const emOf = (font: string): number => {
   const m = /(\d+(?:\.\d+)?)px/.exec(font);
   return m ? Number(m[1]) : 16;
 };
+const isCjkCh = (ch: string): boolean =>
+  (ch >= "\u2e80" && ch <= "\u9fff") ||
+  (ch >= "\u3040" && ch <= "\u30ff") ||
+  (ch >= "\uf900" && ch <= "\ufaff") ||
+  (ch >= "\uff00" && ch <= "\uffef");
 const advanceOf = (ch: string, em: number): number => {
   if (ch === " " || ch === "\t") return em / 4;
-  if (ch >= "\u4e00" && ch <= "\u9fff") return em;
+  if (isCjkCh(ch)) return em;
   if (ch >= "A" && ch <= "Z") return (em * 5) / 8;
   return em / 2;
 };
@@ -70,6 +75,13 @@ const textItems = (line: {
 }): Extract<LaidOutLineItem, { kind: "text" }>[] =>
   line.items.filter((i): i is Extract<LaidOutLineItem, { kind: "text" }> => i.kind === "text");
 
+/** The line's painted text (caps display form preferred). */
+const textsOf = (line: { items: LaidOutLineItem[] }): string => {
+  let out = "";
+  for (const item of line.items) if (item.kind === "text") out += item.displayText ?? item.text;
+  return out;
+};
+
 describe("capsPiecesOf", () => {
   it("returns one untouched piece without caps formatting", () => {
     expect(capsPiecesOf("aA1 ", undefined)).toEqual([
@@ -93,6 +105,14 @@ describe("capsPiecesOf", () => {
       { source: "D", display: "D", small: false },
     ]);
   });
+
+  it("keeps a combining mark attached to its base character", () => {
+    // A per-code-point split would emit the mark as its own full-size piece.
+    expect(capsPiecesOf("e\u0301A", "small")).toEqual([
+      { source: "e\u0301", display: "E\u0301", small: true },
+      { source: "A", display: "A", small: false },
+    ]);
+  });
 });
 
 describe("displayTextOf / characterScaleOf / kerningActive", () => {
@@ -114,6 +134,10 @@ describe("displayTextOf / characterScaleOf / kerningActive", () => {
     expect(kerningActive({ family: "serif", sizePx: 16, kernPt: 8 })).toBe(true);
     expect(kerningActive({ family: "serif", sizePx: 8, kernPt: 8 })).toBe(false);
     expect(kerningActive({ family: "serif", sizePx: 16 })).toBe(false);
+    // The boundary is inclusive: a 16px run is exactly 12pt and kerns at a
+    // 12pt threshold.
+    expect(kerningActive({ family: "serif", sizePx: 16, kernPt: 12 })).toBe(true);
+    expect(kerningActive({ family: "serif", sizePx: 15, kernPt: 12 })).toBe(false);
   });
 });
 
@@ -180,5 +204,60 @@ describe("packLines character effects", () => {
     expect(raised[0]!.heightPx).toBe(plain[0]!.heightPx);
     expect(raised[0]!.naturalPx).toBe(plain[0]!.naturalPx);
     expect(textItems(raised[0]!)[0]!.xPx).toBe(0);
+  });
+
+  it("measures a decomposed lowercase cluster as one smallCaps piece", () => {
+    // "a\u0301B": the combining acute rides the "a" piece (a per-code-point
+    // split would measure the mark as a standalone full-size piece).
+    const lines = pack([text("a\u0301B", { ...latin, caps: "small" })]);
+    const items = textItems(lines[0]!);
+    expect(items).toHaveLength(2);
+    expect(items[0]).toMatchObject({ text: "a\u0301", displayText: "A\u0301", fontSizePx: 12.8 });
+    expect(items[1]).toMatchObject({ text: "B", widthPx: 10 });
+  });
+
+  it("keeps a ruby guide across a caps case boundary", () => {
+    // A smallCaps split would otherwise place "a"(small) + "B"(full) and drop
+    // the guide on both — the laid item's whole-run check never matches a
+    // piece. Ruby runs stay one piece per segment, guide included.
+    const lines = pack([
+      {
+        kind: "text",
+        text: "aB",
+        style: { ...latin, caps: "small" },
+        ruby: { text: "アブ", fontSizePx: 8 },
+      },
+    ]);
+    const [item] = textItems(lines[0]!);
+    expect(item!.text).toBe("aB");
+    expect(item!.displayText).toBe("AB");
+    expect(item!.ruby).toEqual({ text: "アブ", fontSizePx: 8 });
+    // The annotation space raises the line's natural height above the base
+    // run's (19.2) by the guide's ascent (9.6).
+    expect(lines[0]!.naturalPx).toBeCloseTo(28.8, 5);
+  });
+
+  it("hangs a scaled closing punctuation by its scaled advance", () => {
+    // The overflow-punct probe must charge the run's w:w: the closer's
+    // advance at 50% is 8px, so it hangs by 8 (a natural-width probe hung it
+    // by 16).
+    const cjk: LayoutTextStyle = {
+      family: { latin: "serif", eastAsia: "SimSun" },
+      sizePx: 16,
+      scalePct: 50,
+    };
+    const lines = pack([text("甲乙丙丁戊、己", cjk)], 44);
+    expect(textsOf(lines[0]!)).toBe("甲乙丙丁戊、");
+    expect(lines[0]!.hangPx).toBeCloseTo(8, 5);
+  });
+
+  it("wraps at a smallCaps case boundary (documented approximation)", () => {
+    // "x aB" pieces: "x"(8) " "(4) "a"(8) "B"(10). At 22px the greedy pack
+    // fills "x a" and moves the "B" piece instead of moving the whole word —
+    // Word treats the case boundary as a word-internal position and breaks at
+    // the space. Pinned here so an atomic-word fix must change this test
+    // deliberately.
+    const lines = pack([text("x aB", { ...latin, caps: "small" })], 22);
+    expect(lines.map(textsOf)).toEqual(["X A", "B"]);
   });
 });

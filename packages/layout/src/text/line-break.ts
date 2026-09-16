@@ -33,6 +33,7 @@ import {
   characterScaleOf,
   cssFontAtSize,
   cssFontOf,
+  displayTextOf,
   familyOfSlot,
   kerningActive,
   SMALL_CAPS_SCALE,
@@ -263,13 +264,20 @@ function groupOf(
       // with its slot's family — the OOXML eastAsia/ascii split. A caps
       // transform (w:caps / w:smallCaps) then splits the segment into display
       // pieces: lowercase smallCaps stretches measure and paint uppercased at
-      // the reduced size, everything else at the run's own size.
+      // the reduced size, everything else at the run's own size. A
+      // ruby-annotated run (w:ruby) stays ONE piece per segment — the laid
+      // item's whole-run check carries the guide, and a cap split would drop
+      // it on every piece; the caps transform still uppercases the piece, at
+      // the run's own size (a documented smallCaps approximation for ruby).
       const scale = characterScaleOf(item.style);
       const kern = kerningActive(item.style);
       const baseSize = vertAlignedSizePx(item.style);
       const { segments } = measurer.analyze(item.text, item.style);
       for (const seg of segments) {
-        for (const piece of capsPiecesOf(seg.text, item.style.caps)) {
+        const pieces = item.ruby
+          ? [{ source: seg.text, display: displayTextOf(seg.text, item.style.caps), small: false }]
+          : capsPiecesOf(seg.text, item.style.caps);
+        for (const piece of pieces) {
           const sizePx = piece.small ? baseSize * SMALL_CAPS_SCALE : baseSize;
           push(
             {
@@ -602,18 +610,30 @@ export function lineSpaceGaps(
   return { spaces, next: at, matched };
 }
 
-/** One-off advance measurements for hanging closers, keyed by char+font. */
+/** One-off advance measurements for hanging closers, keyed by the item's
+ *  measurement options (font + spacing + scale + kerning). */
 const closerAdvanceCache = new Map<string, number>();
 
-/** The advance of a single grapheme in its run's font (pretext measures with
- *  canvas measureText; a one-item prepared line is the public handle). */
-function advanceOfGrapheme(ch: string, font: string, letterSpacing?: number): number {
-  const key = `${ch}\x00${font}\x00${letterSpacing ?? 0}`;
+/** The advance of a single grapheme as its source item would measure it —
+ *  the probe must carry the run's w:w scale and w:kern mode, or a scaled
+ *  closer hangs by its natural width (pretext measures with canvas
+ *  measureText; a one-item prepared line is the public handle). */
+function advanceOfGrapheme(ch: string, item: RichInlineItem): number {
+  const key = `${ch}\x00${item.font}\x00${item.letterSpacing ?? 0}\x00${item.widthScale ?? 1}\x00${item.fontKerning ? "k" : ""}`;
   let w = closerAdvanceCache.get(key);
   if (w === undefined) {
-    const prepared = prepareRichInline([{ text: ch, font, letterSpacing }], {
-      whiteSpace: DOCEN_WHITE_SPACE,
-    });
+    const prepared = prepareRichInline(
+      [
+        {
+          text: ch,
+          font: item.font,
+          letterSpacing: item.letterSpacing,
+          ...(item.widthScale != null ? { widthScale: item.widthScale } : {}),
+          ...(item.fontKerning ? { fontKerning: true } : {}),
+        },
+      ],
+      { whiteSpace: DOCEN_WHITE_SPACE },
+    );
     w = measureRichInlineStats(prepared, 1e9).maxLineWidth;
     closerAdvanceCache.set(key, w);
   }
@@ -642,7 +662,7 @@ function overflowPunctAfter(
   const lastFrag = fragments[fragments.length - 1];
   const src = group.items[lastFrag.itemIndex];
   if (!src) return undefined;
-  const closerPx = advanceOfGrapheme(closer, src.font, src.letterSpacing);
+  const closerPx = advanceOfGrapheme(closer, src);
   return { leadPx: Math.max(0, probe.width - closerPx), closerPx };
 }
 

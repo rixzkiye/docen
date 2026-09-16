@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it } from "vitest";
 
 import { installFakeCanvas } from "../test/fake-canvas";
+import { prepareWithSegments } from "./layout";
+import { measurePreparedLineGeometry } from "./line-break";
 import {
   clearMeasurementCaches,
   getCorrectedSegmentWidth,
@@ -244,5 +246,45 @@ describe.sequential("vendored widthScale (docen w:w / hidden runs)", () => {
     const line = materializeRichInlineLineRange(prepared, range!);
     expect(line.fragments[0]!.text).toBe("abcd");
     expect(line.width).toBe(16);
+  });
+});
+
+describe.sequential("vendored widthScale letter spacing", () => {
+  // The terminal and grapheme-walk spacing must scale with the segment
+  // widths: "ab" at 16px = 16 glyph + 4 spacing between = 20, plus the
+  // terminal 4 = 24; at 50% every part halves.
+  it("scales the terminal letter spacing", () => {
+    expect(
+      measurePreparedLineGeometry(prepareWithSegments("ab", FONT, { letterSpacing: 4 }), 1e9)
+        .maxLineWidth,
+    ).toBe(24);
+    expect(
+      measurePreparedLineGeometry(
+        prepareWithSegments("ab", FONT, { letterSpacing: 4, widthScale: 0.5 }),
+        1e9,
+      ).maxLineWidth,
+    ).toBe(12);
+    expect(
+      measurePreparedLineGeometry(
+        prepareWithSegments("ab", FONT, { letterSpacing: 4, widthScale: 0 }),
+        1e9,
+      ).maxLineWidth,
+    ).toBe(0);
+  });
+
+  it("scales the grapheme-walk spacing at a mid-word break", () => {
+    // "abcd" at 11px packs one grapheme per line: 8 glyph + terminal 4 = 12.
+    // At 50% the walk's per-grapheme spacing must halve too — 4 + 2 = 6 (a
+    // raw un-scaled spacing would leave 8).
+    expect(
+      measurePreparedLineGeometry(prepareWithSegments("abcd", FONT, { letterSpacing: 4 }), 11)
+        .maxLineWidth,
+    ).toBe(12);
+    expect(
+      measurePreparedLineGeometry(
+        prepareWithSegments("abcd", FONT, { letterSpacing: 4, widthScale: 0.5 }),
+        11,
+      ).maxLineWidth,
+    ).toBe(6);
   });
 });
