@@ -384,12 +384,20 @@ export function projectRuns(
     // when balloons are on, a margin anchor.
     const revision = isRecord(rPr.revision) ? rPr.revision : undefined;
     const indicator = revision ? formatIndicatorOf(ctx, revision) : {};
+    const link = isRecord(rPr.link)
+      ? {
+          url: typeof rPr.link.url === "string" ? rPr.link.url : undefined,
+          anchor: typeof rPr.link.anchor === "string" ? rPr.link.anchor : undefined,
+          tooltip: typeof rPr.link.tooltip === "string" ? rPr.link.tooltip : undefined,
+        }
+      : undefined;
     out.push({
       kind: "text",
       text: runText,
       style: textStyleOf(rPr),
       commentIds,
       ...(combine ? { combine } : {}),
+      ...(link ? { link } : {}),
       ...indicator,
     });
     const inlineIndex = out.length - 1;
@@ -657,7 +665,13 @@ export function projectRuns(
       if (isRecord(child.complexField)) pushField(child.complexField, rPr);
       if (isRecord(child.simpleField)) pushField(child.simpleField, rPr);
       if (isRecord(child.hyperlink) && Array.isArray(child.hyperlink.children)) {
-        pushRuns(child.hyperlink.children, preset);
+        const link = {
+          url: typeof child.hyperlink.url === "string" ? child.hyperlink.url : undefined,
+          anchor: typeof child.hyperlink.anchor === "string" ? child.hyperlink.anchor : undefined,
+          tooltip:
+            typeof child.hyperlink.tooltip === "string" ? child.hyperlink.tooltip : undefined,
+        };
+        pushRuns(child.hyperlink.children, { ...preset, link });
       }
       if (isRecord(child.insertion) && Array.isArray(child.insertion.children)) {
         // Word's Display for Review: a revision outside the author filter (or

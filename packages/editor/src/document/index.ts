@@ -120,7 +120,7 @@ import { RevisionsCommands } from "./commands/revisions";
 import { SectionCommands } from "./commands/sections";
 import { SpellingCommands } from "./commands/spelling";
 import type { StylesInspectorData, StylesPaneState } from "./components/styles-pane";
-import { pagesToPdf } from "./export-pdf";
+import { extractPdfPageLayers, pagesToPdf } from "./export-pdf";
 import type { ModifyStylePatch, ParagraphDialogPatch } from "./extensions/commands";
 import {
   chartMenuValueOf,
@@ -6143,7 +6143,21 @@ class DocenDocument extends AddinHost<Editor> {
       this.#renderDoc(this.getJSON());
     }
     if (shots.length === 0) return;
-    const blob = await pagesToPdf(shots);
+    const pageLayers = extractPdfPageLayers(
+      this.#pages,
+      this.#lastRun?.sections ?? [],
+      this.#sectionOfPage,
+    );
+    const shotsWithLayers = shots.map((shot, i) => ({
+      ...shot,
+      textSpans: pageLayers[i]?.textSpans,
+      links: pageLayers[i]?.links,
+    }));
+    const title = this.getAttribute("filename") ?? t("header.doc-name", this);
+    const blob = await pagesToPdf(shotsWithLayers, {
+      metadata: { title, author: "Docen" },
+      tagged: true,
+    });
     await this.#saveBlob(blob, SAVE_FORMATS.pdf, false);
   }
 
