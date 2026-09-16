@@ -72,6 +72,7 @@
   },
   "dependencies": {
     "@docen/core": "workspace:*",
+    "@docen/deduplicate": "workspace:*",
     "@docen/docx": "workspace:*",
     "@docen/layout": "workspace:*",
     "@docen/pptx": "workspace:*",

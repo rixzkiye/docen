@@ -1,4 +1,5 @@
 import type { FontSlots } from "../font";
+import type { LayoutMathData } from "../math/math-layout";
 import { formatNumber } from "../numbering-format";
 import type { LayoutDrawingLine, LayoutDrawingMember, LayoutDrawingShadow } from "./drawing";
 
@@ -193,13 +194,13 @@ export type LayoutInline =
   | { kind: "break" }
   | { kind: "tab"; toPx?: number }
   | {
-      /** An OMML formula (m:oMath) the engine does not lay out yet: a fixed
-       *  unbreakable placeholder box carrying a short structural label (the
-       *  renderer draws it as a dashed slot, Word's empty-argument look). */
+      /** An OMML formula (m:oMath): structured math layout data (with element
+       *  geometries, fraction lines, surd bars, slots), or fallback label box. */
       kind: "math";
       label: string;
       widthPx: number;
       heightPx: number;
+      data?: LayoutMathData;
     }
   | {
       kind: "picture";

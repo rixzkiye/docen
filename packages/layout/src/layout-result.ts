@@ -19,6 +19,7 @@ import type {
   LayoutTabStop,
   LayoutTableBorders,
 } from "./layout-doc";
+import type { LayoutMathData } from "./math/math-layout";
 
 export interface LaidOutTextItem {
   kind: "text";
@@ -79,6 +80,7 @@ export interface LaidOutMathItem {
   widthPx: number;
   heightPx: number;
   label: string;
+  data?: LayoutMathData;
 }
 
 export type LaidOutLineItem =

@@ -324,10 +324,29 @@ export function projectParagraph(p: BodyParagraph, ctx: ProjectContext): LayoutP
     | "top"
     | undefined;
 
+  const dropCapVal = str((pPr.dropCap as Rec)?.val ?? pPr.dropCap ?? (pPr.frame as Rec)?.dropCap);
+  const dropCapLines = num((pPr.dropCap as Rec)?.lines ?? (pPr.frame as Rec)?.lines) ?? 3;
+  const dropCapDist = num((pPr.dropCap as Rec)?.distance ?? (pPr.frame as Rec)?.space);
+  const dropCap =
+    dropCapVal === "drop" || dropCapVal === "dropped"
+      ? {
+          type: "dropped" as const,
+          lines: dropCapLines,
+          distancePx: dropCapDist ? twipToPx(dropCapDist) : undefined,
+        }
+      : dropCapVal === "margin"
+        ? {
+            type: "margin" as const,
+            lines: dropCapLines,
+            distancePx: dropCapDist ? twipToPx(dropCapDist) : undefined,
+          }
+        : undefined;
+
   return {
     kind: "paragraph",
     inline: markerInline.length ? markerInline.concat(inline) : inline,
     drawings: drawings.length > 0 ? drawings : undefined,
+    ...(dropCap ? { dropCap } : {}),
     spacing,
     indent,
     tabStops: tabStops && tabStops.length > 0 ? tabStops : undefined,

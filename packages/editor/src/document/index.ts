@@ -110,6 +110,7 @@ import {
   parseSlicePayload,
   withBlocks,
 } from "./building-blocks";
+import { A11yMirror } from "./canvas/a11y-mirror";
 import { autocorrectConfigOf } from "./canvas/autocorrect";
 import {
   mountEditBridge,
@@ -124,15 +125,16 @@ import {
   type LaidFurnitureSection,
   layFurnitureSections,
 } from "./canvas/stage";
-import { documentStyles, documentTemplate, escapeHtml } from "./chrome";
 // Side-effect: register the document-specific UI components moved out of the
 // shared ui/ barrel — <docen-format-pane> (properties fallback),
 // <docen-outline> (navigation Headings tab), <docen-styles-pane> (Styles).
 import "./components/format-pane";
 import "./components/outline";
 import "./components/styles-pane";
+import { documentStyles, documentTemplate, escapeHtml } from "./chrome";
 import { ClipboardCommands } from "./commands/clipboard";
 import { CommentsCommands } from "./commands/comments";
+import { compareDocs } from "./commands/compare";
 import { DesignCommands } from "./commands/design";
 import { DialogCommands } from "./commands/dialogs";
 import { hostCommands, type HostCommandRegistry } from "./commands/host";
@@ -149,6 +151,8 @@ import { SpellingCommands } from "./commands/spelling";
 import type { StylesInspectorData, StylesPaneState } from "./components/styles-pane";
 import { extractPdfPageLayers, pagesToPdf } from "./export-pdf";
 import type { NewStyleDefinition } from "./extensions/commands";
+// Side-effect import: registers the ribbon/header translation tables.
+import "./i18n";
 import type { ModifyStylePatch, ParagraphDialogPatch } from "./extensions/commands";
 import {
   chartMenuValueOf,
@@ -162,8 +166,6 @@ import {
   wrapMenuValueOf,
   WIRED_DISPATCH,
 } from "./extensions/commands";
-// Side-effect import: registers the ribbon/header translation tables.
-import "./i18n";
 import { collectRevisions } from "./extensions/track-changes";
 import { liveFieldResolver, resolvePageFieldsBounded } from "./field-resolve";
 import { customPropertiesOf, finiteNumber, type FieldContext, type FieldFrame } from "./fields";
@@ -438,7 +440,10 @@ export type TaskPaneId =
   | "proofing"
   | "thesaurus"
   | "revisions"
-  | "styles";
+  | "styles"
+  | "reveal"
+  | "restrict"
+  | "a11y";
 
 /**
  * Visibility mode values, matching `Office.VisibilityMode` (`taskpane` | `hidden`).
@@ -569,6 +574,15 @@ class DocenDocument extends AddinHost<Editor> {
   });
   #stage?: CanvasStage;
   #stageHost?: HTMLElement;
+  readonly #a11yMirror = new A11yMirror();
+  #versionSnapshots: Array<{
+    id: string;
+    timestamp: string;
+    author: string;
+    isAutosave: boolean;
+    doc: JSONContent;
+  }> = [];
+  #currentLandmarkIdx = 0;
   #measurer = new TextMeasurer(browserFontMetrics);
   #pages: readonly FlowPage[] = [];
   /** Page index → section index (the caret's section and per-page geometry
@@ -809,6 +823,12 @@ class DocenDocument extends AddinHost<Editor> {
       void this.#saveAs();
       return;
     }
+    // F6 / Shift+F6 = Cyclical landmark navigation (Ribbon <-> Stage <-> Task Pane <-> Status Bar)
+    if (event.key === "F6") {
+      event.preventDefault();
+      this.#cycleLandmarks(event.shiftKey);
+      return;
+    }
     // F7 = Spelling & Grammar (Word).
     if (event.key === "F7") {
       event.preventDefault();
@@ -894,6 +914,139 @@ class DocenDocument extends AddinHost<Editor> {
       event.preventDefault();
       this.#setZoom(100);
     }
+  };
+
+  #cycleLandmarks(reverse: boolean): void {
+    const landmarks = [
+      this.shadowRoot?.querySelector("docen-ribbon") as HTMLElement | null,
+      this.shadowRoot?.querySelector(".docen-canvas, docen-document-area") as HTMLElement | null,
+      this.shadowRoot?.querySelector("docen-task-pane[open]") as HTMLElement | null,
+      this.shadowRoot?.querySelector("docen-status-bar") as HTMLElement | null,
+    ].filter((el): el is HTMLElement => Boolean(el));
+
+    if (landmarks.length === 0) return;
+    if (reverse) {
+      this.#currentLandmarkIdx =
+        (this.#currentLandmarkIdx - 1 + landmarks.length) % landmarks.length;
+    } else {
+      this.#currentLandmarkIdx = (this.#currentLandmarkIdx + 1) % landmarks.length;
+    }
+    const target = landmarks[this.#currentLandmarkIdx];
+    if (target) {
+      if (typeof target.focus === "function") target.focus();
+      else if ("tabIndex" in target) {
+        target.tabIndex = -1;
+        target.focus();
+      }
+    }
+  }
+
+  readonly #onCompareExecute = async (event: CustomEvent<any>): Promise<void> => {
+    const detail = event.detail ?? {};
+    let origJson = detail.originalJson;
+    let revJson = detail.revisedJson;
+
+    if (detail.originalFile) {
+      try {
+        const buf = await detail.originalFile.arrayBuffer();
+        origJson = await parseDOCX(buf);
+      } catch (err) {
+        console.error("Failed to parse original document for comparison", err);
+      }
+    }
+    if (detail.revisedFile) {
+      try {
+        const buf = await detail.revisedFile.arrayBuffer();
+        revJson = await parseDOCX(buf);
+      } catch (err) {
+        console.error("Failed to parse revised document for comparison", err);
+      }
+    }
+
+    if (!origJson && this.editor) {
+      origJson = this.editor.getJSON();
+    }
+
+    if (origJson && revJson) {
+      const compared = compareDocs(origJson, revJson, {
+        author: detail.revisedAuthor || "Comparison",
+      });
+      this.setJSON(compared);
+    }
+  };
+
+  readonly #onSignatureLineInsert = (event: CustomEvent<any>): void => {
+    const { name, title, email } = event.detail ?? {};
+    this.#bridge?.focus();
+    this.editor?.commands.insertContent({
+      type: "paragraph",
+      attrs: { alignment: "left" },
+      content: [
+        { type: "text", text: "_____________________________________\n" },
+        { type: "text", text: `X  ${name || ""}\n${title || ""}\n${email || ""}` },
+      ],
+    });
+  };
+
+  readonly #onDropCapApply = (event: CustomEvent<any>): void => {
+    const { position, lines, distancePt } = event.detail ?? {};
+    const editor = this.editor;
+    if (!editor) return;
+    this.#bridge?.focus();
+    const parent = editor.state.selection.$from.parent;
+    if (parent.type.name === "paragraph") {
+      const pos = editor.state.selection.$from.before(1);
+      const attrs = {
+        ...parent.attrs,
+        dropCap:
+          position === "none"
+            ? null
+            : {
+                val: position,
+                lines: lines ?? 3,
+                distance: Math.round((distancePt ?? 0) * 20),
+              },
+      };
+      editor.view.dispatch(editor.state.tr.setNodeMarkup(pos, undefined, attrs));
+    }
+  };
+
+  readonly #onRecipientsUpdated = (event: CustomEvent<any>): void => {
+    const { recipients } = event.detail ?? {};
+    if (recipients) {
+      this.#merge.onRecipientsOk(new CustomEvent("recipients:ok", { detail: { recipients } }));
+    }
+  };
+
+  readonly #onVersionRestore = (event: CustomEvent<any>): void => {
+    const { doc } = event.detail ?? {};
+    if (doc) {
+      this.setJSON(doc);
+    }
+  };
+
+  readonly #onProtectionEnforce = (event: CustomEvent<any>): void => {
+    const { type } = event.detail ?? {};
+    if (type === "readOnly") {
+      this.editor?.setEditable(false);
+      this.#syncEditModeMenu();
+    } else if (type === "trackedChanges") {
+      const commands = this.editor?.commands as any;
+      if (typeof commands?.["track-changes"] === "function") {
+        commands["track-changes"](true);
+      }
+    }
+  };
+
+  readonly #onProtectionStop = (): void => {
+    this.editor?.setEditable(true);
+    this.#syncEditModeMenu();
+  };
+
+  readonly #onA11ySelectIssue = (event: CustomEvent<any>): void => {
+    const issue = event.detail?.issue;
+    if (!issue) return;
+    this.#a11yMirror.announce(`Selected issue: ${issue.message}`);
   };
 
   /** Set a text selection (or a range) on the viewless editor. Same runtime
@@ -2084,6 +2237,39 @@ class DocenDocument extends AddinHost<Editor> {
       "symbol:insert",
       this.#onSymbolInsert as EventListener,
     );
+    this.shadowRoot!.appendChild(this.#a11yMirror.root);
+    this.shadowRoot!.querySelector("docen-compare-dialog")?.addEventListener(
+      "compare:execute",
+      this.#onCompareExecute as unknown as EventListener,
+    );
+    this.shadowRoot!.querySelector("docen-signature-line-dialog")?.addEventListener(
+      "signature-line:insert",
+      this.#onSignatureLineInsert as EventListener,
+    );
+    this.shadowRoot!.querySelector("docen-dropcap-dialog")?.addEventListener(
+      "dropcap:apply",
+      this.#onDropCapApply as EventListener,
+    );
+    this.shadowRoot!.querySelector("docen-merge-recipients-dialog")?.addEventListener(
+      "recipients:updated",
+      this.#onRecipientsUpdated as EventListener,
+    );
+    this.shadowRoot!.querySelector("docen-version-history-dialog")?.addEventListener(
+      "version:restore",
+      this.#onVersionRestore as EventListener,
+    );
+    this.shadowRoot!.querySelector("docen-restrict-editing-pane")?.addEventListener(
+      "protection:enforce",
+      this.#onProtectionEnforce as EventListener,
+    );
+    this.shadowRoot!.querySelector("docen-restrict-editing-pane")?.addEventListener(
+      "protection:stop",
+      this.#onProtectionStop as EventListener,
+    );
+    this.shadowRoot!.querySelector("docen-a11y-checker-pane")?.addEventListener(
+      "a11y:select-issue",
+      this.#onA11ySelectIssue as EventListener,
+    );
     // Paragraph dialog — stamp the committed patch onto the selection (or the
     // targeted style when opened through the Modify Style dialog's Format).
     this.shadowRoot!.querySelector("docen-paragraph-dialog")?.addEventListener(
@@ -2897,6 +3083,13 @@ class DocenDocument extends AddinHost<Editor> {
       background: projected.background,
       viewMode: projected.viewMode,
     };
+    try {
+      this.#a11yMirror.update({
+        sections: projected.sections.map((s) => ({ blocks: s.blocks })),
+      } as any);
+    } catch {
+      // Ignore a11y mirror update errors in non-browser environments
+    }
     const prev = this.#lastRun;
     this.#lastRun = run;
     this.#pages = run.pages;
@@ -3358,8 +3551,19 @@ class DocenDocument extends AddinHost<Editor> {
     clearTimeout(this.#autosaveTimer);
     this.#autosaveTimer = window.setTimeout(() => {
       try {
-        const json = JSON.stringify(this.editor?.getJSON() ?? null);
-        if (json.length <= AUTOSAVE_MAX_CHARS) localStorage.setItem(this.#autosaveKey(), json);
+        const curDoc = this.editor?.getJSON();
+        if (curDoc) {
+          const json = JSON.stringify(curDoc);
+          if (json.length <= AUTOSAVE_MAX_CHARS) localStorage.setItem(this.#autosaveKey(), json);
+          this.#versionSnapshots.unshift({
+            id: `v-${Date.now()}`,
+            timestamp: new Date().toISOString(),
+            author: this.settings.identity.name || "User",
+            isAutosave: true,
+            doc: curDoc,
+          });
+          if (this.#versionSnapshots.length > 20) this.#versionSnapshots.pop();
+        }
       } catch {
         // Quota exceeded — keep the last good backup, retry on the next change.
       }
@@ -7326,7 +7530,13 @@ class DocenDocument extends AddinHost<Editor> {
                   ? "revisions-pane"
                   : id === "styles"
                     ? "styles-pane"
-                    : "props-pane";
+                    : id === "reveal"
+                      ? "reveal-pane"
+                      : id === "restrict"
+                        ? "restrict-pane"
+                        : id === "a11y"
+                          ? "a11y-pane"
+                          : "props-pane";
     return this.shadowRoot?.querySelector(`docen-task-pane[part="${part}"]`) as
       | (HTMLElement & { open: boolean })
       | null;

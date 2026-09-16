@@ -963,6 +963,7 @@ export function packLines(inline: LayoutInline[], opts: PackLinesOptions): Packe
                 widthPx: src.widthPx,
                 heightPx: src.heightPx,
                 label: src.label,
+                data: src.data,
               });
               if (src.heightPx > tallestPicturePx) tallestPicturePx = src.heightPx;
             }

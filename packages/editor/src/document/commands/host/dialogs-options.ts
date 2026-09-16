@@ -74,9 +74,37 @@ export class DialogsOptionsHostCommands implements HostCommandDomain {
     "phonetic-guide",
     "two-lines-in-one",
     "define-new-list",
+    "compare",
+    "signature-line",
+    "drop-cap",
+    "dropcap",
   ];
 
   run(event: string, _value?: string): boolean {
+    if (event === "compare") {
+      (
+        this.host.element().shadowRoot?.querySelector("docen-compare-dialog") as {
+          show(): void;
+        } | null
+      )?.show();
+      return true;
+    }
+    if (event === "signature-line") {
+      (
+        this.host.element().shadowRoot?.querySelector("docen-signature-line-dialog") as {
+          show(): void;
+        } | null
+      )?.show();
+      return true;
+    }
+    if (event === "drop-cap" || event === "dropcap") {
+      (
+        this.host.element().shadowRoot?.querySelector("docen-dropcap-dialog") as {
+          show(): void;
+        } | null
+      )?.show();
+      return true;
+    }
     // Symbol — open the character grid dialog; the insertion arrives via the
     // dialog's symbol:insert event (it stays open for several inserts).
     if (event === "symbol") {

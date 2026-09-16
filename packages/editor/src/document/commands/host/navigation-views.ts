@@ -7,8 +7,8 @@ import type { HostCommandDomain } from "./registry";
 export interface NavigationViewsHostView {
   /** The headless editor — undefined before a document opens. */
   editor(): Editor | null | undefined;
-  /** Toggle a task pane (the navigation/outline pane). */
-  togglePane(id: "navigation"): void;
+  /** Toggle a task pane (the navigation/outline/reveal/restrict/a11y pane). */
+  togglePane(id: "navigation" | "reveal" | "restrict" | "a11y"): void;
   /** Editing → Find drop-down → Go To (prompts for a page number). */
   goToPage(): void;
   /** Open the nav pane's search box. */
@@ -56,6 +56,9 @@ export class NavigationViewsHostCommands implements HostCommandDomain {
     "properties",
     "zoom",
     "zoom-100",
+    "reveal-formatting",
+    "restrict-editing",
+    "check-accessibility",
   ];
 
   readonly editor: readonly string[] = [
@@ -73,6 +76,18 @@ export class NavigationViewsHostCommands implements HostCommandDomain {
     // UI chrome actions are handled locally and need no Tiptap editor.
     if (event === "toggle-navigation") {
       this.host.togglePane("navigation");
+      return true;
+    }
+    if (event === "reveal-formatting") {
+      this.host.togglePane("reveal");
+      return true;
+    }
+    if (event === "restrict-editing") {
+      this.host.togglePane("restrict");
+      return true;
+    }
+    if (event === "check-accessibility") {
+      this.host.togglePane("a11y");
       return true;
     }
     // View → Outline: Word's outline view maps to the document-structure

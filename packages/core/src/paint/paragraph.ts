@@ -28,6 +28,7 @@ import type { PaintColumn, PaintContext } from "./context";
 import { paintDrawing, paintMembers, recordDrawingHit } from "./drawing";
 import { addCroppedImage, addDecodedImage } from "./image";
 import { strokePropsOf } from "./line";
+import { paintMath } from "./math";
 
 /** OOXML ST_HighlightColor tokens → Word's highlight palette, #RRGGBB. */
 const HIGHLIGHT_COLOR: Record<string, string> = {
@@ -813,38 +814,7 @@ export function paintParagraph(
           );
         }
       } else if (item.kind === "math" && inline.kind === "math") {
-        // A formula the engine does not lay out yet: a dashed slot with the
-        // structural label centered inside — Word's empty-argument look, an
-        // honest stand-in until the math layout engine lands.
-        tree.add(
-          new Rect({
-            x: lineX + item.xPx,
-            y: lineY + pad,
-            width: item.widthPx,
-            height: item.heightPx,
-            fill: "rgba(149, 166, 190, 0.12)",
-            stroke: "#9aa6be",
-            strokeWidth: 1,
-            dashPattern: [3, 2],
-            hittable: false,
-          }),
-        );
-        tree.add(
-          new Text({
-            x: lineX + item.xPx,
-            y: lineY + pad,
-            width: item.widthPx,
-            height: item.heightPx,
-            text: item.label,
-            fill: "#5b6675",
-            fontFamily: "Inter, sans-serif",
-            fontSize: item.heightPx * 0.62,
-            italic: true,
-            textAlign: "center",
-            verticalAlign: "middle",
-            hittable: false,
-          }),
-        );
+        paintMath(tree, item, lineX + item.xPx, lineY + pad);
       } else if (item.kind === "picture" && inline.kind === "picture") {
         // Word treats an inline picture as a single big character: its BOTTOM
         // edge sits ON the text baseline ("in line with text" = baseline

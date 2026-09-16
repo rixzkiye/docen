@@ -16,6 +16,7 @@ import { SectionsHostCommands, type SectionsHostView } from "./sections-page-set
 import { TablesHostCommands, type TablesHostView } from "./tables";
 
 export type { HostCommandDomain, HostCommandHandler, HostCommandRegistry } from "./registry";
+export * from "./sdt";
 
 /**
  * The narrow host views the extracted command domains receive — each domain

@@ -1530,6 +1530,104 @@ export const ribbonEn: AdditionalLanguage = {
     "styleName.quote": "Quote",
     "styleName.intenseQuote": "Intense Quote",
     "styleName.listParagraph": "List Paragraph",
+
+    // Developer Tab & SDT
+    "ribbon.tab.developer": "Developer",
+    "ribbon.group.code": "Code",
+    "ribbon.group.controls": "Controls",
+    "ribbon.cmd.sdt-rich-text": "Rich Text Content Control",
+    "ribbon.cmd.sdt-plain-text": "Plain Text Content Control",
+    "ribbon.cmd.sdt-picture": "Picture Content Control",
+    "ribbon.cmd.sdt-building-blocks": "Building Block Gallery Content Control",
+    "ribbon.cmd.sdt-checkbox": "Check Box Content Control",
+    "ribbon.cmd.sdt-combo": "Combo Box Content Control",
+    "ribbon.cmd.sdt-dropdown": "Drop-Down List Content Control",
+    "ribbon.cmd.sdt-date": "Date Picker Content Control",
+    "ribbon.cmd.sdt-design-mode": "Design Mode",
+    "ribbon.cmd.sdt-properties": "Properties",
+    "sdt.dialogTitle": "Content Control Properties",
+    "sdt.general": "General",
+    "sdt.title": "Title",
+    "sdt.tag": "Tag",
+    "sdt.locking": "Locking",
+    "sdt.cannotDelete": "Content control cannot be deleted",
+    "sdt.cannotEdit": "Contents cannot be edited",
+
+    // Compare
+    "compare.dialogTitle": "Compare Documents",
+    "compare.originalDocument": "Original document",
+    "compare.revisedDocument": "Revised document",
+    "compare.labelChangesWith": "Label changes with",
+    "compare.comparisonSettings": "Comparison settings",
+    "compare.formatting": "Formatting",
+    "compare.case": "Case changes",
+    "compare.whitespace": "White space",
+    "compare.tables": "Tables",
+    "compare.headersFooters": "Headers and footers",
+    "compare.comments": "Comments",
+    "compare.showChangesAt": "Show changes at",
+    "compare.wordLevel": "Word level",
+    "compare.characterLevel": "Character level",
+    "compare.compareButton": "Compare",
+
+    // Protection
+    "protect.formattingRestrictions": "Formatting restrictions",
+    "protect.limitFormatting": "Limit formatting to a selection of styles",
+    "protect.editingRestrictions": "Editing restrictions",
+    "protect.allowOnlyThisEditing": "Allow only this type of editing in the document:",
+    "protect.trackedChanges": "Tracked changes",
+    "protect.comments": "Comments",
+    "protect.fillingInForms": "Filling in forms",
+    "protect.noChangesReadOnly": "No changes (Read only)",
+    "protect.startEnforcement": "Start enforcement",
+    "protect.startEnforcingBtn": "Yes, Start Enforcing Protection",
+    "protect.protectionActive": "Protection is Active",
+    "protect.enforcedDesc": "This document is protected from unintentional editing.",
+    "protect.stopProtection": "Stop Protection",
+    "protect.enterPasswordToStop": "Enter password to stop protection",
+    "protect.passwordOptional": "Enter new password (optional)",
+
+    // Signature Line
+    "sig.dialogTitle": "Signature Setup",
+    "sig.suggestedSigner": "Suggested signer",
+    "sig.suggestedTitle": "Suggested signer's title",
+    "sig.suggestedEmail": "Suggested signer's e-mail address",
+    "sig.instructions": "Instructions to the signer",
+    "sig.allowComments": "Allow the signer to add comments in the Sign dialog",
+    "sig.showDate": "Show sign date in signature line",
+
+    // Drop Cap
+    "dropcap.dialogTitle": "Drop Cap",
+    "dropcap.position": "Position",
+    "dropcap.none": "None",
+    "dropcap.dropped": "Dropped",
+    "dropcap.inMargin": "In margin",
+    "dropcap.options": "Options",
+    "dropcap.font": "Font",
+    "dropcap.linesToDrop": "Lines to drop",
+    "dropcap.distanceFromText": "Distance from text",
+
+    // Symbol
+    "symbol.font": "Font",
+    "symbol.subset": "Subset",
+    "symbol.recentlyUsed": "Recently used symbols",
+
+    // Accessibility
+    "a11y.checkerTitle": "Accessibility Checker",
+    "a11y.recheck": "Re-check",
+    "a11y.noIssuesFound":
+      "No accessibility issues found. People with disabilities should not have difficulty reading this document.",
+
+    // Recipients Editor
+    "recipients.editTitle": "Mail Merge Recipients",
+    "recipients.filterPlaceholder": "Search recipients...",
+    "recipients.selectAll": "Select All",
+    "recipients.clearAll": "Clear All",
+
+    // Version History
+    "history.dialogTitle": "Version History",
+    "history.selectVersionToPreview": "Select a version to preview",
+    "history.restoreBtn": "Restore this version",
   },
 };
 
@@ -3039,6 +3137,103 @@ export const ribbonZhCN: AdditionalLanguage = {
     "styleName.quote": "引用",
     "styleName.intenseQuote": "明显引用",
     "styleName.listParagraph": "列表段落",
+
+    // Developer Tab & SDT
+    "ribbon.tab.developer": "开发工具",
+    "ribbon.group.code": "代码",
+    "ribbon.group.controls": "控件",
+    "ribbon.cmd.sdt-rich-text": "富文本内容控件",
+    "ribbon.cmd.sdt-plain-text": "纯文本内容控件",
+    "ribbon.cmd.sdt-picture": "图片内容控件",
+    "ribbon.cmd.sdt-building-blocks": "文档部件库内容控件",
+    "ribbon.cmd.sdt-checkbox": "复选框内容控件",
+    "ribbon.cmd.sdt-combo": "组合框内容控件",
+    "ribbon.cmd.sdt-dropdown": "下拉列表内容控件",
+    "ribbon.cmd.sdt-date": "日期选取器内容控件",
+    "ribbon.cmd.sdt-design-mode": "设计模式",
+    "ribbon.cmd.sdt-properties": "属性",
+    "sdt.dialogTitle": "内容控件属性",
+    "sdt.general": "常规",
+    "sdt.title": "标题",
+    "sdt.tag": "标记",
+    "sdt.locking": "锁定",
+    "sdt.cannotDelete": "无法删除内容控件",
+    "sdt.cannotEdit": "无法编辑内容",
+
+    // Compare
+    "compare.dialogTitle": "比较文档",
+    "compare.originalDocument": "原文档",
+    "compare.revisedDocument": "修订的文档",
+    "compare.labelChangesWith": "修订标注来自",
+    "compare.comparisonSettings": "比较设置",
+    "compare.formatting": "格式",
+    "compare.case": "大小写",
+    "compare.whitespace": "空格",
+    "compare.tables": "表格",
+    "compare.headersFooters": "页眉和页脚",
+    "compare.comments": "批注",
+    "compare.showChangesAt": "显示更改级别",
+    "compare.wordLevel": "词级别",
+    "compare.characterLevel": "字符级别",
+    "compare.compareButton": "比较",
+
+    // Protection
+    "protect.formattingRestrictions": "格式设置限制",
+    "protect.limitFormatting": "限制对选定样式的格式设置",
+    "protect.editingRestrictions": "编辑限制",
+    "protect.allowOnlyThisEditing": "仅允许在文档中进行此类编辑:",
+    "protect.trackedChanges": "修订",
+    "protect.comments": "批注",
+    "protect.fillingInForms": "填写窗体",
+    "protect.noChangesReadOnly": "不允许任何更改(只读)",
+    "protect.startEnforcement": "启动强制保护",
+    "protect.startEnforcingBtn": "是，启动强制保护",
+    "protect.protectionActive": "保护已处于活动状态",
+    "protect.enforcedDesc": "本文档已受保护，以防止意外编辑。",
+    "protect.stopProtection": "停止保护",
+    "protect.enterPasswordToStop": "输入密码以停止保护",
+    "protect.passwordOptional": "输入新密码(可选)",
+
+    // Signature Line
+    "sig.dialogTitle": "签名行设置",
+    "sig.suggestedSigner": "建议的签署人",
+    "sig.suggestedTitle": "签署人职务",
+    "sig.suggestedEmail": "签署人电子邮件地址",
+    "sig.instructions": "向签署人提供的说明",
+    "sig.allowComments": "允许签署人在“签署”对话框中添加批注",
+    "sig.showDate": "在签名行中显示签署日期",
+
+    // Drop Cap
+    "dropcap.dialogTitle": "首字下沉",
+    "dropcap.position": "位置",
+    "dropcap.none": "无",
+    "dropcap.dropped": "下沉",
+    "dropcap.inMargin": "页边",
+    "dropcap.options": "选项",
+    "dropcap.font": "字体",
+    "dropcap.linesToDrop": "下沉行数",
+    "dropcap.distanceFromText": "距正文",
+
+    // Symbol
+    "symbol.font": "字体",
+    "symbol.subset": "子集",
+    "symbol.recentlyUsed": "最近使用过的符号",
+
+    // Accessibility
+    "a11y.checkerTitle": "辅助功能检查器",
+    "a11y.recheck": "重新检查",
+    "a11y.noIssuesFound": "未发现辅助功能问题。残障人士阅读此文档应该没有困难。",
+
+    // Recipients Editor
+    "recipients.editTitle": "邮件合并收件人",
+    "recipients.filterPlaceholder": "搜索收件人...",
+    "recipients.selectAll": "全选",
+    "recipients.clearAll": "全不选",
+
+    // Version History
+    "history.dialogTitle": "版本历史记录",
+    "history.selectVersionToPreview": "选择一个版本以预览",
+    "history.restoreBtn": "还原此版本",
   },
 };
 

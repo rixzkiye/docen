@@ -6,6 +6,7 @@
 import {
   emuToPx,
   hyphenateText,
+  layoutMathTree,
   ptToPx,
   twipToPx,
   type LayoutBalloonAnchor,
@@ -626,17 +627,15 @@ export function projectRuns(
       if (child.break != null) out.push({ kind: "break" });
       if (child.tab != null) out.push({ kind: "tab" });
       if (isRecord(child.math)) {
-        // An OMML formula the engine does not lay out yet: a fixed
-        // placeholder slot with a structural label, styled as an inert
-        // annotation (Word shows empty argument slots until the math
-        // layout engine lands).
         const style = { ...textStyleOf(rPr), italic: true, color: "#808080" };
         const label = mathLabelOf(child.math);
+        const mathData = layoutMathTree(child.math, style.sizePx);
         out.push({
           kind: "math",
           label,
-          widthPx: label.length * style.sizePx * 0.7 + 8,
-          heightPx: style.sizePx * 1.6,
+          widthPx: mathData?.widthPx ?? label.length * style.sizePx * 0.7 + 8,
+          heightPx: mathData?.heightPx ?? style.sizePx * 1.6,
+          data: mathData,
         });
       }
       if (isRecord(child.picture)) pushPicture(child.picture);

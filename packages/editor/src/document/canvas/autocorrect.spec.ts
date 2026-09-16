@@ -334,4 +334,23 @@ describe("autocorrectConfigOf", () => {
     });
     expect(emptied.replacements).toEqual([]);
   });
+
+  it("replaces math commands with their unicode glyphs on boundary", () => {
+    expect(autocorrectOf(" ", "\\alpha")).toEqual({
+      text: "α",
+      back: 6,
+    });
+    expect(autocorrectOf(" ", "\\sqrt")).toEqual({
+      text: "√",
+      back: 5,
+    });
+    expect(autocorrectOf(" ", "\\sum")).toEqual({
+      text: "∑",
+      back: 4,
+    });
+    expect(autocorrectOf("+", "\\infty")).toEqual({
+      text: "∞+",
+      back: 6,
+    });
+  });
 });

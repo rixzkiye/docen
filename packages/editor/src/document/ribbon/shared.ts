@@ -183,6 +183,7 @@ export const RIBBON_TAB_IDS = [
   "mailings",
   "review",
   "view",
+  "developer",
 ] as const;
 
 export type RibbonTabId = (typeof RIBBON_TAB_IDS)[number];

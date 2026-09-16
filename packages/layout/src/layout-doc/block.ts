@@ -151,6 +151,12 @@ export interface LayoutParagraph {
    *  paragraph's own lines around the box and registers a float zone the
    *  flow applies to later paragraphs (or a cleared band for topAndBottom). */
   drawings?: LayoutDrawing[];
+  /** Drop cap configuration (w:dropCap / w:framePr): dropped or in-margin capital letter. */
+  dropCap?: {
+    type: "dropped" | "margin";
+    lines: number;
+    distancePx?: number;
+  };
 }
 
 /** A plain container (list body, blockquote) — laid out by recursion, no

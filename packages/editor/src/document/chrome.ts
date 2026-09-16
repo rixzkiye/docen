@@ -194,6 +194,7 @@ export const documentTemplate = html`
     <docen-task-pane slot="task-pane-start" position="start" part="nav-pane">
       <docen-navigation-pane>
         <docen-outline slot="headings"></docen-outline>
+        <docen-nav-pages slot="pages"></docen-nav-pages>
         <div class="search-results" slot="results" part="search-results"></div>
       </docen-navigation-pane>
     </docen-task-pane>
@@ -228,6 +229,30 @@ export const documentTemplate = html`
     </docen-task-pane>
     <docen-task-pane slot="task-pane-end" position="end" part="styles-pane" title="Styles">
       <docen-styles-pane></docen-styles-pane>
+    </docen-task-pane>
+    <docen-task-pane
+      slot="task-pane-end"
+      position="end"
+      part="reveal-pane"
+      title="Reveal Formatting"
+    >
+      <docen-reveal-formatting-pane></docen-reveal-formatting-pane>
+    </docen-task-pane>
+    <docen-task-pane
+      slot="task-pane-end"
+      position="end"
+      part="restrict-pane"
+      title="Restrict Editing"
+    >
+      <docen-restrict-editing-pane></docen-restrict-editing-pane>
+    </docen-task-pane>
+    <docen-task-pane
+      slot="task-pane-end"
+      position="end"
+      part="a11y-pane"
+      title="Accessibility Checker"
+    >
+      <docen-a11y-checker-pane></docen-a11y-checker-pane>
     </docen-task-pane>
     <docen-status-bar slot="status" part="status"></docen-status-bar>
   </docen-workspace>
@@ -283,6 +308,12 @@ export const documentTemplate = html`
   <docen-bookmark-dialog part="bookmark"></docen-bookmark-dialog>
   <docen-go-to-dialog part="go-to"></docen-go-to-dialog>
   <docen-properties-dialog part="properties"></docen-properties-dialog>
+  <docen-sdt-dialog part="sdt"></docen-sdt-dialog>
+  <docen-compare-dialog part="compare"></docen-compare-dialog>
+  <docen-signature-line-dialog part="signature-line"></docen-signature-line-dialog>
+  <docen-dropcap-dialog part="dropcap"></docen-dropcap-dialog>
+  <docen-merge-recipients-dialog part="merge-recipients"></docen-merge-recipients-dialog>
+  <docen-version-history-dialog part="version-history"></docen-version-history-dialog>
   <input type="file" id="file-input" accept=".docx,.docm,.dotx,.dotm,.md,.markdown,.xml" hidden />
   <input type="file" id="image-input" accept="image/*" hidden />
   <input type="file" id="picture-input" accept="image/*" hidden />

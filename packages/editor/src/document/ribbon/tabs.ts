@@ -2,6 +2,7 @@ import type { StylesOptions } from "@docen/docx";
 
 import type { RibbonControl, RibbonTab } from "../../ui";
 import { designTab } from "./design";
+import { developerTab } from "./developer";
 import { drawTab } from "./draw";
 import { homeTab } from "./home";
 import { insertTab } from "./insert";
@@ -47,6 +48,7 @@ export function ribbonTabs(styles?: StylesOptions | null, opts: RibbonOptions = 
   if (show("mailings")) tabs.push(mailingsTab());
   if (show("review")) tabs.push(reviewTab(opts.revisionAuthors));
   if (show("view")) tabs.push(viewTab());
+  if (show("developer")) tabs.push(developerTab());
   return tabs;
 }
 

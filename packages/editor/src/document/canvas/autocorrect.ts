@@ -67,6 +67,91 @@ export const DEFAULT_AUTOCORRECT_REPLACEMENTS: readonly AutocorrectReplacement[]
   { from: "definately", to: "definitely" },
 ];
 
+/** Word's Math AutoCorrect standard dictionary. */
+export const MATH_AUTOCORRECT_MAP: Record<string, string> = {
+  "\\alpha": "α",
+  "\\beta": "β",
+  "\\gamma": "γ",
+  "\\delta": "δ",
+  "\\epsilon": "ε",
+  "\\zeta": "ζ",
+  "\\eta": "η",
+  "\\theta": "θ",
+  "\\iota": "ι",
+  "\\kappa": "κ",
+  "\\lambda": "λ",
+  "\\mu": "μ",
+  "\\nu": "ν",
+  "\\xi": "ξ",
+  "\\pi": "π",
+  "\\rho": "ρ",
+  "\\sigma": "σ",
+  "\\tau": "τ",
+  "\\upsilon": "υ",
+  "\\phi": "φ",
+  "\\chi": "χ",
+  "\\psi": "ψ",
+  "\\omega": "ω",
+  "\\Gamma": "Γ",
+  "\\Delta": "Δ",
+  "\\Theta": "Θ",
+  "\\Lambda": "Λ",
+  "\\Xi": "Ξ",
+  "\\Pi": "Π",
+  "\\Sigma": "Σ",
+  "\\Phi": "Φ",
+  "\\Psi": "Ψ",
+  "\\Omega": "Ω",
+  "\\sqrt": "√",
+  "\\cbrt": "∛",
+  "\\sum": "∑",
+  "\\prod": "∏",
+  "\\int": "∫",
+  "\\oint": "∮",
+  "\\infty": "∞",
+  "\\pm": "±",
+  "\\mp": "∓",
+  "\\times": "×",
+  "\\div": "÷",
+  "\\cdot": "·",
+  "\\ast": "∗",
+  "\\circ": "∘",
+  "\\bullet": "∙",
+  "\\le": "≤",
+  "\\ge": "≥",
+  "\\leq": "≤",
+  "\\geq": "≥",
+  "\\ne": "≠",
+  "\\neq": "≠",
+  "\\approx": "≈",
+  "\\equiv": "≡",
+  "\\sim": "∼",
+  "\\cong": "≅",
+  "\\propto": "∝",
+  "\\partial": "∂",
+  "\\nabla": "∇",
+  "\\in": "∈",
+  "\\notin": "∉",
+  "\\subset": "⊂",
+  "\\supset": "⊃",
+  "\\subseteq": "⊆",
+  "\\supseteq": "⊇",
+  "\\cap": "∩",
+  "\\cup": "∪",
+  "\\forall": "∀",
+  "\\exists": "∃",
+  "\\to": "→",
+  "\\rightarrow": "→",
+  "\\leftarrow": "←",
+  "\\leftrightarrow": "↔",
+  "\\Rightarrow": "⇒",
+  "\\Leftarrow": "⇐",
+  "\\Leftrightarrow": "⇔",
+  "\\deg": "°",
+  "\\degree": "°",
+  "\\angle": "∠",
+};
+
 /**
  * The rule configuration the typed leg reads per keystroke. `replacements`
  * is the effective table (the user's when customized, else the defaults) and
@@ -402,6 +487,21 @@ export function autocorrectOf(
   if (config.capitalizeFirstLetter && single) {
     const capitalized = capitalizeFix(single, textBefore, config.exceptions);
     if (capitalized) return capitalized;
+  }
+
+  // Math AutoCorrect: \cmd followed by boundary, operator, or space
+  if (
+    WORD_BOUNDARY.test(typed) ||
+    /[\s+\-*/^=_()[\]{}<>,.!?;:'"\\|`~]/u.test(typed) ||
+    typed === "\n"
+  ) {
+    const mathMatch = /\\[a-zA-Z]+$/.exec(textBefore);
+    if (mathMatch) {
+      const sym = MATH_AUTOCORRECT_MAP[mathMatch[0]];
+      if (sym) {
+        return { text: sym + (typed === " " ? "" : typed), back: mathMatch[0].length };
+      }
+    }
   }
 
   // Replacement table: the typed char is a boundary, the word behind it may
