@@ -489,6 +489,10 @@ class DocenDocument extends AddinHost<Editor> {
     syncStatusLanguage: () => this.#syncStatusLanguage(),
     filename: () => this.filename,
     fieldFrame: (pos) => this.#fieldFrame(pos),
+    positionTerms: () => ({
+      above: t("crossRef.above", this),
+      below: t("crossRef.below", this),
+    }),
   });
   /** "This section" commands (sectPr read/write, page setup presets, the
    *  page-setup/columns/borders dialogs), split out of this class — see

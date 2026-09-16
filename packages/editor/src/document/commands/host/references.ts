@@ -2,6 +2,7 @@ import type { Editor } from "@docen/docx/core";
 import { twipToPx } from "@docen/layout";
 
 import { t } from "../../../ui";
+import type { CrossReferenceTarget } from "../../cross-reference";
 import type { HostCommandDomain } from "./registry";
 
 /** The references domain's view of the host — only what its command bodies
@@ -27,7 +28,7 @@ export interface ReferencesHostView {
   markIndexEntry(target: Editor): void;
   insertBibliography(): void;
   bibliographySources(): unknown[];
-  crossReferenceTargets(): { name: string; text: string; kind: string }[];
+  crossReferenceTargets(): CrossReferenceTarget[];
   noteInsert(kind: "footnote" | "endnote"): void;
   noteEditAtSelection(): void;
   noteDeleteAtSelection(): void;
@@ -167,14 +168,16 @@ export class ReferencesHostCommands implements HostCommandDomain {
       )?.show();
       return true;
     }
-    // Cross-reference — open the dialog over the document's bookmarks; the
-    // commit arrives via cross-ref:ok (#dialogs.onCrossRefOk).
+    // Cross-reference — open the dialog over the document's candidates; the
+    // commit arrives via cross-ref:ok (#dialogs.onCrossRefOk). The caret
+    // position rides along for the dialog's above/below preview.
     if (event === "cross-reference") {
+      const target = this.host.bridge()?.activeEditor() ?? editor;
       (
         this.host.element().shadowRoot?.querySelector("docen-cross-reference-dialog") as {
-          show(targets: { name: string; text: string; kind: string }[]): void;
+          show(targets: CrossReferenceTarget[], caretPos?: number): void;
         } | null
-      )?.show(this.host.crossReferenceTargets());
+      )?.show(this.host.crossReferenceTargets(), target.state.selection.from);
       return true;
     }
     // Source Manager / Insert Citation — the same dialog in two modes (Word's
