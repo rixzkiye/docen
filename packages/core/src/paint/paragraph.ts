@@ -400,13 +400,17 @@ export function paintParagraph(
         // A page-number field paints its live value; the measured `text` was
         // only a placeholder. PAGE renders in the section's w:pgNumType
         // format at the restart-adjusted value (the ctx carries the offset
-        // between shown and physical numbers).
+        // between shown and physical numbers). Values the render pass already
+        // resolved (`inline.resolved`) win — furniture fields (headers/
+        // footers) are not in the page flow, so they fall back to the live
+        // page context here.
         const label =
-          inline.field === "page"
+          inline.resolved ??
+          (inline.field === "page"
             ? formatNumber(ctx.pageNumber?.fmt, ctx.pageIndex + 1 + (ctx.pageNumber?.offset ?? 0))
             : inline.field === "numPages"
               ? String(ctx.pageCount)
-              : item.text;
+              : item.text);
         // Every run hangs on the LINE's one baseline: Leafer pins an
         // element's own baseline at 0.85 × its font size below the element
         // top, so the element top re-anchors by that share below the line

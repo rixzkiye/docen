@@ -88,12 +88,29 @@ export type LayoutInline =
   /** A `field` marker makes the text a dynamic page-number atom (w:fldSimple /
    *  complexField PAGE / NUMPAGES): the value only exists after pagination, so
    *  `text` is a single-digit placeholder for measuring and the painter swaps
-   *  in the real page number. */
+   *  in the real page number.
+   *
+   *  Every field atom also carries its descriptor — `instruction` verbatim
+   *  plus the `result` the document cached and the `resolved` value the render
+   *  pass derived from the paginated document. Paint prefers `resolved`, then
+   *  `text` (the cache); the dynamic page markers keep their placeholder text
+   *  so pagination never feeds back into their own measurement. */
   | {
       kind: "text";
       text: string;
       style: LayoutTextStyle;
       field?: "page" | "numPages";
+      /** The field instruction verbatim (`PAGE \* MERGEFORMAT`, `AUTHOR`,
+       *  `REF _Ref123 \h`) — set on every w:fldSimple / complexField atom. */
+      instruction?: string;
+      /** The cached result the document stored (simpleField @w:cachedValue /
+       *  complexField result). `text` mirrors it except on the dynamic page
+       *  markers, whose text is the measuring placeholder. */
+      result?: string;
+      /** The live value the render pass resolved against the paginated
+       *  document (real page/section numbers) — paint prefers it over `text`.
+       *  Absent = the field was not resolved this render (cached value shows). */
+      resolved?: string;
       /** Ids of the comments whose range covers this atom (w:commentRangeStart
        *  /commentRangeEnd): the painter tints the text's box (sorted, unique).
        *  Pure paint metadata — measuring and wrapping ignore it. */
