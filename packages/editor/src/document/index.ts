@@ -73,6 +73,10 @@ import {
 import type { AutocorrectDialogValues } from "../ui/components/workspace/autocorrect-dialog";
 import type { DrawingPropertiesState } from "../ui/components/workspace/drawing-properties-dialog";
 import type { FontDialogPatch } from "../ui/components/workspace/font-dialog";
+import type {
+  HyphenationDialogOptions,
+  DocenHyphenationDialog,
+} from "../ui/components/workspace/hyphenation-dialog";
 import { proofingLanguageName } from "../ui/components/workspace/language-dialog";
 import type { LinkValues } from "../ui/components/workspace/link-dialog";
 import type { StyleChoice, ModifyStyleState } from "../ui/components/workspace/modify-style-dialog";
@@ -80,6 +84,7 @@ import type {
   NoteKindSettings,
   NoteSettingsValues,
 } from "../ui/components/workspace/note-settings-dialog";
+import type { DocenTabsDialog } from "../ui/components/workspace/tabs-dialog";
 import type { WordCountStats } from "../ui/components/workspace/word-count-dialog";
 import { createDefaultAddin, textCounter, wordCounter } from "./addin";
 import { autocorrectConfigOf } from "./canvas/autocorrect";
@@ -335,6 +340,10 @@ function fontPatchOfRun(run: Record<string, unknown>): FontDialogPatch {
     smallCaps: run.smallCaps === true,
     allCaps: run.caps === true,
     hidden: run.vanish === true,
+    shadow: run.shadow === true || Boolean(run.shadow),
+    outline: run.outline === true || Boolean(run.outline),
+    emboss: run.emboss === true,
+    imprint: run.imprint === true,
   };
 }
 
@@ -361,6 +370,10 @@ function fontRunPropsOf(patch: FontDialogPatch): Record<string, unknown> {
     caps: patch.allCaps || undefined,
     vertAlign: patch.superscript ? "superscript" : patch.subscript ? "subscript" : undefined,
     vanish: patch.hidden || undefined,
+    shadow: patch.shadow || undefined,
+    outline: patch.outline || undefined,
+    emboss: patch.emboss || undefined,
+    imprint: patch.imprint || undefined,
   };
 }
 
@@ -620,6 +633,12 @@ class DocenDocument extends AddinHost<Editor> {
    *  (Word's drag-to-draw); Esc disarms, draws keep it armed. */
   #armedShape: string | null = null;
   #armedShapeKeyOff?: () => void;
+  #hyphenation: {
+    auto?: boolean;
+    doNotHyphenateCaps?: boolean;
+    zoneTw?: number;
+    limit?: number;
+  } = {};
 
   /** The underlying Tiptap Editor (undefined before connect / after disconnect).
    *  Exposed so a host (the @docen/vue adapter, or any parent element) can drive
@@ -1825,6 +1844,14 @@ class DocenDocument extends AddinHost<Editor> {
       "page-number-format:ok",
       this.#sections.onPageNumberFormatOk as EventListener,
     );
+    this.shadowRoot!.querySelector("docen-hyphenation-dialog")?.addEventListener(
+      "hyphenation:ok",
+      this.#onHyphenationOk as EventListener,
+    );
+    this.shadowRoot!.querySelector("docen-tabs-dialog")?.addEventListener(
+      "tabs:ok",
+      this.#onTabsOk as EventListener,
+    );
     // Document Inspector (检查问题) — the findings dialog's removal buttons.
     this.shadowRoot!.querySelector("docen-inspect-dialog")?.addEventListener(
       "inspect:clear-comments",
@@ -1955,6 +1982,10 @@ class DocenDocument extends AddinHost<Editor> {
       "paragraph:ok",
       this.#onParagraphDialogOk as EventListener,
     );
+    this.shadowRoot!.querySelector("docen-paragraph-dialog")?.addEventListener(
+      "paragraph:open-tabs",
+      this.#openTabsDialog as EventListener,
+    );
     // Paragraph dialog's Set As Default — the patch lands on the Normal style.
     this.shadowRoot!.querySelector("docen-paragraph-dialog")?.addEventListener(
       "paragraph:default",
@@ -2073,6 +2104,7 @@ class DocenDocument extends AddinHost<Editor> {
     // card whose range the caret sits in).
     this.editor?.on("selectionUpdate", this.#comments.syncActiveCommentCard);
     this.editor?.on("selectionUpdate", this.#revisions.syncActiveRevision);
+    this.editor?.on("selectionUpdate", this.#onSelectionUpdateForTabs);
     document.addEventListener("fullscreenchange", this.#onFullscreenChange);
     this.addEventListener("keydown", this.#onZoomKey);
     this.dispatchEvent(new CustomEvent("docen:ready", { bubbles: true, composed: true }));
@@ -2535,6 +2567,7 @@ class DocenDocument extends AddinHost<Editor> {
       // Options → Display: hidden runs render with their dotted marker
       // instead of being suppressed.
       showHiddenText,
+      this.#hyphenation,
     );
     const stageSections: (ProjectedSection & CanvasStageSection)[] = sections.map((section) => ({
       ...section,
@@ -2876,6 +2909,8 @@ class DocenDocument extends AddinHost<Editor> {
       sectionOfPage: [],
       background: p.background,
     });
+    this.#stage.onAddTabStop = (posTw) => this.#addTabStopAt(posTw);
+    this.#stage.onOpenTabsDialog = () => this.#openTabsDialog();
     // A debug attribute stamped before the first render lands here.
     if (this.debug) this.#stage.setDebug(this.debug);
     this.#stage.setMarksLabels({
@@ -2915,6 +2950,7 @@ class DocenDocument extends AddinHost<Editor> {
     this.#revisions.syncRevisionsPane();
     this.#spelling.schedule();
     this.#syncStatusLanguage();
+    this.#syncActiveTabStops();
   }
 
   /** The previous render's flow result — the diff base for the next one. */
@@ -2967,6 +3003,12 @@ class DocenDocument extends AddinHost<Editor> {
     this.shadowRoot
       ?.querySelector("docen-line-numbers-dialog")
       ?.removeEventListener("line-numbers:ok", this.#sections.onLineNumbersOk as EventListener);
+    this.shadowRoot
+      ?.querySelector("docen-hyphenation-dialog")
+      ?.removeEventListener("hyphenation:ok", this.#onHyphenationOk as EventListener);
+    this.shadowRoot
+      ?.querySelector("docen-tabs-dialog")
+      ?.removeEventListener("tabs:ok", this.#onTabsOk as EventListener);
     this.shadowRoot
       ?.querySelector("docen-status-bar")
       ?.removeEventListener("language:open", this.#onLanguageOpen as EventListener);
@@ -3021,6 +3063,9 @@ class DocenDocument extends AddinHost<Editor> {
     this.shadowRoot
       ?.querySelector("docen-paragraph-dialog")
       ?.removeEventListener("paragraph:default", this.#dialogs.onParagraphDefault as EventListener);
+    this.shadowRoot
+      ?.querySelector("docen-paragraph-dialog")
+      ?.removeEventListener("paragraph:open-tabs", this.#openTabsDialog as EventListener);
     this.shadowRoot
       ?.querySelector("docen-paste-special-dialog")
       ?.removeEventListener("paste-special:ok", this.#onPasteSpecialOk as EventListener);
@@ -4396,6 +4441,128 @@ class DocenDocument extends AddinHost<Editor> {
     this.editor?.commands.insertContent(char);
   };
 
+  #setHyphenation(mode: "none" | "auto" | "manual"): void {
+    if (mode === "none") {
+      this.#hyphenation = { ...this.#hyphenation, auto: false };
+      this.#renderDoc(this.getJSON());
+    } else if (mode === "auto") {
+      this.#hyphenation = { ...this.#hyphenation, auto: true };
+      this.#renderDoc(this.getJSON());
+    } else if (mode === "manual") {
+      this.#openHyphenationOptions();
+    }
+  }
+
+  #openHyphenationOptions(): void {
+    const dialog = this.shadowRoot?.querySelector<DocenHyphenationDialog>(
+      "docen-hyphenation-dialog",
+    );
+    dialog?.show(this.#hyphenation);
+  }
+
+  #insertSoftHyphen(): void {
+    this.#bridge?.focus();
+    this.editor?.commands.insertContent("\u00AD");
+  }
+
+  readonly #onHyphenationOk = (event: CustomEvent<HyphenationDialogOptions>): void => {
+    if (!event.detail) return;
+    this.#hyphenation = {
+      auto: event.detail.auto,
+      doNotHyphenateCaps: event.detail.doNotHyphenateCaps,
+      zoneTw: event.detail.zoneTw,
+      limit: event.detail.limit,
+    };
+    this.#renderDoc(this.getJSON());
+  };
+
+  #openTabsDialog = (): void => {
+    const dialog = this.shadowRoot?.querySelector<DocenTabsDialog>("docen-tabs-dialog");
+    if (!dialog) return;
+    const state = this.editor?.state;
+    let tabStops: Array<{
+      position: number;
+      type: "left" | "center" | "right" | "decimal" | "bar";
+      leader?: "dot" | "heavy" | "hyphen" | "middleDot" | "underscore";
+    }> = [];
+    if (state) {
+      state.doc.nodesBetween(state.selection.from, state.selection.to, (node) => {
+        if (node.type.name === "paragraph" && Array.isArray(node.attrs.tabStops)) {
+          tabStops = node.attrs.tabStops;
+          return false;
+        }
+      });
+    }
+    const doc = this.getJSON() as { settings?: { defaultTabStop?: number } } | null;
+    const defaultTabStop = doc?.settings?.defaultTabStop ?? 720;
+    dialog.show({ tabStops, defaultTabStop });
+  };
+
+  readonly #onTabsOk = (
+    event: CustomEvent<{
+      tabStops?: Array<{ position: number; type?: string; leader?: string }>;
+      defaultTabStop?: number;
+    }>,
+  ): void => {
+    const { tabStops, defaultTabStop } = event.detail ?? {};
+    if (tabStops !== undefined) {
+      this.editor?.commands["set-paragraph-tabs"](tabStops);
+    }
+    if (defaultTabStop !== undefined) {
+      const doc = this.getJSON() as { settings?: Record<string, unknown> } | null;
+      if (doc) {
+        doc.settings = { ...doc.settings, defaultTabStop };
+        this.setJSON(doc);
+      }
+    }
+    this.#syncActiveTabStops();
+    this.#bridge?.focus();
+  };
+
+  #addTabStopAt(posTw: number): void {
+    const state = this.editor?.state;
+    if (!state) return;
+    let currentStops: Array<{ position: number; type?: string; leader?: string }> = [];
+    state.doc.nodesBetween(state.selection.from, state.selection.to, (node) => {
+      if (node.type.name === "paragraph" && Array.isArray(node.attrs.tabStops)) {
+        currentStops = [...node.attrs.tabStops];
+        return false;
+      }
+    });
+    const nextStops = currentStops.filter((s) => Math.abs((s.position ?? 0) - posTw) >= 15);
+    nextStops.push({ position: posTw, type: "left" });
+    nextStops.sort((a, b) => (a.position ?? 0) - (b.position ?? 0));
+    this.editor?.commands["set-paragraph-tabs"](nextStops);
+    this.#syncActiveTabStops();
+    this.#bridge?.focus();
+  }
+
+  readonly #onSelectionUpdateForTabs = (): void => {
+    this.#syncActiveTabStops();
+  };
+
+  #syncActiveTabStops(): void {
+    if (!this.#stage) return;
+    const state = this.editor?.state;
+    if (!state) return;
+    let stops: Array<{
+      positionPx: number;
+      type: "left" | "center" | "right" | "decimal" | "bar";
+    }> = [];
+    state.doc.nodesBetween(state.selection.from, state.selection.to, (node) => {
+      if (node.type.name === "paragraph" && Array.isArray(node.attrs.tabStops)) {
+        stops = node.attrs.tabStops.map(
+          (s: { position?: number; type?: "left" | "center" | "right" | "decimal" | "bar" }) => ({
+            positionPx: (s.position ?? 0) / 15,
+            type: s.type ?? "left",
+          }),
+        );
+        return false;
+      }
+    });
+    this.#stage.setActiveTabStops(stops);
+  }
+
   // The Paragraph dialog's OK — stamp its patch onto every selected paragraph
   // in the editor input currently routes into (a furniture story's editor
   // while a story is open, else the main document).
@@ -4436,6 +4603,10 @@ class DocenDocument extends AddinHost<Editor> {
       smallCaps: ts.smallCaps === true,
       allCaps: ts.allCaps === true,
       hidden: ts.vanish === true,
+      shadow: ts.shadow === true || Boolean(ts.shadow),
+      outline: ts.outline === true || Boolean(ts.outline),
+      emboss: ts.emboss === true,
+      imprint: ts.imprint === true,
     };
   }
 
@@ -5191,6 +5362,9 @@ class DocenDocument extends AddinHost<Editor> {
         setPageBorders: (preset) => this.#sections.setPageBorders(preset),
         insertCoverPage: () => this.#insertCoverPage(),
         insertBlankPage: () => this.#insertBlankPage(),
+        setHyphenation: (mode) => this.#setHyphenation(mode),
+        openHyphenationOptions: () => this.#openHyphenationOptions(),
+        insertSoftHyphen: () => this.#insertSoftHyphen(),
       },
       references: {
         editor: () => this.editor,

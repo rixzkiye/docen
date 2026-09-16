@@ -193,6 +193,10 @@ export class DialogCommands {
       smallCaps: patch.smallCaps || null,
       allCaps: patch.allCaps || null,
       vanish: patch.hidden || null,
+      shadow: patch.shadow || null,
+      outline: patch.outline || null,
+      emboss: patch.emboss || null,
+      imprint: patch.imprint || null,
     });
     if (patch.bold) chain.setMark("bold");
     else chain.unsetMark("bold");

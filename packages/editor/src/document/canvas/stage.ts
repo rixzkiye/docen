@@ -217,6 +217,28 @@ export class CanvasStage {
    *  restarts). */
   private pageNumberOffsets: number[] = [];
 
+  onAddTabStop?: (positionTw: number) => void;
+  onOpenTabsDialog?: () => void;
+  activeTabStops?: readonly {
+    positionPx: number;
+    type: "left" | "center" | "right" | "decimal" | "bar";
+  }[];
+
+  setActiveTabStops(
+    stops?: readonly {
+      positionPx: number;
+      type: "left" | "center" | "right" | "decimal" | "bar";
+    }[],
+  ): void {
+    this.activeTabStops = stops;
+    if (this.#showRuler) {
+      for (let i = 0; i < this.slots.length; i++) {
+        const frame = this.slots[i].el.parentElement;
+        if (frame) this.applyRulers(frame, i);
+      }
+    }
+  }
+
   /** The section a page belongs to (its flow box + furniture). */
   private sectionAt(page: number): CanvasStageSection {
     const i = this.ctx.sectionOfPage[page] ?? 0;
@@ -781,13 +803,29 @@ export class CanvasStage {
             out += `<text x="${pos + 1}" y="${THICKNESS - len - 3}" stroke="none">${num}</text>`;
         }
       }
+      if (!vertical && this.activeTabStops) {
+        for (const stop of this.activeTabStops) {
+          const pos = zero + stop.positionPx * this.factor;
+          if (stop.type === "left") {
+            out += `<path d="M ${pos} ${THICKNESS} L ${pos} ${THICKNESS - 6} L ${pos + 5} ${THICKNESS - 6}" stroke="#2563eb" stroke-width="1.5" fill="none"/>`;
+          } else if (stop.type === "right") {
+            out += `<path d="M ${pos} ${THICKNESS} L ${pos} ${THICKNESS - 6} L ${pos - 5} ${THICKNESS - 6}" stroke="#2563eb" stroke-width="1.5" fill="none"/>`;
+          } else if (stop.type === "center") {
+            out += `<path d="M ${pos} ${THICKNESS} L ${pos} ${THICKNESS - 6} M ${pos - 3} ${THICKNESS - 6} L ${pos + 3} ${THICKNESS - 6}" stroke="#2563eb" stroke-width="1.5" fill="none"/>`;
+          } else if (stop.type === "decimal") {
+            out += `<path d="M ${pos} ${THICKNESS} L ${pos} ${THICKNESS - 6} M ${pos - 3} ${THICKNESS - 6} L ${pos + 3} ${THICKNESS - 6}" stroke="#2563eb" stroke-width="1.5" fill="none"/><circle cx="${pos + 2}" cy="${THICKNESS - 8}" r="1" fill="#2563eb"/>`;
+          } else if (stop.type === "bar") {
+            out += `<line x1="${pos}" y1="${THICKNESS}" x2="${pos}" y2="${THICKNESS - 8}" stroke="#2563eb" stroke-width="1.5"/>`;
+          }
+        }
+      }
       return (
         `<svg xmlns="http://www.w3.org/2000/svg" width="100%" height="100%">` +
         `<g stroke="#9aa4b2" stroke-width="1" fill="#5b6675" font-size="7"` +
         ` font-family="Inter, sans-serif">${out}</g></svg>`
       );
     };
-    const mount = (cls: string, style: Partial<CSSStyleDeclaration>, svg: string): void => {
+    const mount = (cls: string, style: Partial<CSSStyleDeclaration>, svg: string): HTMLElement => {
       const div = document.createElement("div");
       div.className = cls;
       // Two assign targets, not one spread object: the linter flags spreading
@@ -806,17 +844,43 @@ export class CanvasStage {
       );
       div.innerHTML = svg;
       frame.append(div);
+      return div;
     };
-    mount(
+    const hDiv = mount(
       "h-ruler",
       {
         left: "0",
         top: `-${THICKNESS}px`,
         width: `${this.pageCss(flow.pageWidthPx)}px`,
         height: `${THICKNESS}px`,
+        pointerEvents: "auto",
+        cursor: "pointer",
       },
       build(this.pageCss(flow.pageWidthPx), flow.contentLeftPx * this.factor, false),
     );
+    const zeroX = flow.contentLeftPx * this.factor;
+    let clickTimer: ReturnType<typeof setTimeout> | undefined;
+    hDiv.addEventListener("click", (e: MouseEvent) => {
+      const rect = hDiv.getBoundingClientRect();
+      const clickX = e.clientX - rect.left;
+      const posPx = (clickX - zeroX) / this.factor;
+      if (posPx < 0) return;
+      const posTw = Math.round(posPx * 15);
+      if (clickTimer) {
+        clearTimeout(clickTimer);
+        clickTimer = undefined;
+      }
+      clickTimer = setTimeout(() => {
+        this.onAddTabStop?.(posTw);
+      }, 220);
+    });
+    hDiv.addEventListener("dblclick", () => {
+      if (clickTimer) {
+        clearTimeout(clickTimer);
+        clickTimer = undefined;
+      }
+      this.onOpenTabsDialog?.();
+    });
     mount(
       "v-ruler",
       {

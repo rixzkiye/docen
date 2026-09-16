@@ -89,15 +89,13 @@ export const lineNumbersItems = (): string =>
     { text: opt("line-numbering-options"), value: "options", event: "line-numbers" },
   ]);
 
-// Word's Hyphenation menu. The layout engine has no hyphenation dictionary or
-// soft-break insertion, so every mode is greyed until it lands — the control
-// is here so the Layout tab matches Word's silhouette.
+// Word's Hyphenation menu: None, Manual, Automatic, Hyphenation Options.
 export const hyphenationItems = (): string =>
   JSON.stringify([
-    { text: opt("hyphenation-none"), value: "none", disabled: true },
-    { text: opt("hyphenation-manual"), value: "manual", disabled: true },
-    { text: opt("hyphenation-auto"), value: "auto", disabled: true },
-    { text: opt("hyphenation-options"), value: "options", disabled: true },
+    { text: opt("hyphenation-none"), value: "none" },
+    { text: opt("hyphenation-manual"), value: "manual" },
+    { text: opt("hyphenation-auto"), value: "auto" },
+    { text: opt("hyphenation-options"), value: "options" },
   ]);
 
 export const indentItems = (): string =>

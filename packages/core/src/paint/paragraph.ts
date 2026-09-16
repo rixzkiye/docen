@@ -443,6 +443,22 @@ export function paintParagraph(
         }),
       );
     }
+    // Bar tabs (w:tab @w:val="bar"): a vertical rule drawn down the paragraph at the stop's position.
+    for (const stop of para.tabStops ?? []) {
+      if (stop.type === "bar") {
+        const barX = x + (para.indent?.leftPx ?? 0) + stop.positionPx;
+        tree.add(
+          new Rect({
+            x: barX,
+            y: lineY,
+            width: 1,
+            height: Math.max(1, line.heightPx),
+            fill: "#1b1b1b",
+            hittable: false,
+          }),
+        );
+      }
+    }
     // A justified line stretches each text item to the next item's x (the
     // last one past the content width by the overflow-punct hang): Leafer's
     // textAlign "both-letter" spreads the slack as uniform letter spacing
@@ -587,6 +603,47 @@ export function paintParagraph(
           (item.rubyLiftPx ?? 0) +
           vertAlignBaselineShiftPx(inline.style) +
           (inline.style.baselineShiftPx ?? 0);
+        const textColor = inline.style.color ? `#${inline.style.color}` : "#1b1b1b";
+        let fill: string | undefined = textColor;
+        let stroke: string | undefined;
+        let strokeWidth: number | undefined;
+        let shadow: { x: number; y: number; blur: number; color: string } | undefined;
+
+        if (inline.style.outline) {
+          const out = typeof inline.style.outline === "object" ? inline.style.outline : undefined;
+          stroke = out?.color ? `#${out.color.replace(/^#/, "")}` : textColor;
+          strokeWidth = out?.widthPx ?? 1;
+          if (inline.style.outline === true) {
+            fill = "transparent";
+          }
+        }
+
+        if (inline.style.glow) {
+          const g = inline.style.glow;
+          shadow = {
+            x: 0,
+            y: 0,
+            blur: g.radiusPx ?? 6,
+            color: g.color ? (g.color.startsWith("#") ? g.color : `#${g.color}`) : "#4a90e2",
+          };
+        } else if (inline.style.emboss) {
+          shadow = { x: 1, y: 1, blur: 1, color: "#ffffff" };
+        } else if (inline.style.imprint) {
+          shadow = { x: -1, y: -1, blur: 1, color: "rgba(0,0,0,0.6)" };
+        } else if (inline.style.shadow) {
+          const s = typeof inline.style.shadow === "object" ? inline.style.shadow : undefined;
+          shadow = {
+            x: s?.x ?? 1.5,
+            y: s?.y ?? 1.5,
+            blur: s?.blur ?? 1,
+            color: s?.color
+              ? s.color.startsWith("#") || s.color.startsWith("rgb")
+                ? s.color
+                : `#${s.color}`
+              : "rgba(0,0,0,0.5)",
+          };
+        }
+
         const textEl = new Text({
           x: lineX + item.xPx,
           // A raised/lowered run (w:vertAlign — the footnote reference) paints
@@ -622,7 +679,9 @@ export function paintParagraph(
               : undefined,
           height: Math.max(1, line.heightPx),
           text: label,
-          fill: inline.style.color ? `#${inline.style.color}` : "#1b1b1b",
+          fill,
+          ...(stroke ? { stroke, strokeWidth } : {}),
+          ...(shadow ? { shadow } : {}),
           // Leafer's textDecoration only knows the single line — a patterned
           // or colored w:u strokes its own path below (paintUnderlinePattern).
           // Single keeps the native path: the 91-page parity baseline rides on
@@ -661,6 +720,27 @@ export function paintParagraph(
           ...(scale !== 1 ? { scaleX: scale, origin: "left" as const } : {}),
         });
         tree.add(textEl);
+        if (inline.style.reflection) {
+          const refl = inline.style.reflection;
+          tree.add(
+            new Text({
+              x: lineX + item.xPx,
+              y: baseY + ownSize * 1.8 + (refl.distancePx ?? 2),
+              scaleY: -0.6,
+              origin: "top" as const,
+              opacity: refl.opacity ?? 0.35,
+              text: label,
+              fill,
+              fontFamily: family,
+              fontSize: ownSize,
+              lineHeight: ownSize,
+              fontWeight: inline.style.bold ? 700 : 400,
+              italic: inline.style.italic,
+              hittable: false,
+              ...(scale !== 1 ? { scaleX: scale, origin: "left" as const } : {}),
+            }),
+          );
+        }
         // The phonetic guide (w:ruby): the annotation fills the space
         // reserved above the base glyphs, centered within the base's width —
         // Word's default; the other ST_RubyAlign tokens shift the same box.

@@ -71,4 +71,11 @@ export interface ProjectContext {
    *  suppresses them — no advance, no ink, the source characters kept on the
    *  atom for the caret lattice. */
   showHiddenText?: boolean;
+  /** Document auto-hyphenation settings (w:autoHyphenation, w:doNotHyphenateCaps, etc.) */
+  autoHyphenation?: boolean;
+  doNotHyphenateCaps?: boolean;
+  hyphenationZoneTw?: number;
+  consecutiveHyphenLimit?: number;
+  /** Whether auto-hyphenation is suppressed for the paragraph being projected */
+  suppressAutoHyphens?: boolean;
 }

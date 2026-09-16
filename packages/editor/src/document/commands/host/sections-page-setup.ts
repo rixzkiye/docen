@@ -23,6 +23,12 @@ export interface SectionsHostView {
   insertCoverPage(): void;
   /** Insert two page breaks (Word's Blank Page). */
   insertBlankPage(): void;
+  /** Set hyphenation mode (none/auto/manual). */
+  setHyphenation(mode: "none" | "auto" | "manual"): void;
+  /** Open Hyphenation Options dialog. */
+  openHyphenationOptions(): void;
+  /** Insert discretionary soft hyphen. */
+  insertSoftHyphen(): void;
 }
 
 /**
@@ -40,6 +46,8 @@ export class SectionsHostCommands implements HostCommandDomain {
     "margins",
     "columns",
     "line-numbers",
+    "hyphenation",
+    "insert-soft-hyphen",
   ];
 
   readonly editor: readonly string[] = ["border", "page-border", "cover-page", "blank-page"];
@@ -88,6 +96,16 @@ export class SectionsHostCommands implements HostCommandDomain {
         value === "newSection"
       )
         this.host.setLineNumbers(value);
+      return true;
+    }
+    if (event === "hyphenation") {
+      if (value === "options") this.host.openHyphenationOptions();
+      else if (value === "none" || value === "auto" || value === "manual")
+        this.host.setHyphenation(value);
+      return true;
+    }
+    if (event === "insert-soft-hyphen") {
+      this.host.insertSoftHyphen();
       return true;
     }
     // The Borders and Shading dialog entries — the border split's and the

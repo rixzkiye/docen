@@ -34,6 +34,10 @@ export interface FontDialogPatch {
   allCaps: boolean;
   /** w:vanish — Word's Hidden effect. */
   hidden: boolean;
+  shadow: boolean;
+  outline: boolean;
+  emboss: boolean;
+  imprint: boolean;
 }
 
 /** Word's underline color dropdown (Automatic + the standard color row) — the
@@ -214,6 +218,22 @@ const template = html<DocenFontDialog>`
           <fluent-checkbox part="hidden" ${ref("hiddenCheck")}></fluent-checkbox>
           <span ${ref("hiddenLabel")}></span>
         </label>
+        <label class="check-field">
+          <fluent-checkbox part="shadow" ${ref("shadowCheck")}></fluent-checkbox>
+          <span ${ref("shadowLabel")}></span>
+        </label>
+        <label class="check-field">
+          <fluent-checkbox part="outline" ${ref("outlineCheck")}></fluent-checkbox>
+          <span ${ref("outlineLabel")}></span>
+        </label>
+        <label class="check-field">
+          <fluent-checkbox part="emboss" ${ref("embossCheck")}></fluent-checkbox>
+          <span ${ref("embossLabel")}></span>
+        </label>
+        <label class="check-field">
+          <fluent-checkbox part="imprint" ${ref("imprintCheck")}></fluent-checkbox>
+          <span ${ref("imprintLabel")}></span>
+        </label>
       </div>
     </div>
     <div slot="action">
@@ -260,6 +280,10 @@ class DocenFontDialog extends FASTElement {
   @observable smallCaps?: FluentCheckbox;
   @observable allCaps?: FluentCheckbox;
   @observable hiddenCheck?: FluentCheckbox;
+  @observable shadowCheck?: FluentCheckbox;
+  @observable outlineCheck?: FluentCheckbox;
+  @observable embossCheck?: FluentCheckbox;
+  @observable imprintCheck?: FluentCheckbox;
   @observable strikeLabel?: HTMLElement;
   @observable doubleStrikeLabel?: HTMLElement;
   @observable superscriptLabel?: HTMLElement;
@@ -267,6 +291,10 @@ class DocenFontDialog extends FASTElement {
   @observable smallCapsLabel?: HTMLElement;
   @observable allCapsLabel?: HTMLElement;
   @observable hiddenLabel?: HTMLElement;
+  @observable shadowLabel?: HTMLElement;
+  @observable outlineLabel?: HTMLElement;
+  @observable embossLabel?: HTMLElement;
+  @observable imprintLabel?: HTMLElement;
   @observable okBtn?: HTMLElement;
   @observable cancelBtn?: HTMLElement;
 
@@ -313,6 +341,10 @@ class DocenFontDialog extends FASTElement {
     this.#check(this.smallCaps, state.smallCaps);
     this.#check(this.allCaps, state.allCaps);
     this.#check(this.hiddenCheck, state.hidden);
+    this.#check(this.shadowCheck, state.shadow);
+    this.#check(this.outlineCheck, state.outline);
+    this.#check(this.embossCheck, state.emboss);
+    this.#check(this.imprintCheck, state.imprint);
     this.dialogEl?.show();
   }
 
@@ -338,6 +370,10 @@ class DocenFontDialog extends FASTElement {
       smallCaps: this.smallCaps?.checked ?? false,
       allCaps: this.allCaps?.checked ?? false,
       hidden: this.hiddenCheck?.checked ?? false,
+      shadow: this.shadowCheck?.checked ?? false,
+      outline: this.outlineCheck?.checked ?? false,
+      emboss: this.embossCheck?.checked ?? false,
+      imprint: this.imprintCheck?.checked ?? false,
     };
     this.$emit("font:ok", patch);
     this.hide();
@@ -424,6 +460,10 @@ class DocenFontDialog extends FASTElement {
     if (this.smallCapsLabel) this.smallCapsLabel.textContent = t("fontDialog.smallCaps", this);
     if (this.allCapsLabel) this.allCapsLabel.textContent = t("fontDialog.allCaps", this);
     if (this.hiddenLabel) this.hiddenLabel.textContent = t("fontDialog.hidden", this);
+    if (this.shadowLabel) this.shadowLabel.textContent = t("fontDialog.effectShadow", this);
+    if (this.outlineLabel) this.outlineLabel.textContent = t("fontDialog.effectOutline", this);
+    if (this.embossLabel) this.embossLabel.textContent = t("fontDialog.effectEmboss", this);
+    if (this.imprintLabel) this.imprintLabel.textContent = t("fontDialog.effectImprint", this);
     if (this.okBtn) this.okBtn.textContent = t("options.ok", this);
     if (this.cancelBtn) this.cancelBtn.textContent = t("options.cancel", this);
     if (this.styleSel) {

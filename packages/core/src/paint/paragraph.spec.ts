@@ -416,4 +416,59 @@ describe("paintParagraph character effects", () => {
     expect(circle!.props.fill).toBe("none");
     expect(circle!.props.stroke).toBe("#1b1b1b");
   });
+
+  it("paints text effects: outline, shadow, emboss, imprint, glow, reflection", () => {
+    const outlined = paint(
+      paraOf({ kind: "text", text: "outline", style: style({ outline: true, color: "0000FF" }) }),
+    );
+    const [tOut] = nodesOf(outlined, "Text");
+    expect(tOut!.props.fill).toBe("transparent");
+    expect(tOut!.props.stroke).toBe("#0000FF");
+    expect(tOut!.props.strokeWidth).toBe(1);
+
+    const shadowed = paint(
+      paraOf({ kind: "text", text: "shadow", style: style({ shadow: true }) }),
+    );
+    const [tShad] = nodesOf(shadowed, "Text");
+    expect(tShad!.props.shadow).toMatchObject({ x: 1.5, y: 1.5 });
+
+    const glowing = paint(
+      paraOf({
+        kind: "text",
+        text: "glow",
+        style: style({ glow: { radiusPx: 8, color: "FF0000" } }),
+      }),
+    );
+    const [tGlow] = nodesOf(glowing, "Text");
+    expect(tGlow!.props.shadow).toMatchObject({ x: 0, y: 0, blur: 8, color: "#FF0000" });
+
+    const reflected = paint(
+      paraOf({ kind: "text", text: "refl", style: style({ reflection: { opacity: 0.5 } }) }),
+    );
+    const texts = nodesOf(reflected, "Text");
+    expect(texts).toHaveLength(2);
+    expect(texts[1].props.scaleY).toBe(-0.6);
+    expect(texts[1].props.opacity).toBe(0.5);
+  });
+
+  it("paints vertical bar tab line at stop position", () => {
+    const tree = new Group();
+    paintParagraph(
+      tree,
+      para({
+        tabStops: [{ positionPx: 60, type: "bar" }],
+      }),
+      10,
+      20,
+      ctx,
+    );
+    const rects = (
+      tree as unknown as { children: Array<{ type: string; props: Record<string, unknown> }> }
+    ).children.filter((c) => c.type === "Rect" && c.props.width === 1);
+    expect(rects).toHaveLength(1);
+    expect(rects[0].props.x).toBe(70);
+    expect(rects[0].props.y).toBe(20);
+    expect(rects[0].props.height).toBe(20);
+    expect(rects[0].props.fill).toBe("#1b1b1b");
+  });
 });

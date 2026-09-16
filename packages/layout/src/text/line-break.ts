@@ -203,6 +203,9 @@ interface FlowGroup {
   /** Natural (unwrapped) width of everything after this group's tab up to
    *  the next tab — the lookahead a RIGHT stop positions against. */
   followingPx: number;
+  /** Width before decimal point of the text after this group's tab — the lookahead
+   *  a DECIMAL stop positions against. */
+  followingBeforeDecimalPx: number;
 }
 
 function groupOf(
@@ -323,7 +326,16 @@ function groupOf(
     }
     preparedCache.set(cacheKey, prepared);
   }
-  return { itemInline, itemSource, itemSizePx, items, prepared, ...closer, followingPx: 0 };
+  return {
+    itemInline,
+    itemSource,
+    itemSizePx,
+    items,
+    prepared,
+    ...closer,
+    followingPx: 0,
+    followingBeforeDecimalPx: 0,
+  };
 }
 
 /** Memoized group builds per inline array. The autofit path builds the same
@@ -386,16 +398,55 @@ function buildGroups(inline: LayoutInline[], measurer: TextMeasurer): FlowGroup[
       measurer,
     ),
   );
-  // Right-stop lookahead: each tabbed group's following width is the natural
+  // Right/decimal-stop lookahead: each tabbed group's following width is the natural
   // (unwrapped) width of the groups after it, up to the next tab.
   for (let g = 0; g < groups.length; g++) {
     if (!groups[g].tab) continue;
     let following = 0;
+    const nextGroups: FlowGroup[] = [];
     for (let h = g + 1; h < groups.length; h++) {
+      nextGroups.push(groups[h]);
       following += measureRichInlineStats(groups[h].prepared, 1e9).maxLineWidth;
       if (groups[h].tab) break;
     }
     groups[g].followingPx = following;
+
+    // Decimal stop lookahead: find the decimal separator (period or comma)
+    let beforeDecimal = following;
+    const fullText = nextGroups.map((grp) => grp.items.map((it) => it.text).join("")).join("");
+    const hasDot = fullText.includes(".");
+    const hasComma = fullText.includes(",");
+    let sepChar: string | null = null;
+    if (hasDot && hasComma) {
+      sepChar = fullText.lastIndexOf(".") > fullText.lastIndexOf(",") ? "." : ",";
+    } else if (hasDot) {
+      sepChar = ".";
+    } else if (hasComma) {
+      sepChar = ",";
+    }
+
+    if (sepChar) {
+      let accum = 0;
+      let found = false;
+      for (const grp of nextGroups) {
+        for (const it of grp.items) {
+          const idx = it.text.indexOf(sepChar);
+          if (idx !== -1) {
+            const prefixItem: RichInlineItem = { ...it, text: it.text.slice(0, idx) };
+            const prefixPrep = prepareRichInline([prefixItem], { whiteSpace: DOCEN_WHITE_SPACE });
+            accum += measureRichInlineStats(prefixPrep, 1e9).maxLineWidth;
+            beforeDecimal = accum;
+            found = true;
+            break;
+          } else {
+            const itPrep = prepareRichInline([it], { whiteSpace: DOCEN_WHITE_SPACE });
+            accum += measureRichInlineStats(itPrep, 1e9).maxLineWidth;
+          }
+        }
+        if (found) break;
+      }
+    }
+    groups[g].followingBeforeDecimalPx = beforeDecimal;
   }
   groupsCache.set(inline, groups);
   return groups;
@@ -518,10 +569,11 @@ interface TabContext {
 }
 
 /** The next stop position past `absX`: the first explicit stop beyond it, else
- *  the next slot of the default grid. */
+ *  the next slot of the default grid. Bar tab stops do not advance text. */
 function nextStopPast(tabs: TabContext, absX: number): number {
   let best: number | null = null;
   for (const s of tabs.stops ?? []) {
+    if (s.type === "bar") continue;
     if (s.positionPx > absX + 0.01 && (best == null || s.positionPx < best)) best = s.positionPx;
   }
   if (best != null) return best;
@@ -531,15 +583,17 @@ function nextStopPast(tabs: TabContext, absX: number): number {
 /** The advance a tab atom produces at walk position `xRaw`: to its explicit
  *  target (a numbering bullet's hop), the next stop, or the default grid. A
  *  RIGHT stop aligns the FOLLOWING text's right edge at the stop, so the tab
- *  itself yields by `followingPx`; when that would cross behind the cursor the
- *  tab degenerates to the default-grid hop (progress, never negative). The
- *  matched explicit stop's leader rides along for the painter; a default-grid
- *  hop (no stop) carries none. */
+ *  itself yields by `followingPx`; a DECIMAL stop aligns the text before the
+ *  decimal point at the stop, yielding by `followingBeforeDecimalPx`; when that
+ *  would cross behind the cursor the tab degenerates to the default-grid hop
+ *  (progress, never negative). The matched explicit stop's leader rides along
+ *  for the painter; a default-grid hop (no stop) carries none. */
 function tabAdvance(
   tab: { toPx?: number },
   xRaw: number,
   tabs: TabContext,
   followingPx: number,
+  followingBeforeDecimalPx: number,
 ): { advancePx: number; leader?: LayoutTabStop["leader"] } {
   const absX = xRaw + tabs.lineBasePx;
   if (tab.toPx != null) return { advancePx: Math.max(0, tab.toPx - absX) };
@@ -559,8 +613,10 @@ function tabAdvance(
       ? stop - absX - followingPx
       : type === "center"
         ? stop - absX - followingPx / 2
-        : stop - absX;
-  // A right/center stop the following text cannot reach falls back to the
+        : type === "decimal"
+          ? stop - absX - followingBeforeDecimalPx
+          : stop - absX;
+  // A right/center/decimal stop the following text cannot reach falls back to the
   // default grid's next slot (the text starts past the stop — progress).
   const advancePx =
     w > 0 ? w : Math.max(0, (Math.floor(absX / tabs.defaultTabPx) + 1) * tabs.defaultTabPx - absX);
@@ -903,7 +959,13 @@ export function packLines(inline: LayoutInline[], opts: PackLinesOptions): Packe
       // jumps and the line continues; a hard break ends the line.
       if (finishedThisLine && !brokeMidGroup) {
         if (group.tab) {
-          const { advancePx, leader } = tabAdvance(group.tab, xLine, tabs, group.followingPx);
+          const { advancePx, leader } = tabAdvance(
+            group.tab,
+            xLine,
+            tabs,
+            group.followingPx,
+            group.followingBeforeDecimalPx,
+          );
           // The tab's interval becomes an item so the painter can fill it with
           // the stop's leader (dot leaders in a TOC).
           lineItems.push({
