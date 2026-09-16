@@ -135,17 +135,15 @@ export class ClipboardFormatHostCommands implements HostCommandDomain {
       void this.host.copySelection(event === "cut");
       return true;
     }
+    if (event === "paste-special" || (event === "paste" && value === "paste-special")) {
+      (
+        this.host.element().shadowRoot?.querySelector("docen-paste-special-dialog") as unknown as {
+          show(): void;
+        } | null
+      )?.show();
+      return true;
+    }
     if (event === "paste") {
-      if (value === "paste-special") {
-        (
-          this.host
-            .element()
-            .shadowRoot?.querySelector("docen-paste-special-dialog") as unknown as {
-            show(): void;
-          } | null
-        )?.show();
-        return true;
-      }
       void this.host.paste(value === "keep-text-only");
       return true;
     }

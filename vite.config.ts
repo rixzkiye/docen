@@ -13,6 +13,11 @@ export default defineConfig({
       concurrent: true,
     },
   },
+  server: {
+    fs: {
+      strict: false,
+    },
+  },
   fmt: {
     sortImports: {
       type: "natural",

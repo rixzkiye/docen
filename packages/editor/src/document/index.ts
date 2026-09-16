@@ -17,15 +17,22 @@ import {
   docxExtensions,
   effectiveRunProps,
   generateDOCX,
+  generateHTML,
   generateMarkdown,
+  generateODT,
+  generatePlainText,
+  generateRTF,
   indexParagraphStyles,
   mergeStyleChain,
   normalizeDocument,
   parseDOCX,
   parseMarkdown,
+  parsePlainText,
+  parseRTF,
   prepareDocument,
   resolveFontName,
   selectionSlicePayload,
+  type HtmlGenerateOptions,
   type JSONContent,
   type SectionPropertiesOptions,
   type StyleEntry,
@@ -88,6 +95,7 @@ import type {
   NoteKindSettings,
   NoteSettingsValues,
 } from "../ui/components/workspace/note-settings-dialog";
+import type { PasteSpecialFormat } from "../ui/components/workspace/paste-special-dialog";
 import type {
   DocumentPropertiesCore,
   DocumentPropertiesStats,
@@ -3435,6 +3443,10 @@ class DocenDocument extends AddinHost<Editor> {
                 <fluent-menu-item data-event="save-as">${t("header.save-as", this)}</fluent-menu-item>
                 <fluent-menu-item data-event="save-as-template">${t("header.save-as-template", this)}</fluent-menu-item>
                 <fluent-menu-item data-event="save-as-markdown">${t("header.save-as-markdown", this)}</fluent-menu-item>
+                <fluent-menu-item data-event="save-as-rtf">${t("header.save-as-rtf", this)}</fluent-menu-item>
+                <fluent-menu-item data-event="save-as-html">${t("header.save-as-html", this)}</fluent-menu-item>
+                <fluent-menu-item data-event="save-as-txt">${t("header.save-as-txt", this)}</fluent-menu-item>
+                <fluent-menu-item data-event="save-as-odt">${t("header.save-as-odt", this)}</fluent-menu-item>
                 <fluent-menu-item data-event="save-as-pdf">${t("header.save-as-pdf", this)}</fluent-menu-item>
                 <fluent-divider role="separator" aria-orientation="horizontal" orientation="horizontal"></fluent-divider>
                 <fluent-menu-item data-event="print">${t("header.print", this)}</fluent-menu-item>
@@ -4403,10 +4415,9 @@ class DocenDocument extends AddinHost<Editor> {
     this.setAttribute("view", v === "reading" ? "read" : v === "web" ? "web" : "print");
   };
 
-  /** Paste Special's pick — re-run the paste in that mode ("text" skips the
-   *  rich legs, like the menu's Keep Text Only). */
-  readonly #onPasteSpecialOk = (event: CustomEvent<"html" | "text">): void => {
-    void this.#clipboard.paste(event.detail === "text");
+  /** Paste Special's pick — re-run the paste in the picked format. */
+  readonly #onPasteSpecialOk = (event: CustomEvent<PasteSpecialFormat>): void => {
+    void this.#clipboard.pasteSpecial(event.detail);
   };
 
   /** Refresh the status bar to mirror Word's bottom row: the left cluster is
@@ -5911,6 +5922,18 @@ class DocenDocument extends AddinHost<Editor> {
         if (!this.#emitCancelable("docen:save-as", { format: "markdown" }))
           void this.#saveAs("markdown");
         break;
+      case "save-as-rtf":
+        if (!this.#emitCancelable("docen:save-as", { format: "rtf" })) void this.#saveAs("rtf");
+        break;
+      case "save-as-html":
+        if (!this.#emitCancelable("docen:save-as", { format: "html" })) void this.#saveAs("html");
+        break;
+      case "save-as-txt":
+        if (!this.#emitCancelable("docen:save-as", { format: "txt" })) void this.#saveAs("txt");
+        break;
+      case "save-as-odt":
+        if (!this.#emitCancelable("docen:save-as", { format: "odt" })) void this.#saveAs("odt");
+        break;
       case "save-as-pdf":
         if (!this.#emitCancelable("docen:save-as", { format: "pdf" })) void this.#saveAsPdf();
         break;
@@ -6691,9 +6714,21 @@ class DocenDocument extends AddinHost<Editor> {
    *  variant (docm/dotx/dotm save as themselves). */
   async #saveAs(format: Exclude<SaveFormat, "pdf"> = this.#docxVariant): Promise<void> {
     const cfg = SAVE_FORMATS[format];
-    // saveDOCX returns a buffer; Markdown returns a string.
-    const data = format === "markdown" ? this.saveMarkdown() : await this.saveDOCX(format);
-    await this.#saveBlob(data as BlobPart, cfg, true);
+    let data: BlobPart;
+    if (format === "markdown") {
+      data = this.saveMarkdown();
+    } else if (format === "rtf") {
+      data = this.saveRTF();
+    } else if (format === "html") {
+      data = this.saveHTML();
+    } else if (format === "txt") {
+      data = this.savePlainText();
+    } else if (format === "odt") {
+      data = (await this.saveODT()) as unknown as BlobPart;
+    } else {
+      data = (await this.saveDOCX(format)) as unknown as BlobPart;
+    }
+    await this.#saveBlob(data, cfg, true);
   }
 
   /** File menu → Save as Template: a `.dotx` download of the current document
@@ -6953,6 +6988,8 @@ class DocenDocument extends AddinHost<Editor> {
   async open(file: File): Promise<void> {
     const format = detectOpenFormat(file);
     if (format === "markdown") return this.openMarkdown(file);
+    if (format === "rtf") return this.openRTF(file);
+    if (format === "text") return this.openPlainText(file);
     return this.openDOCX(file, format);
   }
 
@@ -7027,6 +7064,42 @@ class DocenDocument extends AddinHost<Editor> {
     }
   }
 
+  /** Load an RTF file/string into the editor. A File adopts its name as the
+   *  filename; a bare string carries no name. */
+  async openRTF(input: File | string): Promise<void> {
+    const name = typeof input === "string" ? undefined : input.name;
+    this.#setProgress(t("status.opening", this).replace("{name}", name ?? "RTF"));
+    try {
+      const text = typeof input === "string" ? input : await input.text();
+      await this.#nextFrame();
+      this.#docxVariant = "docx";
+      this.#applyOpenedJSON(parseRTF(text), name);
+      await this.#nextFrame();
+      this.#setProgress();
+    } catch (err) {
+      this.#setProgress();
+      throw err;
+    }
+  }
+
+  /** Load a Plain Text file/string into the editor. A File adopts its name as the
+   *  filename; a bare string carries no name. */
+  async openPlainText(input: File | string): Promise<void> {
+    const name = typeof input === "string" ? undefined : input.name;
+    this.#setProgress(t("status.opening", this).replace("{name}", name ?? "Text"));
+    try {
+      const text = typeof input === "string" ? input : await input.text();
+      await this.#nextFrame();
+      this.#docxVariant = "docx";
+      this.#applyOpenedJSON(parsePlainText(text), name);
+      await this.#nextFrame();
+      this.#setProgress();
+    } catch (err) {
+      this.#setProgress();
+      throw err;
+    }
+  }
+
   /** Open progress on the canvas veil — a label + indeterminate Fluent
    *  progress bar centered over the document area (Word centers its opening
    *  spinner the same way). Byte reads are a sliver of the load and parse/
@@ -7066,6 +7139,26 @@ class DocenDocument extends AddinHost<Editor> {
   /** Serialize the current document to a Markdown string. */
   saveMarkdown(): string {
     return generateMarkdown(this.getJSON());
+  }
+
+  /** Serialize the current document to an RTF string. */
+  saveRTF(): string {
+    return generateRTF(this.getJSON());
+  }
+
+  /** Serialize the current document to an HTML string. */
+  saveHTML(options?: HtmlGenerateOptions): string {
+    return generateHTML(this.getJSON(), options);
+  }
+
+  /** Serialize the current document to plain text. */
+  savePlainText(): string {
+    return generatePlainText(this.getJSON());
+  }
+
+  /** Serialize the current document to an OpenDocument Text (.odt) zip buffer. */
+  async saveODT(): Promise<Uint8Array> {
+    return generateODT(this.getJSON());
   }
 
   /** Current document as Tiptap JSON. Cached — recomputed only after a doc

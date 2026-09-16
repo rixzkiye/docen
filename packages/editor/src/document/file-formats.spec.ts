@@ -39,11 +39,16 @@ describe("detectOpenFormat", () => {
       ),
     ).toBe("docx");
     expect(detectOpenFormat(file("download", "text/markdown"))).toBe("markdown");
+    expect(detectOpenFormat(file("download", "application/rtf"))).toBe("rtf");
+    expect(detectOpenFormat(file("download", "text/rtf"))).toBe("rtf");
+    expect(detectOpenFormat(file("download", "text/plain"))).toBe("text");
   });
 
-  it("keeps the existing docx/markdown detection", () => {
+  it("keeps the existing docx/markdown/rtf/text detection", () => {
     expect(detectOpenFormat(file("Notes.md"))).toBe("markdown");
     expect(detectOpenFormat(file("Notes.markdown"))).toBe("markdown");
+    expect(detectOpenFormat(file("Legacy.rtf"))).toBe("rtf");
+    expect(detectOpenFormat(file("Notes.txt"))).toBe("text");
   });
 
   it("refuses Flat OPC XML with a clear message", () => {
@@ -71,14 +76,14 @@ describe("detectOpenFormat", () => {
     const flat = refusal(file("Flat.xml"));
     expect(flat).toBeInstanceOf(OpenFormatError);
     expect(flat?.code).toBe("flat-opc");
-    const unknown = refusal(file("Legacy.rtf"));
+    const unknown = refusal(file("Legacy.pages"));
     expect(unknown).toBeInstanceOf(OpenFormatError);
     expect(unknown?.code).toBe("unsupported");
-    expect(unknown?.file).toBe("Legacy.rtf");
+    expect(unknown?.file).toBe("Legacy.pages");
   });
 
   it("refuses unknown formats", () => {
-    expect(() => detectOpenFormat(file("Legacy.rtf"))).toThrow(/Unsupported file type/);
+    expect(() => detectOpenFormat(file("Legacy.pages"))).toThrow(/Unsupported file type/);
     expect(() => detectOpenFormat(file("book", "application/epub+zip"))).toThrow(
       /Unsupported file type/,
     );
@@ -86,14 +91,18 @@ describe("detectOpenFormat", () => {
 });
 
 describe("SAVE_FORMATS", () => {
-  it("declares the full docx family, markdown, and pdf", () => {
+  it("declares the full docx family, markdown, pdf, rtf, html, txt, and odt", () => {
     expect(Object.keys(SAVE_FORMATS).sort()).toEqual([
       "docm",
       "docx",
       "dotm",
       "dotx",
+      "html",
       "markdown",
+      "odt",
       "pdf",
+      "rtf",
+      "txt",
     ]);
   });
 
@@ -118,6 +127,26 @@ describe("SAVE_FORMATS", () => {
       mime: "application/vnd.ms-word.template.macroEnabled.12",
       ext: ".dotm",
     });
+    expect(SAVE_FORMATS.rtf).toEqual({
+      description: "Rich Text Format",
+      mime: "application/rtf",
+      ext: ".rtf",
+    });
+    expect(SAVE_FORMATS.html).toEqual({
+      description: "Web Page",
+      mime: "text/html",
+      ext: ".html",
+    });
+    expect(SAVE_FORMATS.txt).toEqual({
+      description: "Plain Text",
+      mime: "text/plain",
+      ext: ".txt",
+    });
+    expect(SAVE_FORMATS.odt).toEqual({
+      description: "OpenDocument Text",
+      mime: "application/vnd.oasis.opendocument.text",
+      ext: ".odt",
+    });
     // showSaveFilePicker rejects accept MIME keys carrying parameters.
     for (const cfg of Object.values(SAVE_FORMATS)) {
       expect(cfg.mime).not.toContain(";");
@@ -133,6 +162,8 @@ describe("suggestedFileName", () => {
     expect(suggestedFileName("Letter.dotx", SAVE_FORMATS.docm)).toBe("Letter.docm");
     expect(suggestedFileName("Notes.md", SAVE_FORMATS.docx)).toBe("Notes.docx");
     expect(suggestedFileName("Document.docx", SAVE_FORMATS.dotm)).toBe("Document.dotm");
+    expect(suggestedFileName("Draft.rtf", SAVE_FORMATS.odt)).toBe("Draft.odt");
+    expect(suggestedFileName("Page.html", SAVE_FORMATS.txt)).toBe("Page.txt");
   });
 
   it("keeps names without a known extension (and the localized default)", () => {

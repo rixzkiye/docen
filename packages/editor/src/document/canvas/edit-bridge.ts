@@ -13,7 +13,10 @@
 import type { ShapeTextStack } from "@docen/core";
 import {
   docxExtensions,
+  generateHTML,
+  generateRTF,
   parseHTMLBody,
+  parseRTF,
   DOCEN_CLIP_MIME,
   selectionSlicePayload,
   HEADING_COMPILE_MAP,
@@ -237,7 +240,7 @@ export interface EditBridgeOptions {
   onClipboardCollect?: (item: { text: string; payload: string | null }) => void;
   /** A keyboard paste landed rich content (the docen slice or styled HTML
    *  lane) — the host shows Word's paste-options bar over the pasted text. */
-  onRichPaste?: (source: { kind: "slice" | "html"; raw: string; text: string }) => void;
+  onRichPaste?: (source: { kind: "slice" | "html" | "rtf"; raw: string; text: string }) => void;
   /** The border painter's armed state (Table Design → Draw Border). While
    *  active the canvas presses start edge sweeps instead of text selection. */
   borderPaint?: () => { active: boolean; eraser: boolean };
@@ -860,6 +863,27 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
       restartBlink();
     }
   };
+
+  const placeDropCaret = (pos: number | null): void => {
+    const s = active();
+    if (pos == null || !mapFresh(s)) {
+      caret.style.display = "none";
+      return;
+    }
+    const rect = s.map.caretRect(pos);
+    const frame = rect ? (opts.pageHost?.(framePage(s, rect.page)) ?? null) : null;
+    if (!rect || !frame) {
+      caret.style.display = "none";
+      return;
+    }
+    if (frame !== caret.parentElement) frame.append(caret);
+    caret.style.display = "block";
+    const scale = opts.scale?.() ?? 1;
+    caret.style.left = `${rect.xPx * scale}px`;
+    caret.style.top = `${rect.yPx * scale}px`;
+    caret.style.height = `${rect.heightPx * scale}px`;
+    restartBlink();
+  };
   main.editor.on("selectionUpdate", placeCaret);
 
   /** A viewport point → the hit page, its page-local coordinates, and its
@@ -955,6 +979,15 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
     }
   };
 
+  let textDrag: {
+    from: number;
+    to: number;
+    startX: number;
+    startY: number;
+    moved: boolean;
+    copy: boolean;
+  } | null = null;
+
   /** A click's selection: Word's Shift+Click extends from the caret's anchor
    *  instead of dropping a fresh caret (the pick — word, paragraph, or bare
    *  point — grows whichever side it falls on), and a continuing drag grows
@@ -968,6 +1001,21 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
       // anchor is the pick's far edge, not the click point.
       dragAnchor = active().editor.state.selection.anchor;
       dragStart = { x: event.clientX, y: event.clientY };
+      dragMoved = false;
+      return;
+    }
+    const { from, to } = active().editor.state.selection;
+    if (clicks === 1 && !event.shiftKey && from !== to && pos >= from && pos <= to) {
+      textDrag = {
+        from,
+        to,
+        startX: event.clientX,
+        startY: event.clientY,
+        moved: false,
+        copy: event.ctrlKey || event.altKey,
+      };
+      dragAnchor = null;
+      dragStart = null;
       dragMoved = false;
       return;
     }
@@ -1541,6 +1589,20 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
       if (edges) for (const s of edges.sides) borderSweep.set(`${s.pos}:${s.side}`, s);
       return;
     }
+    if (textDrag) {
+      if (
+        !textDrag.moved &&
+        Math.hypot(event.clientX - textDrag.startX, event.clientY - textDrag.startY) >= 3
+      ) {
+        textDrag.moved = true;
+      }
+      if (textDrag.moved) {
+        opts.host.style.cursor = textDrag.copy ? "copy" : "move";
+        const dropPos = posAtClient(event.clientX, event.clientY, true);
+        placeDropCaret(dropPos);
+      }
+      return;
+    }
     if (dragAnchor == null) {
       hoverTableGrip(event);
       linkHover.onMove(event);
@@ -1640,6 +1702,32 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
       const sides = [...borderSweep.values()];
       borderSweep = null;
       if (sides.length) opts.applyBorderPaint?.(sides);
+      return;
+    }
+    if (textDrag) {
+      const td = textDrag;
+      textDrag = null;
+      opts.host.style.cursor = "";
+      if (td.moved) {
+        const dropPos = posAtClient(event.clientX, event.clientY, true);
+        if (dropPos != null && (dropPos < td.from || dropPos > td.to)) {
+          const { state, view } = active().editor;
+          const slice = state.doc.slice(td.from, td.to);
+          const tr = state.tr;
+          if (td.copy) {
+            tr.replaceRange(dropPos, dropPos, slice);
+          } else {
+            tr.delete(td.from, td.to);
+            const target = tr.mapping.map(dropPos);
+            tr.replaceRange(target, target, slice);
+          }
+          view.dispatch(tr);
+        }
+      } else {
+        const clickPos = posAtClient(event.clientX, event.clientY);
+        if (clickPos != null) setSel(clickPos);
+      }
+      placeCaret();
       return;
     }
     dragAnchor = null;
@@ -2974,6 +3062,19 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
     return true;
   };
 
+  /** Insert pasted RTF at the caret. Returns true when something landed. */
+  const insertPastedRTF = (rtf: string): boolean => {
+    try {
+      const json = parseRTF(rtf);
+      const content = (json.content ?? []).filter((n) => n.type !== "text" || n.text);
+      if (!content.length) return false;
+      active().editor.commands.insertContent(content);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
   /** Insert a docen slice payload (the DOCEN_CLIP_MIME lane) at the caret —
    *  marks, node attrs, and open depths all survive. Returns true when the
    *  payload parsed and landed. */
@@ -2998,11 +3099,7 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
     event.preventDefault();
     // The docen lane first (a copy from a docen editor round-trips losslessly);
     // then styled HTML through the schema's parse rules so external rich text
-    // maps to its DOCX equivalents; plain text is the last resort. The custom
-    // lane reads through BOTH spellings: the `web `-prefixed key is what the
-    // system clipboard carries (Chromium's custom-format spec — and what the
-    // async clipboard.read() below matches), the bare key is what a same-page
-    // DataTransfer passthrough may still hand back.
+    // maps to its DOCX equivalents; RTF; plain text is the last resort.
     const data = event.clipboardData;
     const docen = data?.getData(`web ${DOCEN_CLIP_MIME}`) || data?.getData(DOCEN_CLIP_MIME);
     if (docen && insertSlicePayload(docen)) {
@@ -3013,6 +3110,11 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
     const html = data?.getData("text/html");
     if (html && insertPastedJSON(html)) {
       opts.onRichPaste?.({ kind: "html", raw: html, text: data?.getData("text/plain") ?? "" });
+      return;
+    }
+    const rtf = data?.getData("text/rtf") || data?.getData("application/rtf");
+    if (rtf && insertPastedRTF(rtf)) {
+      opts.onRichPaste?.({ kind: "rtf", raw: rtf, text: data?.getData("text/plain") ?? "" });
       return;
     }
     const text = data?.getData("text/plain");
@@ -3041,18 +3143,32 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
   let lastCopied: { payload: string; text: string } | null = null;
 
   /** Pin the current selection's copy pieces and register them for the
-   *  fallback lane. Neither clipboard channel carries the custom format to a
-   *  paste event — a copy EVENT's types never persist to the system clipboard,
-   *  and the async write's `web ` format never reaches a paste event — so the
-   *  pinned payload plus the matching plain text is what every paste path
-   *  recovers marks through. */
-  const pinCopied = (): { text: string; payload: string | null } | null => {
+   *  fallback lane. */
+  const pinCopied = (): {
+    text: string;
+    payload: string | null;
+    html?: string;
+    rtf?: string;
+  } | null => {
     const text = selectionText();
     if (text == null) return null;
     const payload = selectionSlicePayload(active().editor.state);
+    let html: string | undefined;
+    let rtf: string | undefined;
+    if (payload) {
+      try {
+        const parsed = JSON.parse(payload) as { content?: JSONContent[] };
+        if (Array.isArray(parsed.content)) {
+          html = generateHTML(parsed.content, { fullDocument: false });
+          rtf = generateRTF(parsed.content);
+        }
+      } catch {
+        /* fallback */
+      }
+    }
     lastCopied = payload ? { payload, text } : null;
     opts.onClipboardCollect?.({ text, payload });
-    return { text, payload };
+    return { text, payload, html, rtf };
   };
 
   const onCopy = (event: ClipboardEvent): void => {
@@ -3060,6 +3176,11 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
     if (!copied) return;
     event.preventDefault();
     event.clipboardData?.setData("text/plain", copied.text);
+    if (copied.html) event.clipboardData?.setData("text/html", copied.html);
+    if (copied.rtf) {
+      event.clipboardData?.setData("text/rtf", copied.rtf);
+      event.clipboardData?.setData("application/rtf", copied.rtf);
+    }
     // The `web ` prefix is Chromium's spelling for custom clipboard formats;
     // through a copy event it only survives same-page DataTransfer passthrough
     // (the async read() needs the pinned payload above).
@@ -3071,6 +3192,11 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
     if (!copied) return;
     event.preventDefault();
     event.clipboardData?.setData("text/plain", copied.text);
+    if (copied.html) event.clipboardData?.setData("text/html", copied.html);
+    if (copied.rtf) {
+      event.clipboardData?.setData("text/rtf", copied.rtf);
+      event.clipboardData?.setData("application/rtf", copied.rtf);
+    }
     if (copied.payload) event.clipboardData?.setData(`web ${DOCEN_CLIP_MIME}`, copied.payload);
     active().editor.commands.command(({ state, dispatch }) => {
       dispatch?.(state.tr.deleteSelection());
@@ -3080,22 +3206,22 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
 
   /** Copy/cut for the entry points that produce no copy event (the ribbon and
    *  context-menu buttons — the selection is canvas-rendered). Writes the
-   *  system clipboard through the async API (the custom format survives there
-   *  for clipboard.read()-based pastes) and pins the payload so a keyboard
-   *  paste — which cannot see either custom-format channel — still recovers
-   *  the marks. */
+   *  system clipboard through the async API and pins the payload so a keyboard
+   *  paste still recovers the marks. */
   const copySelection = async (cut: boolean): Promise<void> => {
     const copied = pinCopied();
     if (!copied) return;
     try {
-      await navigator.clipboard.write([
-        new ClipboardItem({
-          "text/plain": new Blob([copied.text], { type: "text/plain" }),
-          ...(copied.payload
-            ? { [`web ${DOCEN_CLIP_MIME}`]: new Blob([copied.payload], { type: DOCEN_CLIP_MIME }) }
-            : {}),
-        }),
-      ]);
+      const items: Record<string, Blob> = {
+        "text/plain": new Blob([copied.text], { type: "text/plain" }),
+      };
+      if (copied.html) {
+        items["text/html"] = new Blob([copied.html], { type: "text/html" });
+      }
+      if (copied.payload) {
+        items[`web ${DOCEN_CLIP_MIME}`] = new Blob([copied.payload], { type: DOCEN_CLIP_MIME });
+      }
+      await navigator.clipboard.write([new ClipboardItem(items)]);
     } catch {
       try {
         await navigator.clipboard.writeText(copied.text);
@@ -3110,6 +3236,68 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
       });
     }
   };
+
+  const onDragOver = (event: DragEvent): void => {
+    event.preventDefault();
+    if (event.dataTransfer) {
+      event.dataTransfer.dropEffect = "copy";
+    }
+    const pos = posAtClient(event.clientX, event.clientY, true);
+    placeDropCaret(pos);
+  };
+
+  const onDragLeave = (): void => {
+    placeCaret();
+  };
+
+  const onDrop = async (event: DragEvent): Promise<void> => {
+    event.preventDefault();
+    const pos = posAtClient(event.clientX, event.clientY, true);
+    if (pos != null) setSel(pos);
+    placeCaret();
+    const data = event.dataTransfer;
+    if (!data) return;
+
+    if (data.files && data.files.length > 0) {
+      for (let i = 0; i < data.files.length; i++) {
+        const file = data.files[i]!;
+        if (file.type.startsWith("image/")) {
+          const reader = new FileReader();
+          reader.onload = () => {
+            const url = reader.result as string;
+            active().editor.commands.insertContent({
+              type: "image",
+              attrs: { src: url },
+            });
+          };
+          reader.readAsDataURL(file);
+        } else if (file.name.endsWith(".txt")) {
+          const text = await file.text();
+          insertText(text);
+        } else if (file.name.endsWith(".rtf")) {
+          const text = await file.text();
+          insertPastedRTF(text);
+        }
+      }
+      return;
+    }
+
+    const docen = data.getData(`web ${DOCEN_CLIP_MIME}`) || data.getData(DOCEN_CLIP_MIME);
+    if (docen && insertSlicePayload(docen)) return;
+
+    const html = data.getData("text/html");
+    if (html && insertPastedJSON(html)) return;
+
+    const rtf = data.getData("text/rtf") || data.getData("application/rtf");
+    if (rtf && insertPastedRTF(rtf)) return;
+
+    const text = data.getData("text/plain");
+    if (text) insertText(text);
+  };
+
+  opts.host.addEventListener("dragover", onDragOver);
+  opts.host.addEventListener("dragleave", onDragLeave);
+  opts.host.addEventListener("drop", onDrop);
 
   ta.addEventListener("beforeinput", onBeforeInput);
   ta.addEventListener("keydown", onKeyDown);
@@ -3298,6 +3486,9 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
       main.editor.destroy();
       stopDragAutoScroll();
       opts.host.removeEventListener("mousedown", takeFocus);
+      opts.host.removeEventListener("dragover", onDragOver);
+      opts.host.removeEventListener("dragleave", onDragLeave);
+      opts.host.removeEventListener("drop", onDrop);
       document.removeEventListener("mousemove", onMouseMove);
       document.removeEventListener("mouseup", onMouseUp);
       draw.destroy();

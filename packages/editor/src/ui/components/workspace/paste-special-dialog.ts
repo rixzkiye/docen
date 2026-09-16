@@ -13,10 +13,12 @@ import { observeLang, t } from "../../i18n/localize";
 /** The formats the dialog offers — the clipboard lanes this editor can read
  *  (Word's dialog lists more: RTF, pictures; the browser clipboard only
  *  reliably carries styled HTML and plain text). */
-export type PasteSpecialFormat = "html" | "text";
+export type PasteSpecialFormat = "slice" | "html" | "rtf" | "text";
 
 const FORMATS: Array<{ value: PasteSpecialFormat; key: string }> = [
+  { value: "slice", key: "pasteSpecial.slice" },
   { value: "html", key: "pasteSpecial.html" },
+  { value: "rtf", key: "pasteSpecial.rtf" },
   { value: "text", key: "pasteSpecial.text" },
 ];
 

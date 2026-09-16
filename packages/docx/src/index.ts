@@ -81,6 +81,18 @@ export {
 // Converters: Markdown pipeline (Markdown string ↔ Tiptap JSON)
 export { parseMarkdown, generateMarkdown } from "./converters/markdown";
 
+// Converters: RTF pipeline (RTF string ↔ Tiptap JSON)
+export { parseRTF, generateRTF } from "./converters/rtf";
+
+// Converters: HTML pipeline (HTML string ↔ Tiptap JSON)
+export { parseHTML, generateHTML, type HtmlGenerateOptions } from "./converters/html";
+
+// Converters: Plain Text pipeline (Plain text ↔ Tiptap JSON)
+export { parsePlainText, generatePlainText } from "./converters/text";
+
+// Converters: ODT pipeline (ODT zip package from Tiptap JSON)
+export { generateODT } from "./converters/odt";
+
 // Style-facing editor helpers (Quick Styles gallery entries, caret run props)
 export {
   quickStyles,

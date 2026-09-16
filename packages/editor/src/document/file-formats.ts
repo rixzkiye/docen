@@ -4,14 +4,14 @@
 
 import type { DocxVariant } from "@docen/docx";
 
-/** The formats the open picker can actually load: the docx family or Markdown.
- *  Flat OPC XML (.xml) is recognized too, but only to be refused with a clear
- *  error — see {@link detectOpenFormat}. */
-export type OpenFormat = DocxVariant | "markdown";
+/** The formats the open picker can actually load: the docx family, Markdown,
+ *  RTF, or Plain Text. Flat OPC XML (.xml) is recognized too, but only to be
+ *  refused with a clear error — see {@link detectOpenFormat}. */
+export type OpenFormat = DocxVariant | "markdown" | "rtf" | "text";
 
-/** Save targets: the docx family plus Markdown and PDF (the latter written by
- *  the canvas snapshot export, never by the DOCX packer). */
-export type SaveFormat = DocxVariant | "markdown" | "pdf";
+/** Save targets: the docx family plus Markdown, PDF, RTF, HTML, Plain Text, and
+ *  OpenDocument Text (ODT). */
+export type SaveFormat = DocxVariant | "markdown" | "pdf" | "rtf" | "html" | "txt" | "odt";
 
 /** Clear refusal for Flat OPC input. A Flat OPC package is a single
  *  WordprocessingML XML document (no ZIP), which office-open's archive parser
@@ -48,6 +48,8 @@ export function detectOpenFormat(file: File): OpenFormat {
   if (name.endsWith(".dotx")) return "dotx";
   if (name.endsWith(".dotm")) return "dotm";
   if (name.endsWith(".md") || name.endsWith(".markdown")) return "markdown";
+  if (name.endsWith(".rtf")) return "rtf";
+  if (name.endsWith(".txt")) return "text";
   if (name.endsWith(".xml")) throw new OpenFormatError("flat-opc", FLAT_OPC_UNSUPPORTED, name);
   const type = (file.type.split(";")[0] ?? "").trim().toLowerCase();
   if (type.includes("ms-word.document.macroenabled")) return "docm";
@@ -55,6 +57,8 @@ export function detectOpenFormat(file: File): OpenFormat {
   if (type.includes("ms-word.template.macroenabled")) return "dotm";
   if (type.includes("wordprocessingml.document")) return "docx";
   if (type === "text/markdown") return "markdown";
+  if (type === "application/rtf" || type === "text/rtf") return "rtf";
+  if (type === "text/plain") return "text";
   if (type === "application/xml" || type === "text/xml")
     throw new OpenFormatError("flat-opc", FLAT_OPC_UNSUPPORTED, file.name || type);
   throw new OpenFormatError(
@@ -92,13 +96,21 @@ export const SAVE_FORMATS: Record<SaveFormat, { description: string; mime: strin
     },
     markdown: { description: "Markdown", mime: "text/markdown", ext: ".md" },
     pdf: { description: "PDF Document", mime: "application/pdf", ext: ".pdf" },
+    rtf: { description: "Rich Text Format", mime: "application/rtf", ext: ".rtf" },
+    html: { description: "Web Page", mime: "text/html", ext: ".html" },
+    txt: { description: "Plain Text", mime: "text/plain", ext: ".txt" },
+    odt: {
+      description: "OpenDocument Text",
+      mime: "application/vnd.oasis.opendocument.text",
+      ext: ".odt",
+    },
   };
 
 /** Suggested download name for a save: the document's display name with any
  *  known document extension swapped for the target format's (a .docx opened
  *  then saved as a template must not keep its .docx name). */
 export function suggestedFileName(name: string, cfg: { ext: string }): string {
-  return name.replace(/\.(docx|docm|dotx|dotm|md|markdown|txt)$/i, "") + cfg.ext;
+  return name.replace(/\.(docx|docm|dotx|dotm|md|markdown|txt|rtf|html|htm|odt)$/i, "") + cfg.ext;
 }
 
 /** Commands that stay live when the document is read-only (Viewing mode):
@@ -377,6 +389,11 @@ export const LOCAL_HANDLED: ReadonlySet<string> = new Set([
   "open",
   "save-as",
   "save-as-template",
+  "save-as-markdown",
+  "save-as-rtf",
+  "save-as-html",
+  "save-as-txt",
+  "save-as-odt",
   "new-from-template",
   "save-as-pdf",
   "print",

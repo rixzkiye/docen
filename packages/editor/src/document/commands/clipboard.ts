@@ -1,8 +1,9 @@
 import type { JSONContent } from "@docen/docx";
-import { DOCEN_CLIP_MIME, parseHTMLBody } from "@docen/docx";
+import { DOCEN_CLIP_MIME, parseHTMLBody, parseRTF } from "@docen/docx";
 import type { Editor } from "@docen/docx/core";
 
 import { t } from "../../ui";
+import type { PasteSpecialFormat } from "../../ui/components/workspace/paste-special-dialog";
 import type { EditBridge } from "../canvas/edit-bridge";
 
 /** Word's Match Destination Formatting in paste-options form: the block
@@ -30,7 +31,7 @@ function insertPlainText(editor: Editor, text: string): void {
 
 /** Where the paste options bar hangs — the pasted content's last line, as
  *  frame-relative screen px (the bridge's paste anchor). */
-export type PasteSource = { kind: "slice" | "html"; raw: string; text: string };
+export type PasteSource = { kind: "slice" | "html" | "rtf"; raw: string; text: string };
 
 /** The clipboard domain's view of the host — resolved per call so the
  *  controller can be built before a document opens. */
@@ -46,25 +47,31 @@ export interface ClipboardHost {
 
 /**
  * The clipboard domain, split out of the host element: the system-clipboard
- * paste lanes (docen slice → styled HTML → plain text), Word's paste-options
- * bar (the three picks replay the same content in the picked form), and the
+ * paste lanes (docen slice → styled HTML → RTF → plain text), Word's paste-options
+ * bar (the picks replay the same content in the picked form), and the
  * Office Clipboard pane's session collection.
  */
 export class ClipboardCommands {
   constructor(private readonly host: ClipboardHost) {}
 
-  /** Paste from the system clipboard. The docen lane wins (a copy from a
-   *  docen editor round-trips losslessly through the custom MIME — Chrome
-   *  reads it back as a web custom format), then text/html — styled paste
-   *  through the schema's parse rules — then plain text; `textOnly` (the
-   *  menu's Keep Text Only) skips the rich legs. navigator.clipboard is the
-   *  reliable path; execCommand("paste") is the fallback (often blocked). */
+  /** Paste from the system clipboard. Delegated to {@link pasteSpecial}. */
   async paste(textOnly = false): Promise<void> {
+    return this.pasteSpecial(textOnly ? "text" : undefined);
+  }
+
+  /** Paste using a specific format or automatic ladder when omitted. */
+  async pasteSpecial(format?: PasteSpecialFormat): Promise<void> {
     const bridge = this.host.bridge();
     const editor = bridge?.activeEditor() ?? this.host.editor();
     if (!editor) return;
     bridge?.focus();
-    const docenType = textOnly ? null : `web ${DOCEN_CLIP_MIME}`;
+
+    const allowSlice = !format || format === "slice";
+    const allowHtml = !format || format === "html";
+    const allowRtf = !format || format === "rtf";
+    const allowText = !format || format === "text";
+
+    const docenType = allowSlice ? `web ${DOCEN_CLIP_MIME}` : null;
     try {
       const items = await navigator.clipboard.read();
       for (const item of items) {
@@ -78,35 +85,43 @@ export class ClipboardCommands {
             return;
           }
         }
-        const type =
-          !textOnly && item.types.includes("text/html")
-            ? "text/html"
-            : item.types.includes("text/plain")
-              ? "text/plain"
-              : null;
-        if (!type) continue;
-        const text = await (await item.getType(type)).text();
-        if (!text) continue;
-        if (type === "text/html") {
-          const body = new DOMParser().parseFromString(text, "text/html").body;
-          const content = parseHTMLBody(body, editor.state.schema).content ?? [];
-          if (content.length) {
-            editor.commands.insertContent(content);
-            const plain = item.types.includes("text/plain")
-              ? await (await item.getType("text/plain")).text()
-              : "";
-            this.showPasteOptions({ kind: "html", raw: text, text: plain });
-            return;
+        if (allowHtml && item.types.includes("text/html")) {
+          const text = await (await item.getType("text/html")).text();
+          if (text) {
+            const body = new DOMParser().parseFromString(text, "text/html").body;
+            const content = parseHTMLBody(body, editor.state.schema).content ?? [];
+            if (content.length) {
+              editor.commands.insertContent(content);
+              const plain = item.types.includes("text/plain")
+                ? await (await item.getType("text/plain")).text()
+                : "";
+              this.showPasteOptions({ kind: "html", raw: text, text: plain });
+              return;
+            }
           }
-        } else {
-          // Chromium never persists a copy EVENT's custom types to the system
-          // clipboard (the `web ` spelling only survives the async write API),
-          // so a same-page Ctrl+C → context-menu Paste round-trip can't see
-          // the docen lane in read(). When the plain text still matches the
-          // pinned in-editor copy, the slice payload rides memory instead; a
-          // copy made elsewhere produces different text and the fallback
-          // correctly stays out.
-          const pinned = textOnly ? null : bridge?.copiedSlice();
+        }
+        const rtfMime = allowRtf
+          ? item.types.find((t) => t === "text/rtf" || t === "application/rtf")
+          : null;
+        if (rtfMime) {
+          const text = await (await item.getType(rtfMime)).text();
+          if (text) {
+            const json = parseRTF(text);
+            const content = (json.content ?? []).filter((n) => n.type !== "text" || n.text);
+            if (content.length) {
+              editor.commands.insertContent(content);
+              const plain = item.types.includes("text/plain")
+                ? await (await item.getType("text/plain")).text()
+                : "";
+              this.showPasteOptions({ kind: "rtf", raw: text, text: plain });
+              return;
+            }
+          }
+        }
+        if (allowText && item.types.includes("text/plain")) {
+          const text = await (await item.getType("text/plain")).text();
+          if (!text) continue;
+          const pinned = allowSlice ? bridge?.copiedSlice() : null;
           if (pinned && pinned.text === text && bridge?.insertSlicePayload(pinned.payload)) {
             return;
           }
@@ -117,18 +132,22 @@ export class ClipboardCommands {
     } catch {
       // read() may be denied (permission policy) — fall through to readText.
     }
-    try {
-      const text = await navigator.clipboard.readText();
-      if (text) {
-        const pinned = textOnly ? null : bridge?.copiedSlice();
-        if (pinned && pinned.text === text && bridge?.insertSlicePayload(pinned.payload)) {
-          this.showPasteOptions({ kind: "slice", raw: pinned.payload, text });
-          return;
+    if (allowText || allowSlice) {
+      try {
+        const text = await navigator.clipboard.readText();
+        if (text) {
+          const pinned = allowSlice ? bridge?.copiedSlice() : null;
+          if (pinned && pinned.text === text && bridge?.insertSlicePayload(pinned.payload)) {
+            this.showPasteOptions({ kind: "slice", raw: pinned.payload, text });
+            return;
+          }
+          if (allowText) {
+            insertPlainText(editor, text);
+          }
         }
-        insertPlainText(editor, text);
+      } catch {
+        /* clipboard unavailable — nothing to paste */
       }
-    } catch {
-      /* clipboard unavailable — nothing to paste */
     }
   }
 
@@ -268,7 +287,7 @@ export class ClipboardCommands {
     const bridge = this.host.bridge();
     const editor = bridge?.activeEditor() ?? this.host.editor();
     if (!source || !editor) return;
-    editor.commands.undo();
+    editor.commands.undo?.();
     if (mode === "text") {
       editor.commands.insertContent(source.text);
       return;
@@ -284,6 +303,13 @@ export class ClipboardCommands {
       } catch {
         /* unparsable payload — the undo already restored the prior state */
       }
+      return;
+    }
+    if (source.kind === "rtf") {
+      const json = parseRTF(source.raw);
+      const content = (json.content ?? []).filter((n) => n.type !== "text" || n.text);
+      if (content.length)
+        editor.commands.insertContent(mode === "match" ? stripRunMarks(content) : content);
       return;
     }
     const body = new DOMParser().parseFromString(source.raw, "text/html").body;
