@@ -13,17 +13,18 @@ import {
   type PaintContext,
   type ShapeTextStack,
 } from "@docen/core";
-import type {
-  FlowItem,
-  LayoutBlock,
-  ProjectedColumns,
-  ProjectedFlowBox,
-  ProjectedLineNumbers,
-  ProjectedPageBackground,
-  ProjectedPageBorder,
-  ProjectedPageBorders,
-  ProjectedPageFurniture,
-  ProjectedPageNumbering,
+import {
+  computePageNumberOffsets,
+  type FlowItem,
+  type LayoutBlock,
+  type ProjectedColumns,
+  type ProjectedFlowBox,
+  type ProjectedLineNumbers,
+  type ProjectedPageBackground,
+  type ProjectedPageBorder,
+  type ProjectedPageBorders,
+  type ProjectedPageFurniture,
+  type ProjectedPageNumbering,
 } from "@docen/layout";
 /**
  * Canvas stage — the page layer of the canvas document component.
@@ -140,28 +141,6 @@ export interface CanvasStageSection {
 
 /** [default, first, even] slot pick order. */
 const FURNITURE_SLOTS = [0, 1, 2] as const;
-
-/** Per-section PAGE field offsets (shown number − physical page number): a
- *  w:start section restarts the count on its first physical page; later
- *  sections without a start continue the same skew. */
-function computePageNumberOffsets(
-  sections: readonly CanvasStageSection[],
-  sectionOfPage: readonly number[],
-): number[] {
-  const firstPageOf = new Map<number, number>();
-  sectionOfPage.forEach((s, p) => {
-    if (!firstPageOf.has(s)) firstPageOf.set(s, p);
-  });
-  const offsets: number[] = [];
-  let offset = 0;
-  sections.forEach((section, s) => {
-    const first = firstPageOf.get(s);
-    const start = section.pageNumbering?.start;
-    if (start != null && first != null) offset = start - 1 - first;
-    offsets[s] = offset;
-  });
-  return offsets;
-}
 
 /** Lay every furniture slot once, at its section's content width — the
  *  single pass both consumers share. No grid context: Word keeps
