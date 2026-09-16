@@ -570,6 +570,10 @@ class DocenDocument extends AddinHost<Editor> {
    *  instruction text instead of the cached result. Pure display state — the
    *  document's field atoms are untouched. */
   #fieldCodes = false;
+  /** The hidden-text display the last projection used (the settings store's
+   *  writing.showHiddenText): a store change to it re-renders the document,
+   *  Word's Options → Display toggle. */
+  #hiddenTextShown = false;
   /** A loaded document asked for w:updateFields (Options → Update fields on
    *  open): consumed by the first completed render, when the bridge's page
    *  map is fresh, to run one Update All Fields. */
@@ -2008,6 +2012,12 @@ class DocenDocument extends AddinHost<Editor> {
     // an add-in) re-stamps the chrome and bubbles out as `docen:settings-change`.
     this.#settingsOff = onSettingsChange((settings) => {
       this.#renderChrome();
+      // The hidden-text display is a projection input: a store change that
+      // flips it re-renders the document (Options → Display, or another host
+      // sharing the store).
+      if (settings.writing.showHiddenText !== this.#hiddenTextShown && this.#stageHost) {
+        this.#renderDoc(this.getJSON());
+      }
       this.dispatchEvent(
         new CustomEvent("docen:settings-change", {
           bubbles: true,
@@ -2456,6 +2466,12 @@ class DocenDocument extends AddinHost<Editor> {
    *  section's furniture ONCE (the insets and the painter's bands share the
    *  pass) → assemble the flow inputs. Pure preparation — no pagination. */
   #projectFlowSections(doc: JSONContent): ProjectedFlowInputs {
+    // Word's Options → Display "Show hidden text" (w:vanish): hidden runs
+    // project suppressed (no advance, no ink) unless the shared settings
+    // store asks for their display — read per projection, so a store change
+    // reaches the next render.
+    const showHiddenText = getSettings().writing.showHiddenText;
+    this.#hiddenTextShown = showHiddenText;
     const { sections, background } = projectDocumentOptions(
       compileDocument(this.#mergedView(doc)),
       // Word's Display for Review: "simple" is also the all-marks projection
@@ -2473,6 +2489,9 @@ class DocenDocument extends AddinHost<Editor> {
         : undefined,
       // Alt+F9: every field projects its instruction instead of the result.
       this.#fieldCodes,
+      // Options → Display: hidden runs render with their dotted marker
+      // instead of being suppressed.
+      showHiddenText,
     );
     const stageSections: (ProjectedSection & CanvasStageSection)[] = sections.map((section) => ({
       ...section,

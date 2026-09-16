@@ -8,13 +8,11 @@
 
 import type { ShapeTextStack } from "@docen/core";
 import {
-  cssFontOf,
-  familyOfSlot,
   type FlowPage,
   gridPadOf,
-  isCjkCodeUnit,
   type ItemGlyphLayout,
-  itemGlyphLayout,
+  itemFontOf,
+  itemGlyphLayoutOf,
   justifiedIntervals,
   type LaidOutLine,
   type LaidOutParagraph,
@@ -804,30 +802,34 @@ export class CaretMap {
     for (const item of line.line.items) {
       if (item.kind !== "text") continue;
       const inline = line.para.inline[item.inlineIndex];
-      if (inline?.kind !== "text") continue;
-      // The slot test the layout's own measurement used (isCjkCodeUnit over
-      // the engine's CJK ranges) — the band hugs glyphs measured AND painted
-      // in the same face.
-      const font = cssFontOf(
-        inline.style,
-        familyOfSlot(inline.style.family, isCjkCodeUnit(item.text, 0)),
-      );
+      if (inline?.kind !== "text" || inline.suppressed) continue;
+      // The paint font of the item's own piece — a smallCaps lowercase piece
+      // rides at its reduced size, a caps run measures the displayed glyphs
+      // (itemFontOf picks the script slot from the display text).
+      const font = itemFontOf(inline.style, item);
       ctx.font = font;
       // The painter's own baseline: the LINE's measured baseline (the shared
       // lineBaselineDepthPx — mixed-size runs align on it, so a small run's
       // band may not re-derive its own depth), plus a vertAlign run's shift
-      // (vertAlignBaselineShiftPx in the shared measure module) — the band
-      // must anchor there too, or a footnote reference's highlight rides
-      // below its glyphs. A ruby base sinks below its annotation space the
-      // same way the painter sinks it (rubyLiftPx, layout-computed).
+      // (vertAlignBaselineShiftPx in the shared measure module) and a
+      // w:position raise/lower — the band must anchor there too, or a
+      // footnote reference's highlight rides below its glyphs. A ruby base
+      // sinks below its annotation space the same way the painter sinks it
+      // (rubyLiftPx, layout-computed).
+      const size = item.fontSizePx ?? vertAlignedSizePx(inline.style);
       const baseline =
         line.yPx +
-        lineBaselineDepthPx(line.line, vertAlignedSizePx(inline.style)) +
+        lineBaselineDepthPx(line.line, size) +
         (item.rubyLiftPx ?? 0) +
-        vertAlignBaselineShiftPx(inline.style);
+        vertAlignBaselineShiftPx(inline.style) +
+        (inline.style.baselineShiftPx ?? 0);
       // The item's own ink box (first graphemes carry its script's shape); the
       // deepest run's descent and highest run's ascent bound the highlight.
-      const metrics = ctx.measureText(Array.from(item.text).slice(0, 8).join(""));
+      const metrics = ctx.measureText(
+        Array.from(item.displayText ?? item.text)
+          .slice(0, 8)
+          .join(""),
+      );
       top = Math.min(top, baseline - metrics.actualBoundingBoxAscent);
       bottom = Math.max(bottom, baseline + metrics.actualBoundingBoxDescent);
     }
@@ -1148,8 +1150,9 @@ export class CaretMap {
   }
 
   /** One text item's glyph placement anchored at the line — the shared
-   *  itemGlyphLayout model (the exact distribution the painter's Text
-   *  renders, Leafer's CharLayout) with the item's stretch/compress
+   *  itemGlyphLayoutOf model (the exact distribution the painter's Text
+   *  renders, Leafer's CharLayout, with the caps display form, the piece's
+   *  size and the w:w scale folded in) with the item's stretch/compress
    *  interval: a justified item's interval end, or on a squeezed line the
    *  item's own right edge (the painter runs both-letter at negative
    *  slack — the same uniform per-grapheme delta as justification). */
@@ -1164,17 +1167,8 @@ export class CaretMap {
     const end =
       entry.intervals?.[itemIndex] ??
       (entry.line.advanceScale != null ? item.xPx + item.widthPx : undefined);
-    const font = cssFontOf(
-      inline.style,
-      familyOfSlot(inline.style.family, isCjkCodeUnit(item.text, 0)),
-    );
     return {
-      layout: itemGlyphLayout(
-        item.text,
-        font,
-        inline.style.letterSpacingPx,
-        end != null ? end - item.xPx : undefined,
-      ),
+      layout: itemGlyphLayoutOf(item, inline.style, end != null ? end - item.xPx : undefined),
       base: entry.xPx + item.xPx,
       end,
     };

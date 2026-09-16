@@ -5,8 +5,10 @@
  * ({@link SETTINGS_STORAGE_KEY}), shared by every host element on the page:
  * identity (the Word Options → General "User name"/"Initials" pair) and the
  * writing toggles the lanes consume — D1 autocorrect (its options + the user
- * replacement table), B4 proofing language, C1 hidden-text display. This
- * module only stores the options; the document behavior rides the engine.
+ * replacement table), B4 proofing language, C1 hidden-text display (the
+ * `<docen-document>` projection reads `writing.showHiddenText` per render and
+ * re-renders when it flips). This module only stores the options; the document
+ * behavior rides the engine.
  *
  * Storage is treated as a cache: a corrupt entry, a foreign version, blocked
  * storage (private mode / SecurityError) or a throwing write all fall back to

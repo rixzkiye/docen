@@ -2128,3 +2128,114 @@ describe("projectDocumentOptions preset geometry", () => {
     expect(flipped[2].y + flipped[2].height).toBeCloseTo(96, 1);
   });
 });
+
+describe("projectDocumentOptions character effects", () => {
+  const paraOf = (children: SectionChild[], showHiddenText?: boolean): LayoutBlock[] =>
+    projectDocumentOptions(doc(children), undefined, undefined, showHiddenText).sections[0]!.blocks;
+
+  const firstInline = (children: SectionChild[], showHiddenText?: boolean) => {
+    const para = paraOf(children, showHiddenText)[0];
+    if (para?.kind !== "paragraph") throw new Error("expected paragraph");
+    return para.inline;
+  };
+
+  /** The i-th atom's resolved style (asserting the atom is a text run). */
+  const styleAt = (inline: readonly unknown[], i = 0): Record<string, unknown> => {
+    const atom = inline[i] as { style?: Record<string, unknown> } | undefined;
+    if (!atom?.style) throw new Error("expected a styled text atom");
+    return atom.style;
+  };
+
+  it("projects w:caps and w:smallCaps as a caps token (allCaps wins)", () => {
+    const [all] = firstInline([{ paragraph: { children: [{ text: "cap", allCaps: true }] } }]);
+    expect(all).toMatchObject({ kind: "text", style: { caps: "all" } });
+    const [small] = firstInline([{ paragraph: { children: [{ text: "cap", smallCaps: true }] } }]);
+    expect(small).toMatchObject({ kind: "text", style: { caps: "small" } });
+    const [both] = firstInline([
+      { paragraph: { children: [{ text: "cap", allCaps: true, smallCaps: true }] } },
+    ]);
+    expect(both).toMatchObject({ kind: "text", style: { caps: "all" } });
+  });
+
+  it("cancels an inherited caps token with an explicit false", () => {
+    // The inline style-flavored cascade: a paragraph style's run props reach
+    // the run unless the run's own rPr says otherwise.
+    const styled: DocumentOptions = {
+      styles: {
+        paragraphStyles: [{ id: "Normal", default: true, run: { smallCaps: true } }],
+      },
+      sections: [{ children: [{ paragraph: { children: [{ text: "off", smallCaps: false }] } }] }],
+    };
+    const blocks = projectDocumentOptions(styled).sections[0]!.blocks;
+    const para = blocks[0];
+    if (para?.kind !== "paragraph") throw new Error("expected paragraph");
+    expect(para.inline[0]).toMatchObject({ kind: "text", style: { caps: undefined } });
+  });
+
+  it("resolves w:w (1-600, 100 = identity)", () => {
+    const [half] = firstInline([{ paragraph: { children: [{ text: "wide", scale: 50 }] } }]);
+    expect(half).toMatchObject({ style: { scalePct: 50 } });
+    const identity = firstInline([{ paragraph: { children: [{ text: "wide", scale: 100 }] } }]);
+    expect(styleAt(identity).scalePct).toBeUndefined();
+    const invalid = firstInline([{ paragraph: { children: [{ text: "wide", scale: 900 }] } }]);
+    expect(styleAt(invalid).scalePct).toBeUndefined();
+  });
+
+  it("resolves w:position (half-points) to a baseline shift, raise negative", () => {
+    const [raised] = firstInline([{ paragraph: { children: [{ text: "up", position: 12 }] } }]);
+    // 12 half-points = 6pt = 8px raised → -8.
+    expect(raised).toMatchObject({ style: { baselineShiftPx: -8 } });
+    const [lowered] = firstInline([{ paragraph: { children: [{ text: "down", position: -6 }] } }]);
+    // -6 half-points = -3pt = -4px → +4 (down).
+    expect(lowered).toMatchObject({ style: { baselineShiftPx: 4 } });
+  });
+
+  it("resolves w:kern (half-points) to the point threshold", () => {
+    const [kerned] = firstInline([{ paragraph: { children: [{ text: "av", kern: 16 }] } }]);
+    expect(kerned).toMatchObject({ style: { kernPt: 8 } });
+    // w:kern 0 = off: the explicit zero cancels an inherited threshold and
+    // kerningActive() reads it as inactive.
+    const off = firstInline([{ paragraph: { children: [{ text: "av", kern: 0 }] } }]);
+    expect(styleAt(off).kernPt).toBe(0);
+  });
+
+  it("resolves w:bdr and w:em into paintable boxes and marks", () => {
+    const [bordered] = firstInline([
+      {
+        paragraph: {
+          children: [
+            { text: "boxed", border: { style: "single", size: 8, space: 1, color: "FF0000" } },
+          ],
+        },
+      },
+    ]);
+    expect(bordered).toMatchObject({
+      style: {
+        border: { style: "single", px: 4 / 3, spacePx: 4 / 3, color: "FF0000" },
+      },
+    });
+    const [marked] = firstInline([
+      { paragraph: { children: [{ text: "m", emphasisMark: { type: "underDot" } }] } },
+    ]);
+    expect(marked).toMatchObject({ style: { emphasisMark: "underDot" } });
+    // "none" and unknown tokens project nothing.
+    const plain = firstInline([
+      { paragraph: { children: [{ text: "m", emphasisMark: { type: "none" } }] } },
+    ]);
+    expect(styleAt(plain).emphasisMark).toBeUndefined();
+  });
+
+  it("suppresses hidden runs unless Show Hidden Text is on", () => {
+    const children: SectionChild[] = [
+      { paragraph: { children: [{ text: "visible " }, { text: "secret", vanish: true }] } },
+    ];
+    const off = firstInline(children);
+    expect(styleAt(off).hidden).toBeUndefined();
+    expect(off[1]).toMatchObject({ kind: "text", text: "secret", suppressed: true });
+    expect(off[1]).toMatchObject({ style: { hidden: true } });
+    const on = firstInline(children, true);
+    expect(on[1]).toMatchObject({ kind: "text", text: "secret" });
+    expect(on[1]).not.toHaveProperty("suppressed");
+    expect(on[1]).toMatchObject({ style: { hidden: true } });
+  });
+});

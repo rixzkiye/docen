@@ -1,10 +1,10 @@
 import {
-  cssFontOf,
+  characterScaleOf,
   familyOfSlot,
   fieldLabelOf,
   gridPadOf,
   isCjkCodeUnit,
-  itemGlyphLayout,
+  itemGlyphLayoutOf,
   justifiedIntervals,
   justifyPerGrapheme,
   leaferBaselinePadPx,
@@ -17,6 +17,7 @@ import {
   type LaidOutLine,
   type LaidOutLineItem,
   type LaidOutParagraph,
+  type LayoutCharBorder,
   type LayoutInline,
   type LayoutParagraphBorderEdge,
   type LayoutTextStyle,
@@ -162,6 +163,131 @@ function lineFormatColor(para: LaidOutParagraph, line: LaidOutLine): string | un
     if (inline?.kind === "text" && inline.formatChange) return inline.formatChange.color;
   }
   return undefined;
+}
+
+/** w:bdr dash tokens (ST_Border) with a visible pattern — everything else
+ *  (single/double/…) strokes solid; "double" rules a second inner box. */
+const CHAR_BORDER_DASHES: Record<string, number[] | undefined> = {
+  dashed: [3, 2],
+  dotted: [1, 2],
+  dashDot: [3, 2, 1, 2],
+  dashDotDot: [3, 2, 1, 2, 1, 2],
+  sysDash: [3, 1],
+  sysDot: [1, 1],
+  sysDashDot: [3, 1, 1, 1],
+  sysDashDotDot: [3, 1, 1, 1, 1, 1],
+};
+
+/** The run's character border (w:bdr): a box around the laid glyphs' painted
+ *  text box, expanded by w:space and stroked in the border color (the text
+ *  ink when none). Word draws one box per line segment — the laid items
+ *  already split the run that way. */
+function paintCharBorder(
+  tree: IGroup,
+  border: LayoutCharBorder,
+  style: LayoutTextStyle,
+  box: { x: number; y: number; width: number; height: number },
+): void {
+  const color = border.color ? `#${border.color}` : style.color ? `#${style.color}` : "#1b1b1b";
+  const space = border.spacePx ?? 0;
+  const weight = Math.max(0.5, border.px ?? 0.5);
+  const x = box.x - space;
+  const y = box.y - space;
+  const width = Math.max(1, box.width + space * 2);
+  const height = Math.max(1, box.height + space * 2);
+  const dash = CHAR_BORDER_DASHES[border.style ?? ""];
+  tree.add(
+    new Rect({
+      x,
+      y,
+      width,
+      height,
+      stroke: color,
+      strokeWidth: weight,
+      ...(dash ? { dashPattern: dash } : {}),
+      hittable: false,
+    }),
+  );
+  if (border.style === "double") {
+    const inset = weight * 2;
+    tree.add(
+      new Rect({
+        x: x + inset,
+        y: y + inset,
+        width: Math.max(1, width - inset * 2),
+        height: Math.max(1, height - inset * 2),
+        stroke: color,
+        strokeWidth: weight,
+        hittable: false,
+      }),
+    );
+  }
+}
+
+/** w:em — Word's emphasis marks: one small mark centred over every grapheme
+ *  (dot / comma / circle) or under it (underDot). Positions ride the shared
+ *  glyph lattice, so the marks track a caps transform, a smallCaps piece's
+ *  size and the w:w scale. */
+function paintEmphasisMarks(
+  tree: IGroup,
+  style: LayoutTextStyle,
+  mark: NonNullable<LayoutTextStyle["emphasisMark"]>,
+  layout: ReturnType<typeof itemGlyphLayoutOf>,
+  baseX: number,
+  baselineY: number,
+  sizePx: number,
+  text: string,
+): void {
+  const color = style.color ? `#${style.color}` : "#1b1b1b";
+  const r = Math.max(0.75, sizePx * 0.055);
+  const cy = mark === "underDot" ? baselineY + sizePx * 0.14 : baselineY - sizePx * 0.62;
+  let at = 0;
+  for (let g = 0; g < layout.lens.length; g++) {
+    const slice = text.slice(at, at + layout.lens[g]!);
+    at += layout.lens[g]!;
+    // A space carries no mark in Word.
+    if (slice.trim().length === 0) continue;
+    const cx = baseX + layout.xs[g]! + layout.widths[g]! / 2;
+    if (mark === "circle") {
+      tree.add(
+        new Ellipse({
+          x: cx - r,
+          y: cy - r,
+          width: r * 2,
+          height: r * 2,
+          fill: "none",
+          stroke: color,
+          strokeWidth: Math.max(1, sizePx * 0.045),
+          hittable: false,
+        }),
+      );
+      continue;
+    }
+    tree.add(
+      new Ellipse({
+        x: cx - r,
+        y: cy - r,
+        width: r * 2,
+        height: r * 2,
+        fill: color,
+        hittable: false,
+      }),
+    );
+    if (mark === "comma") {
+      // The comma tail: a short stroke sweeping below the dot.
+      tree.add(
+        new Path({
+          x: cx,
+          y: cy,
+          path: `M ${r * 0.3} ${r * 0.6} Q ${-r * 0.2} ${r * 1.8} ${-r * 0.9} ${r * 2.1}`,
+          stroke: color,
+          strokeWidth: Math.max(1, r * 0.5),
+          fill: "none",
+          hittable: false,
+        }),
+      );
+    }
+  }
 }
 
 export function paintParagraph(
@@ -326,7 +452,14 @@ export function paintParagraph(
       const inline: LayoutInline | undefined = para.inline[item.inlineIndex];
       if (!inline) continue;
       if (item.kind === "text" && inline.kind === "text") {
-        const family = familyOf(inline.style, item.text);
+        // Hidden text the host does not display (Show Hidden Text off): the
+        // atom only keeps the caret lattice aligned — no highlight, no ink,
+        // no decorations.
+        if (inline.suppressed) continue;
+        // The displayed glyph run when a caps transform (w:caps /
+        // w:smallCaps) changes it; `item.text` stays the source slice.
+        const display = item.displayText ?? item.text;
+        const family = familyOf(inline.style, display);
         const intervalPx = rights ? rights[itemIndex]! - item.xPx : undefined;
         // A squeezed line (advanceScale — Word's compressPunctuation)
         // compresses its pure-CJK glyphs to the item's already-scaled width:
@@ -430,7 +563,7 @@ export function paintParagraph(
         // only a placeholder. fieldLabelOf prefers the render pass's resolved
         // value, then the live page context (furniture/header fields the page
         // flow does not carry), then the measured text (cache / field code).
-        const label = fieldLabelOf(inline, ctx, item.text);
+        const label = fieldLabelOf(inline, ctx, display);
         // Every run hangs on the LINE's one baseline: Leafer pins an
         // element's own baseline at 0.85 × its font size below the element
         // top, so the element top re-anchors by that share below the line
@@ -441,7 +574,10 @@ export function paintParagraph(
         // rides only the container pads (shapeTextPadPx — the exact sink and
         // grid half-lead, not the body's multiple-spacing scale). The
         // fallbacks reproduce the old constant for fixtures without the field.
-        const ownSize = vertAlignedSizePx(inline.style);
+        // A smallCaps lowercase piece paints at its reduced size; w:position
+        // shifts the glyphs off the shared baseline without moving the line.
+        const ownSize = item.fontSizePx ?? vertAlignedSizePx(inline.style);
+        const scale = characterScaleOf(inline.style);
         const baseY =
           lineY +
           (col?.shapeText
@@ -449,7 +585,8 @@ export function paintParagraph(
             : lineBaselineDepthPx(line, ownSize)) -
           leaferBaselinePadPx(ownSize) +
           (item.rubyLiftPx ?? 0) +
-          vertAlignBaselineShiftPx(inline.style);
+          vertAlignBaselineShiftPx(inline.style) +
+          (inline.style.baselineShiftPx ?? 0);
         const textEl = new Text({
           x: lineX + item.xPx,
           // A raised/lowered run (w:vertAlign — the footnote reference) paints
@@ -462,7 +599,14 @@ export function paintParagraph(
           // wrap the slice again with its own metrics (a phantom second
           // line). textWrap "none" keeps the interval from wrapping; height
           // keeps the element paintable (height 0 is skipped by Leafer).
-          width: intervalPx ?? squeezePx,
+          // w:w scales the element horizontally (scaleX), so the interval
+          // compensates by /scale to end where the layout measured it.
+          width:
+            intervalPx != null
+              ? intervalPx / scale
+              : squeezePx != null
+                ? squeezePx / scale
+                : undefined,
           textWrap: intervalPx != null || squeezePx != null ? "none" : undefined,
           // CJK items spread per glyph (both-letter); Latin items spread
           // per word gap (both-justify — Leafer's word mode, Word's Latin
@@ -470,7 +614,7 @@ export function paintParagraph(
           // and compresses when the interval is narrower than the glyphs
           // (the squeeze path).
           textAlign: rights
-            ? justifyPerGrapheme(item.text)
+            ? justifyPerGrapheme(display)
               ? "both-letter"
               : "both-justify"
             : squeezePx != null
@@ -495,13 +639,13 @@ export function paintParagraph(
                 ? "under"
                 : undefined,
           fontFamily: family,
-          fontSize: vertAlignedSizePx(inline.style),
+          fontSize: ownSize,
           // Leafer's default 150% line spacing half-leads the glyphs ~0.25×
           // fontSize below the line-box top the layout handed over (text-box
           // text riding low). The px form pins one line's spacing to the font
           // size — the percent form (`{ type: "percent" }`) silently blanks
           // every body Text when combined with an explicit height.
-          lineHeight: vertAlignedSizePx(inline.style),
+          lineHeight: ownSize,
           // Numbers only: Leafer's fontWeight setter treats strings as named
           // weights ("bold"/"thin"…) and silently maps unknown strings to 400,
           // so a string "700" would lose bold. Italic is the `italic` boolean
@@ -511,6 +655,10 @@ export function paintParagraph(
           letterSpacing: inline.style.letterSpacingPx
             ? { type: "px", value: inline.style.letterSpacingPx }
             : undefined,
+          // w:w — Word's character scale stretches the glyphs (and their
+          // spacing) horizontally about the run's left edge; the vertical
+          // metrics stay the font's. Absent = natural width.
+          ...(scale !== 1 ? { scaleX: scale, origin: "left" as const } : {}),
         });
         tree.add(textEl);
         // The phonetic guide (w:ruby): the annotation fills the space
@@ -541,10 +689,48 @@ export function paintParagraph(
         if (pattern) {
           paintUnderlinePattern(tree, pattern, inline.style, {
             x: lineX + item.xPx,
+            // paintUnderlinePattern's y IS the baseline.
+            y: baseY + leaferBaselinePadPx(ownSize),
+            width: intervalPx ?? item.widthPx,
+            emPx: ownSize,
+          });
+        }
+        // A hidden run while Show Hidden Text is on: Word paints the text
+        // normally but adds its dotted hidden-text underline.
+        if (inline.style.hidden) {
+          paintUnderlinePattern(tree, "dotted", inline.style, {
+            x: lineX + item.xPx,
+            y: baseY + leaferBaselinePadPx(ownSize),
+            width: intervalPx ?? item.widthPx,
+            emPx: ownSize,
+          });
+        }
+        // w:bdr — the run's character border box.
+        if (inline.style.border) {
+          paintCharBorder(tree, inline.style.border, inline.style, {
+            x: lineX + item.xPx,
             y: baseY,
             width: intervalPx ?? item.widthPx,
-            emPx: vertAlignedSizePx(inline.style),
+            height: ownSize,
           });
+        }
+        // w:em — one emphasis mark per grapheme, riding the item's own glyph
+        // lattice (a squeezed item compresses the same way its glyphs do).
+        if (inline.style.emphasisMark) {
+          paintEmphasisMarks(
+            tree,
+            inline.style,
+            inline.style.emphasisMark,
+            itemGlyphLayoutOf(
+              item,
+              inline.style,
+              intervalPx ?? (line.advanceScale != null ? item.widthPx : undefined),
+            ),
+            lineX + item.xPx,
+            baseY + leaferBaselinePadPx(ownSize),
+            ownSize,
+            display,
+          );
         }
       } else if (item.kind === "math" && inline.kind === "math") {
         // A formula the engine does not lay out yet: a dashed slot with the
@@ -840,7 +1026,7 @@ function dominantRunOf(
   let color = fallback;
   for (const other of line.items) {
     const src = para.inline[other.inlineIndex];
-    if (src?.kind !== "text" || !(src.text ?? "").trim()) continue;
+    if (src?.kind !== "text" || src.suppressed || !(src.text ?? "").trim()) continue;
     // Raised/lowered runs count at their scaled size — a footnote reference
     // must not pull the leader dots up.
     const px = vertAlignedSizePx(src.style);
@@ -888,7 +1074,7 @@ function paintLineMarks(
   if (para.preserveSpaces) {
     // Preserved spaces: every space is a real glyph inside the item's text
     // (the layout charged its advance), so the dots read their geometry
-    // straight off the item's glyph placement — the same itemGlyphLayout
+    // straight off the item's glyph placement — the same itemGlyphLayoutOf
     // model the caret map's lattice and the painter's Text share, fed the
     // item's justify-stretch or compressPunctuation interval — one dot per
     // space at the space's own glyph center, on natural, justified and
@@ -898,18 +1084,15 @@ function paintLineMarks(
     for (const [itemIndex, item] of line.items.entries()) {
       if (item.kind !== "text") continue;
       const src = para.inline[item.inlineIndex];
-      if (src?.kind !== "text") continue;
+      if (src?.kind !== "text" || src.suppressed) continue;
       const intervalPx = rights ? rights[itemIndex]! - item.xPx : undefined;
       const interval = intervalPx ?? (line.advanceScale != null ? item.widthPx : undefined);
-      const font = cssFontOf(
-        src.style,
-        familyOfSlot(src.style.family, isCjkCodeUnit(item.text, 0)),
-      );
-      const layout = itemGlyphLayout(item.text, font, src.style.letterSpacingPx, interval);
+      const layout = itemGlyphLayoutOf(item, src.style, interval);
       const fill = src.style.color ? `#${src.style.color}` : color;
+      const text = item.displayText ?? item.text;
       let at = 0;
       for (let g = 0; g < layout.xs.length; g++) {
-        const slice = item.text.slice(at, at + layout.lens[g]!);
+        const slice = text.slice(at, at + layout.lens[g]!);
         at += layout.lens[g]!;
         if (slice !== " " && slice !== "　") continue;
         const w = layout.widths[g]!;
@@ -954,6 +1137,7 @@ function paintLineMarks(
           spaces > 0 &&
           prevEndPx != null &&
           src?.kind === "text" &&
+          !src.suppressed &&
           prevIndex === itemIndex - 1
         ) {
           const span = item.xPx - prevEndPx;

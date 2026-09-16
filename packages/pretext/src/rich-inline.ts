@@ -4,6 +4,7 @@ import {
   prepareWithSegments,
   type PreparedTextWithSegments,
   type LayoutCursor,
+  type PrepareOptions,
 } from "./layout.js";
 import { type LineBreakCursor, stepPreparedLineGeometry } from "./line-break.js";
 import { buildLineTextFromRange, getLineTextCache } from "./line-text.js";
@@ -28,6 +29,10 @@ export type RichInlineItem = {
   letterSpacing?: number; // Extra horizontal spacing between graphemes, in CSS px
   break?: "normal" | "never"; // `never` keeps the item atomic, like a pill or mention chip
   extraWidth?: number; // Caller-owned horizontal chrome, e.g. padding + border width
+  // docen-local: horizontal advance scale (OOXML w:w); 1/absent = natural.
+  widthScale?: number;
+  // docen-local: explicit canvas kerning while measuring this item.
+  fontKerning?: boolean;
 };
 
 export type PreparedRichInline = {
@@ -232,16 +237,15 @@ export function prepareRichInline(
         : hasLeadingWhitespace
           ? getCollapsedSpaceWidth(item.font, letterSpacing, collapsedSpaceWidthCache)
           : 0;
+    const prepareOptions: PrepareOptions = {};
+    if (preserveSpaces) prepareOptions.whiteSpace = "pre-wrap";
+    if (letterSpacing !== 0) prepareOptions.letterSpacing = letterSpacing;
+    if (item.widthScale != null) prepareOptions.widthScale = item.widthScale;
+    if (item.fontKerning === true) prepareOptions.fontKerning = true;
     const prepared = prepareWithSegments(
       trimmedText,
       item.font,
-      preserveSpaces
-        ? letterSpacing === 0
-          ? { whiteSpace: "pre-wrap" }
-          : { whiteSpace: "pre-wrap", letterSpacing }
-        : letterSpacing === 0
-          ? undefined
-          : { letterSpacing },
+      Object.keys(prepareOptions).length > 0 ? prepareOptions : undefined,
     );
     const wholeLine = prepareWholeItemLine(prepared);
     if (wholeLine === null) {

@@ -27,7 +27,18 @@ import {
 
 import type { LayoutFloatZone, LayoutInline, LayoutTabStop } from "../layout-doc";
 import type { LaidOutLine, LaidOutLineItem } from "../layout-result";
-import { baselinePadPxOf, cssFontOf, familyOfSlot, type TextMeasurer } from "./measure";
+import {
+  baselinePadPxOf,
+  capsPiecesOf,
+  characterScaleOf,
+  cssFontAtSize,
+  cssFontOf,
+  familyOfSlot,
+  kerningActive,
+  SMALL_CAPS_SCALE,
+  vertAlignedSizePx,
+  type TextMeasurer,
+} from "./measure";
 
 export interface LineHeightInput {
   /** Max run natural height among the line's text content (0 when none). */
@@ -172,6 +183,14 @@ interface FlowGroup {
   /** RichInlineItem[i] originates from inline[itemInline[i]]. */
   itemInline: number[];
   items: RichInlineItem[];
+  /** Per prepared item: the source slice it renders (caps pieces and
+   *  suppressed hidden runs carry their untransformed text here, so the laid
+   *  item can keep the document-model characters while painting the display
+   *  form). Empty for atoms. */
+  itemSource: string[];
+  /** Per prepared item: the painted glyph size (a smallCaps piece's reduced
+   *  size); 0 for atoms. */
+  itemSizePx: number[];
   prepared: PreparedRichInline;
   /** The tab atom closing this group (null unless the group ends at a tab). */
   tab: Extract<LayoutInline, { kind: "tab" }> | null;
@@ -194,6 +213,19 @@ function groupOf(
 ): FlowGroup {
   const items: RichInlineItem[] = [];
   const itemInline: number[] = [];
+  const itemSource: string[] = [];
+  const itemSizePx: number[] = [];
+  const push = (
+    item: RichInlineItem,
+    inlineIndex: number,
+    source: string,
+    sizePx: number,
+  ): void => {
+    items.push(item);
+    itemInline.push(inlineIndex);
+    itemSource.push(source);
+    itemSizePx.push(sizePx);
+  };
   for (let i = from; i < to; i++) {
     const item = inline[i];
     if (item.kind === "text" && item.combine) {
@@ -205,25 +237,58 @@ function groupOf(
         measurer.widthOf(item.combine.second, half, DOCEN_WHITE_SPACE),
       );
       if (item.combine.bracket) widthPx += item.style.sizePx * 0.6;
-      items.push({ text: "", font: "1px serif", break: "never", extraWidth: widthPx });
-      itemInline.push(i);
+      push(
+        { text: "", font: "1px serif", break: "never", extraWidth: widthPx },
+        i,
+        item.text,
+        item.style.sizePx,
+      );
+    } else if (item.kind === "text" && item.suppressed) {
+      // A hidden run the host does not display (Show Hidden Text off): it
+      // charges no advance — widthScale 0 zeroes every glyph and space — but
+      // the fragment still materializes its source text so the caret lattice
+      // keeps the document-model characters.
+      push(
+        {
+          text: item.text,
+          font: cssFontOf(item.style, familyOfSlot(item.style.family, false)),
+          widthScale: 0,
+        },
+        i,
+        item.text,
+        vertAlignedSizePx(item.style),
+      );
     } else if (item.kind === "text") {
       // Script itemization: each same-script segment measures (and paints)
-      // with its slot's family — the OOXML eastAsia/ascii split.
+      // with its slot's family — the OOXML eastAsia/ascii split. A caps
+      // transform (w:caps / w:smallCaps) then splits the segment into display
+      // pieces: lowercase smallCaps stretches measure and paint uppercased at
+      // the reduced size, everything else at the run's own size.
+      const scale = characterScaleOf(item.style);
+      const kern = kerningActive(item.style);
+      const baseSize = vertAlignedSizePx(item.style);
       const { segments } = measurer.analyze(item.text, item.style);
       for (const seg of segments) {
-        items.push({
-          text: seg.text,
-          font: cssFontOf(item.style, familyOfSlot(item.style.family, seg.isCjk)),
-          letterSpacing: item.style.letterSpacingPx,
-        });
-        itemInline.push(i);
+        for (const piece of capsPiecesOf(seg.text, item.style.caps)) {
+          const sizePx = piece.small ? baseSize * SMALL_CAPS_SCALE : baseSize;
+          push(
+            {
+              text: piece.display,
+              font: cssFontAtSize(item.style, familyOfSlot(item.style.family, seg.isCjk), sizePx),
+              letterSpacing: item.style.letterSpacingPx,
+              ...(scale !== 1 ? { widthScale: scale } : {}),
+              ...(kern ? { fontKerning: true } : {}),
+            },
+            i,
+            piece.source,
+            sizePx,
+          );
+        }
       }
     } else if (item.kind === "picture" || item.kind === "math") {
       // An unbreakable atom of known width (the patched pretext keeps
       // empty-text extraWidth items alive).
-      items.push({ text: "", font: "1px serif", break: "never", extraWidth: item.widthPx });
-      itemInline.push(i);
+      push({ text: "", font: "1px serif", break: "never", extraWidth: item.widthPx }, i, "", 0);
     }
     // Tab and break atoms carry no item — the group boundary itself jumps
     // (tab) or ends the line (break).
@@ -231,7 +296,7 @@ function groupOf(
   const key = items
     .map(
       (it) =>
-        `${it.text}\x00${it.font}\x00${it.letterSpacing ?? ""}\x00${it.break ?? ""}\x00${it.extraWidth ?? ""}`,
+        `${it.text}\x00${it.font}\x00${it.letterSpacing ?? ""}\x00${it.break ?? ""}\x00${it.extraWidth ?? ""}\x00${it.widthScale ?? ""}\x00${it.fontKerning ? "k" : ""}`,
     )
     .join("\x01");
   // The mode rides outside the per-item key (single packer-wide constant
@@ -250,7 +315,7 @@ function groupOf(
     }
     preparedCache.set(cacheKey, prepared);
   }
-  return { itemInline, items, prepared, ...closer, followingPx: 0 };
+  return { itemInline, itemSource, itemSizePx, items, prepared, ...closer, followingPx: 0 };
 }
 
 /** Memoized group builds per inline array. The autofit path builds the same
@@ -260,6 +325,22 @@ function groupOf(
  *  lifetime spans one projection, hence one layout pass, hence one
  *  measurer — caching per array cannot go stale on fonts. */
 const groupsCache = new WeakMap<LayoutInline[], FlowGroup[]>();
+
+/** One fragment's source slice. Fragments of a prepared item arrive in
+ *  order, and the display transform (w:caps / w:smallCaps) preserves UTF-16
+ *  length, so a running consumption count recovers the untransformed slice
+ *  (`itemSource`) from the painted fragment text. `consumed` is per pack
+ *  call — a re-layout restarts the walk. */
+function sourceSliceOf(
+  group: FlowGroup,
+  frag: { itemIndex: number; text: string },
+  consumed: number[],
+): string {
+  const piece = group.itemSource[frag.itemIndex] ?? "";
+  const start = consumed[frag.itemIndex] ?? 0;
+  consumed[frag.itemIndex] = start + frag.text.length;
+  return piece.slice(start, start + frag.text.length);
+}
 
 /** Split the inline flow at tab and break atoms into pretext-prepared
  *  groups; the final group (no closing atom) runs to the flow's end. */
@@ -574,6 +655,9 @@ export function packLines(inline: LayoutInline[], opts: PackLinesOptions): Packe
   const groups = buildGroups(inline, measurer);
   const cursors: (RichInlineCursor | undefined)[] = groups.map(() => undefined);
   const done = groups.map(() => false);
+  // Per prepared item consumption of its source slice (see sourceSliceOf) —
+  // reset per pack call, continuous across the group's wrapped lines.
+  const consumed: number[][] = groups.map((group) => group.items.map(() => 0));
 
   const lines: PackedLine[] = [];
   let lineIndex = 0;
@@ -714,20 +798,28 @@ export function packLines(inline: LayoutInline[], opts: PackLinesOptions): Packe
               if (baseline > baselinePadPx) baselinePadPx = baseline;
               if (analyzed.hasCjk) hasCjk = true;
             } else if (src.kind === "text") {
+              // The painted (display) form and the document-model source text
+              // part company under a caps transform — the laid item carries
+              // both, same UTF-16 length, so the caret lattice counts source
+              // characters while the painter draws the transformed glyphs.
+              const sourceText = sourceSliceOf(group, frag, consumed[g]!);
               // A phonetic guide (w:ruby) reserves annotation space above the
               // base: the line's natural height grows by the annotation's
               // ascent, and the placed item carries the guide only when the
               // run's full text landed on this line — a ruby split across
               // lines annotates neither half.
-              const whole = src.ruby != null && frag.text === src.text;
+              const whole = src.ruby != null && sourceText === src.text;
               const rubyLiftPx = whole
                 ? measurer.analyze(src.ruby!.text, { ...src.style, sizePx: src.ruby!.fontSizePx })
                     .naturalPx
                 : 0;
+              const pieceSize = group.itemSizePx[frag.itemIndex] ?? vertAlignedSizePx(src.style);
               lineItems.push({
                 kind: "text",
                 inlineIndex,
-                text: frag.text,
+                text: sourceText,
+                ...(frag.text !== sourceText ? { displayText: frag.text } : {}),
+                ...(pieceSize !== vertAlignedSizePx(src.style) ? { fontSizePx: pieceSize } : {}),
                 xPx: at,
                 widthPx: squeeze ? frag.occupiedWidth * squeeze : frag.occupiedWidth,
                 // Synthetic markers stay flagged through materialization — the
@@ -736,14 +828,19 @@ export function packLines(inline: LayoutInline[], opts: PackLinesOptions): Packe
                 synthetic: src.synthetic,
                 ...(whole && src.ruby ? { ruby: src.ruby, rubyLiftPx } : {}),
               });
-              hasText = true;
-              const analyzed = measurer.analyze(src.text, src.style);
-              if (analyzed.naturalPx + rubyLiftPx > naturalPx)
-                naturalPx = analyzed.naturalPx + rubyLiftPx;
-              if (textEmPx == null || src.style.sizePx > textEmPx) textEmPx = src.style.sizePx;
-              const baseline = baselinePadPxOf(src.style, src.text);
-              if (baseline > baselinePadPx) baselinePadPx = baseline;
-              if (analyzed.hasCjk) hasCjk = true;
+              // Hidden text the host does not display renders no ink and no
+              // line-box metric — its atom only keeps the caret lattice
+              // aligned. Word: hidden characters do not affect the layout.
+              if (!src.suppressed) {
+                hasText = true;
+                const analyzed = measurer.analyze(src.text, src.style);
+                if (analyzed.naturalPx + rubyLiftPx > naturalPx)
+                  naturalPx = analyzed.naturalPx + rubyLiftPx;
+                if (textEmPx == null || src.style.sizePx > textEmPx) textEmPx = src.style.sizePx;
+                const baseline = baselinePadPxOf(src.style, src.text);
+                if (baseline > baselinePadPx) baselinePadPx = baseline;
+                if (analyzed.hasCjk) hasCjk = true;
+              }
             } else if (src.kind === "picture") {
               lineItems.push({
                 kind: "picture",

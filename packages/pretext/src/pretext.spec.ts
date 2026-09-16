@@ -204,3 +204,45 @@ describe.sequential("rich inline pre-wrap (preserved spaces)", () => {
     expect(lines).toEqual(["甲乙", "ccc"]);
   });
 });
+
+describe.sequential("vendored widthScale (docen w:w / hidden runs)", () => {
+  // The fake's advances at 16px: latin 8, space 4.
+  it("scales the whole item advance, text and spacing together", () => {
+    const prepared = prepareRichInline([{ text: "a b", font: FONT, widthScale: 0.5 }], {
+      whiteSpace: "pre-wrap",
+    });
+    const range = layoutNextRichInlineLineRange(prepared, 200);
+    const line = materializeRichInlineLineRange(prepared, range!);
+    // Natural "a b" = 8 + 4 + 8 = 20; at 50% the advance is 10 and the text
+    // slice still carries every source character.
+    expect(line.width).toBe(10);
+    expect(line.fragments[0]!.text).toBe("a b");
+  });
+
+  it("gives a zero-scaled (hidden) item no advance but keeps its text", () => {
+    const prepared = prepareRichInline(
+      [
+        { text: "see", font: FONT },
+        { text: "secret", font: FONT, widthScale: 0 },
+        { text: "!", font: FONT },
+      ],
+      { whiteSpace: "pre-wrap" },
+    );
+    const range = layoutNextRichInlineLineRange(prepared, 200);
+    const line = materializeRichInlineLineRange(prepared, range!);
+    expect(line.fragments.map((f) => f.text).join("")).toBe("seesecret!");
+    expect(line.width).toBe(32); // "see" 24 + hidden 0 + "!" 8
+  });
+
+  it("wraps against the scaled advance", () => {
+    // "abcd" natural 32; at 50% it fits a 17px line.
+    const prepared = prepareRichInline([{ text: "abcd", font: FONT, widthScale: 0.5 }], {
+      whiteSpace: "pre-wrap",
+    });
+    const range = layoutNextRichInlineLineRange(prepared, 17);
+    expect(range).not.toBeNull();
+    const line = materializeRichInlineLineRange(prepared, range!);
+    expect(line.fragments[0]!.text).toBe("abcd");
+    expect(line.width).toBe(16);
+  });
+});

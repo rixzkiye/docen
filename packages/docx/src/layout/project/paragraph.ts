@@ -32,6 +32,7 @@ import {
   alignOf,
   docDefaultsOf,
   fontAttr,
+  normalizeScalePct,
   pick,
   runStyleOf,
   styleChainOf,
@@ -71,6 +72,10 @@ export function projectParagraph(p: BodyParagraph, ctx: ProjectContext): LayoutP
   // color/underline/strikethrough reach runs that carry no rPr of their own,
   // exactly as bold/italic already did.
   const chainDefRun = runStyleOf({ ...docRPr, ...chainRPr });
+  // The style chain's character effects, resolved once into the paragraph's
+  // default run style — a run with no own rPr inherits them per field (the
+  // same cascade rule bold/italic already follow). w:caps wins over
+  // w:smallCaps; an explicit false on either leaves no token.
   const defaultTextStyle: LayoutTextStyle = {
     family: toFamily(null, defFont) ?? {},
     sizePx: ptToPx(markSizePt),
@@ -81,6 +86,14 @@ export function projectParagraph(p: BodyParagraph, ctx: ProjectContext): LayoutP
     strikethrough: chainDefRun.strikethrough,
     letterSpacingPx:
       chainDefRun.characterSpacingTw != null ? twipToPx(chainDefRun.characterSpacingTw) : undefined,
+    caps:
+      chainDefRun.allCaps === true ? "all" : chainDefRun.smallCaps === true ? "small" : undefined,
+    scalePct: normalizeScalePct(chainDefRun.scalePct),
+    baselineShiftPx: chainDefRun.positionPt != null ? -ptToPx(chainDefRun.positionPt) : undefined,
+    hidden: chainDefRun.vanish,
+    kernPt: chainDefRun.kernPt,
+    border: chainDefRun.border,
+    emphasisMark: chainDefRun.emphasisMark,
   };
 
   // Spacing/indent cascade: direct attr wins per-field, else chain, else docDefaults.
