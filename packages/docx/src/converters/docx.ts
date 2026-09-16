@@ -1425,9 +1425,62 @@ export function parseDOCXSync(
 }
 
 /**
+ * DOCX package variants — the macro-enabled and template siblings that share
+ * the OOXML part layout but declare a different main document part content
+ * type (ECMA-376 Part 1 §11.3.10 + the MS-OFFMACRO main types). Word keeps the
+ * document part at `word/document.xml` in every variant; only the
+ * `[Content_Types].xml` Override changes.
+ */
+export type DocxVariant = "docx" | "docm" | "dotx" | "dotm";
+
+/** `[Content_Types].xml` Override for `/word/document.xml`, per variant. */
+const MAIN_DOCUMENT_CONTENT_TYPES: Record<DocxVariant, string> = {
+  docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml",
+  docm: "application/vnd.ms-word.document.macroEnabled.main+xml",
+  dotx: "application/vnd.openxmlformats-officedocument.wordprocessingml.template.main+xml",
+  dotm: "application/vnd.ms-word.template.macroEnabled.main+xml",
+};
+
+/**
+ * Stamp a variant's main-part content type onto compiled options.
+ *
+ * office-open's content-type merge keeps a surviving source Override for a
+ * part it rebuilds, so a `dotx` save of an opened `.docx` must REPLACE the
+ * source's `/word/document.xml` override rather than add a second one — while
+ * merging (not replacing) the rest keeps every other source declaration
+ * (macro/ole parts, theme, footnotes) intact. `docx` is the no-op default:
+ * parse→save of a standard document keeps its derived table untouched.
+ */
+function applyVariant(
+  compiled: DocumentOptions,
+  variant: DocxVariant | undefined,
+): DocumentOptions {
+  if (!variant || variant === "docx") return compiled;
+  const source = compiled.contentTypes;
+  return {
+    ...compiled,
+    contentTypes: {
+      defaults: source?.defaults ?? [],
+      overrides: [
+        ...(source?.overrides ?? []).filter(
+          (o) => o.partName.toLowerCase() !== "/word/document.xml",
+        ),
+        { partName: "/word/document.xml", contentType: MAIN_DOCUMENT_CONTENT_TYPES[variant] },
+      ],
+    },
+  };
+}
+
+/**
  * Options for {@link generateDOCX} / {@link generateDOCXStream}.
  */
 export interface DocxGenerateOptions<T extends OutputType = "nodebuffer"> {
+  /**
+   * Package variant whose main document part content type is stamped on the
+   * output — `docx` (default), `docm`, `dotx`, or `dotm`. Macro parts carried
+   * in `documentExtras.rawParts` stay in every variant.
+   */
+  variant?: DocxVariant;
   /**
    * Pre-compilation steps run on the JSON in place (default: `prepareImages()`).
    * - `true` / `undefined`: default image pre-fetch (http(s) → embedded data URL)
@@ -1488,12 +1541,12 @@ export async function generateDOCX<T extends OutputType = "nodebuffer">(
   json: JSONContent,
   options?: DocxGenerateOptions<T>,
 ): Promise<OutputByType[T]> {
-  const { prepare = true, packer, document, extensions } = options ?? {};
+  const { prepare = true, packer, document, extensions, variant } = options ?? {};
   if (prepare !== false) {
     await prepareDocument(json, prepare === true ? undefined : prepare);
   }
   return generateDocument(
-    applyDocumentOptions(compileDocument(json, extensions), document),
+    applyVariant(applyDocumentOptions(compileDocument(json, extensions), document), variant),
     packer,
   );
 }
@@ -1509,9 +1562,9 @@ export function generateDOCXSync<T extends OutputType = "nodebuffer">(
   json: JSONContent,
   options?: DocxGenerateOptions<T>,
 ): OutputByType[T] {
-  const { packer, document, extensions } = options ?? {};
+  const { packer, document, extensions, variant } = options ?? {};
   return generateDocumentSync(
-    applyDocumentOptions(compileDocument(json, extensions), document),
+    applyVariant(applyDocumentOptions(compileDocument(json, extensions), document), variant),
     packer,
   );
 }
@@ -1527,12 +1580,12 @@ export async function generateDOCXStream(
   json: JSONContent,
   options?: DocxGenerateOptions,
 ): Promise<ReadableStream<Uint8Array>> {
-  const { prepare = true, packer, document, extensions } = options ?? {};
+  const { prepare = true, packer, document, extensions, variant } = options ?? {};
   if (prepare !== false) {
     await prepareDocument(json, prepare === true ? undefined : prepare);
   }
   return generateDocumentStream(
-    applyDocumentOptions(compileDocument(json, extensions), document),
+    applyVariant(applyDocumentOptions(compileDocument(json, extensions), document), variant),
     packer,
   );
 }

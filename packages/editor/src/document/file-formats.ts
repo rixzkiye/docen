@@ -2,17 +2,44 @@
 // save-picker metadata, the read-only live command set, and the locally
 // handled command set (the "wired" basis for ribbon greying).
 
+import type { DocxVariant } from "@docen/docx";
+
+/** The formats the open picker can actually load: the docx family or Markdown.
+ *  Flat OPC XML (.xml) is recognized too, but only to be refused with a clear
+ *  error — see {@link detectOpenFormat}. */
+export type OpenFormat = DocxVariant | "markdown";
+
+/** Save targets: the docx family plus Markdown and PDF (the latter written by
+ *  the canvas snapshot export, never by the DOCX packer). */
+export type SaveFormat = DocxVariant | "markdown" | "pdf";
+
+/** Clear refusal for Flat OPC input. A Flat OPC package is a single
+ *  WordprocessingML XML document (no ZIP), which office-open's archive parser
+ *  does not read — the type is recognized only to surface this error instead
+ *  of "Unsupported file type". */
+export const FLAT_OPC_UNSUPPORTED =
+  "Flat OPC XML (.xml) documents are not supported yet — open the .docx or .docm version.";
+
 /** Detect a document's format from its filename + MIME for open(). Extension
  *  first (the picker filters on it), MIME as a fallback for platforms that fill
- *  it in. Throws on an unrecognized type so the caller surfaces the error
- *  rather than silently parsing garbage. */
-export function detectOpenFormat(file: File): "docx" | "markdown" {
+ *  it in. Throws on Flat OPC XML (recognized, but no parser exists) and on an
+ *  unrecognized type so the caller surfaces the error rather than silently
+ *  parsing garbage. */
+export function detectOpenFormat(file: File): OpenFormat {
   const name = file.name.toLowerCase();
   if (name.endsWith(".docx")) return "docx";
+  if (name.endsWith(".docm")) return "docm";
+  if (name.endsWith(".dotx")) return "dotx";
+  if (name.endsWith(".dotm")) return "dotm";
   if (name.endsWith(".md") || name.endsWith(".markdown")) return "markdown";
-  const type = file.type;
+  if (name.endsWith(".xml")) throw new Error(FLAT_OPC_UNSUPPORTED);
+  const type = file.type.toLowerCase();
+  if (type.includes("ms-word.document.macroenabled")) return "docm";
+  if (type.includes("wordprocessingml.template")) return "dotx";
+  if (type.includes("ms-word.template.macroenabled")) return "dotm";
   if (type.includes("wordprocessingml.document")) return "docx";
   if (type === "text/markdown") return "markdown";
+  if (type === "application/xml" || type === "text/xml") throw new Error(FLAT_OPC_UNSUPPORTED);
   throw new Error(`Unsupported file type: ${file.name || type || "(unknown)"}`);
 }
 
@@ -20,18 +47,38 @@ export function detectOpenFormat(file: File): "docx" | "markdown" {
  *  its accept filter, and the extension stamped on the suggested name. The MIME
  *  must be a BARE type — showSaveFilePicker rejects accept keys carrying params
  *  (e.g. ";charset=utf-8") with NotSupportedError, so the picker never opens. */
-export const SAVE_FORMATS: Record<
-  "docx" | "markdown" | "pdf",
-  { description: string; mime: string; ext: string }
-> = {
-  docx: {
-    description: "Word Document",
-    mime: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-    ext: ".docx",
-  },
-  markdown: { description: "Markdown", mime: "text/markdown", ext: ".md" },
-  pdf: { description: "PDF Document", mime: "application/pdf", ext: ".pdf" },
-};
+export const SAVE_FORMATS: Record<SaveFormat, { description: string; mime: string; ext: string }> =
+  {
+    docx: {
+      description: "Word Document",
+      mime: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      ext: ".docx",
+    },
+    docm: {
+      description: "Word Macro-Enabled Document",
+      mime: "application/vnd.ms-word.document.macroEnabled.12",
+      ext: ".docm",
+    },
+    dotx: {
+      description: "Word Template",
+      mime: "application/vnd.openxmlformats-officedocument.wordprocessingml.template",
+      ext: ".dotx",
+    },
+    dotm: {
+      description: "Word Macro-Enabled Template",
+      mime: "application/vnd.ms-word.template.macroEnabled.12",
+      ext: ".dotm",
+    },
+    markdown: { description: "Markdown", mime: "text/markdown", ext: ".md" },
+    pdf: { description: "PDF Document", mime: "application/pdf", ext: ".pdf" },
+  };
+
+/** Suggested download name for a save: the document's display name with any
+ *  known document extension swapped for the target format's (a .docx opened
+ *  then saved as a template must not keep its .docx name). */
+export function suggestedFileName(name: string, cfg: { ext: string }): string {
+  return name.replace(/\.(docx|docm|dotx|dotm|md|markdown|txt)$/i, "") + cfg.ext;
+}
 
 /** Commands that stay live when the document is read-only (Viewing mode):
  *  chrome toggles, view panes, the mode switch, save, clipboard reads and
@@ -300,6 +347,8 @@ export const LOCAL_HANDLED: ReadonlySet<string> = new Set([
   // #onChange (data-event)
   "open",
   "save-as",
+  "save-as-template",
+  "new-from-template",
   "save-as-pdf",
   "print",
   // The filename menu's tail (Word's File menu): Properties opens the

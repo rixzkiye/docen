@@ -29,6 +29,7 @@ import {
   type SectionPropertiesOptions,
   type StyleEntry,
   type StylesOptions,
+  type DocxVariant,
 } from "@docen/docx";
 import type { Editor } from "@docen/docx/core";
 import {
@@ -133,7 +134,14 @@ import "./i18n";
 import { collectRevisions } from "./extensions/track-changes";
 import { liveFieldResolver, resolvePageFieldsBounded } from "./field-resolve";
 import { customPropertiesOf, finiteNumber, type FieldContext, type FieldFrame } from "./fields";
-import { LOCAL_HANDLED, READONLY_LIVE, SAVE_FORMATS, detectOpenFormat } from "./file-formats";
+import {
+  LOCAL_HANDLED,
+  READONLY_LIVE,
+  SAVE_FORMATS,
+  detectOpenFormat,
+  suggestedFileName,
+  type SaveFormat,
+} from "./file-formats";
 import { mergeSectionProperties } from "./page-setup";
 import { compressPictureSrc, pickTransparentColor, type CropRect } from "./pixels";
 import {
@@ -163,6 +171,7 @@ import {
   type SettingsPatch,
 } from "./settings";
 import { spellSuggestions } from "./spelling";
+import { findTemplate, templateLocale } from "./templates";
 
 /** Split buttons whose face carries no command of its own — the handler only
  *  exists for the drop-down variants' values (Word's menu buttons; a face
@@ -558,6 +567,11 @@ class DocenDocument extends AddinHost<Editor> {
    *  save/autosave/getJSON call. */
   #cachedJSON?: JSONContent;
   #jsonDirty = true;
+  /** The docx-family variant the open document belongs to (docm/dotx/dotm
+   *  opened via their extension, docx otherwise). Save keeps the document's
+   *  variant — main content type, extension, picker MIME — so a macro-enabled
+   *  or template document round-trips as itself instead of being mislabelled. */
+  #docxVariant: DocxVariant = "docx";
   /** The header/footer story under edit (null = none). `#storyPage` is the
    *  anchor page the story edits in place on. */
   #storyKind: StoryKind | null = null;
@@ -1804,6 +1818,11 @@ class DocenDocument extends AddinHost<Editor> {
       "inspect:accept-revisions",
       this.#onInspect as EventListener,
     );
+    // New from Template dialog — instantiate the picked built-in template as a
+    // new document (model JSON through the normal load path; no canvas DOM).
+    this.shadowRoot!.querySelector("docen-template-dialog")?.addEventListener("template:create", ((
+      event: CustomEvent<{ id: string }>,
+    ) => this.#newFromTemplate(event.detail.id)) as EventListener);
     // Language dialog — commit the selection's proofing language (w:lang).
     this.shadowRoot!.querySelector("docen-language-dialog")?.addEventListener(
       "language:ok",
@@ -3191,10 +3210,12 @@ class DocenDocument extends AddinHost<Editor> {
               >${escapeHtml(filename)}</fluent-menu-button>
               <fluent-menu-list>
                 <fluent-menu-item data-event="new">${t("header.new", this)}</fluent-menu-item>
+                <fluent-menu-item data-event="new-from-template">${t("header.new-from-template", this)}</fluent-menu-item>
                 <fluent-divider role="separator" aria-orientation="horizontal" orientation="horizontal"></fluent-divider>
                 <fluent-menu-item data-event="open">${t("header.open", this)}</fluent-menu-item>
                 <fluent-divider role="separator" aria-orientation="horizontal" orientation="horizontal"></fluent-divider>
                 <fluent-menu-item data-event="save-as">${t("header.save-as", this)}</fluent-menu-item>
+                <fluent-menu-item data-event="save-as-template">${t("header.save-as-template", this)}</fluent-menu-item>
                 <fluent-menu-item data-event="save-as-markdown">${t("header.save-as-markdown", this)}</fluent-menu-item>
                 <fluent-menu-item data-event="save-as-pdf">${t("header.save-as-pdf", this)}</fluent-menu-item>
                 <fluent-divider role="separator" aria-orientation="horizontal" orientation="horizontal"></fluent-divider>
@@ -3935,7 +3956,7 @@ class DocenDocument extends AddinHost<Editor> {
       | "docen:new"
       | "docen:print"
       | "docen:close",
-    detail?: { format?: "docx" | "markdown" | "pdf" },
+    detail?: { format?: SaveFormat },
   ): boolean {
     const event = new CustomEvent(name, {
       bubbles: true,
@@ -5368,8 +5389,13 @@ class DocenDocument extends AddinHost<Editor> {
         // picker — #onFileChange auto-detects docx/md from the extension.
         if (!this.#emitCancelable("docen:open")) this.#pickFile();
         break;
-      case "save-as":
-        if (!this.#emitCancelable("docen:save-as", { format: "docx" })) void this.#saveAs("docx");
+      case "save-as": {
+        const format = this.#docxVariant;
+        if (!this.#emitCancelable("docen:save-as", { format })) void this.#saveAs(format);
+        break;
+      }
+      case "save-as-template":
+        if (!this.#emitCancelable("docen:save-as", { format: "dotx" })) void this.#saveAsTemplate();
         break;
       case "save-as-markdown":
         if (!this.#emitCancelable("docen:save-as", { format: "markdown" }))
@@ -5397,6 +5423,9 @@ class DocenDocument extends AddinHost<Editor> {
       case "new":
         // No built-in "new" — always hand to the host (docen:new).
         this.#emitCancelable("docen:new");
+        break;
+      case "new-from-template":
+        this.#openTemplateDialog();
         break;
       case "options": {
         // Filename menu → open the Options dialog (UI language + theme +
@@ -5711,7 +5740,11 @@ class DocenDocument extends AddinHost<Editor> {
     // Reset so picking the same file twice still fires `change`.
     input.value = "";
     if (!file) return;
-    void this.open(file);
+    // Surface the detection/parse refusal (unsupported type, Flat OPC XML)
+    // instead of dropping it as an unhandled rejection.
+    void this.open(file).catch((err: unknown) => {
+      window.alert(err instanceof Error ? err.message : String(err));
+    });
   };
 
   /** Insert the picked image as a data URL. Width/height are left unset — the
@@ -5769,12 +5802,21 @@ class DocenDocument extends AddinHost<Editor> {
   /** Save the document in the given format via the native Save As dialog
    *  (showSaveFilePicker) when available so the user picks the location and name;
    *  falls back to a plain download otherwise. The header filename is updated to
-   *  match the saved name. */
-  async #saveAs(format: "docx" | "markdown" = "docx"): Promise<void> {
+   *  match the saved name. Defaults to the open document's own docx-family
+   *  variant (docm/dotx/dotm save as themselves). */
+  async #saveAs(format: Exclude<SaveFormat, "pdf"> = this.#docxVariant): Promise<void> {
     const cfg = SAVE_FORMATS[format];
     // saveDOCX returns a buffer; Markdown returns a string.
-    const data = format === "docx" ? await this.saveDOCX() : this.saveMarkdown();
+    const data = format === "markdown" ? this.saveMarkdown() : await this.saveDOCX(format);
     await this.#saveBlob(data as BlobPart, cfg, true);
+  }
+
+  /** File menu → Save as Template: a `.dotx` download of the current document
+   *  (template main-part content type via the packer variant). Export-shaped —
+   *  the working document keeps its name and format. */
+  async #saveAsTemplate(): Promise<void> {
+    const data = await this.saveDOCX("dotx");
+    await this.#saveBlob(data as BlobPart, SAVE_FORMATS.dotx, false);
   }
 
   /** Write a finished blob out through the File System Access picker (adopting
@@ -5787,13 +5829,10 @@ class DocenDocument extends AddinHost<Editor> {
     adoptName: boolean,
   ): Promise<void> {
     const blob = new Blob([data], { type: cfg.mime });
-    // Re-stamp the extension so a .docx opened then saved as Markdown does not
-    // keep its .docx name.
-    const baseName = (this.getAttribute("filename")?.trim() || t("header.doc-name", this)).replace(
-      /\.(docx|md|markdown|txt)$/i,
-      "",
+    const suggestedName = suggestedFileName(
+      this.getAttribute("filename")?.trim() || t("header.doc-name", this),
+      cfg,
     );
-    const suggestedName = baseName + cfg.ext;
     const picker = (
       window as unknown as {
         showSaveFilePicker?: (opts: {
@@ -5887,6 +5926,7 @@ class DocenDocument extends AddinHost<Editor> {
     if (this.#jsonDirty && !window.confirm(t("close.confirm", this))) return;
     this.setAttribute("filename", t("header.doc-name", this));
     this.#renderChrome();
+    this.#docxVariant = "docx";
     this.setJSON({ type: "doc", content: [{ type: "paragraph" }] });
   }
 
@@ -6005,25 +6045,31 @@ class DocenDocument extends AddinHost<Editor> {
     this.#loadDoc(json);
   }
 
-  /** Load a file into the editor, auto-detecting its format from the extension
-   *  (.docx → DOCX, .md/.markdown → Markdown). This is the single entry point
-   *  the filename-menu "Open…" uses; openDOCX/openMarkdown remain for when the
-   *  caller already knows the format (e.g. loading a server-fetched docx buffer
-   *  that has no filename). Throws on an unrecognized extension. */
+  /** Load a file into the editor, auto-detecting its format: the docx family
+   *  (.docx/.docm/.dotx/.dotm) or Markdown (.md/.markdown). This is the single
+   *  entry point the filename-menu "Open…" uses; openDOCX/openMarkdown remain
+   *  for when the caller already knows the format (e.g. loading a server-fetched
+   *  docx buffer that has no filename). Throws on a Flat OPC .xml and on an
+   *  unrecognized extension. */
   async open(file: File): Promise<void> {
     const format = detectOpenFormat(file);
-    if (format === "docx") return this.openDOCX(file);
-    return this.openMarkdown(file);
+    if (format === "markdown") return this.openMarkdown(file);
+    return this.openDOCX(file, format);
   }
 
-  /** Load a .docx into the editor from a File or a buffer (ArrayBuffer /
-   *  Uint8Array). A File also adopts its name as the filename; a bare buffer
-   *  carries no name. parseDOCX is async (office-open 0.14): a File is passed
-   *  through whole and its bytes are read inside the parse. While loading, an
-   *  "Opening <name>" veil covers the canvas (Office shows the same message
-   *  for a slow open) and the scroller stays frozen until the document is
-   *  ready. */
-  async openDOCX(input: File | ArrayBuffer | Uint8Array): Promise<void> {
+  /** Load a docx-family document (.docx/.docm/.dotx/.dotm) into the editor from
+   *  a File or a buffer (ArrayBuffer / Uint8Array). A File also adopts its name
+   *  as the filename; a bare buffer carries no name. `variant` names the package
+   *  kind (the detected extension; docx by default) and becomes the document's
+   *  save format — macro parts ride through parseDOCX either way. parseDOCX is
+   *  async (office-open 0.14): a File is passed through whole and its bytes are
+   *  read inside the parse. While loading, an "Opening <name>" veil covers the
+   *  canvas (Office shows the same message for a slow open) and the scroller
+   *  stays frozen until the document is ready. */
+  async openDOCX(
+    input: File | ArrayBuffer | Uint8Array,
+    variant: DocxVariant = "docx",
+  ): Promise<void> {
     const name = input instanceof File ? input.name : undefined;
     this.#setProgress(t("status.opening", this).replace("{name}", name ?? "DOCX"));
     try {
@@ -6032,6 +6078,9 @@ class DocenDocument extends AddinHost<Editor> {
       // compositor-driven and keeps moving through it).
       await this.#nextFrame();
       const json = await parseDOCX(input);
+      // Adopt the variant only after a successful parse — a failed open must
+      // not relabel the still-open document's save format.
+      this.#docxVariant = variant;
       this.#applyOpenedJSON(json, name);
       await this.#nextFrame();
       this.#setProgress();
@@ -6039,6 +6088,25 @@ class DocenDocument extends AddinHost<Editor> {
       this.#setProgress();
       throw err;
     }
+  }
+
+  /** New from Template → load the picked built-in template's model JSON as a
+   *  fresh document. The template bodies are localized to the active UI locale;
+   *  the new document takes the template's name (Word names a template-born
+   *  document after the template) and the standard docx save format. */
+  #newFromTemplate(id: string): void {
+    const template = findTemplate(id);
+    if (!template) return;
+    const locale = templateLocale(this.lang || document.documentElement.lang);
+    this.#docxVariant = "docx";
+    this.#applyOpenedJSON(template.build(locale), `${t(template.nameKey, this)}.docx`);
+  }
+  /** Filename menu → New from Template: open the built-in template gallery. */
+  #openTemplateDialog(): void {
+    const dialog = this.shadowRoot?.querySelector("docen-template-dialog") as unknown as {
+      show(): void;
+    } | null;
+    dialog?.show();
   }
 
   /** Load a Markdown file/string into the editor. A File adopts its name as the
@@ -6049,6 +6117,8 @@ class DocenDocument extends AddinHost<Editor> {
     try {
       const text = typeof input === "string" ? input : await input.text();
       await this.#nextFrame();
+      // Markdown has no docx-family variant — a new document saves as .docx.
+      this.#docxVariant = "docx";
       this.#applyOpenedJSON(parseMarkdown(text), name);
       await this.#nextFrame();
       this.#setProgress();
@@ -6085,9 +6155,12 @@ class DocenDocument extends AddinHost<Editor> {
     );
   }
 
-  /** Serialize the current document to a DOCX buffer. */
-  async saveDOCX(): Promise<Uint8Array> {
-    const buffer = await generateDOCX(this.getJSON());
+  /** Serialize the current document to a DOCX buffer. `variant` selects the
+   *  package kind (default: the open document's own — a .docm saves as a .docm,
+   *  a .dotx as a .dotx) and stamps the main-part content type; macro parts
+   *  carried from the source stay in the package. */
+  async saveDOCX(variant: DocxVariant = this.#docxVariant): Promise<Uint8Array> {
+    const buffer = await generateDOCX(this.getJSON(), { variant });
     return buffer as unknown as Uint8Array;
   }
 

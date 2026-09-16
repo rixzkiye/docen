@@ -269,9 +269,10 @@ export const documentTemplate = html`
   <docen-watermark-dialog part="watermark-dialog"></docen-watermark-dialog>
   <docen-fill-effects-dialog part="fill-effects"></docen-fill-effects-dialog>
   <docen-inspect-dialog part="inspect"></docen-inspect-dialog>
+  <docen-template-dialog part="template"></docen-template-dialog>
   <docen-modify-style-dialog part="modify-style"></docen-modify-style-dialog>
   <docen-find-replace-dialog></docen-find-replace-dialog>
-  <input type="file" id="file-input" accept=".docx,.md,.markdown" hidden />
+  <input type="file" id="file-input" accept=".docx,.docm,.dotx,.dotm,.md,.markdown,.xml" hidden />
   <input type="file" id="image-input" accept="image/*" hidden />
   <input type="file" id="picture-input" accept="image/*" hidden />
   <input type="file" id="text-input" accept=".txt,.md,.markdown,text/plain" hidden />

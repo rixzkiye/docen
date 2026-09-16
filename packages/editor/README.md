@@ -100,13 +100,17 @@ Unwired ribbon commands (skeleton buttons) render visually but are greyed out
 
 ```typescript
 class DocenDocument extends HTMLElement {
-  // Open — single entry point auto-detects docx/md from the extension.
+  // Open — single entry point auto-detects the format: the docx family
+  // (.docx/.docm/.dotx/.dotm) or Markdown (.md/.markdown). Flat OPC XML
+  // (.xml) is recognized only to refuse it with a clear error — no parser.
   open(file: File): Promise<void>;
   // Format-specific loaders (use when the format is known up front, e.g. a
-  // server-fetched docx buffer with no filename).
-  openDOCX(input: File | ArrayBuffer | Uint8Array): Promise<void>;
+  // server-fetched docx buffer with no filename). `variant` names the package
+  // kind (docx by default; docm/dotx/dotm save as themselves — macro parts
+  // ride through parse/save unchanged).
+  openDOCX(input: File | ArrayBuffer | Uint8Array, variant?: DocxVariant): Promise<void>;
   openMarkdown(input: File | string): Promise<void>;
-  saveDOCX(): Promise<Uint8Array>;
+  saveDOCX(variant?: DocxVariant): Promise<Uint8Array>;
   saveMarkdown(): string;
 
   // Runtime model — flat Tiptap JSON (doc > block+). Pages are a rendering
@@ -147,10 +151,13 @@ class DocenDocument extends HTMLElement {
 All events bubble and compose out of the shadow DOM — listen on the host
 element. `docen:save` / `:save-as` / `:open` / `:print` are cancelable: call
 `preventDefault()` to take over the action (otherwise the built-in behavior runs).
-`docen:save-as` carries `{ format }` (`"docx" | "markdown"`) — which
-Save-As variant the user picked. (`docen:open` is format-agnostic: the host
-auto-detects docx/md from the chosen file's extension, so it carries no
-detail.)
+`docen:save-as` carries `{ format }`
+(`"docx" | "docm" | "dotx" | "dotm" | "markdown" | "pdf"`) — which Save-As
+variant the user picked (Save As defaults to the open document's own docx-family
+variant; Save as Template and Export as PDF ride the same event). (`docen:open`
+is format-agnostic: the host auto-detects the docx family/Markdown from the
+chosen file's extension — Flat OPC XML is refused with a clear error — so it
+carries no detail.)
 
 | Event                              | When                                           | Detail                   |
 | ---------------------------------- | ---------------------------------------------- | ------------------------ |
