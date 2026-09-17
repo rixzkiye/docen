@@ -1,7 +1,7 @@
 # RFC: Deterministic Text Stack for docen (rustybuzz + fontations)
 
 - **Author:** docen R6 Team
-- **Status:** Draft (R6.0 Spike Validated)
+- **Status:** Complete (R6.0 through R6.9 Implemented & Verified)
 - **Target Branch:** `feat/r6-text-stack` (staging)
 - **Date:** 2026-09-17
 
@@ -86,14 +86,14 @@ A production WASM module (`docen_shaping.wasm`) was built using standard Rust `w
 
 ## 5. Phased Rollout Plan
 
-- **R6.0 Spike (Done)**: Toolchain, WASM build, `ShapingBackend`, differential oracle, benchmarks.
-- **R6.1 Package `@docen/shaping`**: Full TS API (`FontRef`, metrics, shape, outline, subset), zero-copy ABI.
-- **R6.2 Font Manager**: Sources, OPFS LRU cache, fallback chain per script, font identity model.
-- **R6.3 Shaped Measurer**: Integrate with `@docen/layout` as `ShapedMeasurer` (`TextMeasurer`), opt-in flag.
-- **R6.4 Glyph Painting**: Skrifa outline → `Path2D` + cache, glyph run painter, caret cluster mapping.
-- **R6.7 Font Embedding**: PDF subset write-fonts, DOCX fontTable embed + fsType.
-- **STOP-GATE T1**: Comprehensive verification gate before T2.
-- **R6.5 Complex Scripts & Bidi**: Arabic/Hebrew/Thai/Indic fixtures, vertical CJK metrics.
-- **R6.6 OT Features & Variable Fonts**: Real kerning, OpenType feature tags, fvar/HVAR/gvar instancing.
-- **R6.8 Default Flip & Hardening**: Worker offload, incremental cache, flip default with rollback flag.
-- **R6.9 Cleanup**: Single representation, remove dead code, finalize documentation.
+- **R6.0 Spike (Complete)**: Toolchain, WASM build, `ShapingBackend`, differential oracle, benchmarks.
+- **R6.1 Package `@docen/shaping` (Complete)**: Full TS API (`FontRef`, metrics, shape, outline, subset), zero-copy ABI.
+- **R6.2 Font Manager (Complete)**: Sources, OPFS LRU cache, fallback chain per script, font identity model.
+- **R6.3 Shaped Measurer (Complete)**: Integrate with `@docen/layout` as `ShapedMeasurer` (`TextMeasurer`), opt-in flag.
+- **R6.4 Glyph Painting (Complete)**: Skrifa outline → `Path2D` + cache, glyph run painter, caret cluster mapping.
+- **R6.7 Font Embedding (Complete)**: PDF subset write-fonts, DOCX fontTable embed + fsType.
+- **STOP-GATE T1 (Complete)**: Comprehensive verification gate before T2 (352KB gzip, 0 regressions).
+- **R6.5 Complex Scripts & Bidi (Complete)**: Arabic/Hebrew/Thai/Indic/Khmer fixtures, vertical CJK metrics.
+- **R6.6 OT Features & Variable Fonts (Complete)**: Real kerning, OpenType feature tags, fvar/HVAR/gvar instancing.
+- **R6.8 Default Flip & Hardening (Complete)**: Worker offload, incremental cache, flip default with rollback flag.
+- **R6.9 Cleanup & Documentation (Complete)**: Deduplication, font-metrics-data tidy, docs, dead code elimination.
