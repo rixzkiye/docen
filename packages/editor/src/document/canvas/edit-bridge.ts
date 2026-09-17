@@ -854,6 +854,14 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
 
   const placeSpelling = (): void => {
     const s = active();
+    // Before the stage's liveness push (one frame after mount), every page
+    // counts as live — placing a full-document squiggle set then is the
+    // big-document cliff (thousands of pooled divs against an unpainted
+    // stage). setPageLive re-runs the placement.
+    if (!liveKnown) {
+      pooledPlace(spellingPool, [], { zIndex: "2" });
+      return;
+    }
     if (
       spellingCache &&
       spellingCache.issues === spellingIssues &&
@@ -894,6 +902,10 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
 
   const placeGrammar = (): void => {
     const s = active();
+    if (!liveKnown) {
+      pooledPlace(grammarPool, [], { zIndex: "2" });
+      return;
+    }
     if (
       grammarCache &&
       grammarCache.issues === grammarIssues &&
