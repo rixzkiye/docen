@@ -107,17 +107,16 @@ export function resolveFontVariations(
   return variations;
 }
 
-let globalShapingDefault = false;
+let globalShapingDefault = true;
 
 /**
  * Flag controlling deterministic OpenType shaping across docen.
  *
- * Default is `false` (canvas measureText — R6.4 audit: the laid-out glyph
- * pipeline had no registered fonts, so a "default" shaped measurer was a
- * no-op facade; the default returns to canvas until document-level parity,
- * per-keystroke and cross-environment determinism gates are green).
- * `setShapingEnabled(true)` opts in; `DOCEN_SHAPING_ENABLED=1` forces it on
- * and `DOCEN_SHAPING_DISABLED=1` forces it off regardless of the flag.
+ * Default is `true`: registered fonts shape (rustybuzz + fontations) and feed
+ * the line breaker; families without a registered face fall back to the
+ * canvas measurer per run, so a document never shaped by its host is
+ * unaffected. `setShapingEnabled(false)` (or `DOCEN_SHAPING_DISABLED=1`)
+ * rolls back to canvas; `DOCEN_SHAPING_ENABLED=1` forces shaping on.
  */
 export function setShapingEnabled(enabled: boolean): void {
   globalShapingDefault = enabled;

@@ -23,7 +23,7 @@ const openSansPath = path.resolve(
   "../../../shaping/test/fixtures/fonts/OpenSans-Regular.ttf",
 );
 
-describe("R6.3 & R6.8 ShapedMeasurer (Opt-in Shaping & Canvas Default)", () => {
+describe("R6.3 & R6.8 ShapedMeasurer (Shaped Default & Canvas Rollback)", () => {
   let openSansBytes: Uint8Array;
   let fontRef: FontRef;
 
@@ -39,18 +39,18 @@ describe("R6.3 & R6.8 ShapedMeasurer (Opt-in Shaping & Canvas Default)", () => {
     setShapingEnabled(false);
   });
 
-  it("defaults to canvas until shaping is explicitly opted in (R6.8 flip reverted)", () => {
-    setShapingEnabled(false);
-    expect(isShapingEnabled()).toBe(false);
-
-    const measurer = createMeasurer(fakeFontMetrics);
-    expect(measurer).not.toBeInstanceOf(ShapedMeasurer);
-    expect(measurer.glyphRunOf("Hello", { family: "Open Sans", sizePx: 16 })).toBeUndefined();
+  it("defaults to the shaped measurer; explicit false rolls back to canvas", () => {
+    setShapingEnabled(true);
+    expect(isShapingEnabled()).toBe(true);
+    expect(createMeasurer(fakeFontMetrics)).toBeInstanceOf(ShapedMeasurer);
 
     try {
-      setShapingEnabled(true);
-      expect(isShapingEnabled()).toBe(true);
-      expect(createMeasurer(fakeFontMetrics)).toBeInstanceOf(ShapedMeasurer);
+      setShapingEnabled(false);
+      expect(isShapingEnabled()).toBe(false);
+
+      const measurer = createMeasurer(fakeFontMetrics);
+      expect(measurer).not.toBeInstanceOf(ShapedMeasurer);
+      expect(measurer.glyphRunOf("Hello", { family: "Open Sans", sizePx: 16 })).toBeUndefined();
     } finally {
       setShapingEnabled(false);
     }
@@ -96,7 +96,7 @@ describe("R6.3 & R6.8 ShapedMeasurer (Opt-in Shaping & Canvas Default)", () => {
     }
   });
 
-  it("produces shaped glyph run and deterministic advances when opt-in enabled", () => {
+  it("produces shaped glyph run and deterministic advances when enabled", () => {
     const measurer = new ShapedMeasurer(fakeFontMetrics, { optIn: true });
     measurer.registerFont("Open Sans", fontRef);
     const style: LayoutTextStyle = {

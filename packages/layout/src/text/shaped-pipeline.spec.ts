@@ -1,6 +1,6 @@
 // The R6 pipeline-level gates that need real font-table metrics and the
 // shaping WASM: (1) repeated layouts of the same document hash identically
-// without relying on the canvas, (2) the opt-in shaped measurer's per-keystroke
+// without relying on the canvas, (2) the shaped measurer's per-keystroke
 // layout stays within the documented regression budget of the canvas measurer.
 //
 // @vitest-environment node
@@ -81,7 +81,7 @@ describe("shaped pipeline gates", () => {
     expect(json).toContain("totalAdvancePx");
   });
 
-  it("keeps opt-in per-keystroke layout within the documented regression budget", () => {
+  it("keeps per-keystroke shaped layout within the documented regression budget", () => {
     const base = "The quick brown fox jumps over the lazy dog";
     const style = { family: "Calibri", sizePx: 16 };
     const canvas = new TextMeasurer(browserFontMetrics);

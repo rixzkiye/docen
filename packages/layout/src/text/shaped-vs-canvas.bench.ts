@@ -1,4 +1,4 @@
-// Measurer comparison: the canvas TextMeasurer against the opt-in
+// Measurer comparison: the canvas TextMeasurer against the
 // ShapedMeasurer (rustybuzz + fontations) over Latin and complex-script
 // (Arabic, cursive joining + marks) text. The warm variants measure the
 // typing steady state (cached strings); the `unique` variants force a cache
@@ -16,6 +16,7 @@ import { layoutBlock } from "../block/block";
 import { browserFontMetrics } from "../font";
 import type { LayoutBlock, LayoutParagraph } from "../layout-doc";
 import { TextMeasurer } from "./measure";
+import { createMeasurer } from "./shaped-measurer";
 import { ShapedMeasurer } from "./shaped-measurer";
 
 const fontsDir = path.resolve(__dirname, "../../../shaping/test/fixtures/fonts");
@@ -38,6 +39,10 @@ beforeAll(async () => {
 });
 
 const canvas = new TextMeasurer(browserFontMetrics);
+// The post-flip default with no registered face: shaping is on but every
+// family falls back to the canvas — this is the overhead a host that never
+// registers fonts pays.
+const fallback = createMeasurer(browserFontMetrics);
 let shaped: ShapedMeasurer;
 
 const style = (family: string): { family: string; sizePx: number } => ({ family, sizePx: 16 });
@@ -56,6 +61,15 @@ describe("shaped vs canvas measurement", () => {
   });
   bench("shaped widthOf (latin, warm)", () => {
     shaped.widthOf(LATIN, style("Open Sans"));
+  });
+  bench("fallback widthOf (latin, warm)", () => {
+    fallback.widthOf(LATIN, style("Open Sans"));
+  });
+  bench("fallback widthOf (latin, unique)", () => {
+    fallback.widthOf(`${LATIN}${unique++}`, style("Open Sans"));
+  });
+  bench("fallback layoutBlock (latin paragraph)", () => {
+    layoutBlock(paragraph("Open Sans") as LayoutBlock, 468, undefined, fallback);
   });
   bench("canvas widthOf (latin, unique)", () => {
     canvas.widthOf(`${LATIN}${unique++}`, style("Open Sans"));

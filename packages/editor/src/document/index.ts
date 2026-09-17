@@ -7861,9 +7861,11 @@ class DocenDocument extends AddinHost<Editor> {
   /**
    * Register font bytes for deterministic shaping and export embedding.
    * Pass the family name the document styles reference (e.g. "Calibri").
-   * Shaping only uses the font when it is opted in (`setShapingEnabled(true)`
-   * or `DOCEN_SHAPING_ENABLED=1`); PDF/DOCX export embeds it whenever the
-   * font's `fsType` allows.
+   * Shaping is on by default — a registered family shapes under the engine
+   * and feeds the line breaker; families without a registered face keep the
+   * canvas fallback. `setShapingEnabled(false)` / `DOCEN_SHAPING_DISABLED=1`
+   * rolls back. PDF/DOCX export embeds the font whenever the font's `fsType`
+   * allows.
    */
   async registerFont(family: string, fontData: Uint8Array): Promise<void> {
     this.#fonts.set(family.toLowerCase(), { family, fontData });
