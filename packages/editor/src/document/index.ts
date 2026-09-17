@@ -613,9 +613,10 @@ class DocenDocument extends AddinHost<Editor> {
   }> = [];
   #currentLandmarkIdx = 0;
   #measurer = createMeasurer(browserFontMetrics);
-  /** Host-registered font bytes by family — used for shaping (when opted in)
-   *  and for PDF/DOCX font embedding. */
-  readonly #fonts = new Map<string, Uint8Array>();
+  /** Host-registered font bytes by lowercased family — used for shaping
+   *  (when opted in) and for PDF/DOCX font embedding. The original family
+   *  spelling rides along for font-name output. */
+  readonly #fonts = new Map<string, { family: string; fontData: Uint8Array }>();
   #pages: readonly FlowPage[] = [];
   /** Page index → section index (the caret's section and per-page geometry
    *  read through it). */
@@ -7378,7 +7379,10 @@ class DocenDocument extends AddinHost<Editor> {
       this.#fonts.size > 0
         ? buildEmbeddedPdfFonts(
             pageLayers.flatMap((layer) => layer.textSpans),
-            [...this.#fonts.entries()].map(([family, fontData]) => ({ family, fontData })),
+            [...this.#fonts.values()].map((entry) => ({
+              family: entry.family,
+              fontData: entry.fontData,
+            })),
           )
         : [];
     const title = this.getAttribute("filename") ?? t("header.doc-name", this);
@@ -7699,7 +7703,10 @@ class DocenDocument extends AddinHost<Editor> {
     const fonts =
       this.#fonts.size > 0
         ? prepareEmbeddedFonts(
-            [...this.#fonts.entries()].map(([family, fontData]) => ({ family, fontData })),
+            [...this.#fonts.values()].map((entry) => ({
+              family: entry.family,
+              fontData: entry.fontData,
+            })),
           )
         : [];
     const buffer = await generateDOCX(this.getJSON(), {
@@ -7717,7 +7724,7 @@ class DocenDocument extends AddinHost<Editor> {
    * font's `fsType` allows.
    */
   async registerFont(family: string, fontData: Uint8Array): Promise<void> {
-    this.#fonts.set(family.toLowerCase(), fontData);
+    this.#fonts.set(family.toLowerCase(), { family, fontData });
     await initShapingWasm();
     registerShapingFont(family, fontData);
     this.#measurer.clearCache();
