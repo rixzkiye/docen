@@ -13,6 +13,7 @@ import {
   vertAlignBaselineShiftPx,
   vertAlignedSizePx,
 } from "@docen/layout";
+import { generateToUnicodeCMap } from "@docen/shaping";
 
 import type { CanvasStageSection } from "./canvas/stage";
 
@@ -57,6 +58,13 @@ export interface PdfPageShot {
   links?: PdfLinkAnnotation[];
 }
 
+/** One embedded subset font with its raw bytes and optional ToUnicode mapping. */
+export interface PdfEmbeddedFont {
+  readonly fontName: string;
+  readonly fontData: Uint8Array;
+  readonly toUnicodeMap?: Map<number, number> | [number, number][];
+}
+
 /** Options for PDF document generation. */
 export interface PdfExportOptions {
   metadata?: {
@@ -69,6 +77,8 @@ export interface PdfExportOptions {
   };
   /** Produce a Tagged PDF with /MarkInfo and /StructTreeRoot (default: true). */
   tagged?: boolean;
+  /** Embedded subset TrueType/OpenType fonts for visual fidelity and text extraction. */
+  embeddedFonts?: readonly PdfEmbeddedFont[];
 }
 
 /** Decode a snapshot PNG and flatten it onto white — the print canvases are
@@ -259,6 +269,8 @@ export async function pagesToPdf(
   const cidFontId = allocId();
   const fontDescId = allocId();
   const toUnicodeId = allocId();
+  const embeddedFont = options?.embeddedFonts?.[0];
+  const fontFileId = embeddedFont ? allocId() : undefined;
 
   const infoId = allocId();
 
@@ -326,42 +338,55 @@ export async function pagesToPdf(
     );
   }
 
+  // Embedded Font Stream (if provided)
+  if (fontFileId && embeddedFont) {
+    record();
+    push(
+      `${fontFileId} 0 obj\n<< /Length ${embeddedFont.fontData.length} /Length1 ${embeddedFont.fontData.length} >>\nstream\n`,
+    );
+    push(embeddedFont.fontData);
+    push("\nendstream\nendobj\n");
+  }
+
   // Type 0 Unicode Font
+  const baseFontName = embeddedFont ? embeddedFont.fontName.replace(/\s+/g, "") : "Helvetica";
   record();
   push(
-    `${fontIds.F_Uni} 0 obj\n<< /Type /Font /Subtype /Type0 /BaseFont /Helvetica /Encoding /Identity-H /DescendantFonts [ ${cidFontId} 0 R ] /ToUnicode ${toUnicodeId} 0 R >>\nendobj\n`,
+    `${fontIds.F_Uni} 0 obj\n<< /Type /Font /Subtype /Type0 /BaseFont /${baseFontName} /Encoding /Identity-H /DescendantFonts [ ${cidFontId} 0 R ] /ToUnicode ${toUnicodeId} 0 R >>\nendobj\n`,
   );
 
   // Descendant CIDFont
   record();
   push(
-    `${cidFontId} 0 obj\n<< /Type /Font /Subtype /CIDFontType2 /BaseFont /Helvetica /CIDSystemInfo << /Registry (Adobe) /Ordering (Identity) /Supplement 0 >> /FontDescriptor ${fontDescId} 0 R /DW 1000 >>\nendobj\n`,
+    `${cidFontId} 0 obj\n<< /Type /Font /Subtype /CIDFontType2 /BaseFont /${baseFontName} /CIDSystemInfo << /Registry (Adobe) /Ordering (Identity) /Supplement 0 >> /FontDescriptor ${fontDescId} 0 R /DW 1000 >>\nendobj\n`,
   );
 
   // FontDescriptor
+  const fontFileRef = fontFileId ? ` /FontFile2 ${fontFileId} 0 R` : "";
   record();
   push(
-    `${fontDescId} 0 obj\n<< /Type /FontDescriptor /FontName /Helvetica /Flags 4 /FontBBox [ -1000 -1000 2000 2000 ] /ItalicAngle 0 /Ascent 800 /Descent -200 /CapHeight 800 /StemV 80 >>\nendobj\n`,
+    `${fontDescId} 0 obj\n<< /Type /FontDescriptor /FontName /${baseFontName} /Flags 4 /FontBBox [ -1000 -1000 2000 2000 ] /ItalicAngle 0 /Ascent 800 /Descent -200 /CapHeight 800 /StemV 80${fontFileRef} >>\nendobj\n`,
   );
 
   // ToUnicode CMap Stream
-  const toUnicodeCMap =
-    `/CIDInit /ProcSet findresource begin\n` +
-    `12 dict begin\n` +
-    `begincmap\n` +
-    `/CIDSystemInfo << /Registry (Adobe) /Ordering (UCS) /Supplement 0 >> def\n` +
-    `/CMapName /Custom-ToUnicode def\n` +
-    `/CMapType 2 def\n` +
-    `1 begincodespacerange\n` +
-    `<0000> <FFFF>\n` +
-    `endcodespacerange\n` +
-    `1 beginbfrange\n` +
-    `<0000> <FFFF> <0000>\n` +
-    `endbfrange\n` +
-    `endcmap\n` +
-    `CMapName currentdict /CMap defineresource pop\n` +
-    `end\n` +
-    `end\n`;
+  const toUnicodeCMap = embeddedFont?.toUnicodeMap
+    ? generateToUnicodeCMap(embeddedFont.toUnicodeMap)
+    : `/CIDInit /ProcSet findresource begin\n` +
+      `12 dict begin\n` +
+      `begincmap\n` +
+      `/CIDSystemInfo << /Registry (Adobe) /Ordering (UCS) /Supplement 0 >> def\n` +
+      `/CMapName /Custom-ToUnicode def\n` +
+      `/CMapType 2 def\n` +
+      `1 begincodespacerange\n` +
+      `<0000> <FFFF>\n` +
+      `endcodespacerange\n` +
+      `1 beginbfrange\n` +
+      `<0000> <FFFF> <0000>\n` +
+      `endbfrange\n` +
+      `endcmap\n` +
+      `CMapName currentdict /CMap defineresource pop\n` +
+      `end\n` +
+      `end\n`;
 
   record();
   push(

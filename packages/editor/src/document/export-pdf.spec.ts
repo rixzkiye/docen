@@ -410,8 +410,37 @@ describe("pdftotext and pdfinfo integration verification", () => {
       expect(infoOut).toMatch(/Pages:\s+1/);
     } finally {
       if (fs.existsSync(tmpPdf)) {
-        fs.unlinkSync(tmpPdf);
+        if (fs.existsSync(tmpPdf)) {
+          fs.unlinkSync(tmpPdf);
+        }
       }
     }
+  });
+
+  it("embeds subset font stream and custom ToUnicode CMap when embeddedFonts option is provided", async () => {
+    const dummyFontData = new Uint8Array([0x00, 0x01, 0x00, 0x00, 0x00, 0x04]);
+    const toUnicodeMap = new Map<number, number>([
+      [1, 0x0041], // 'A'
+      [2, 0x0042], // 'B'
+    ]);
+    const shot: PdfPageShot = {
+      width: 800,
+      height: 600,
+      jpeg: DUMMY_JPEG,
+    };
+    const blob = await pagesToPdf([shot], {
+      embeddedFonts: [
+        {
+          fontName: "CustomSubsetFont",
+          fontData: dummyFontData,
+          toUnicodeMap,
+        },
+      ],
+    });
+    const text = await blob.text();
+    expect(text).toContain("/FontFile2");
+    expect(text).toContain("/FontName /CustomSubsetFont");
+    expect(text).toContain("/CMapName /Custom-ToUnicode def");
+    expect(text).toContain("<0001> <0041>");
   });
 });

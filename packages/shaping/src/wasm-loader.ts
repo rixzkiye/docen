@@ -24,6 +24,7 @@ export interface ShapingWasmExports {
   get_string_buffer_ptr(): number;
   get_font_name(fontId: number, nameId: number): number;
   get_glyph_count(fontId: number): number;
+  get_font_fs_type(fontId: number): number;
 }
 
 let wasmInstance: WebAssembly.Instance | null = null;

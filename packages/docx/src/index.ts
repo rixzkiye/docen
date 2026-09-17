@@ -126,5 +126,8 @@ export { indexNumberings, type NumberingLevel } from "./layout/project/numbering
 // evaluator itself is format-neutral and lives in @docen/core.
 export { presetShapePaths, type PresetShapeOutline } from "@docen/core/geometry";
 
+// Font embedding (ECMA-376 Part 4 §14.2.14 obfuscation & fontTable)
+export * from "./font-embedding";
+
 // Types
 export type * from "./types";

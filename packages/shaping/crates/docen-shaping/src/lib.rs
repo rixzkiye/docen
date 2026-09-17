@@ -298,3 +298,21 @@ pub extern "C" fn get_glyph_count(font_id: u32) -> i32 {
         Err(_) => -3,
     }
 }
+
+#[no_mangle]
+pub extern "C" fn get_font_fs_type(font_id: u32) -> i32 {
+    let state = STATE.lock().unwrap();
+    let font_bytes = match state.fonts.get(&font_id) {
+        Some(b) => b,
+        None => return -1,
+    };
+    let font_ref = match FontRef::new(font_bytes) {
+        Ok(f) => f,
+        Err(_) => return -2,
+    };
+    if let Ok(os2) = font_ref.os2() {
+        os2.fs_type() as i32
+    } else {
+        0
+    }
+}
