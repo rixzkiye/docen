@@ -9,3 +9,5 @@ export * from "./font-cache.js";
 export * from "./font-source.js";
 export * from "./fallback-chain.js";
 export * from "./font-manager.js";
+export * from "./subsetter.js";
+export * from "./to-unicode.js";

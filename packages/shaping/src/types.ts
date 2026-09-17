@@ -75,6 +75,23 @@ export interface FontIdentity {
   readonly subfamilyName?: string;
   readonly unitsPerEm: number;
   readonly glyphCount: number;
+  readonly fsType?: number;
+  readonly isEmbeddingAllowed?: boolean;
+  readonly isSubsettingAllowed?: boolean;
+}
+
+export const FS_TYPE_RESTRICTED = 0x0002;
+export const FS_TYPE_PREVIEW_PRINT = 0x0004;
+export const FS_TYPE_EDITABLE = 0x0008;
+export const FS_TYPE_NO_SUBSETTING = 0x0100;
+export const FS_TYPE_BITMAP_ONLY = 0x0200;
+
+export function isFontEmbeddingAllowed(fsType: number): boolean {
+  return (fsType & FS_TYPE_RESTRICTED) === 0;
+}
+
+export function isFontSubsettingAllowed(fsType: number): boolean {
+  return isFontEmbeddingAllowed(fsType) && (fsType & FS_TYPE_NO_SUBSETTING) === 0;
 }
 
 /**
@@ -89,5 +106,6 @@ export interface ShapingBackend {
   getGlyphOutline?(fontId: number, glyphId: number): readonly PathCommand[];
   getFontName?(fontId: number, nameId: number): string | undefined;
   getGlyphCount?(fontId: number): number;
+  getFontFsType?(fontId: number): number;
   subset?(fontId: number, glyphIds: readonly number[]): Uint8Array;
 }

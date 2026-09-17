@@ -1,11 +1,13 @@
 import { getShapingBackend } from "./backend.js";
-import type {
-  FontIdentity,
-  FontMetrics,
-  PathCommand,
-  ShapingBackend,
-  ShapingOptions,
-  ShapingResult,
+import {
+  isFontEmbeddingAllowed,
+  isFontSubsettingAllowed,
+  type FontIdentity,
+  type FontMetrics,
+  type PathCommand,
+  type ShapingBackend,
+  type ShapingOptions,
+  type ShapingResult,
 } from "./types.js";
 import { initShapingWasm, isShapingWasmInitialized } from "./wasm-loader.js";
 
@@ -32,6 +34,10 @@ export class FontRef {
     const postscriptName = backend.getFontName?.(id, 6);
     const glyphCount = backend.getGlyphCount?.(id) ?? 0;
 
+    const fsType = backend.getFontFsType?.(id);
+    const isEmbeddingAllowed = fsType !== undefined ? isFontEmbeddingAllowed(fsType) : true;
+    const isSubsettingAllowed = fsType !== undefined ? isFontSubsettingAllowed(fsType) : true;
+
     this.identity = {
       familyName,
       subfamilyName,
@@ -39,6 +45,9 @@ export class FontRef {
       postscriptName,
       unitsPerEm: this.metrics.unitsPerEm,
       glyphCount,
+      fsType,
+      isEmbeddingAllowed,
+      isSubsettingAllowed,
     };
   }
 

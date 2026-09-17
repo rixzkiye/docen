@@ -70,6 +70,7 @@
     "@docen/core": "workspace:*",
     "@docen/layout": "workspace:*",
     "@docen/markdown": "workspace:*",
+    "@docen/shaping": "workspace:*",
     "@office-open/core": "0.14.5",
     "@office-open/docx": "0.14.5",
     "@tiptap/core": "3.31.3",
