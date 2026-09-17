@@ -841,3 +841,5 @@ export class DocenSymbolDialog extends FASTElement {
     if (this.closeBtn) this.closeBtn.textContent = t("symbol.close", this);
   }
 }
+
+export default DocenSymbolDialog;

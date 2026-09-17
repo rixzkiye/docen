@@ -257,3 +257,5 @@ export class DocenGoToDialog extends FASTElement {
     this.#applyTargetLabels();
   }
 }
+
+export default DocenGoToDialog;

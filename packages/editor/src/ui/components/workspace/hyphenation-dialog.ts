@@ -151,3 +151,5 @@ export class DocenHyphenationDialog extends FASTElement {
     if (this.cancelBtn) this.cancelBtn.textContent = t("options.cancel", this);
   }
 }
+
+export default DocenHyphenationDialog;

@@ -308,3 +308,5 @@ export class DocenBookmarkDialog extends FASTElement {
     if (this.closeBtn) this.closeBtn.textContent = t("bookmark.close", this);
   }
 }
+
+export default DocenBookmarkDialog;
