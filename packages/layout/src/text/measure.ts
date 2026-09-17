@@ -7,7 +7,13 @@
 
 import { measureNaturalWidth, prepareWithSegments, type PrepareOptions } from "@docen/pretext";
 
-import { isCjkCodeUnit, isCjkText, type FontMetrics, type FontSlots } from "../font";
+import {
+  resolvedBaselineShare,
+  isCjkCodeUnit,
+  isCjkText,
+  type FontMetrics,
+  type FontSlots,
+} from "../font";
 import { getWordFontMetric, wordBaselineShare } from "../font-metrics-data";
 import type { LayoutTextStyle } from "../layout-doc";
 import type { LaidOutGlyphRun } from "../layout-result";
@@ -180,8 +186,13 @@ export function baselineShareOf(family: string, bold: boolean, italic: boolean):
   const key = `${family}|${bold ? "b" : ""}${italic ? "i" : ""}`;
   const cached = baselineShareCache.get(key);
   if (cached != null) return cached;
-  const word = getWordFontMetric(family);
-  let share = word ? wordBaselineShare(word) : 0;
+  // A font file the shaping layer knows (registered bytes) carries its own
+  // winAscent — deterministic, no canvas/DOM read.
+  let share = resolvedBaselineShare(family) ?? 0;
+  if (share === 0) {
+    const word = getWordFontMetric(family);
+    share = word ? wordBaselineShare(word) : 0;
+  }
   if (share === 0 && typeof document !== "undefined") {
     baselineCanvas ??= document.createElement("canvas");
     const ctx = baselineCanvas.getContext("2d");

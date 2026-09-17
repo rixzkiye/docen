@@ -19,10 +19,10 @@ export class HarfbuzzBackend implements ShapingBackend {
   private nextFontId = 1;
   private readonly fonts = new Map<number, HarfBuzzFontEntry>();
 
-  registerFont(fontData: Uint8Array): number {
+  registerFont(fontData: Uint8Array, fontIndex = 0): number {
     const id = this.nextFontId++;
     const blob = new hb.Blob(fontData);
-    const face = new hb.Face(blob, 0);
+    const face = new hb.Face(blob, fontIndex);
     const font = new hb.Font(face);
     this.fonts.set(id, { blob, face, font });
     return id;

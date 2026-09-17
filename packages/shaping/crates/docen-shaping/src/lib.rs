@@ -34,7 +34,9 @@ impl OutlinePen for PathPen {
 
 struct EngineState {
     next_font_id: u32,
-    fonts: HashMap<u32, Vec<u8>>,
+    /// Registered faces: sfnt bytes plus the face index inside a TrueType
+    /// Collection (0 for a plain .ttf/.otf).
+    fonts: HashMap<u32, (Vec<u8>, u32)>,
     shape_buffer: Vec<f32>,
     metrics_buffer: [f32; 12],
     outline_buffer: Vec<f32>,
@@ -71,6 +73,18 @@ pub unsafe extern "C" fn dealloc(ptr: *mut u8, size: usize) {
 
 #[no_mangle]
 pub unsafe extern "C" fn register_font(ptr: *const u8, len: usize) -> i32 {
+    register_font_at(ptr, len, 0)
+}
+
+/// Register face `index` of an sfnt buffer — a `.ttc`/`.otc` collection
+/// carries several faces in one file (Noto Sans CJK, Windows msyh.ttc), and
+/// both rustybuzz and fontations address them by index.
+#[no_mangle]
+pub unsafe extern "C" fn register_font_index(ptr: *const u8, len: usize, index: u32) -> i32 {
+    register_font_at(ptr, len, index)
+}
+
+unsafe fn register_font_at(ptr: *const u8, len: usize, index: u32) -> i32 {
     if ptr.is_null() || len == 0 {
         return -1;
     }
@@ -78,14 +92,14 @@ pub unsafe extern "C" fn register_font(ptr: *const u8, len: usize) -> i32 {
     let vec = slice.to_vec();
 
     // Validate with rustybuzz and skrifa
-    if Face::from_slice(&vec, 0).is_none() || FontRef::new(&vec).is_err() {
+    if Face::from_slice(&vec, index).is_none() || FontRef::from_index(&vec, index).is_err() {
         return -2;
     }
 
     let mut state = STATE.lock().unwrap();
     let id = state.next_font_id;
     state.next_font_id += 1;
-    state.fonts.insert(id, vec);
+    state.fonts.insert(id, (vec, index));
     id as i32
 }
 
@@ -132,11 +146,11 @@ pub unsafe extern "C" fn shape_text(
     };
 
     let mut state = STATE.lock().unwrap();
-    let font_bytes = match state.fonts.get(&font_id) {
-        Some(b) => b,
+    let (font_bytes, font_index) = match state.fonts.get(&font_id) {
+        Some((b, i)) => (b, *i),
         None => return -1,
     };
-    let mut face = match Face::from_slice(font_bytes, 0) {
+    let mut face = match Face::from_slice(font_bytes, font_index) {
         Some(f) => f,
         None => return -2,
     };
@@ -226,11 +240,11 @@ pub unsafe extern "C" fn get_font_metrics_var(
     variations_count: usize,
 ) -> i32 {
     let mut state = STATE.lock().unwrap();
-    let font_bytes = match state.fonts.get(&font_id) {
-        Some(b) => b,
+    let (font_bytes, font_index) = match state.fonts.get(&font_id) {
+        Some((b, i)) => (b, *i),
         None => return -1,
     };
-    let font_ref = match FontRef::new(font_bytes) {
+    let font_ref = match FontRef::from_index(font_bytes, font_index) {
         Ok(f) => f,
         Err(_) => return -2,
     };
@@ -334,11 +348,11 @@ pub unsafe extern "C" fn get_glyph_outline_var(
     variations_count: usize,
 ) -> i32 {
     let mut state = STATE.lock().unwrap();
-    let font_bytes = match state.fonts.get(&font_id) {
-        Some(b) => b,
+    let (font_bytes, font_index) = match state.fonts.get(&font_id) {
+        Some((b, i)) => (b, *i),
         None => return -1,
     };
-    let font_ref = match FontRef::new(font_bytes) {
+    let font_ref = match FontRef::from_index(font_bytes, font_index) {
         Ok(f) => f,
         Err(_) => return -2,
     };
@@ -402,11 +416,11 @@ pub extern "C" fn get_font_axes_ptr() -> *const u8 {
 #[no_mangle]
 pub extern "C" fn get_font_axes(font_id: u32) -> i32 {
     let mut state = STATE.lock().unwrap();
-    let font_bytes = match state.fonts.get(&font_id) {
-        Some(b) => b.as_slice(),
+    let (font_bytes, font_index) = match state.fonts.get(&font_id) {
+        Some((b, i)) => (b.as_slice(), *i),
         None => return -1,
     };
-    let font_ref = match FontRef::new(font_bytes) {
+    let font_ref = match FontRef::from_index(font_bytes, font_index) {
         Ok(f) => f,
         Err(_) => return -2,
     };
@@ -437,11 +451,11 @@ pub extern "C" fn get_string_buffer_ptr() -> *const u8 {
 #[no_mangle]
 pub extern "C" fn get_font_name(font_id: u32, name_id: u16) -> i32 {
     let mut state = STATE.lock().unwrap();
-    let font_bytes = match state.fonts.get(&font_id) {
-        Some(b) => b,
+    let (font_bytes, font_index) = match state.fonts.get(&font_id) {
+        Some((b, i)) => (b, *i),
         None => return -1,
     };
-    let font_ref = match FontRef::new(font_bytes) {
+    let font_ref = match FontRef::from_index(font_bytes, font_index) {
         Ok(f) => f,
         Err(_) => return -2,
     };
@@ -462,11 +476,11 @@ pub extern "C" fn get_font_name(font_id: u32, name_id: u16) -> i32 {
 #[no_mangle]
 pub extern "C" fn get_glyph_count(font_id: u32) -> i32 {
     let state = STATE.lock().unwrap();
-    let font_bytes = match state.fonts.get(&font_id) {
-        Some(b) => b,
+    let (font_bytes, font_index) = match state.fonts.get(&font_id) {
+        Some((b, i)) => (b, *i),
         None => return -1,
     };
-    let font_ref = match FontRef::new(font_bytes) {
+    let font_ref = match FontRef::from_index(font_bytes, font_index) {
         Ok(f) => f,
         Err(_) => return -2,
     };
@@ -479,11 +493,11 @@ pub extern "C" fn get_glyph_count(font_id: u32) -> i32 {
 #[no_mangle]
 pub extern "C" fn get_font_fs_type(font_id: u32) -> i32 {
     let state = STATE.lock().unwrap();
-    let font_bytes = match state.fonts.get(&font_id) {
-        Some(b) => b,
+    let (font_bytes, font_index) = match state.fonts.get(&font_id) {
+        Some((b, i)) => (b, *i),
         None => return -1,
     };
-    let font_ref = match FontRef::new(font_bytes) {
+    let font_ref = match FontRef::from_index(font_bytes, font_index) {
         Ok(f) => f,
         Err(_) => return -2,
     };

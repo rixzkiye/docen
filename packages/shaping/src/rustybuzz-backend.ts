@@ -15,12 +15,13 @@ const textEncoder = new TextEncoder();
 export class RustybuzzBackend implements ShapingBackend {
   readonly id = "rustybuzz";
 
-  registerFont(fontData: Uint8Array): number {
+  registerFont(fontData: Uint8Array, fontIndex = 0): number {
     const wasm = getShapingWasm();
     const ptr = wasm.alloc(fontData.length);
     new Uint8Array(wasm.memory.buffer, ptr, fontData.length).set(fontData);
 
-    const fontId = wasm.register_font(ptr, fontData.length);
+    // fontIndex selects a face inside a .ttc/.otc collection (0 = plain sfnt).
+    const fontId = wasm.register_font_index(ptr, fontData.length, fontIndex);
     wasm.dealloc(ptr, fontData.length);
 
     if (fontId < 0) {
