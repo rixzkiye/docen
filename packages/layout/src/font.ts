@@ -44,6 +44,20 @@ const FALLBACK_RATIO = 1.2;
 const PROBE_SIZE_PX = 100;
 
 const ratioCache = new Map<string, number>();
+/** Word ratios published by shaping-registered fonts (their own OS/2
+ *  metrics) — deterministic, no DOM probe. Keyed by lowercased family. */
+const registeredRatios = new Map<string, number>();
+
+/** Publish Word's single-line ratio for a shaping-registered family —
+ *  `registerShapingFont` / `ShapedMeasurer.registerFont` call this. */
+export function setRegisteredFontRatio(family: string, ratio: number): void {
+  registeredRatios.set(family.trim().toLowerCase(), ratio);
+}
+
+/** Drop the published ratios (tests). */
+export function clearRegisteredFontRatios(): void {
+  registeredRatios.clear();
+}
 let probe: HTMLSpanElement | null = null;
 
 function ensureProbe(): HTMLSpanElement | null {
@@ -63,6 +77,13 @@ function ensureProbe(): HTMLSpanElement | null {
 export const browserFontMetrics: FontMetrics = {
   normalRatio(request) {
     const key = `${request.family}|${request.bold ? "b" : ""}|${request.italic ? "i" : ""}`;
+    // A shaping-registered face wins: its own OS/2 metrics give Word's exact
+    // number without the browser probe (deterministic across engines).
+    const registered = registeredRatios.get(request.family.trim().toLowerCase());
+    if (registered != null) {
+      ratioCache.set(key, registered);
+      return registered;
+    }
     const cached = ratioCache.get(key);
     if (cached != null) return cached;
     const word = getWordFontMetric(request.family);

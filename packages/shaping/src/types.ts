@@ -37,6 +37,10 @@ export interface FontMetrics {
   readonly lineGap: number;
   readonly capHeight: number;
   readonly xHeight: number;
+  /** OS/2 usWinAscent — the inputs to Word's single-line-height ratio.
+   *  Absent when a backend cannot read OS/2 (falls back to ascender). */
+  readonly winAscent?: number;
+  readonly winDescent?: number;
   readonly vertical?: VerticalFontMetrics;
 }
 

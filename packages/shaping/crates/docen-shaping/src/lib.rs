@@ -36,7 +36,7 @@ struct EngineState {
     next_font_id: u32,
     fonts: HashMap<u32, Vec<u8>>,
     shape_buffer: Vec<f32>,
-    metrics_buffer: [f32; 10],
+    metrics_buffer: [f32; 12],
     outline_buffer: Vec<f32>,
     string_buffer: Vec<u8>,
     axes_buffer: Vec<u8>,
@@ -47,7 +47,7 @@ static STATE: LazyLock<Mutex<EngineState>> = LazyLock::new(|| {
         next_font_id: 1,
         fonts: HashMap::new(),
         shape_buffer: Vec::new(),
-        metrics_buffer: [0.0; 10],
+        metrics_buffer: [0.0; 12],
         outline_buffer: Vec::new(),
         string_buffer: Vec::new(),
         axes_buffer: Vec::new(),
@@ -260,7 +260,7 @@ pub unsafe extern "C" fn get_font_metrics_var(
     let loc = font_ref.axes().location(var_tuples.iter().copied());
     let loc_ref = LocationRef::from(&loc);
 
-    let (upem, ascent, descent, leading, cap_height, x_height, vert) = {
+    let (upem, ascent, descent, leading, cap_height, x_height, vert, win) = {
         let metrics = font_ref.metrics(Size::unscaled(), loc_ref);
         let vert = font_ref.vhea().ok().map(|v| {
             (
@@ -269,6 +269,10 @@ pub unsafe extern "C" fn get_font_metrics_var(
                 v.line_gap().to_i16() as f32,
             )
         });
+        let win = font_ref
+            .os2()
+            .ok()
+            .map(|o| (o.us_win_ascent() as f32, o.us_win_descent() as f32));
         (
             metrics.units_per_em as f32,
             metrics.ascent,
@@ -277,6 +281,7 @@ pub unsafe extern "C" fn get_font_metrics_var(
             metrics.cap_height.unwrap_or(0.0),
             metrics.x_height.unwrap_or(0.0),
             vert,
+            win,
         )
     };
 
@@ -299,6 +304,13 @@ pub unsafe extern "C" fn get_font_metrics_var(
         state.metrics_buffer[8] = -upem / 2.0;
         state.metrics_buffer[9] = 0.0;
     }
+
+    // OS/2 usWinAscent/usWinDescent — the inputs to Word's single-line-height
+    // ratio (winAscent + winDescent + 2 × round(0.15 × (A + D))) / upem.
+    // Absent OS/2 falls back to the hhea extremes.
+    let (win_ascent, win_descent) = win.unwrap_or((ascent.max(0.0), (-descent).max(0.0)));
+    state.metrics_buffer[10] = win_ascent;
+    state.metrics_buffer[11] = win_descent;
 
     0
 }

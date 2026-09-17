@@ -62,7 +62,7 @@ export class RustybuzzBackend implements ShapingBackend {
     }
 
     const ptr = wasm.get_metrics_buffer_ptr();
-    const metricsView = new Float32Array(wasm.memory.buffer, ptr, 10);
+    const metricsView = new Float32Array(wasm.memory.buffer, ptr, 12);
     const hasVertical = metricsView[6] === 1.0;
     return {
       unitsPerEm: metricsView[0]!,
@@ -71,6 +71,9 @@ export class RustybuzzBackend implements ShapingBackend {
       lineGap: metricsView[3]!,
       capHeight: metricsView[4]!,
       xHeight: metricsView[5]!,
+      // OS/2 usWinAscent/usWinDescent — Word's line-height formula inputs.
+      winAscent: metricsView[10]!,
+      winDescent: metricsView[11]!,
       ...(hasVertical
         ? {
             vertical: {
