@@ -220,6 +220,9 @@ export class CanvasStage {
 
   onAddTabStop?: (positionTw: number) => void;
   onOpenTabsDialog?: () => void;
+  /** A page's paint app went live/dark (viewport virtualization) — the host
+   *  mirrors it into the edit bridge so overlays cull to live pages. */
+  onLiveChange?: (page: number, live: boolean) => void;
   activeTabStops?: readonly {
     positionPx: number;
     type: "left" | "center" | "right" | "decimal" | "bar";
@@ -287,13 +290,14 @@ export class CanvasStage {
         for (const record of records) {
           const slot = this.slots.find((s) => s.el === record.target);
           if (!slot) continue;
+          const slotIndex = this.slots.indexOf(slot);
           if (record.isIntersecting) {
             this.ensure(slot);
             // A paint-time flag flipped while this page lived outside the
             // viewport — repaint it before it can scroll into view.
             if (slot.stale && slot.app) {
               slot.stale = false;
-              this.repaint(slot.app, this.slots.indexOf(slot));
+              this.repaint(slot.app, slotIndex);
             }
           } else if (slot.app) {
             slot.app.destroy();
@@ -304,6 +308,9 @@ export class CanvasStage {
             // groups of a dead App.
             slot.layers = null;
           }
+          // Viewport virtualization reach: the host mirrors it into the edit
+          // bridge so overlays materialize only on live pages.
+          this.onLiveChange?.(slotIndex, record.isIntersecting);
         }
       },
       // The IO root is the SCROLL CONTAINER (the stage host's parent), not the

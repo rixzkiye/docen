@@ -609,6 +609,7 @@ class DocenDocument extends AddinHost<Editor> {
   #stage?: CanvasStage;
   #stageHost?: HTMLElement;
   readonly #a11yMirror = new A11yMirror();
+  #a11yTimer?: number;
   #versionSnapshots: Array<{
     id: string;
     timestamp: string;
@@ -3266,13 +3267,7 @@ class DocenDocument extends AddinHost<Editor> {
       background: projected.background,
       viewMode: projected.viewMode,
     };
-    try {
-      this.#a11yMirror.update({
-        sections: projected.sections.map((s) => ({ blocks: s.blocks })),
-      } as any);
-    } catch {
-      // Ignore a11y mirror update errors in non-browser environments
-    }
+    this.#scheduleA11yMirror(projected.sections);
     const prev = this.#lastRun;
     this.#lastRun = run;
     this.#pages = run.pages;
@@ -3404,6 +3399,9 @@ class DocenDocument extends AddinHost<Editor> {
     });
     this.#stage.onAddTabStop = (posTw) => this.#addTabStopAt(posTw);
     this.#stage.onOpenTabsDialog = () => this.#openTabsDialog();
+    // Viewport virtualization → overlay culling (the bridge paints squiggles,
+    // selection and search only on pages the stage keeps painted).
+    this.#stage.onLiveChange = (page, live) => this.#bridge?.setPageLive(page, live);
     // A debug attribute stamped before the first render lands here.
     if (this.debug) this.#stage.setDebug(this.debug);
     this.#stage.setMarksLabels({
@@ -3425,6 +3423,23 @@ class DocenDocument extends AddinHost<Editor> {
     }
     this.#syncEditable();
     return this.#stage;
+  }
+
+  /** The hidden semantic mirror, off the render's critical path: a full
+   *  rebuild is O(document) DOM, so a keystroke must not pay it — it lands on
+   *  a short debounce instead (screen readers read settled text). */
+  #scheduleA11yMirror(sections: readonly { blocks: unknown }[]): void {
+    clearTimeout(this.#a11yTimer);
+    this.#a11yTimer = window.setTimeout(() => {
+      this.#a11yTimer = undefined;
+      try {
+        this.#a11yMirror.update({
+          sections: sections.map((s) => ({ blocks: s.blocks })),
+        } as any);
+      } catch {
+        // Ignore a11y mirror update errors in non-browser environments
+      }
+    }, 250);
   }
 
   /** The panes-and-status tail both render paths run after their final sync. */
@@ -3464,6 +3479,7 @@ class DocenDocument extends AddinHost<Editor> {
 
   disconnectedCallback(): void {
     this.#clipboard.hidePasteOptions();
+    clearTimeout(this.#a11yTimer);
     this.#langObserver?.disconnect();
     this.#unobserveLang?.();
     this.#unobserveLang = undefined;
