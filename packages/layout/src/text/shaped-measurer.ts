@@ -2,6 +2,7 @@ import type { PrepareOptions } from "@docen/pretext";
 import { FontManager, createFontRefSync, type FontRef } from "@docen/shaping";
 
 import type { FontMetrics } from "../font";
+import { isCjkCodePoint, isCjkText } from "../font";
 import type { LayoutTextStyle } from "../layout-doc";
 import type { LaidOutGlyphRun } from "../layout-result";
 import {
@@ -260,7 +261,19 @@ export class ShapedMeasurer extends TextMeasurer {
     const effectiveStyle: LayoutTextStyle =
       style.sizePx !== undefined ? style : { ...style, sizePx: rawSize };
     const sizePx = vertAlignedSizePx(effectiveStyle);
-    const family = familyOfSlot(style.family, false);
+    // A slot family resolves by script: a mixed Latin+CJK run cannot be
+    // shaped faithfully with one face, so it stays canvas (the painter then
+    // paints the same mixed run with fillText).
+    if (typeof style.family !== "string") {
+      let hasCjk = false;
+      let hasNonCjk = false;
+      for (const ch of text) {
+        if (isCjkCodePoint(ch)) hasCjk = true;
+        else hasNonCjk = true;
+        if (hasCjk && hasNonCjk) return undefined;
+      }
+    }
+    const family = familyOfSlot(style.family, isCjkText(text));
     const direction = style.vertical ? "ttb" : (style.direction ?? "auto");
 
     const fontRef = this.getFont(family);

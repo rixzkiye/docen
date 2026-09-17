@@ -187,6 +187,27 @@ describe("R6.3 & R6.8 ShapedMeasurer (Opt-in Shaping & Canvas Default)", () => {
     expect(measurer.widthOf("spaced", style)).toBeGreaterThan(0);
   });
 
+  it("picks the script slot for single-script runs and skips mixed runs", () => {
+    const cjkBytes = fs.readFileSync(
+      path.resolve(
+        __dirname,
+        "../../../shaping/test/fixtures/fonts/NotoFangsongKSSVertical-Regular.ttf",
+      ),
+    );
+    const cjkFont = createFontRefSync(cjkBytes);
+    const measurer = new ShapedMeasurer(fakeFontMetrics, { optIn: true });
+    measurer.registerFont("Open Sans", fontRef);
+    measurer.registerFont("CJK Face", cjkFont);
+    const slots: LayoutTextStyle = {
+      family: { latin: "Open Sans", eastAsia: "CJK Face" },
+      sizePx: 16,
+    };
+
+    expect(measurer.glyphRunOf("天地玄黃", slots)?.fontName).toBe("CJK Face");
+    expect(measurer.glyphRunOf("Hello", slots)?.fontName).toBe("Open Sans");
+    expect(measurer.glyphRunOf("中文 test", slots)).toBeUndefined();
+  });
+
   it("attaches produced glyph runs to laid-out items and maps caret clusters", () => {
     installFakeCanvas();
     setShapingEnabled(false);
