@@ -91,6 +91,9 @@ importers:
       '@docen/core':
         specifier: workspace:*
         version: link:../core
+      '@docen/deduplicate':
+        specifier: workspace:*
+        version: link:../deduplicate
       '@docen/docx':
         specifier: workspace:*
         version: link:../docx

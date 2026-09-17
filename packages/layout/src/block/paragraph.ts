@@ -35,8 +35,118 @@ import { packLines, type PackedLine } from "../text/line-break";
 import { splitFirstGrapheme, type TextMeasurer } from "../text/measure";
 
 /** Lay out a paragraph at `width` (its container's content width; indents
- *  shrink the usable width inside). */
+ *  shrink the usable width inside).
+ *
+ *  Memoized: a keystroke re-lays the whole flow, but only the edited
+ *  paragraph's inputs change — the projection hands structurally identical
+ *  (fresh) objects for every other block, so identity cannot drive reuse. The
+ *  memo keys on a structural hash of the paragraph plus the context fields
+ *  that shape it, and returns a fresh shallow copy (callers key cell boxes by
+ *  paragraph identity — two identical paragraphs must not alias). Absolute
+ *  float zones make the result position-dependent and skip the memo. */
 export function layoutParagraph(
+  para: LayoutParagraph,
+  width: number,
+  ctx: LayoutBlockContext | undefined,
+  measurer: TextMeasurer,
+): LaidOutParagraph {
+  if (para.drawings?.length || ctx?.floatZones?.length) {
+    return layoutParagraphUncached(para, width, ctx, measurer);
+  }
+  const key = memoKey(para, width, ctx);
+  const memo = memoFor(measurer);
+  const hit = memo.get(key);
+  if (hit) return { ...hit };
+  const laid = layoutParagraphUncached(para, width, ctx, measurer);
+  if (memo.size >= MEMO_CAP) {
+    const oldest = memo.keys().next().value;
+    if (oldest !== undefined) memo.delete(oldest);
+  }
+  memo.set(key, laid);
+  return { ...laid };
+}
+
+/** Line breaking is the flow's dominant cost on large documents (see
+ *  flow-scale.bench.ts) — one map per measurer, FIFO-capped so a long editing
+ *  session cannot grow it without bound. */
+const MEMO_CAP = 2048;
+const memoByMeasurer = new WeakMap<TextMeasurer, Map<string, LaidOutParagraph>>();
+
+function memoFor(measurer: TextMeasurer): Map<string, LaidOutParagraph> {
+  let memo = memoByMeasurer.get(measurer);
+  if (!memo) {
+    memo = new Map();
+    memoByMeasurer.set(measurer, memo);
+  }
+  return memo;
+}
+
+/** Structural FNV-1a pair over the layout inputs — a memo key without
+ *  JSON.stringify's string allocation, which the typing path would pay for
+ *  every paragraph on every render. Two independent hashes make a collision
+ *  (a stale layout) practically impossible; both sides of a comparison come
+ *  from the same projection code, so property order is deterministic. */
+function memoKey(
+  para: LayoutParagraph,
+  width: number,
+  ctx: LayoutBlockContext | undefined,
+): string {
+  let h1 = 0x811c9dc5;
+  let h2 = 0x9e3779b9;
+  const mix = (v: number): void => {
+    h1 = Math.imul(h1 ^ v, 0x01000193);
+    h2 = Math.imul(h2 ^ v, 0x85ebca6b);
+  };
+  const mixStr = (s: string): void => {
+    for (let i = 0; i < s.length; i++) mix(s.charCodeAt(i));
+  };
+  const walk = (v: unknown): void => {
+    if (v === null || v === undefined) {
+      mix(v === null ? 0x11 : 0x12);
+      return;
+    }
+    switch (typeof v) {
+      case "string":
+        mix(0x13);
+        mixStr(v);
+        return;
+      case "number":
+        mix(0x14);
+        // Sub-thousandth differences never change layout — quantize so tiny
+        // float noise (e.g. a re-derived percentage) cannot churn the memo.
+        mix(Math.round(v * 1000));
+        return;
+      case "boolean":
+        mix(v ? 0x15 : 0x16);
+        return;
+      case "object": {
+        if (Array.isArray(v)) {
+          mix(0x17);
+          for (const item of v) walk(item);
+          return;
+        }
+        mix(0x18);
+        for (const key of Object.keys(v as Record<string, unknown>)) {
+          mixStr(key);
+          walk((v as Record<string, unknown>)[key]);
+        }
+        return;
+      }
+      default:
+        mixStr(String(v));
+    }
+  };
+  walk(para);
+  mix(0x19);
+  mix(Math.round(width * 1000));
+  mix(ctx?.inTable ? 1 : 0);
+  mix(ctx?.adjustLinesInTable ? 1 : 0);
+  mix(ctx?.onGrid ? 1 : 0);
+  mix(Math.round((ctx?.linePitchPx ?? 0) * 1000));
+  return `${(h1 >>> 0).toString(36)}:${(h2 >>> 0).toString(36)}`;
+}
+
+function layoutParagraphUncached(
   para: LayoutParagraph,
   width: number,
   ctx: LayoutBlockContext | undefined,
