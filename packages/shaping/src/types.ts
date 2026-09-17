@@ -66,6 +66,18 @@ export interface ShapingOptions {
 }
 
 /**
+ * Font identity metadata extracted from font name and maxp tables.
+ */
+export interface FontIdentity {
+  readonly familyName?: string;
+  readonly postscriptName?: string;
+  readonly fullName?: string;
+  readonly subfamilyName?: string;
+  readonly unitsPerEm: number;
+  readonly glyphCount: number;
+}
+
+/**
  * Common abstraction for text shaping engines (rustybuzz WASM, HarfBuzz oracle, Canvas fallback).
  */
 export interface ShapingBackend {
@@ -75,4 +87,7 @@ export interface ShapingBackend {
   getFontMetrics(fontId: number): FontMetrics;
   shape(fontId: number, text: string, options?: ShapingOptions): ShapingResult;
   getGlyphOutline?(fontId: number, glyphId: number): readonly PathCommand[];
+  getFontName?(fontId: number, nameId: number): string | undefined;
+  getGlyphCount?(fontId: number): number;
+  subset?(fontId: number, glyphIds: readonly number[]): Uint8Array;
 }

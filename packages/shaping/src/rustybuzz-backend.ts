@@ -167,4 +167,23 @@ export class RustybuzzBackend implements ShapingBackend {
 
     return commands;
   }
+
+  getFontName(fontId: number, nameId: number): string | undefined {
+    const wasm = getShapingWasm();
+    const len = wasm.get_font_name(fontId, nameId);
+    if (len <= 0) return undefined;
+    const ptr = wasm.get_string_buffer_ptr();
+    const bytes = new Uint8Array(wasm.memory.buffer, ptr, len);
+    return new TextDecoder().decode(bytes);
+  }
+
+  getGlyphCount(fontId: number): number {
+    const wasm = getShapingWasm();
+    const count = wasm.get_glyph_count(fontId);
+    return count >= 0 ? count : 0;
+  }
+
+  subset(_fontId: number, _glyphIds: readonly number[]): Uint8Array {
+    return new Uint8Array(0);
+  }
 }

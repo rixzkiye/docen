@@ -2,10 +2,12 @@ use std::collections::HashMap;
 use std::str::FromStr;
 use std::sync::{LazyLock, Mutex};
 use read_fonts::model::pen::OutlinePen;
+use read_fonts::TableProvider;
 use rustybuzz::ttf_parser::Tag;
 use rustybuzz::{Direction, Face, Language, Script, UnicodeBuffer};
 use skrifa::instance::{LocationRef, Size};
 use skrifa::outline::DrawSettings;
+use skrifa::string::StringId;
 use skrifa::{FontRef, GlyphId, MetadataProvider};
 
 struct PathPen {
@@ -36,6 +38,7 @@ struct EngineState {
     shape_buffer: Vec<f32>,
     metrics_buffer: [f32; 6],
     outline_buffer: Vec<f32>,
+    string_buffer: Vec<u8>,
 }
 
 static STATE: LazyLock<Mutex<EngineState>> = LazyLock::new(|| {
@@ -45,6 +48,7 @@ static STATE: LazyLock<Mutex<EngineState>> = LazyLock::new(|| {
         shape_buffer: Vec::new(),
         metrics_buffer: [0.0; 6],
         outline_buffer: Vec::new(),
+        string_buffer: Vec::new(),
     })
 });
 
@@ -245,4 +249,52 @@ pub extern "C" fn get_glyph_outline(font_id: u32, glyph_id: u32) -> i32 {
     let len = pen.commands.len();
     state.outline_buffer = pen.commands;
     len as i32
+}
+
+#[no_mangle]
+pub extern "C" fn get_string_buffer_ptr() -> *const u8 {
+    let state = STATE.lock().unwrap();
+    state.string_buffer.as_ptr()
+}
+
+#[no_mangle]
+pub extern "C" fn get_font_name(font_id: u32, name_id: u16) -> i32 {
+    let mut state = STATE.lock().unwrap();
+    let font_bytes = match state.fonts.get(&font_id) {
+        Some(b) => b,
+        None => return -1,
+    };
+    let font_ref = match FontRef::new(font_bytes) {
+        Ok(f) => f,
+        Err(_) => return -2,
+    };
+
+    let string_id = StringId::new(name_id);
+    for s in font_ref.localized_strings(string_id) {
+        let text = s.to_string();
+        let bytes = text.into_bytes();
+        let len = bytes.len();
+        state.string_buffer = bytes;
+        return len as i32;
+    }
+
+    state.string_buffer.clear();
+    0
+}
+
+#[no_mangle]
+pub extern "C" fn get_glyph_count(font_id: u32) -> i32 {
+    let state = STATE.lock().unwrap();
+    let font_bytes = match state.fonts.get(&font_id) {
+        Some(b) => b,
+        None => return -1,
+    };
+    let font_ref = match FontRef::new(font_bytes) {
+        Ok(f) => f,
+        Err(_) => return -2,
+    };
+    match font_ref.maxp() {
+        Ok(maxp) => maxp.num_glyphs() as i32,
+        Err(_) => -3,
+    }
 }
