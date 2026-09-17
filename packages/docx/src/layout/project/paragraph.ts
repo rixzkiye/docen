@@ -60,6 +60,9 @@ export function projectParagraph(p: BodyParagraph, ctx: ProjectContext): LayoutP
   const docDefaults = docDefaultsOf(ctx.styles);
   const docPPr: Rec = isRecord(docDefaults.paragraph) ? docDefaults.paragraph : {};
   const docRPr: Rec = isRecord(docDefaults.run) ? docDefaults.run : {};
+  const cellDefaults = ctx.tableCellDefaults;
+  const cellPPr: Rec = isRecord(cellDefaults?.paragraph) ? cellDefaults.paragraph : {};
+  const cellRPr: Rec = isRecord(cellDefaults?.run) ? cellDefaults.run : {};
 
   // ¶-mark strut: direct rPr, else style chain run over docDefaults.
   const markRun: Rec = isRecord(pPr.run) ? pPr.run : {};
@@ -67,13 +70,14 @@ export function projectParagraph(p: BodyParagraph, ctx: ProjectContext): LayoutP
   const isNoteStyle = styleId === "FootnoteText" || styleId === "EndnoteText";
   const chainSizeRaw = num(chainRPr.size);
   const chainSize = isNoteStyle && chainSizeRaw === 20 ? 10 : chainSizeRaw;
-  const markSizePt = markSize ?? chainSize ?? num(docRPr.size) ?? (isNoteStyle ? 10 : 12);
-  const defFont: FontAttr = fontAttr(chainRPr.font) ?? fontAttr(docRPr.font) ?? null;
+  const markSizePt =
+    markSize ?? chainSize ?? num(cellRPr.size) ?? num(docRPr.size) ?? (isNoteStyle ? 10 : 12);
+  const defFont: FontAttr =
+    fontAttr(chainRPr.font) ?? fontAttr(cellRPr.font) ?? fontAttr(docRPr.font) ?? null;
   // The paragraph's default run style — every field cascades from the style
-  // chain over docDefaults (Word's effective-rPr resolution), so a style's
-  // color/underline/strikethrough reach runs that carry no rPr of their own,
-  // exactly as bold/italic already did.
-  const chainDefRun = runStyleOf({ ...docRPr, ...chainRPr });
+  // chain over tableCellDefaults and docDefaults (Word's effective-rPr resolution),
+  // so a style's color/underline/strikethrough reach runs that carry no rPr of their own.
+  const chainDefRun = runStyleOf({ ...docRPr, ...cellRPr, ...chainRPr });
   // The document theme's font pair supplies the family for text with no
   // explicit font (body → minor, heading styles → major). This is the minimal
   // theme-font consumer; a full `w:rFonts w:*Theme` resolution against a
@@ -105,9 +109,10 @@ export function projectParagraph(p: BodyParagraph, ctx: ProjectContext): LayoutP
     emphasisMark: chainDefRun.emphasisMark,
   };
 
-  // Spacing/indent cascade: direct attr wins per-field, else chain, else docDefaults.
+  // Spacing/indent cascade: direct attr wins per-field, else chain, else cellDefaults, else docDefaults.
   const direct: Rec = isRecord(pPr.spacing) ? pPr.spacing : {};
   const styleSp: Rec = isRecord(chainPPr.spacing) ? chainPPr.spacing : {};
+  const cellSp: Rec = isRecord(cellPPr.spacing) ? cellPPr.spacing : {};
   const docSp: Rec = isRecord(docPPr.spacing) ? docPPr.spacing : {};
   // Word's *Lines spacing unit (hundredths of a line) beats its twip twin and
   // resolves against one line — the grid pitch on a gridded page, else the
@@ -115,23 +120,24 @@ export function projectParagraph(p: BodyParagraph, ctx: ProjectContext): LayoutP
   // the approximation here rides the engine's empirical single-line factor
   // (the DengXian word ratio) over the paragraph's default run size.
   const spacingPx = (linesKey: string, twipKey: string): number => {
-    const lines = num(pick([direct, styleSp, docSp], linesKey));
+    const lines = num(pick([direct, styleSp, cellSp, docSp], linesKey));
     if (lines != null) return (lines / 100) * defaultTextStyle.sizePx * 1.4;
-    return twipToPx(measureTwip(pick([direct, styleSp, docSp], twipKey)) ?? 0);
+    return twipToPx(measureTwip(pick([direct, styleSp, cellSp, docSp], twipKey)) ?? 0);
   };
   const spacing: LayoutSpacing = {
     beforePx: spacingPx("beforeLines", "before"),
     afterPx: spacingPx("afterLines", "after"),
     lineHeight: toLineHeight(
-      measureTwip(pick([direct, styleSp, docSp], "line")),
-      pick([direct, styleSp, docSp], "lineRule"),
+      measureTwip(pick([direct, styleSp, cellSp, docSp], "line")),
+      pick([direct, styleSp, cellSp, docSp], "lineRule"),
     ),
   };
 
   const dInd: Rec = isRecord(pPr.indent) ? pPr.indent : {};
   const sInd: Rec = isRecord(chainPPr.indent) ? chainPPr.indent : {};
+  const cellInd: Rec = isRecord(cellPPr.indent) ? cellPPr.indent : {};
   const docInd: Rec = isRecord(docPPr.indent) ? docPPr.indent : {};
-  const ind = (key: string): unknown => pick([dInd, sInd, docInd], key);
+  const ind = (key: string): unknown => pick([dInd, sInd, cellInd, docInd], key);
 
   // Numbering: the paragraph's own numPr wins, else the style chain's. The
   // level's indent fills gaps the paragraph left unset (Word: direct w:ind
@@ -371,7 +377,7 @@ export function projectParagraph(p: BodyParagraph, ctx: ProjectContext): LayoutP
     markSizePx: markSize != null ? ptToPx(markSize) : undefined,
     defaultTextStyle,
     snapToGrid: typeof pPr.snapToGrid === "boolean" ? pPr.snapToGrid : null,
-    align: alignOf(pick([pPr, chainPPr, docPPr], "alignment")),
+    align: alignOf(pick([pPr, chainPPr, cellPPr, docPPr], "alignment")),
     keepLines: pPr.keepLines === true || chainPPr.keepLines === true,
     keepNext: pPr.keepNext === true || chainPPr.keepNext === true,
     widowControl: pick([pPr, chainPPr], "widowControl") !== false,

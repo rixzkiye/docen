@@ -3124,6 +3124,7 @@ export const DocumentCommands = Extension.create({
             const tableNode = $from.node(anchor.tableAt);
             const tr = state.tr.setNodeMarkup(tablePos, undefined, {
               ...tableNode.attrs,
+              style: value,
               borders: preset.borders,
             });
             for (let r = 0; r < tableNode.childCount; r += 1) {
@@ -3163,12 +3164,42 @@ export const DocumentCommands = Extension.create({
             const look = {
               ...((table.attrs.tableLook ?? {}) as Record<string, boolean>),
             };
-            look[value] = !look[value];
-            dispatch(
-              state.tr
-                .setNodeMarkup(tablePos, undefined, { ...table.attrs, tableLook: look })
-                .scrollIntoView(),
-            );
+            const currentVal = look[value];
+            look[value] = currentVal !== undefined ? !currentVal : true;
+            const tr = state.tr.setNodeMarkup(tablePos, undefined, {
+              ...table.attrs,
+              tableLook: look,
+            });
+
+            // If table uses a preset style, update cell fills accordingly so editor reflects toggle
+            const styleId = typeof table.attrs.style === "string" ? table.attrs.style : undefined;
+            const preset = styleId ? TABLE_STYLE_PRESETS[styleId] : undefined;
+            if (preset) {
+              const isHeaderOn = look.firstRow !== false;
+              const isBandOn = look.bandRow !== false;
+              for (let r = 0; r < table.childCount; r += 1) {
+                const rowNode = table.child(r);
+                let rowPos = tablePos + 1;
+                for (let i = 0; i < r; i += 1) rowPos += table.child(i).nodeSize;
+                const isHeader = !!rowNode.attrs.tableHeader;
+                const isBand = !isHeader && preset.bandFill != null && r >= 2 && r % 2 === 0;
+                const fill =
+                  isHeader && isHeaderOn
+                    ? preset.headerFill
+                    : isBand && isBandOn
+                      ? preset.bandFill
+                      : undefined;
+                rowNode.forEach((cell: PMNode, offset: number) => {
+                  const cellPos = rowPos + 1 + offset;
+                  tr.setNodeMarkup(cellPos, undefined, {
+                    ...cell.attrs,
+                    shading: fill ? { fill, type: "clear" } : null,
+                  });
+                });
+              }
+            }
+
+            dispatch(tr.scrollIntoView());
           }
           return true;
         },

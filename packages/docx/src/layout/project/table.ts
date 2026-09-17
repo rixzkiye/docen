@@ -12,7 +12,14 @@ import {
 } from "@docen/layout";
 import type { TableCellOptions, TableOptions } from "@office-open/docx";
 
-import { indexTableStyles } from "../../style-cascade";
+import {
+  indexTableStyles,
+  resolveTableCellStyle,
+  resolveTableLook,
+  resolveTableStyle,
+  type EffectiveTableCellStyle,
+  type TableCellPosition,
+} from "../../style-cascade";
 import type { ProjectContext } from "./context";
 import { eighthPtToPx, isRecord, measureTwip, num, type LayoutCell, type Rec } from "./guards";
 import { projectChild } from "./page";
@@ -84,6 +91,21 @@ function toBorders(b: unknown): CellBorders | undefined {
   return out.top || out.right || out.bottom || out.left ? out : undefined;
 }
 
+function toCellBorders(direct: unknown, styleBorders: unknown): CellBorders | undefined {
+  const d = isRecord(direct) ? direct : undefined;
+  const s = isRecord(styleBorders) ? styleBorders : undefined;
+  if (!d && !s) return undefined;
+  const edge = (side: string): LayoutBorderEdge | undefined =>
+    toBorderEdge(d?.[side]) ?? toBorderEdge(s?.[side]);
+  const out = {
+    top: edge("top"),
+    right: edge("right"),
+    bottom: edge("bottom"),
+    left: edge("left"),
+  };
+  return out.top || out.right || out.bottom || out.left ? out : undefined;
+}
+
 /** w:tblBorders → the engine's table-level defaults, merging the direct
  *  tblPr borders over the table style's per side. */
 function toTableBorders(direct: unknown, styleTable: unknown): LayoutTable["borders"] | undefined {
@@ -114,26 +136,58 @@ function toTableBorders(direct: unknown, styleTable: unknown): LayoutTable["bord
     : undefined;
 }
 
-function projectCell(c: TableCellOptions, ctx: ProjectContext, rowspan?: number): LayoutCell {
+function projectCell(
+  c: TableCellOptions,
+  ctx: ProjectContext,
+  rowspan?: number,
+  style?: EffectiveTableCellStyle,
+): LayoutCell {
   const shd = isRecord(c.shading) ? c.shading : undefined;
-  const fill =
+  const styleShd = style?.cell?.shading;
+  const directFill =
     shd && typeof shd.fill === "string" && shd.fill !== "auto" && shd.type !== "nil"
       ? shd.fill
       : undefined;
+  const styleFill =
+    styleShd &&
+    typeof styleShd.fill === "string" &&
+    styleShd.fill !== "auto" &&
+    styleShd.type !== "nil"
+      ? styleShd.fill
+      : undefined;
+  const fill = directFill ?? styleFill;
+
+  const cellCtx: ProjectContext =
+    style?.paragraph || style?.run
+      ? {
+          ...ctx,
+          tableCellDefaults: {
+            paragraph: style.paragraph as Record<string, unknown> | undefined,
+            run: style.run as Record<string, unknown> | undefined,
+          },
+        }
+      : ctx;
+
+  const verticalAlign =
+    c.verticalAlign === "center" || c.verticalAlign === "bottom"
+      ? c.verticalAlign
+      : style?.cell?.verticalAlign === "center" || style?.cell?.verticalAlign === "bottom"
+        ? style?.cell?.verticalAlign
+        : undefined;
+
   return {
     colspan: c.columnSpan,
     rowspan: rowspan ?? 1,
-    insets: toCellInsets(c.margins),
-    borders: toBorders(c.borders),
+    insets: toCellInsets(c.margins) ?? toCellInsets(style?.cell?.margins),
+    borders: toCellBorders(c.borders, style?.cell?.borders) ?? toBorders(c.borders),
     fill,
-    verticalAlign:
-      c.verticalAlign === "center" || c.verticalAlign === "bottom" ? c.verticalAlign : undefined,
+    verticalAlign,
     textDirection:
       c.textDirection === "tbRl" || c.textDirection === "btLr" || c.textDirection === "lrTb"
         ? c.textDirection
         : undefined,
     blocks: c.children
-      .map((child) => projectChild(child, ctx))
+      .map((child) => projectChild(child, cellCtx))
       .filter((b): b is LayoutBlock => b !== null),
   };
 }
@@ -179,8 +233,29 @@ export function projectTable(t: TableOptions, ctx: ProjectContext): LayoutTable 
       "cells" in row && Array.isArray(row.cells),
   );
   const rowSpans = collectRowSpans(cellRows);
+  const resolvedStyle = t.style ? resolveTableStyle(ctx.styles?.tableStyles, t.style) : undefined;
+  const look = resolveTableLook(t.tableLook);
+  const totalRows = cellRows.length;
+  const totalCols =
+    t.columnWidths && t.columnWidths.length > 0
+      ? t.columnWidths.length
+      : Math.max(
+          1,
+          ...cellRows.map((r) =>
+            r.cells.reduce(
+              (sum, c) =>
+                sum +
+                (isRecord(c) && "columnSpan" in c && typeof c.columnSpan === "number"
+                  ? c.columnSpan
+                  : 1),
+              0,
+            ),
+          ),
+        );
+
   const rows: LayoutTable["rows"] = [];
-  for (const row of cellRows) {
+  for (let r = 0; r < cellRows.length; r++) {
+    const row = cellRows[r]!;
     const trHeight: Rec = isRecord(row.height) ? row.height : {};
     const heightValue = measureTwip(trHeight.value);
     const height =
@@ -190,11 +265,41 @@ export function projectTable(t: TableOptions, ctx: ProjectContext): LayoutTable 
             px: twipToPx(heightValue),
           }
         : undefined;
+
+    const projectedCells: LayoutCell[] = [];
+    let col = 0;
+    for (const raw of row.cells) {
+      if (!isRecord(raw) || !("children" in raw)) continue;
+      const cell = raw as unknown as TableCellOptions;
+      const span = cell.columnSpan ?? 1;
+      if (cell.verticalMerge === "continue") {
+        col += span;
+        continue;
+      }
+      const rowSpan = rowSpans.get(cell) ?? 1;
+      const cellPos: TableCellPosition = {
+        rowIndex: r,
+        colIndex: col,
+        rowSpan,
+        colSpan: span,
+        totalRows,
+        totalCols,
+      };
+      const cellStyle = resolvedStyle
+        ? resolveTableCellStyle(
+            resolvedStyle,
+            cellPos,
+            look,
+            t.styleRowBandSize,
+            t.styleColBandSize,
+          )
+        : undefined;
+      projectedCells.push(projectCell(cell, ctx, rowSpan, cellStyle));
+      col += span;
+    }
+
     rows.push({
-      cells: row.cells
-        .filter((cell): cell is TableCellOptions => "children" in cell)
-        .filter((cell) => cell.verticalMerge !== "continue")
-        .map((cell) => projectCell(cell, ctx, rowSpans.get(cell))),
+      cells: projectedCells,
       height,
       tableHeader: row.tableHeader || undefined,
       cantSplit: row.cantSplit || undefined,
@@ -202,11 +307,13 @@ export function projectTable(t: TableOptions, ctx: ProjectContext): LayoutTable 
   }
 
   const columnWidthsPx = t.columnWidths?.map((w) => twipToPx(measureTwip(w) ?? 0));
-  const styleTable = t.style ? indexTableStyles(ctx.styles).get(t.style)?.table : undefined;
+  const styleTable =
+    resolvedStyle?.table ??
+    (t.style ? indexTableStyles(ctx.styles).get(t.style)?.table : undefined);
   const alignment = t.alignment ?? styleTable?.alignment;
   return {
     kind: "table",
-    width: toTableWidth(t.width),
+    width: toTableWidth(t.width) ?? toTableWidth(styleTable?.width),
     layout: t.layout,
     align:
       alignment === "center"
@@ -215,7 +322,8 @@ export function projectTable(t: TableOptions, ctx: ProjectContext): LayoutTable 
           ? "right"
           : undefined,
     columnWidthsPx: columnWidthsPx && columnWidthsPx.length > 0 ? columnWidthsPx : undefined,
-    cellInsets: toCellInsets(t.margins) ?? WORD_DEFAULT_CELL_INSETS,
+    cellInsets:
+      toCellInsets(t.margins) ?? toCellInsets(styleTable?.margins) ?? WORD_DEFAULT_CELL_INSETS,
     borders: toTableBorders(t.borders, styleTable),
     rows,
   };

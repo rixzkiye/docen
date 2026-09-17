@@ -114,7 +114,16 @@ export {
   mergeStyleChain,
   deepMergeInto,
   mergeTableStyleProps,
+  resolveTableLook,
+  resolveTableStyle,
+  resolveTableCellStyle,
+  activeConditionalTypes,
+  CONDITIONAL_FORMAT_PRIORITY,
   type StyleEntry,
+  type ResolvedTableLook,
+  type ResolvedTableStyle,
+  type TableCellPosition,
+  type EffectiveTableCellStyle,
 } from "./style-cascade";
 
 // Numbering (list) level index — the same reference → levels table the layout

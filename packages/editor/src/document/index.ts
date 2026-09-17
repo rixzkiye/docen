@@ -1370,6 +1370,7 @@ class DocenDocument extends AddinHost<Editor> {
     // also the one that appends the Table Layout panel — the combos only
     // exist from that pass on. The drawing Size combos ride the same pass.
     this.#syncCellSize();
+    this.#syncTableLookCheckboxes();
     this.#syncDrawingSize();
     // Selection-sensitive greying: the arrange group's liveness depends on
     // what the selection points at, which no static pass sees.
@@ -2771,6 +2772,10 @@ class DocenDocument extends AddinHost<Editor> {
 
   #syncDrawingSize(): void {
     this.#chrome.syncDrawingSize();
+  }
+
+  #syncTableLookCheckboxes(): void {
+    this.#chrome.syncTableLookCheckboxes();
   }
 
   #syncContextTabs(): void {
