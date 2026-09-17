@@ -12,7 +12,7 @@ Consumed by [`@docen/layout`](../layout/README.md)'s `ShapedMeasurer` for bit-ex
 
 ## Features
 
-- **Cross-Platform Determinism:** Replaces browser-divergent `CanvasRenderingContext2D.measureText` with OpenType shaping. The shaped measurer is opt-in (`setShapingEnabled(true)` in `@docen/layout` or `DOCEN_SHAPING_ENABLED=1`) until the document-level parity, per-keystroke and cross-environment determinism gates are fully green; the canvas measurer remains the default.
+- **Cross-Platform Determinism:** Replaces browser-divergent `CanvasRenderingContext2D.measureText` with OpenType shaping. The shaped measurer is the default for registered fonts (`setShapingEnabled(false)` in `@docen/layout` or `DOCEN_SHAPING_DISABLED=1` rolls back to the canvas measurer); families without a registered face keep the canvas fallback.
 - **Complex Scripts & Direction:**
   - Multi-direction: LTR, RTL, TTB (vertical CJK with `vhea` / OpenType synthesis), BTT, and automatic Unicode script detection.
   - Full GSUB/GPOS shaping for Arabic cursive joining & mark positioning, Hebrew RTL Niqqud, Thai vowel reordering & mark stacking, Devanagari conjuncts & matras, Khmer coeng subscripts, and Latin ligature substitution (`fi`, `fl`, `ffi`, `ffl`).

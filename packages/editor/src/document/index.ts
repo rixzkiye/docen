@@ -7862,11 +7862,13 @@ class DocenDocument extends AddinHost<Editor> {
    * Register font bytes for deterministic shaping and export embedding.
    * Pass the family name the document styles reference (e.g. "Calibri") and,
    * for a `.ttc`/`.otc` collection (Noto Sans CJK, msyh.ttc), the face
-   * `fontIndex`. Shaping only uses the font when it is opted in
-   * (`setShapingEnabled(true)` or `DOCEN_SHAPING_ENABLED=1`); PDF/DOCX export
-   * embeds it whenever the font's `fsType` allows. Collection faces cannot be
-   * subset by the embedded-font writer yet — register an extracted face for
-   * export embedding.
+   * `fontIndex`. Shaping is on by default — a registered family shapes under
+   * the engine and feeds the line breaker; families without a registered face
+   * keep the canvas fallback (`setShapingEnabled(false)` /
+   * `DOCEN_SHAPING_DISABLED=1` rolls back). PDF/DOCX export embeds the font
+   * whenever its `fsType` allows; collection faces cannot be subset by the
+   * embedded-font writer yet — register an extracted face for export
+   * embedding.
    */
   async registerFont(family: string, fontData: Uint8Array, fontIndex = 0): Promise<void> {
     this.#fonts.set(family.toLowerCase(), { family, fontData });
