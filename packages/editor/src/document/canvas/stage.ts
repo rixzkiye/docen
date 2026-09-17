@@ -1098,14 +1098,34 @@ export class CanvasStage {
     }
   }
 
+  /** Thumbnails for EVERY page, including slots the viewport never reached:
+   *  one forced raster pass renders each page, then every canvas exports as a
+   *  PNG (null when a page could not be rasterized). */
+  async pageThumbnails(): Promise<(string | null)[]> {
+    return this.#rasterizeAll();
+  }
+
   /** Rasterize every page for printing: pages the IntersectionObserver never
    *  reached get their App forced (a printout needs all pages, not just the
    *  scrolled-into-view ones), every slot repaints, then each canvas exports
    *  as PNG. `width`/`height` are the page's unzoomed CSS px (96 dpi) so the
    *  print view can lay the images out at true paper size. */
   async printSnapshots(): Promise<{ width: number; height: number; url: string }[]> {
-    // Strip the page color for the export (see repaint's background note),
-    // then repaint with it back — the print repaint overwrote the live view.
+    const urls = await this.#rasterizeAll();
+    return this.slots.flatMap((_, index) => {
+      const url = urls[index];
+      if (!url) return [];
+      const flow = this.sectionAt(index).flow;
+      return [
+        { width: this.pageCss(flow.pageWidthPx), height: this.pageCss(flow.pageHeightPx), url },
+      ];
+    });
+  }
+
+  /** Shared full-document raster pass: strip the page color for the export
+   *  (see repaint's background note), force every slot through a render,
+   *  settle the canvases, then restore the live view. */
+  async #rasterizeAll(): Promise<(string | null)[]> {
     this.#suppressBackground = true;
     try {
       const apps: App[] = [];
@@ -1117,18 +1137,15 @@ export class CanvasStage {
         apps.push(slot.app);
       }
       await this.#settleCanvases(apps);
-      const shots: { width: number; height: number; url: string }[] = [];
-      for (const [index, slot] of this.slots.entries()) {
+      return this.slots.map((slot) => {
         const canvas = slot.el.querySelector("canvas");
-        if (!canvas) continue;
-        const flow = this.sectionAt(index).flow;
-        shots.push({
-          width: this.pageCss(flow.pageWidthPx),
-          height: this.pageCss(flow.pageHeightPx),
-          url: canvas.toDataURL("image/png"),
-        });
-      }
-      return shots;
+        if (!canvas) return null;
+        try {
+          return canvas.toDataURL("image/png");
+        } catch {
+          return null;
+        }
+      });
     } finally {
       this.#suppressBackground = false;
       for (const [index, slot] of this.slots.entries()) {

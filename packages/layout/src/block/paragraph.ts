@@ -32,7 +32,7 @@ import {
 } from "../layout-doc";
 import type { LaidOutLine, LaidOutLineItem, LaidOutParagraph } from "../layout-result";
 import { packLines, type PackedLine } from "../text/line-break";
-import type { TextMeasurer } from "../text/measure";
+import { splitFirstGrapheme, type TextMeasurer } from "../text/measure";
 
 /** Lay out a paragraph at `width` (its container's content width; indents
  *  shrink the usable width inside). */
@@ -87,6 +87,20 @@ export function layoutParagraph(
     ctx?.wrapPage && ctx.startY != null ? { ...ctx.wrapPage, flowZeroPx: -ctx.startY } : undefined,
   ).zones;
 
+  // A drop cap renders as one enlarged glyph in its own box; the flow must
+  // not repeat it. Split the leading grapheme off the first text atom before
+  // packing and hand it to the painter through `dropCapGlyph`.
+  let inline = para.inline;
+  let dropCapGlyph: LaidOutParagraph["dropCapGlyph"];
+  if (para.dropCap) {
+    const first = para.inline[0];
+    if (first && first.kind === "text" && first.text.length > 0) {
+      const [glyph, rest] = splitFirstGrapheme(first.text);
+      dropCapGlyph = { text: glyph, style: first.style };
+      inline = rest ? [{ ...first, text: rest }, ...para.inline.slice(1)] : para.inline.slice(1);
+    }
+  }
+
   if (para.dropCap && para.inline.length > 0) {
     const lines = para.dropCap.lines ?? 3;
     const h = lines * strutPx;
@@ -100,7 +114,7 @@ export function layoutParagraph(
     });
   }
 
-  const packed = packLines(para.inline, {
+  const packed = packLines(inline, {
     measurer,
     width: usable,
     firstLineIndentPx: para.indent?.firstLinePx,
@@ -221,6 +235,7 @@ export function layoutParagraph(
     tabStops: para.tabStops,
     drawings: para.drawings,
     dropCap: para.dropCap,
+    dropCapGlyph,
     markSizePx: para.markSizePx,
     preserveSpaces: true,
     sectionEnd: para.sectionEnd,

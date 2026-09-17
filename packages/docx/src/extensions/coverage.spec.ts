@@ -416,6 +416,13 @@ const INLINE_EDITABLE: InlineEditable = {
       expect(sdt.children?.[0]).toEqual({ text: "body" });
     },
   },
+  math: {
+    marker: "mathInline",
+    probe: (out) => {
+      // The MathInput rides the node verbatim through resolve → compile.
+      expect(out).toEqual({ math: { display: true } });
+    },
+  },
 };
 
 describe("ParagraphChild dispositions", () => {

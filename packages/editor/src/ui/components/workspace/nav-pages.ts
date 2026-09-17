@@ -145,17 +145,6 @@ export class DocenNavPages extends FASTElement {
     this.activePage = current;
   }
 
-  setPageThumbnail(pageNumber: number, url: string): void {
-    const idx = pageNumber - 1;
-    if (idx >= 0 && idx < this.pages.length) {
-      const item = this.pages[idx];
-      if (item && item.thumbnailUrl !== url) {
-        this.pages[idx] = { ...item, thumbnailUrl: url };
-        this.pages = [...this.pages];
-      }
-    }
-  }
-
   onPageClick(pageNumber: number): void {
     this.activePage = pageNumber;
     this.pages = this.pages.map((p) => ({

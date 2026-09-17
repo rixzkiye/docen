@@ -28,6 +28,14 @@ export interface FormattingInfo {
   };
 }
 
+/** One "Compare to another selection" row: a property whose value differs
+ *  between the reference snapshot and the current selection. */
+export interface FormattingDiffRow {
+  label: string;
+  reference: string;
+  current: string;
+}
+
 const styles = css`
   :host {
     display: flex;
@@ -170,6 +178,8 @@ const template = html<DocenRevealFormattingPane>`
       ${(x) => t("reveal.compareToSelection", x)}
     </fluent-checkbox>
   </div>
+
+  <div class="compare-slot" ${ref("compareSlot")}></div>
 `;
 
 /**
@@ -181,7 +191,11 @@ export class DocenRevealFormattingPane extends FASTElement {
   @observable formatting?: FormattingInfo;
   @observable compareCheckbox?: HTMLElement & { checked: boolean };
   @observable compareWithSelection = false;
+  @observable compareSlot?: HTMLElement;
 
+  /** The reference selection's snapshot (host-captured); not observable — the
+   *  compare section renders imperatively so a binding clobber cannot lose it. */
+  #reference: FormattingInfo | null = null;
   #unsubscribe?: () => void;
 
   override connectedCallback(): void {
@@ -196,6 +210,85 @@ export class DocenRevealFormattingPane extends FASTElement {
 
   setFormatting(info: FormattingInfo): void {
     this.formatting = { ...info };
+    this.#renderComparison();
+  }
+
+  /** Set (or clear) the reference snapshot the current selection is compared
+   *  against. The host captures it when the checkbox is enabled. */
+  setComparison(reference: FormattingInfo | null): void {
+    this.#reference = reference;
+    this.#renderComparison();
+  }
+
+  /** Properties whose values differ between the reference and the current
+   *  selection, already localized for display. Empty when nothing differs. */
+  diffRows(): FormattingDiffRow[] {
+    const ref = this.#reference;
+    const cur = this.formatting;
+    if (!ref || !cur) return [];
+    const rows: FormattingDiffRow[] = [];
+    const add = (key: string, from?: string, to?: string): void => {
+      if ((from ?? "") !== (to ?? "")) {
+        rows.push({ label: t(key, this), reference: from ?? "", current: to ?? "" });
+      }
+    };
+    const stylesOf = (font: FormattingInfo["font"]): string => {
+      const parts = [
+        font?.bold ? t("reveal.bold", this) : "",
+        font?.italic ? t("reveal.italic", this) : "",
+        font?.underline ? t("reveal.underline", this) : "",
+      ].filter(Boolean);
+      return parts.length > 0 ? parts.join(", ") : t("reveal.regular", this);
+    };
+    add("reveal.fontFamily", ref.font?.family, cur.font?.family);
+    add("reveal.fontSize", ref.font?.size, cur.font?.size);
+    add("reveal.styles", stylesOf(ref.font), stylesOf(cur.font));
+    add("reveal.color", ref.font?.color, cur.font?.color);
+    add("reveal.alignment", ref.paragraph?.alignment, cur.paragraph?.alignment);
+    add("reveal.leftIndent", ref.paragraph?.indentLeft, cur.paragraph?.indentLeft);
+    add("reveal.lineSpacing", ref.paragraph?.lineSpacing, cur.paragraph?.lineSpacing);
+    add("reveal.margins", ref.section?.margins, cur.section?.margins);
+    add("reveal.orientation", ref.section?.orientation, cur.section?.orientation);
+    add("reveal.paperSize", ref.section?.paperSize, cur.section?.paperSize);
+    return rows;
+  }
+
+  /** Fill the compare slot (imperative — no observable binding involved). */
+  #renderComparison(): void {
+    const slot = this.compareSlot;
+    if (!slot) return;
+    slot.replaceChildren();
+    if (!this.#reference || !this.formatting) return;
+    const category = document.createElement("div");
+    category.className = "category";
+    const header = document.createElement("div");
+    header.className = "cat-header";
+    header.textContent = t("reveal.comparedTo", this);
+    category.append(header);
+    const rows = this.diffRows();
+    if (rows.length === 0) {
+      const row = document.createElement("div");
+      row.className = "prop-row";
+      const val = document.createElement("span");
+      val.className = "prop-val";
+      val.textContent = t("reveal.noDifferences", this);
+      row.append(val);
+      category.append(row);
+    } else {
+      for (const diff of rows) {
+        const row = document.createElement("div");
+        row.className = "prop-row";
+        const name = document.createElement("span");
+        name.className = "prop-name";
+        name.textContent = diff.label;
+        const val = document.createElement("span");
+        val.className = "prop-val";
+        val.textContent = `${diff.reference} → ${diff.current}`;
+        row.append(name, val);
+        category.append(row);
+      }
+    }
+    slot.append(category);
   }
 
   onCompareToggle(checked: boolean): void {

@@ -61,7 +61,7 @@ describe("drop cap projection", () => {
     expect(opts.frame).toEqual({
       dropCap: "drop",
       lines: 3,
-      hSpace: 200,
+      space: { horizontal: 200, vertical: 0 },
     });
 
     const parsed = parseParagraphDocx(opts as any);
@@ -69,6 +69,7 @@ describe("drop cap projection", () => {
       val: "drop",
       lines: 3,
       distance: 200,
+      vDistance: 0,
     });
   });
 
@@ -109,5 +110,50 @@ describe("drop cap projection", () => {
     expect(laid.dropCap?.type).toBe("dropped");
     // At least one line should have an xOffsetPx due to the selfZone
     expect(laid.lines[0]?.xOffsetPx).toBeGreaterThan(0);
+    // The cap glyph is lifted OUT of the flow (rendered once by the painter):
+    // the packed lines start at "nce" and the glyph rides dropCapGlyph.
+    const lineText = laid.lines
+      .flatMap((line) => line.items.filter((item) => item.kind === "text").map((item) => item.text))
+      .join("");
+    expect(lineText.startsWith("nce upon")).toBe(true);
+    expect(lineText).not.toContain("Once");
+    expect(laid.dropCapGlyph).toEqual({
+      text: "O",
+      style: { family: "Calibri", sizePx: 16 },
+    });
+  });
+
+  it("keeps a combining mark attached to the dropped grapheme", () => {
+    (globalThis as any).OffscreenCanvas = class {
+      getContext() {
+        return {
+          font: "16px serif",
+          measureText: (s: string) => ({ width: s.length * 8 }),
+        };
+      }
+    };
+    HTMLCanvasElement.prototype.getContext = () =>
+      ({
+        font: "16px serif",
+        measureText: (s: string) => ({ width: s.length * 8 }),
+      }) as any;
+    const para: LayoutParagraph = {
+      kind: "paragraph",
+      inline: [
+        {
+          kind: "text",
+          text: "e\u0301clair was here",
+          style: { family: "Calibri", sizePx: 16 },
+        },
+      ],
+      dropCap: { type: "dropped", lines: 3 },
+    };
+    const measurer = new TextMeasurer({ normalRatio: () => 1.2 });
+    const laid = layoutParagraph(para, 400, undefined, measurer);
+    expect(laid.dropCapGlyph?.text).toBe("e\u0301");
+    const lineText = laid.lines
+      .flatMap((line) => line.items.filter((item) => item.kind === "text").map((item) => item.text))
+      .join("");
+    expect(lineText.startsWith("clair")).toBe(true);
   });
 });

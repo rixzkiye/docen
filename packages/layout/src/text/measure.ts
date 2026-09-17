@@ -142,6 +142,17 @@ export function capsPiecesOf(text: string, caps: LayoutTextStyle["caps"]): CapsP
   return pieces;
 }
 
+/** Split off the first grapheme cluster (a drop cap's letter must never
+ *  separate a combining mark from its base). Returns `[first, rest]`; an
+ *  empty string yields `["", ""]`. */
+export function splitFirstGrapheme(text: string): [string, string] {
+  if (!text) return ["", ""];
+  for (const { segment } of GRAPHEME_SEGMENTER.segment(text)) {
+    return [segment, text.slice(segment.length)];
+  }
+  return [text, ""];
+}
+
 /** The alphabetic baseline's offset below a painted Text element's top: the
  *  painter pins each Text's lineHeight to the font size (px form), and
  *  Leafer's baseline formula ((lineHeight + 0.7·fontSize) / 2) then puts the

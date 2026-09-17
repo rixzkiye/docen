@@ -139,6 +139,7 @@ import { CommentsCommands } from "./commands/comments";
 import { combineDocs, compareDocs } from "./commands/compare";
 import { DesignCommands } from "./commands/design";
 import { DialogCommands } from "./commands/dialogs";
+import { equationSeed } from "./commands/equation";
 import { hostCommands, type HostCommandRegistry } from "./commands/host";
 import {
   BuildingBlocksHostCommands,
@@ -157,8 +158,6 @@ import { THEMES } from "./commands/themes";
 import type { StylesInspectorData, StylesPaneState } from "./components/styles-pane";
 import { extractPdfPageLayers, pagesToPdf } from "./export-pdf";
 import type { NewStyleDefinition } from "./extensions/commands";
-// Side-effect import: registers the ribbon/header translation tables.
-import "./i18n";
 import type { ModifyStylePatch, ParagraphDialogPatch } from "./extensions/commands";
 import {
   chartMenuValueOf,
@@ -172,6 +171,8 @@ import {
   wrapMenuValueOf,
   WIRED_DISPATCH,
 } from "./extensions/commands";
+// Side-effect import: registers the ribbon/header translation tables.
+import "./i18n";
 import { collectRevisions } from "./extensions/track-changes";
 import { liveFieldResolver, resolvePageFieldsBounded } from "./field-resolve";
 import { customPropertiesOf, finiteNumber, type FieldContext, type FieldFrame } from "./fields";
@@ -186,6 +187,16 @@ import {
 } from "./file-formats";
 import { mergeSectionProperties } from "./page-setup";
 import { compressPictureSrc, pickTransparentColor, type CropRect } from "./pixels";
+import {
+  applyProtectionMode,
+  enforceProtection,
+  isInsideEditableSdt,
+  stopProtection,
+  withProtection,
+  type ProtectionHostView,
+  type ProtectionPane,
+} from "./protection";
+import { formattingInfoOf } from "./reveal-formatting";
 import {
   buildContextualTab,
   DEFAULT_RIBBON_TAB,
@@ -413,17 +424,24 @@ function fontRunPropsOf(patch: FontDialogPatch): Record<string, unknown> {
   };
 }
 
-/** The inlinePassthrough carrying a math payload at the selection — the
+/** The mathInline atom carrying a math payload at the selection — the
  *  equation context tab's trigger. A caret hugging the atom (before or after)
  *  or a NodeSelection wrapping it counts; `pos` is the atom's document
- *  position so the host can re-select it after inserts shift positions. */
+ *  position so the host can re-select it after inserts shift positions. A
+ *  legacy `inlinePassthrough` carrying `data.math` (documents saved before
+ *  the single-representation switch) is still recognized. */
 function mathAtomAt(state: EditorState): { node: PMNode; pos: number } | null {
   const { $from } = state.selection;
   const before = $from.parent.childAfter($from.parentOffset);
   const after = $from.parent.childBefore($from.parentOffset);
   for (const child of [before, after]) {
     const node = child.node;
-    if (!node || node.type.name !== "inlinePassthrough") continue;
+    if (!node) continue;
+    if (node.type.name === "mathInline") {
+      if (node.attrs?.math) return { node, pos: $from.start() + child.offset };
+      continue;
+    }
+    if (node.type.name !== "inlinePassthrough") continue;
     try {
       const data = JSON.parse(String(node.attrs.data ?? "{}")) as { math?: unknown };
       if (data.math) return { node, pos: $from.start() + child.offset };
@@ -1006,13 +1024,15 @@ class DocenDocument extends AddinHost<Editor> {
     const parent = editor.state.selection.$from.parent;
     if (parent.type.name === "paragraph") {
       const pos = editor.state.selection.$from.before(1);
+      const distanceTwip = Math.round((distancePt ?? 0) * 20);
       const dropCap =
         position === "none"
           ? null
           : {
               val: position,
               lines: lines ?? 3,
-              distance: Math.round((distancePt ?? 0) * 20),
+              distance: distanceTwip,
+              vDistance: 0,
             };
       const frame =
         position === "none"
@@ -1020,7 +1040,8 @@ class DocenDocument extends AddinHost<Editor> {
           : {
               dropCap: position,
               lines: lines ?? 3,
-              hSpace: Math.round((distancePt ?? 0) * 20),
+              // office-open's frame writer reads w:hSpace/w:vSpace from `space`.
+              space: { horizontal: distanceTwip, vertical: 0 },
             };
       const attrs = {
         ...parent.attrs,
@@ -1045,58 +1066,43 @@ class DocenDocument extends AddinHost<Editor> {
     }
   };
 
+  /** The protection domain's host view — thin adapters over this element's
+   *  editor + documentExtras channel so the logic in ./protection is shared
+   *  with the tests instead of living as private host methods. */
+  #protectionView(): ProtectionHostView {
+    return {
+      editor: () => this.editor,
+      settings: () => this.#documentSettings(),
+      commitSettings: (settings) => {
+        const editor = this.editor;
+        if (!editor) return;
+        const attrs = (editor.state.doc.attrs ?? {}) as {
+          documentExtras?: Record<string, unknown>;
+        };
+        const extras = attrs.documentExtras ?? {};
+        editor.view.dispatch(
+          editor.state.tr.setDocAttribute("documentExtras", { ...extras, settings }),
+        );
+      },
+      setMode: (mode, docProtected) => {
+        this.#protectionMode = mode;
+        this.#docProtected = docProtected;
+        this.#syncEditable();
+        this.#syncEditModeMenu();
+      },
+      pane: () =>
+        this.shadowRoot?.querySelector(
+          "docen-restrict-editing-pane",
+        ) as unknown as ProtectionPane | null,
+    };
+  }
+
   readonly #onProtectionEnforce = (event: CustomEvent<any>): void => {
-    const { type, formattingRestricted, passwordHash } = event.detail ?? {};
-    this.#protectionMode = type;
-    this.#docProtected = type === "readOnly" || type === "comments";
-
-    const editor = this.editor;
-    if (editor) {
-      const attrs = (editor.state.doc.attrs ?? {}) as { documentExtras?: Record<string, unknown> };
-      const extras = attrs.documentExtras ?? {};
-      const prevSettings = this.#documentSettings();
-      const settings: Record<string, unknown> = {
-        ...prevSettings,
-        documentProtection: {
-          edit: type,
-          hash: passwordHash,
-          formatting: formattingRestricted,
-        },
-      };
-      editor.view.dispatch(
-        editor.state.tr.setDocAttribute("documentExtras", { ...extras, settings }),
-      );
-
-      if (type === "trackedChanges") {
-        const commands = editor.commands as any;
-        if (typeof commands?.["track-changes"] === "function") {
-          commands["track-changes"](true);
-        }
-      }
-    }
-
-    this.#syncEditable();
-    this.#syncEditModeMenu();
+    enforceProtection(this.#protectionView(), event.detail ?? {});
   };
 
   readonly #onProtectionStop = (): void => {
-    this.#docProtected = false;
-    this.#protectionMode = undefined;
-
-    const editor = this.editor;
-    if (editor) {
-      const attrs = (editor.state.doc.attrs ?? {}) as { documentExtras?: Record<string, unknown> };
-      const extras = attrs.documentExtras ?? {};
-      const prevSettings = this.#documentSettings();
-      const settings: Record<string, unknown> = { ...prevSettings };
-      delete settings.documentProtection;
-      editor.view.dispatch(
-        editor.state.tr.setDocAttribute("documentExtras", { ...extras, settings }),
-      );
-    }
-
-    this.#syncEditable();
-    this.#syncEditModeMenu();
+    stopProtection(this.#protectionView());
   };
 
   readonly #onA11ySelectIssue = (event: CustomEvent<any>): void => {
@@ -1911,7 +1917,7 @@ class DocenDocument extends AddinHost<Editor> {
 
     this.#bridge = mountEditBridge({
       host: this.#stageHost,
-      canEdit: (ed) => (this.#protectionMode === "forms" ? this.#isInsideSdt(ed) : true),
+      canEdit: (ed) => (this.#protectionMode === "forms" ? isInsideEditableSdt(ed) : true),
       // The textarea must live outside docen-context-menu (fluent-menu eats
       // Space/Enter) — the input layer at the shadow root is menu-free.
       inputHost: this.shadowRoot!.querySelector<HTMLElement>(".input-layer")!,
@@ -2370,6 +2376,10 @@ class DocenDocument extends AddinHost<Editor> {
     this.shadowRoot!.querySelector("docen-restrict-editing-pane")?.addEventListener(
       "protection:stop",
       this.#onProtectionStop as EventListener,
+    );
+    this.shadowRoot!.querySelector("docen-reveal-formatting-pane")?.addEventListener(
+      "reveal:compare-toggle",
+      this.#onRevealCompareToggle as EventListener,
     );
     this.shadowRoot!.querySelector("docen-a11y-checker-pane")?.addEventListener(
       "a11y:select-issue",
@@ -2952,6 +2962,10 @@ class DocenDocument extends AddinHost<Editor> {
     // reaches the next render.
     const showHiddenText = getSettings().writing.showHiddenText;
     this.#hiddenTextShown = showHiddenText;
+    // The active document theme's font pair feeds the projection's fallback
+    // for text with no explicit font (body → minor, headings → major).
+    const themeId = (this.#documentSettings().theme as { id?: string } | undefined)?.id;
+    const themeFonts = themeId ? THEMES[themeId]?.fonts : undefined;
     // Balloons are print-layout chrome: Draft/Web/Read project inline markup
     // only (Word hides the markup area outside Print Layout / Web Layout has
     // no margin at all).
@@ -2981,6 +2995,7 @@ class DocenDocument extends AddinHost<Editor> {
       // instead of being suppressed.
       showHiddenText,
       this.#hyphenation,
+      themeFonts,
     );
     const stageSections: (ProjectedSection & CanvasStageSection)[] = sections.map((section) => ({
       ...section,
@@ -4834,6 +4849,23 @@ class DocenDocument extends AddinHost<Editor> {
     }
   }
 
+  /** Rasterize every page (forcing off-screen slots through one render pass)
+   *  and feed the Navigation pane real thumbnails for the whole document. The
+   *  sync `#updateStatus` path only fills pages whose canvas already exists;
+   *  this is the pane-open completion that covers the rest. */
+  async #refreshNavThumbnails(): Promise<void> {
+    const navPages = this.shadowRoot?.querySelector("docen-nav-pages") as any;
+    const stage = this.#stage;
+    if (!navPages || !stage || this.#pages.length === 0) return;
+    const thumbs = await stage.pageThumbnails();
+    if (thumbs.length === 0) return;
+    navPages.setPageCount(
+      this.#pages.length,
+      (this.#bridge?.pageOf(this.editor?.state.selection.from ?? 0) ?? 0) + 1,
+      thumbs,
+    );
+  }
+
   /** Word Count (Review tab) — compute the document statistics twice (Word's
    *  dialog shape): the body alone, and with textboxes + footnotes/endnotes
    *  folded back in — the dialog's "include" toggle (default ON) switches
@@ -5179,44 +5211,17 @@ class DocenDocument extends AddinHost<Editor> {
   }
 
   /** Insert → Equation — drop one placeholder template (fraction / script /
-   *  radical / sum / integral) at the caret as a math passthrough atom
-   *  (Word's Insert → Symbols → Equation gallery). Each argument is an empty
-   *  run — the □ slot; the radical's absent degree reads as the square root
-   *  (degHide follows). Round-trips verbatim through DOCX; the projection
-   *  paints the placeholder box until a math editor lands. */
+   *  radical / sum / integral) at the caret as a mathInline atom (Word's
+   *  Insert → Symbols → Equation gallery). Each argument is an empty run —
+   *  the □ slot; the radical's absent degree reads as the square root
+   *  (degHide follows). Round-trips through DOCX via the node's
+   *  parseDocxInline/compile pair; the projection paints the structured
+   *  elements (or the placeholder box when a shape has none). */
   #insertEquation(template: string): void {
     const editor = this.editor;
     if (!editor) return;
-    const slot = (): object => ({ text: "" });
-    const templates: Record<string, object> = {
-      // Alt+= inserts a blank equation — one empty run to type into.
-      plain: { text: "" },
-      fraction: { fraction: { numerator: [slot()], denominator: [slot()] } },
-      superScript: { superScript: { children: [slot()], superScript: [slot()] } },
-      radical: { radical: { children: [slot()] } },
-      sum: {
-        sum: {
-          children: [slot()],
-          subScript: [slot()],
-          superScript: [slot()],
-          properties: { limitLocation: "undOvr" },
-        },
-      },
-      integral: {
-        integral: {
-          children: [slot()],
-          subScript: [slot()],
-          superScript: [slot()],
-          properties: { limitLocation: "subSup" },
-        },
-      },
-    };
-    const shape = templates[template];
-    if (!shape) return;
-    const seed: JSONContent = {
-      type: "inlinePassthrough",
-      attrs: { data: JSON.stringify({ math: { children: [shape] } }) },
-    };
+    const seed = equationSeed(template);
+    if (!seed) return;
     const node = editor.schema.nodeFromJSON(seed);
     // One transaction: insert the atom and wrap it in a NodeSelection — the
     // selection rides the new atom, keeping the equation context tab alive
@@ -6305,24 +6310,6 @@ class DocenDocument extends AddinHost<Editor> {
     dialog?.show(initialProps);
   }
 
-  #isInsideSdt(editor: Editor): boolean {
-    const { $from, $to } = editor.state.selection;
-    for (let d = $from.depth; d > 0; d--) {
-      const node = $from.node(d);
-      if (
-        node.type.name === "sdtBlock" ||
-        node.type.name === "sdtInline" ||
-        node.attrs?.properties
-      ) {
-        if ($to.pos < $from.start(d) || $to.pos > $from.end(d)) return false;
-        const props = (node.attrs?.properties ?? {}) as Record<string, unknown>;
-        if (props.cannotEdit === true) return false;
-        return true;
-      }
-    }
-    return false;
-  }
-
   #updateRevealFormatting(): void {
     const pane = this.shadowRoot?.querySelector("docen-reveal-formatting-pane") as {
       setFormatting?(info: FormattingInfo): void;
@@ -6330,98 +6317,17 @@ class DocenDocument extends AddinHost<Editor> {
     if (!pane || !this.getTaskpaneState("reveal")) return;
     const editor = this.#bridge?.activeEditor() ?? this.editor;
     if (!editor) return;
-
-    const { $from, empty } = editor.state.selection;
-    const sampleText = empty
-      ? $from.parent.textBetween(
-          Math.max(0, $from.parentOffset - 15),
-          Math.min($from.parent.content.size, $from.parentOffset + 15),
-          " ",
-        )
-      : editor.state.doc.textBetween(editor.state.selection.from, editor.state.selection.to, " ");
-
-    const marks = $from.marks();
-    const markTypes = new Set(marks.map((m) => m.type.name));
-    const fontMark = marks.find((m) => m.type.name === "textStyle" || m.attrs?.fontFamily);
-    const colorMark = marks.find((m) => m.attrs?.color);
-
-    const para = $from.parent;
-    const paraAttrs = (para.attrs ?? {}) as Record<string, any>;
-
-    let activeSecProps: SectionPropertiesOptions | undefined;
-    let foundSection = false;
-    editor.state.doc.descendants((node, pos) => {
-      if (foundSection) return false;
-      if (
-        node.type.name === "paragraph" &&
-        (node.attrs as { sectionProperties?: unknown }).sectionProperties != null
-      ) {
-        if (pos >= $from.pos) {
-          activeSecProps = (node.attrs as { sectionProperties?: SectionPropertiesOptions })
-            .sectionProperties;
-          foundSection = true;
-          return false;
-        }
-      }
-    });
-    if (!activeSecProps) {
-      activeSecProps = (editor.state.doc.attrs as { sectionProperties?: SectionPropertiesOptions })
-        ?.sectionProperties;
-    }
-
-    const pageSize =
-      activeSecProps?.pageSize && typeof activeSecProps.pageSize === "object"
-        ? activeSecProps.pageSize
-        : undefined;
-    const pageMargin =
-      activeSecProps?.pageMargin && typeof activeSecProps.pageMargin === "object"
-        ? activeSecProps.pageMargin
-        : undefined;
-
-    let orientationStr = "Portrait";
-    if (pageSize?.orientation === "landscape") {
-      orientationStr = "Landscape";
-    }
-    let marginsStr = "Normal (1 in)";
-    if (pageMargin) {
-      const { top, left } = pageMargin;
-      if (top != null && left != null) {
-        const topIn = (Number(top) / 1440).toFixed(1);
-        const leftIn = (Number(left) / 1440).toFixed(1);
-        marginsStr = `Top: ${topIn}", Left: ${leftIn}"`;
-      }
-    }
-    let paperSizeStr: string | undefined;
-    if (pageSize?.width && pageSize?.height) {
-      const wIn = (Number(pageSize.width) / 1440).toFixed(1);
-      const hIn = (Number(pageSize.height) / 1440).toFixed(1);
-      paperSizeStr = `${wIn}" × ${hIn}"`;
-    }
-
-    const info: FormattingInfo = {
-      sampleText: sampleText.trim() || "Selected text",
-      font: {
-        family: (fontMark?.attrs?.fontFamily as string) || "Calibri",
-        size: (fontMark?.attrs?.fontSize as string) || "11 pt",
-        bold: markTypes.has("bold"),
-        italic: markTypes.has("italic"),
-        underline: markTypes.has("underline"),
-        color: (colorMark?.attrs?.color as string) || "Auto",
-      },
-      paragraph: {
-        alignment: (paraAttrs.textAlign as string) || "Left",
-        indentLeft: paraAttrs.indentLeft != null ? `${paraAttrs.indentLeft} pt` : "0 pt",
-        lineSpacing: paraAttrs.lineSpacing ? String(paraAttrs.lineSpacing) : "1.15",
-      },
-      section: {
-        margins: marginsStr,
-        orientation: orientationStr,
-        paperSize: paperSizeStr,
-      },
-    };
-
-    pane.setFormatting?.(info);
+    pane.setFormatting?.(formattingInfoOf(editor));
   }
+
+  readonly #onRevealCompareToggle = (event: CustomEvent<{ enabled?: boolean }>): void => {
+    const pane = this.shadowRoot?.querySelector("docen-reveal-formatting-pane") as {
+      setComparison?(reference: FormattingInfo | null): void;
+    } | null;
+    if (!pane?.setComparison) return;
+    const editor = this.#bridge?.activeEditor() ?? this.editor;
+    pane.setComparison(event.detail?.enabled === true && editor ? formattingInfoOf(editor) : null);
+  };
 
   readonly #onCommand = (event: CustomEvent<{ event?: string; value?: string }>): void => {
     const { event: name, value } = event.detail ?? {};
@@ -6465,7 +6371,7 @@ class DocenDocument extends AddinHost<Editor> {
       name !== "toggle-checkbox"
     ) {
       const active = this.#bridge?.activeEditor() ?? this.editor;
-      if (active && !this.#isInsideSdt(active)) {
+      if (active && !isInsideEditableSdt(active)) {
         return;
       }
     }
@@ -6834,18 +6740,11 @@ class DocenDocument extends AddinHost<Editor> {
     ) {
       const attrs = (editor.state.doc.attrs ?? {}) as { documentExtras?: Record<string, unknown> };
       const extras = attrs.documentExtras ?? {};
-      const settings: Record<string, unknown> = { ...prev };
+      let settings: Record<string, unknown> = { ...prev };
       if (tabTwip != null) settings.defaultTabStop = tabTwip;
       if (d.updateFields) settings.updateFields = true;
       else delete settings.updateFields;
-      if (d.protection === "none") {
-        delete settings.documentProtection;
-      } else {
-        settings.documentProtection = {
-          ...(prev.documentProtection as object | undefined),
-          edit: d.protection,
-        };
-      }
+      settings = withProtection(settings, d.protection ?? "none");
       settings.compatibility = {
         ...(prev.compatibility as object | undefined),
         version: d.compatVersion,
@@ -6857,28 +6756,8 @@ class DocenDocument extends AddinHost<Editor> {
     // Protection folds into #syncEditable's formula; a tracked-changes
     // restriction additionally forces revision tracking on (Word "start
     // enforcement" behavior).
-    this.#protectionMode = d.protection !== "none" ? d.protection : undefined;
-    this.#docProtected = d.protection === "readOnly" || d.protection === "comments";
     if (d.protection === "trackedChanges") editor.commands["track-changes"](true);
-    this.#syncEditable();
-    this.#syncEditModeMenu();
-    const pane = this.shadowRoot?.querySelector("docen-restrict-editing-pane") as {
-      setProtectionState?(state: any, hash?: string): void;
-    } | null;
-    if (pane) {
-      const docProt = prev.documentProtection as
-        | { formatting?: boolean; hash?: string }
-        | undefined;
-      const isEnforced = d.protection !== "none";
-      pane.setProtectionState?.(
-        {
-          isEnforced,
-          type: isEnforced ? d.protection : "trackedChanges",
-          formattingRestricted: Boolean(docProt?.formatting),
-        },
-        docProt?.hash,
-      );
-    }
+    applyProtectionMode(this.#protectionView(), d.protection ?? "none");
   }
 
   /** References → footnotes group launcher: the Word Footnote and Endnote
@@ -8067,6 +7946,10 @@ class DocenDocument extends AddinHost<Editor> {
             (this.#bridge?.pageOf(this.editor?.state.selection.from ?? 0) ?? 0) + 1,
             thumbs,
           );
+          // Off-screen pages have no canvas yet — rasterize every page once so
+          // the pane shows real thumbnails for the whole document, not just
+          // the pages the viewport already reached.
+          void this.#refreshNavThumbnails();
         }
       }
     }

@@ -18,6 +18,7 @@ import type {
   LayoutRuby,
   LayoutTabStop,
   LayoutTableBorders,
+  LayoutTextStyle,
 } from "./layout-doc";
 import type { LayoutMathData } from "./math/math-layout";
 
@@ -196,6 +197,11 @@ export interface LaidOutParagraph {
   drawings?: LayoutDrawing[];
   /** Drop cap configuration (w:dropCap / w:framePr). */
   dropCap?: LayoutParagraph["dropCap"];
+  /** The leading grapheme lifted out of the flow for the drop cap — the
+   *  painter draws this enlarged; `lines`/`inline` no longer contain it, so
+   *  the glyph renders exactly once. Absent when the paragraph has no
+   *  droppable first text atom. */
+  dropCapGlyph?: { text: string; style: LayoutTextStyle };
   /** The paragraph closes its section — the painter's mark row reads it and
    *  names the break type (mirrors the input block's field). */
   sectionEnd?: boolean | "continuous" | "evenPage" | "oddPage";

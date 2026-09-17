@@ -1,14 +1,37 @@
+import type { ParagraphChild } from "@office-open/docx";
+
 import { Node } from "../core";
+import type { ParseInlineRule } from "./types";
 import { attrNative } from "./utils";
 
 /**
- * Math Architecture Decision:
- * - `inlinePassthrough.math` (registered in coverage.ts) is canonical for DOCX/OOXML
- *   lossless roundtrip and byte fidelity.
- * - `MathInline` (`mathInline`) and convertLinearToOMML / convertOMMLToLinear provide
- *   the linear LaTeX-like representation (`\frac{a}{b}`, `\sqrt{x}`, etc.) for authoring,
- *   HTML clipboard roundtrips, and UI interaction.
+ * Math representation: `MathInline` (`mathInline`) is THE single math node.
+ * DOCX `w:oMath`/`w:oMathPara` content resolves into it (the `math` attr keeps
+ * the office-open MathInput verbatim, `linear` is the editable LaTeX-like
+ * projection), compile emits the MathInput back into the office-open model,
+ * and the Insert → Equation path seeds the same node. `convertLinearToOMML` /
+ * `convertOMMLToLinear` back the linear ↔ structured conversion (HTML
+ * clipboard spans and authoring labels).
  */
+
+/** DOCX `{ math: MathInput }` run branch → the mathInline atom. The run-level
+ *  `math` boolean flag (rPr) is NOT this branch — the discriminator is the
+ *  object shape. */
+type MathDocxBranch = Extract<ParagraphChild, { math: object }>;
+
+export const parseDocxInline: ParseInlineRule<MathDocxBranch> = {
+  match: (child): child is MathDocxBranch => {
+    const math = (child as { math?: unknown }).math;
+    return typeof math === "object" && math !== null;
+  },
+  convert: (child) => ({
+    type: "mathInline",
+    attrs: {
+      math: child.math,
+      linear: convertOMMLToLinear(child.math),
+    },
+  }),
+};
 
 /**
  * Convert simple linear math text (e.g. `\frac{a}{b}`, `\sqrt{x}`, `x^2`, `x_i`)
@@ -121,6 +144,8 @@ export const MathInline = Node.create({
   group: "inline",
   inline: true,
   atom: true,
+
+  parseDocxInline,
 
   addAttributes() {
     return {

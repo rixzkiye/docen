@@ -101,6 +101,44 @@ export function detectHeadingLevel(
 
 // ── DOCX serialization (near-identity: attrs mirror ParagraphPropertiesOptionsBase) ──
 
+/** office-open writes `w:hSpace`/`w:vSpace` from `frame.space.{horizontal,
+ *  vertical}`. A drop cap's editable `distance`/`vDistance` and any legacy
+ *  `hSpace`/`vSpace` keys on the frame attr are folded into that shape so the
+ *  twip distances survive the writer. */
+function frameForDocx(attrs: Record<string, unknown>): Record<string, unknown> | undefined {
+  let frame: Record<string, unknown> | undefined;
+  if (attrs.frame && typeof attrs.frame === "object") {
+    frame = { ...(attrs.frame as Record<string, unknown>) };
+    const legacyH = frame.hSpace;
+    const legacyV = frame.vSpace;
+    const space =
+      frame.space && typeof frame.space === "object"
+        ? { ...(frame.space as Record<string, unknown>) }
+        : undefined;
+    delete frame.hSpace;
+    delete frame.vSpace;
+    if (legacyH !== undefined || legacyV !== undefined || space) {
+      frame.space = {
+        horizontal: space?.horizontal ?? legacyH ?? 0,
+        vertical: space?.vertical ?? legacyV ?? 0,
+      };
+    }
+  }
+  const dc = attrs.dropCap;
+  if (dc && typeof dc === "object") {
+    const d = dc as { val?: string; lines?: number; distance?: number; vDistance?: number };
+    if (d.val && d.val !== "none") {
+      return {
+        ...frame,
+        dropCap: d.val,
+        lines: d.lines ?? 3,
+        space: { horizontal: d.distance ?? 0, vertical: d.vDistance ?? 0 },
+      };
+    }
+  }
+  return frame;
+}
+
 export function renderDocx(node: JSONContent): Record<string, unknown> {
   const attrs = (node.attrs ?? {}) as Record<string, unknown>;
   const opts: Record<string, unknown> = {};
@@ -113,19 +151,11 @@ export function renderDocx(node: JSONContent): Record<string, unknown> {
     // docen-only round-trip data with no OOXML paragraph counterpart (the
     // markdown code-fence info string) — keeps the JSON lossless but must not
     // reach ParagraphOptions.
-    if (key === "codeLanguage" || key === "dropCap") continue;
+    if (key === "codeLanguage" || key === "dropCap" || key === "frame") continue;
     opts[key] = value;
   }
-  if (attrs.dropCap && typeof attrs.dropCap === "object" && !opts.frame) {
-    const dc = attrs.dropCap as { val?: string; lines?: number; distance?: number };
-    if (dc.val && dc.val !== "none") {
-      opts.frame = {
-        dropCap: dc.val,
-        lines: dc.lines ?? 3,
-        hSpace: dc.distance ?? 0,
-      };
-    }
-  }
+  const frame = frameForDocx(attrs);
+  if (frame) opts.frame = frame;
   return opts;
 }
 
@@ -136,6 +166,12 @@ export function renderDocx(node: JSONContent): Record<string, unknown> {
  * paragraphs whose styling lives there).
  */
 const SKIP_KEYS = new Set(["children", "text"]);
+
+const asNumber = (v: unknown): number | undefined => {
+  if (typeof v === "number" && Number.isFinite(v)) return v;
+  if (typeof v === "string" && v.trim() !== "" && Number.isFinite(Number(v))) return Number(v);
+  return undefined;
+};
 
 export function parseDocx(opts: ParagraphOptions | string): Record<string, unknown> {
   const resolved: ParagraphOptions = typeof opts === "string" ? { text: opts } : opts;
@@ -148,10 +184,15 @@ export function parseDocx(opts: ParagraphOptions | string): Record<string, unkno
     (resolved.frame as Record<string, unknown> | undefined) ??
     ((resolved as Record<string, unknown>).framePr as Record<string, unknown> | undefined);
   if (frame && frame.dropCap && !attrs.dropCap) {
+    const space =
+      frame.space && typeof frame.space === "object"
+        ? (frame.space as Record<string, unknown>)
+        : undefined;
     attrs.dropCap = {
       val: frame.dropCap,
-      lines: frame.lines ?? 3,
-      distance: (frame.hSpace as number) ?? (frame.space as number) ?? 0,
+      lines: asNumber(frame.lines) ?? 3,
+      distance: asNumber(space?.horizontal) ?? asNumber(frame.hSpace) ?? 0,
+      vDistance: asNumber(space?.vertical) ?? asNumber(frame.vSpace) ?? 0,
     };
   }
   return attrs;
