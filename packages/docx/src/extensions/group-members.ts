@@ -222,7 +222,7 @@ export function memberNodeToGroupChild(
     // display-only.
     const xfrm = attrs.groupXfrm as { x: number; y: number; cx: number; cy: number } | undefined;
     if (!xfrm || !Number.isFinite(xfrm.cx) || !Number.isFinite(xfrm.cy)) return null;
-    const media = mediaOfSrc(attrs, src);
+    const media = mediaOfSrc(src);
     if (!media) return null;
     return cleanAttrs({
       type: media.type,

@@ -42,21 +42,20 @@ import { splitFirstGrapheme, type TextMeasurer } from "../text/measure";
  *  (fresh) objects for every other block, so identity cannot drive reuse. The
  *  memo keys on a structural hash of the paragraph plus the context fields
  *  that shape it, and returns a fresh shallow copy (callers key cell boxes by
- *  paragraph identity — two identical paragraphs must not alias). Absolute
- *  float zones make the result position-dependent and skip the memo. */
+ *  paragraph identity — two identical paragraphs must not alias). A
+ *  position-dependent paragraph (an anchored drawing, or a flow with
+ *  absolute float zones) additionally keys on its flow position and those
+ *  zones, so an unchanged paragraph still reuses its layout. */
 export function layoutParagraph(
   para: LayoutParagraph,
   width: number,
   ctx: LayoutBlockContext | undefined,
   measurer: TextMeasurer,
 ): LaidOutParagraph {
-  if (para.drawings?.length || ctx?.floatZones?.length) {
-    return layoutParagraphUncached(para, width, ctx, measurer);
-  }
   const key = memoKey(para, width, ctx);
   const memo = memoFor(measurer);
   const hit = memo.get(key);
-  if (hit) return { ...hit };
+  if (hit && mediaSame(para, hit)) return { ...hit };
   const laid = layoutParagraphUncached(para, width, ctx, measurer);
   if (memo.size >= MEMO_CAP) {
     const oldest = memo.keys().next().value;
@@ -64,6 +63,40 @@ export function layoutParagraph(
   }
   memo.set(key, laid);
   return { ...laid };
+}
+
+/** The memo key omits paint-only media sources (megabyte data URLs), so a hit
+ *  must still prove them unchanged — a replaced image with identical geometry
+ *  re-lays instead of painting the old bitmap. String comparison is a memcmp
+ *  (or O(1) when the projection's identity cache hands back the same string),
+ *  far below hashing every base64 char. The member/array structure is part of
+ *  the key, so the walks below line up. */
+function mediaSame(para: LayoutParagraph, laid: LaidOutParagraph): boolean {
+  const a = para.inline;
+  const b = laid.inline;
+  for (let i = 0; i < a.length; i++) {
+    const x = a[i]!;
+    if (x.kind !== "picture") continue;
+    const y = b[i];
+    if (y?.kind !== "picture" || x.src !== y.src) return false;
+  }
+  const da = para.drawings;
+  const db = laid.drawings;
+  if (da === db) return true;
+  if (!da || !db || da.length !== db.length) return false;
+  for (let i = 0; i < da.length; i++) {
+    const ma = da[i]!.members;
+    const mb = db[i]!.members;
+    if (ma === mb) continue;
+    if (ma.length !== mb.length) return false;
+    for (let k = 0; k < ma.length; k++) {
+      const x = ma[k]!;
+      const y = mb[k]!;
+      if (x.kind !== "picture" || y.kind !== "picture") continue;
+      if (x.src !== y.src) return false;
+    }
+  }
+  return true;
 }
 
 /** Line breaking is the flow's dominant cost on large documents (see
@@ -85,12 +118,56 @@ function memoFor(measurer: TextMeasurer): Map<string, LaidOutParagraph> {
  *  JSON.stringify's string allocation, which the typing path would pay for
  *  every paragraph on every render. Two independent hashes make a collision
  *  (a stale layout) practically impossible; both sides of a comparison come
- *  from the same projection code, so property order is deterministic. */
+ *  from the same projection code, so property order is deterministic.
+ *
+ *  Key names repeat across every paragraph and style object, so their hash
+ *  is computed once and cached — hashing ~30 names per object was most of
+ *  the per-keystroke key cost on large documents. */
+const keyNameHashes = new Map<string, number>();
+function hashKeyName(name: string): number {
+  let h = keyNameHashes.get(name);
+  if (h === undefined) {
+    h = 0x811c9dc5;
+    for (let i = 0; i < name.length; i++) h = Math.imul(h ^ name.charCodeAt(i), 0x01000193);
+    keyNameHashes.set(name, h);
+  }
+  return h;
+}
+
+/** Position-free keys depend only on the paragraph, the width, and a handful
+ *  of flow scalars — all stable across a rerun of the same paragraph object
+ *  (the flow re-lays overflow blocks from its page replay). One entry per
+ *  object; the scalars are compared, not just the width, so a cell paragraph
+ *  and a body paragraph cannot share a key. */
+const keyCache = new WeakMap<
+  LayoutParagraph,
+  { width: number; inTable: boolean; adjust: boolean; onGrid: boolean; pitch: number; key: string }
+>();
+
 function memoKey(
   para: LayoutParagraph,
   width: number,
   ctx: LayoutBlockContext | undefined,
 ): string {
+  const inTable = ctx?.inTable === true;
+  const adjust = ctx?.adjustLinesInTable === true;
+  const onGrid = ctx?.onGrid === true;
+  const pitch = Math.round((ctx?.linePitchPx ?? 0) * 1000);
+  // Position-dependent paragraphs skip the cache (their key varies per call).
+  const positional = (para.drawings?.length ?? 0) > 0 || (ctx?.floatZones?.length ?? 0) > 0;
+  if (!positional) {
+    const cached = keyCache.get(para);
+    if (
+      cached &&
+      cached.width === width &&
+      cached.inTable === inTable &&
+      cached.adjust === adjust &&
+      cached.onGrid === onGrid &&
+      cached.pitch === pitch
+    ) {
+      return cached.key;
+    }
+  }
   let h1 = 0x811c9dc5;
   let h2 = 0x9e3779b9;
   const mix = (v: number): void => {
@@ -127,7 +204,12 @@ function memoKey(
         }
         mix(0x18);
         for (const key of Object.keys(v as Record<string, unknown>)) {
-          mixStr(key);
+          // Renderer-only media source (a megabyte data URL): it never shapes
+          // the layout — the picture atom's box is widthPx/heightPx alone (see
+          // LayoutInline) — and a hit is re-checked for it separately, so the
+          // memo does not walk every base64 char on every render.
+          if (key === "src") continue;
+          mix(hashKeyName(key));
           walk((v as Record<string, unknown>)[key]);
         }
         return;
@@ -139,11 +221,31 @@ function memoKey(
   walk(para);
   mix(0x19);
   mix(Math.round(width * 1000));
-  mix(ctx?.inTable ? 1 : 0);
-  mix(ctx?.adjustLinesInTable ? 1 : 0);
-  mix(ctx?.onGrid ? 1 : 0);
-  mix(Math.round((ctx?.linePitchPx ?? 0) * 1000));
-  return `${(h1 >>> 0).toString(36)}:${(h2 >>> 0).toString(36)}`;
+  mix(inTable ? 1 : 0);
+  mix(adjust ? 1 : 0);
+  mix(onGrid ? 1 : 0);
+  mix(pitch);
+  // A drawing or a flow with absolute float zones makes the result
+  // position-dependent (the zones scan from the block's flow Y, and a
+  // paragraph-anchored drawing resolves against the page box): the key must
+  // cover that context or an unchanged paragraph would reuse a layout from
+  // another position. Everything else keeps the position-free key, so a
+  // line-count change early in the document cannot churn the whole memo.
+  if (para.drawings?.length || ctx?.floatZones?.length) {
+    mix(0x1a);
+    mix(Math.round((ctx?.startY ?? 0) * 1000));
+    if (ctx?.wrapPage) {
+      mix(0x1b);
+      walk(ctx.wrapPage);
+    }
+    if (ctx?.floatZones?.length) {
+      mix(0x1c);
+      walk(ctx.floatZones);
+    }
+  }
+  const key = `${(h1 >>> 0).toString(36)}:${(h2 >>> 0).toString(36)}`;
+  if (!positional) keyCache.set(para, { width, inTable, adjust, onGrid, pitch, key });
+  return key;
 }
 
 function layoutParagraphUncached(

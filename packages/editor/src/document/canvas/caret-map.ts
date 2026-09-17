@@ -1308,6 +1308,26 @@ export class CaretMap {
     return line ? this.posOfChar(line.owner, line.startChar) : null;
   }
 
+  /** First doc position per page, ascending — the overlay cull's page index.
+   *  Building it walks the lines once (one posOfChar per page); the lazy
+   *  cache dies with the map. */
+  pageFirstPositions(): ReadonlyArray<{ page: number; from: number }> {
+    if (!this.#pageFirsts) {
+      const starts = new Map<number, number>();
+      for (const line of this.lines) {
+        const from = this.posOfChar(line.owner, line.startChar);
+        const cur = starts.get(line.page);
+        if (cur === undefined || from < cur) starts.set(line.page, from);
+      }
+      this.#pageFirsts = [...starts.entries()]
+        .map(([page, from]) => ({ page, from }))
+        .sort((a, b) => a.from - b.from);
+    }
+    return this.#pageFirsts;
+  }
+
+  #pageFirsts?: Array<{ page: number; from: number }>;
+
   /** The first doc position rendered on a line (null when lineIndex out of range). */
   firstPosOfLine(lineIndex: number): number | null {
     const line = this.lines[lineIndex];

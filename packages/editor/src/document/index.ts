@@ -11,38 +11,22 @@
  */
 
 import {
-  compileDocument,
   convertMillimetersToTwip,
-  defaultParagraphStyleId,
   docxExtensions,
   effectiveRunProps,
   generateDOCX,
-  generateHTML,
-  generateMarkdown,
-  generateODT,
-  generatePlainText,
-  generateRTF,
-  indexParagraphStyles,
-  mergeStyleChain,
   normalizeDocument,
   parseDOCX,
-  parseMarkdown,
-  parsePlainText,
-  parseRTF,
   prepareDocument,
-  prepareEmbeddedFonts,
-  resolveFontName,
   selectionSlicePayload,
   type HtmlGenerateOptions,
   type JSONContent,
   type SectionPropertiesOptions,
-  type StyleEntry,
   type StylesOptions,
   type DocxVariant,
 } from "@docen/docx";
 import type { Editor } from "@docen/docx/core";
 import {
-  projectDocumentOptions,
   type ProjectedFlowBox,
   type ProjectedPageBackground,
   type ProjectedPageFurniture,
@@ -50,50 +34,34 @@ import {
 } from "@docen/docx/layout";
 import {
   browserFontMetrics,
-  computePageNumberOffsets,
   createMeasurer,
-  EMU_PER_PX,
-  layoutFlowSections,
-  layoutSectionsIncremental,
   registerShapingFont,
-  twipToPx,
   type FlowPage,
   type FlowPageInsets,
-  type FlowSection,
 } from "@docen/layout";
 import { initShapingWasm } from "@docen/shaping";
 import { attr, customElement } from "@microsoft/fast-element";
-import { redoDepth, undoDepth } from "@tiptap/pm/history";
 import type { Mark, Node as PMNode } from "@tiptap/pm/model";
 import { EditorState, NodeSelection, TextSelection, type Transaction } from "@tiptap/pm/state";
 
-import { descendGroupChild, drawingNodePos, drawingSelectionKind } from "../drawing";
+import { descendGroupChild, drawingNodePos } from "../drawing";
+import type { DocenAddin } from "../ui";
 import {
   AddinHost,
   applyTheme,
-  mergeRibbonSchema,
   notifyLocaleChange,
   observeLang,
   registerComponents,
   resolveTheme,
   t,
-  type DocenAddin,
   type RibbonMenuItem,
-  type RibbonTab,
 } from "../ui";
 import type { AutocorrectDialogValues } from "../ui/components/workspace/autocorrect-dialog";
 import type { BookmarkItem } from "../ui/components/workspace/bookmark-dialog";
 import type { DrawingPropertiesState } from "../ui/components/workspace/drawing-properties-dialog";
 import type { FontDialogPatch } from "../ui/components/workspace/font-dialog";
 import type { GoToKind, GoToPayload } from "../ui/components/workspace/go-to-dialog";
-import type {
-  HyphenationDialogOptions,
-  DocenHyphenationDialog,
-} from "../ui/components/workspace/hyphenation-dialog";
-import { proofingLanguageName } from "../ui/components/workspace/language-dialog";
 import type { LinkValues } from "../ui/components/workspace/link-dialog";
-import type { StyleChoice, ModifyStyleState } from "../ui/components/workspace/modify-style-dialog";
-import type { NewStyleState } from "../ui/components/workspace/new-style-dialog";
 import type {
   NoteKindSettings,
   NoteSettingsValues,
@@ -106,15 +74,8 @@ import type {
 import type { QuickPartValues } from "../ui/components/workspace/quick-part-dialog";
 import type { FormattingInfo } from "../ui/components/workspace/reveal-formatting-pane";
 import type { SdtPropertiesValues } from "../ui/components/workspace/sdt-dialog";
-import type { DocenTabsDialog } from "../ui/components/workspace/tabs-dialog";
-import type { WordCountStats } from "../ui/components/workspace/word-count-dialog";
 import { createDefaultAddin, textCounter, wordCounter } from "./addin";
-import {
-  blocksOfDocAttrs,
-  groupBlocksByGallery,
-  parseSlicePayload,
-  withBlocks,
-} from "./building-blocks";
+import { blocksOfDocAttrs, parseSlicePayload, withBlocks } from "./building-blocks";
 import { A11yMirror } from "./canvas/a11y-mirror";
 import { autocorrectConfigOf } from "./canvas/autocorrect";
 import {
@@ -123,26 +84,19 @@ import {
   type StoryKind,
   type StorySlot,
 } from "./canvas/edit-bridge";
-import { deepEq, dirtyPagesOf } from "./canvas/page-eq";
 // Side-effect: register the document-specific UI components moved out of the
 // shared ui/ barrel — <docen-format-pane> (properties fallback),
 // <docen-outline> (navigation Headings tab), <docen-styles-pane> (Styles).
 import "./components/format-pane";
 import "./components/outline";
 import "./components/styles-pane";
-import {
-  CanvasStage,
-  type CanvasStageSection,
-  type LaidFurnitureSection,
-  layFurnitureSections,
-} from "./canvas/stage";
-import { documentStyles, documentTemplate, escapeHtml } from "./chrome";
+import { CanvasStage, type CanvasStageSection, type LaidFurnitureSection } from "./canvas/stage";
+import { documentStyles, documentTemplate } from "./chrome";
 import { ClipboardCommands } from "./commands/clipboard";
 import { CommentsCommands } from "./commands/comments";
 import { combineDocs, compareDocs } from "./commands/compare";
 import { DesignCommands } from "./commands/design";
 import { DialogCommands } from "./commands/dialogs";
-import { equationSeed } from "./commands/equation";
 import { hostCommands, type HostCommandRegistry } from "./commands/host";
 import {
   BuildingBlocksHostCommands,
@@ -158,36 +112,19 @@ import { RevisionsCommands } from "./commands/revisions";
 import { SectionCommands } from "./commands/sections";
 import { SpellingCommands } from "./commands/spelling";
 import { THEMES } from "./commands/themes";
-import type { StylesInspectorData, StylesPaneState } from "./components/styles-pane";
-import { extractPdfPageLayers, buildEmbeddedPdfFonts, pagesToPdf } from "./export-pdf";
 import type { NewStyleDefinition } from "./extensions/commands";
 import type { ModifyStylePatch, ParagraphDialogPatch } from "./extensions/commands";
-import {
-  chartMenuValueOf,
-  floatingDrawingAt,
-  formatToggleStatesOf,
-  inlineDrawingAt,
-  inlineImageAt,
-  positionMenuValueOf,
-  tableAncestry,
-  textDirectionMenuValueOf,
-  wrapMenuValueOf,
-  WIRED_DISPATCH,
-} from "./extensions/commands";
+import { type FieldFrame } from "./fields";
+import { READONLY_LIVE, type SaveFormat } from "./file-formats";
+import { ChromeDomain } from "./host/chrome";
+import { InsertDomain } from "./host/insert";
+import { IODomain } from "./host/io";
 // Side-effect import: registers the ribbon/header translation tables.
 import "./i18n";
-import { collectRevisions } from "./extensions/track-changes";
-import { liveFieldResolver, resolvePageFieldsBounded } from "./field-resolve";
-import { customPropertiesOf, finiteNumber, type FieldContext, type FieldFrame } from "./fields";
-import {
-  LOCAL_HANDLED,
-  READONLY_LIVE,
-  SAVE_FORMATS,
-  OpenFormatError,
-  detectOpenFormat,
-  suggestedFileName,
-  type SaveFormat,
-} from "./file-formats";
+import { RenderDomain } from "./host/render";
+import { StatusDomain } from "./host/status";
+import { pageInsets, StoriesDomain } from "./host/stories";
+import { StylesDomain } from "./host/styles";
 import { mergeSectionProperties } from "./page-setup";
 import { compressPictureSrc, pickTransparentColor, type CropRect } from "./pixels";
 import {
@@ -200,22 +137,7 @@ import {
   type ProtectionPane,
 } from "./protection";
 import { formattingInfoOf } from "./reveal-formatting";
-import {
-  buildContextualTab,
-  DEFAULT_RIBBON_TAB,
-  chartDesignTab,
-  equationContextTab,
-  formatMeasureTwip,
-  headerFooterContextTab,
-  pictureFormatTab,
-  renderRibbonFromSchema,
-  ribbonActions,
-  ribbonTabs,
-  styleGalleryItems,
-  shapeFormatTab,
-  tableContextTabs,
-  useCmUnits,
-} from "./ribbon";
+import { useCmUnits } from "./ribbon";
 import {
   AUTOCORRECT_TABLE_VERSION,
   getSettings,
@@ -227,158 +149,10 @@ import {
   type SettingsPatch,
 } from "./settings";
 import { getSynonyms, spellSuggestions } from "./spelling";
-import { findTemplate, templateLocale } from "./templates";
 
-/** Split buttons whose face carries no command of its own — the handler only
- *  exists for the drop-down variants' values (Word's menu buttons; a face
- *  click opens the menu instead of emitting a valueless command). */
-const FACE_ONLY_SPLITS: ReadonlySet<string> = new Set(["autofit", "columns"]);
-
-/** Quick Access Toolbar candidates (Word's customize-QAT menu): each id is a
- *  routed command (`event`), shown in the title bar while checked. The shown
- *  set persists in localStorage (`docen:qat`); the order here is the bar's. */
-const QAT_CANDIDATES: readonly { id: string; icon: string; labelKey: string }[] = [
-  { id: "new", icon: "new", labelKey: "header.new" },
-  { id: "open", icon: "open", labelKey: "header.open" },
-  { id: "save", icon: "save", labelKey: "header.save" },
-  { id: "print", icon: "print", labelKey: "header.print" },
-  { id: "undo", icon: "undo", labelKey: "header.undo" },
-  { id: "redo", icon: "redo", labelKey: "header.redo" },
-  { id: "repeat", icon: "repeat", labelKey: "header.repeat" },
-  { id: "spell-check", icon: "spell-check", labelKey: "ribbon.cmd.spell-check" },
-];
-const QAT_DEFAULT: readonly string[] = ["save", "undo", "redo"];
-const QAT_STORAGE_KEY = "docen:qat";
-const AUTOSAVE_ON_KEY = "docen:autosave";
-/** localStorage quota is ~5MB per origin — skip the write (keep the last
- *  backup) rather than throwing mid-typing. */
-const AUTOSAVE_MAX_CHARS = 4_000_000;
-/** Layout budget per incremental render slice (ms) — the open path lays
- *  sealed pages for this long, then yields a frame to the browser. */
-const LAYOUT_SLICE_MS = 12;
-/** Pagination-feedback budget: resolve passes per render. A pass rewrites the
- *  measured text of non-numbering fields (SECTION/SECTIONPAGES) and re-lays;
- *  the cap makes a field-value/pagination oscillation terminate (the last
- *  resolution wins; page numbers themselves never feed back — their atoms
- *  keep the measuring placeholder). See {@link resolvePageFieldsBounded}. */
-const FIELD_RESOLVE_PASSES = 3;
 /** Double-click window (ms) — the format painter's sticky toggle and the
  *  bare-click stroke deferral both track the system double-click time. */
 const PAINTER_DOUBLE_CLICK_MS = 500;
-/** Idle delay (ms) before the status bar re-walks the document for the word
- *  count — CharacterCount.words() regexes every text node, so the typing path
- *  keeps the last finished count and recounts once typing pauses. */
-const STATUS_WORD_COUNT_IDLE_MS = 200;
-/** Idle delay (ms) before the Navigation pane's page thumbnails re-rasterize.
- *  Each thumbnail is a full PNG encode of a page canvas — far too heavy for
- *  the per-keystroke path even when the pane is open. */
-const NAV_THUMB_IDLE_MS = 250;
-
-/** The projection half's output — the flow inputs both the synchronous drain
- *  and the incremental walk lay. */
-interface ProjectedFlowInputs {
-  sections: (ProjectedSection & CanvasStageSection)[];
-  background?: ProjectedPageBackground;
-  flowSections: FlowSection[];
-  viewMode: "print" | "web" | "draft" | "read";
-  continuous: boolean;
-}
-
-/** Run marks the Style Inspector lists as direct formatting (i18n keys — the
- *  ribbon's command labels double as the formatting names). */
-const MARK_LABELS: Readonly<Record<string, string>> = {
-  bold: "ribbon.cmd.bold",
-  italic: "ribbon.cmd.italic",
-  underline: "ribbon.cmd.underline",
-  strike: "ribbon.cmd.strike",
-  subscript: "ribbon.cmd.subscript",
-  superscript: "ribbon.cmd.superscript",
-};
-
-/** The built-in paragraph styles whose display name Word localizes ("Heading 1"
- *  / "标题 1") regardless of what the document's styles.xml calls them. Keys
- *  are lower-cased style ids. */
-const BUILT_IN_STYLE_KEYS: Readonly<Record<string, string>> = {
-  normal: "styleName.normal",
-  heading1: "styleName.heading1",
-  heading2: "styleName.heading2",
-  heading3: "styleName.heading3",
-  heading4: "styleName.heading4",
-  heading5: "styleName.heading5",
-  heading6: "styleName.heading6",
-  heading7: "styleName.heading7",
-  heading8: "styleName.heading8",
-  heading9: "styleName.heading9",
-  title: "styleName.title",
-  subtitle: "styleName.subtitle",
-  quote: "styleName.quote",
-  intensequote: "styleName.intenseQuote",
-  listparagraph: "styleName.listParagraph",
-};
-
-/** The OOXML w:name each built-in style ships with — a style whose explicit
- *  name differs (case-insensitively) was renamed and shows that name as-is;
- *  the untouched defaults keep localizing. */
-const BUILT_IN_DEFAULT_NAMES: Readonly<Record<string, string>> = {
-  normal: "Normal",
-  heading1: "heading 1",
-  heading2: "heading 2",
-  heading3: "heading 3",
-  heading4: "heading 4",
-  heading5: "heading 5",
-  heading6: "heading 6",
-  heading7: "heading 7",
-  heading8: "heading 8",
-  heading9: "heading 9",
-  title: "Title",
-  subtitle: "Subtitle",
-  quote: "Quote",
-  intensequote: "Intense Quote",
-  listparagraph: "List Paragraph",
-};
-
-/** Patch a section's header/footer slot inside the doc JSON tree — the
- *  section owns its slots on the paragraph closing it (the Nth
- *  sectionProperties paragraph in document order, the same address
- *  #readStorySource reads and #persistStory writes). Returns undefined when
- *  that paragraph doesn't exist (the final section closes at the body end —
- *  its slots live on the doc attrs). Copies along the walked path only; the
- *  editor state's objects are shared and must not mutate. */
-function patchSectionSlots(
-  root: JSONContent,
-  sectionIndex: number,
-  key: "sectionHeaders" | "sectionFooters",
-  slot: StorySlot,
-  content: JSONContent[],
-): JSONContent | undefined {
-  let remaining = sectionIndex;
-  const walk = (node: JSONContent): JSONContent | undefined => {
-    if (node.type === "paragraph") {
-      const attrs = (node.attrs ?? {}) as Record<string, unknown>;
-      if (attrs.sectionProperties != null) {
-        if (remaining === 0) {
-          const group = (attrs[key] ?? {}) as Record<string, unknown>;
-          return {
-            ...node,
-            attrs: { ...attrs, [key]: { ...group, [slot]: content } },
-          };
-        }
-        remaining--;
-      }
-    }
-    if (!Array.isArray(node.content)) return undefined;
-    for (let i = 0; i < node.content.length; i++) {
-      const patched = walk(node.content[i]!);
-      if (patched) {
-        const children = node.content.slice();
-        children[i] = patched;
-        return { ...node, content: children };
-      }
-    }
-    return undefined;
-  };
-  return walk(root);
-}
 
 /** The style's run definition as the Font dialog's prefill (the Format >
  *  Font open — absent values leave the combo blank, inherit-again). */
@@ -435,34 +209,6 @@ function fontRunPropsOf(patch: FontDialogPatch): Record<string, unknown> {
   };
 }
 
-/** The mathInline atom carrying a math payload at the selection — the
- *  equation context tab's trigger. A caret hugging the atom (before or after)
- *  or a NodeSelection wrapping it counts; `pos` is the atom's document
- *  position so the host can re-select it after inserts shift positions. A
- *  legacy `inlinePassthrough` carrying `data.math` (documents saved before
- *  the single-representation switch) is still recognized. */
-function mathAtomAt(state: EditorState): { node: PMNode; pos: number } | null {
-  const { $from } = state.selection;
-  const before = $from.parent.childAfter($from.parentOffset);
-  const after = $from.parent.childBefore($from.parentOffset);
-  for (const child of [before, after]) {
-    const node = child.node;
-    if (!node) continue;
-    if (node.type.name === "mathInline") {
-      if (node.attrs?.math) return { node, pos: $from.start() + child.offset };
-      continue;
-    }
-    if (node.type.name !== "inlinePassthrough") continue;
-    try {
-      const data = JSON.parse(String(node.attrs.data ?? "{}")) as { math?: unknown };
-      if (data.math) return { node, pos: $from.start() + child.offset };
-    } catch {
-      /* opaque payload — not a math atom */
-    }
-  }
-  return null;
-}
-
 /**
  * Task pane identifiers, mirroring the Office `<TaskpaneId>` concept. The host
  * ships two built-in panes: `navigation` (start/left) and `properties` (end/right).
@@ -485,24 +231,6 @@ export type TaskPaneId =
  * Carried on {@link docen:taskpane-visibility-change} event details.
  */
 export type VisibilityMode = "taskpane" | "hidden";
-
-/** Arrange events that serve floating drawings only — with anything else
- *  selected (or just a caret) their commands decline. */
-const FLOATING_ONLY = new Set([
-  "align-objects",
-  "bring-forward",
-  "send-backward",
-  "bring-to-front",
-  "send-to-back",
-]);
-
-/** Arrange events that also serve an inline drawing — wrap and position
- *  convert it to a floating one (Word's galleries convert on click). */
-const FLOATING_OR_INLINE = new Set(["wrap", "position"]);
-
-/** Rotate also serves an inline picture; inline shapes and charts don't
- *  rotate. */
-const FLOATING_OR_INLINE_IMAGE = new Set(["rotate"]);
 
 @customElement({ name: "docen-document", template: documentTemplate, styles: documentStyles })
 class DocenDocument extends AddinHost<Editor> {
@@ -540,35 +268,35 @@ class DocenDocument extends AddinHost<Editor> {
     // bridge's active story so run/replace/right-click follow it.
     editor: () => this.#bridge?.activeEditor() ?? this.editor,
     bridge: () => this.#bridge,
-    element: () => this,
+    element: () => this as HTMLElement,
   });
   readonly #navigation = new NavigationCommands({
     editor: () => this.editor,
     bridge: () => this.#bridge,
-    element: () => this,
+    element: () => this as HTMLElement,
     setTextSelection: (from, to) => this.#setTextSelection(from, to),
   });
   readonly #design = new DesignCommands({
     editor: () => this.editor,
     bridge: () => this.#bridge,
-    element: () => this,
+    element: () => this as HTMLElement,
   });
   readonly #comments = new CommentsCommands({
     editor: () => this.editor,
     bridge: () => this.#bridge,
-    element: () => this,
+    element: () => this as HTMLElement,
     showTaskpane: (id) => this.showTaskpane(id),
   });
   readonly #revisions = new RevisionsCommands({
     editor: () => this.editor,
     bridge: () => this.#bridge,
-    element: () => this,
+    element: () => this as HTMLElement,
     togglePane: (id) => this.#togglePane(id),
   });
   readonly #references = new ReferencesCommands({
     editor: () => this.editor,
     bridge: () => this.#bridge,
-    element: () => this,
+    element: () => this as HTMLElement,
     updateAllFields: () => this.#dialogs.updateAllFields(),
   });
   /** Mailings-tab merge commands (recipients/merge fields/preview), split out
@@ -576,7 +304,7 @@ class DocenDocument extends AddinHost<Editor> {
   readonly #merge = new MailMergeCommands({
     editor: () => this.editor,
     bridge: () => this.#bridge,
-    element: () => this,
+    element: () => this as HTMLElement,
     rerender: () => this.#renderDoc(this.getJSON()),
   });
   /** Dialog-commit commands (paragraph/font/table/Chinese layout/caption/
@@ -584,7 +312,7 @@ class DocenDocument extends AddinHost<Editor> {
   readonly #dialogs = new DialogCommands({
     editor: () => this.editor,
     bridge: () => this.#bridge,
-    element: () => this,
+    element: () => this as HTMLElement,
     syncStatusLanguage: () => this.#syncStatusLanguage(),
     filename: () => this.filename,
     fieldFrame: (pos) => this.#fieldFrame(pos),
@@ -599,7 +327,7 @@ class DocenDocument extends AddinHost<Editor> {
   readonly #sections = new SectionCommands({
     editor: () => this.editor,
     bridge: () => this.#bridge,
-    element: () => this,
+    element: () => this as HTMLElement,
     flow: () => this.#flow,
   });
   /** Paste lanes, the paste-options bar, and the Office Clipboard pane,
@@ -607,9 +335,236 @@ class DocenDocument extends AddinHost<Editor> {
   readonly #clipboard = new ClipboardCommands({
     editor: () => this.editor,
     bridge: () => this.#bridge,
-    element: () => this,
+    element: () => this as HTMLElement,
+  });
+  /** Status bar / zoom / Navigation-pane thumbnails, split out of this class —
+   *  see host/status.ts. */
+  readonly #status = new StatusDomain({
+    root: () => this.shadowRoot,
+    editor: () => this.editor,
+    bridge: () => this.#bridge,
+    stage: () => this.#stage,
+    pages: () => this.#pages,
+    sectionOfPage: () => this.#sectionOfPage,
+    flow: () => this.#flow,
+    viewMode: () => this.#viewMode(),
+    caretLanguage: () => this.#caretLanguage(),
+    taskpaneOpen: (id) => this.getTaskpaneState(id),
+    updateReveal: () => this.#updateRevealFormatting(),
+    setView: (view) => this.setAttribute("view", view),
+    emitZoom: (zoom) =>
+      this.dispatchEvent(
+        new CustomEvent("docen:zoom-change", {
+          bubbles: true,
+          composed: true,
+          detail: { zoom },
+        }),
+      ),
+  });
+  /** Ribbon/title-bar chrome (QAT, auto-save, header/panes, menu syncs), split
+   *  out of this class — see host/chrome.ts. */
+  readonly #chrome = new ChromeDomain({
+    element: () => this as HTMLElement,
+    root: () => this.shadowRoot,
+    editor: () => this.editor,
+    bridge: () => this.#bridge,
+    settings: () => this.settings,
+    addins: () => this.addins as readonly DocenAddin[],
+    addAddin: (addin) => this.addAddin(addin as never),
+    removeAddin: (id) => this.removeAddin(id),
+    getAttribute: (name) => this.getAttribute(name),
+    hasAttribute: (name) => this.hasAttribute(name),
+    markdown: () => this.#markdown,
+    markupView: () => this.#markupView,
+    markupAuthors: () => this.#markupAuthors,
+    markupColors: () => this.#markupColors,
+    balloons: () => this.#balloons,
+    snapshots: () => this.#versionSnapshots,
+    setSnapshots: (value) => {
+      this.#versionSnapshots = value;
+    },
+    merge: () => this.#merge,
+    stories: () => this.#stories,
+    storyKind: () => this.#stories.kind(),
+    getTaskpaneState: (id) => this.getTaskpaneState(id),
+    setTaskpane: (id, open) => this.#setTaskpane(id, open),
+    updateStatus: () => this.#updateStatus(),
+    dispatch: (event) => this.dispatchEvent(event),
+  });
+  /** File I/O (open/save/print/close/templates), split out of this class —
+   *  see host/io.ts. */
+  readonly #io = new IODomain({
+    element: () => this as HTMLElement,
+    root: () => this.shadowRoot,
+    editor: () => this.editor,
+    bridge: () => this.#bridge,
+    stage: () => this.#stage,
+    pages: () => this.#pages,
+    sectionOfPage: () => this.#sectionOfPage,
+    flow: () => this.#flow,
+    lastRun: () => this.#lastRun,
+    fonts: () => this.#fonts,
+    viewMode: () => this.#viewMode(),
+    lang: () => this.lang,
+    docxVariant: () => this.#docxVariant,
+    setDocxVariant: (variant) => {
+      this.#docxVariant = variant;
+    },
+    docProtected: () => this.#docProtected,
+    setDocProtected: (value) => {
+      this.#docProtected = value;
+    },
+    protectionMode: () => this.#protectionMode,
+    setProtectionMode: (value) => {
+      this.#protectionMode = value;
+    },
+    updateFieldsOnOpen: () => this.#updateFieldsOnOpen,
+    setUpdateFieldsOnOpen: (value) => {
+      this.#updateFieldsOnOpen = value;
+    },
+    jsonDirty: () => this.#jsonDirty,
+    setJsonDirty: (value) => {
+      this.#jsonDirty = value;
+    },
+    cachedJSON: () => this.#cachedJSON,
+    setCachedJSON: (value) => {
+      this.#cachedJSON = value;
+    },
+    fileInput: () => this.#fileInput,
+    getAttribute: (name) => this.getAttribute(name),
+    setAttribute: (name, value) => this.setAttribute(name, value),
+    emitCancelable: (name, detail) => this.#emitCancelable(name, detail),
+    renderChrome: () => this.#renderChrome(),
+    renderDoc: (doc) => this.#renderDoc(doc),
+    applyDocumentTheme: (kind, value, persist) => this.#applyDocumentTheme(kind, value, persist),
+    snapshotStyles: () => this.#snapshotStyles(),
+    syncEditable: () => this.#syncEditable(),
+  });
+  /** Styles pane / gallery / Modify Style dialogs, split out of this class —
+   *  see host/styles.ts. */
+  readonly #styles = new StylesDomain({
+    element: () => this as HTMLElement,
+    root: () => this.shadowRoot,
+    editor: () => this.editor,
+    renderChrome: () => this.#renderChrome(),
+    fontPatchOfRun: (run) => fontPatchOfRun(run),
+    fontRunPropsOf: (patch) => fontRunPropsOf(patch),
+  });
+  /** Insert/jump commands (symbols, shapes, pages, equations, tabs, bookmarks,
+   *  note jumps), split out of this class — see host/insert.ts. */
+  readonly #insert = new InsertDomain({
+    element: () => this as HTMLElement,
+    root: () => this.shadowRoot,
+    editor: () => this.editor,
+    bridge: () => this.#bridge,
+    stage: () => this.#stage,
+    flow: () => this.#flow,
+    pages: () => this.#pages,
+    hyphenation: () => this.#hyphenation,
+    setHyphenation: (value) => {
+      this.#hyphenation = value;
+    },
+    merge: () => this.#merge,
+    getJSON: () => this.getJSON(),
+    setJSON: (json) => this.setJSON(json),
+    renderDoc: (doc) => this.#renderDoc(doc),
+    setTextSelection: (from, to) => this.#setTextSelection(from, to),
+    openBookmarkDialog: () => this.#openBookmarkDialog(),
+  });
+  /** Canvas render pipeline (project -> layout -> paint, field feedback, page
+   *  diff), split out of this class - see host/render.ts. */
+  readonly #render = new RenderDomain({
+    root: () => this.shadowRoot,
+    editor: () => this.editor,
+    bridge: () => this.#bridge,
+    stage: () => this.#stage,
+    stageHost: () => this.#stageHost,
+    armStage: (projected) => this.#armStage(projected),
+    measurer: () => this.#measurer,
+    a11yMirror: () => this.#a11yMirror,
+    a11yTimer: () => this.#a11yTimer,
+    setA11yTimer: (value) => {
+      this.#a11yTimer = value;
+    },
+    comments: () => this.#comments,
+    revisions: () => this.#revisions,
+    spelling: () => this.#spelling,
+    dialogs: () => this.#dialogs,
+    getJSON: () => this.getJSON(),
+    getTaskpaneState: (id) => this.getTaskpaneState(id),
+    hasAttribute: (name) => this.hasAttribute(name),
+    isConnected: () => this.isConnected,
+    filename: () => this.filename,
+    debug: () => this.debug,
+    hyphenation: () => this.#hyphenation,
+    markupView: () => this.#markupView,
+    markupAuthors: () => this.#markupAuthors,
+    markupColors: () => this.#markupColors,
+    balloons: () => this.#balloons,
+    hiddenTextShown: () => this.#hiddenTextShown,
+    setHiddenTextShown: (value) => {
+      this.#hiddenTextShown = value;
+    },
+    fieldCodes: () => this.#fieldCodes,
+    setFieldCodes: (value) => {
+      this.#fieldCodes = value;
+    },
+    updateFieldsOnOpen: () => this.#updateFieldsOnOpen,
+    setUpdateFieldsOnOpen: (value) => {
+      this.#updateFieldsOnOpen = value;
+    },
+    documentSettings: () => this.#documentSettings(),
+    pages: () => this.#pages,
+    setPages: (pages) => {
+      this.#pages = pages;
+    },
+    sectionOfPage: () => this.#sectionOfPage,
+    setSectionOfPage: (sectionOfPage) => {
+      this.#sectionOfPage = sectionOfPage;
+    },
+    flow: () => this.#flow,
+    setFlow: (flow) => {
+      this.#flow = flow;
+    },
+    lastRun: () => this.#lastRun,
+    setLastRun: (run) => {
+      this.#lastRun = run;
+    },
+    renderSeq: () => this.#renderSeq,
+    setRenderSeq: (seq) => {
+      this.#renderSeq = seq;
+    },
+    mergedView: (doc) => this.#mergedView(doc),
+    pageOriginOf: (sections, sectionOfPage) => this.#pageOriginOf(sections, sectionOfPage),
+    pageInsets: (flow, furniture, laid) => this.#pageInsets(flow, furniture, laid),
+    updateStatus: () => this.#updateStatus(),
+    syncStatusLanguage: () => this.#syncStatusLanguage(),
+    syncActiveTabStops: () => this.#syncActiveTabStops(),
+    setProgress: (label) => this.#setProgress(label),
+    viewMode: () => this.#viewMode(),
   });
   #stage?: CanvasStage;
+  /** Header/footer story editing, split out of this class — see
+   *  host/stories.ts. */
+  readonly #stories = new StoriesDomain({
+    element: () => this as HTMLElement,
+    editor: () => this.editor,
+    bridge: () => this.#bridge,
+    stage: () => this.#stage,
+    sectionOfPage: () => this.#sectionOfPage,
+    projectAndLayout: (doc) => this.#projectAndLayout(doc),
+    setLayout: (run) => {
+      this.#pages = run.pages;
+      this.#sectionOfPage = run.sectionOfPage;
+      this.#flow = run.sections[0]?.flow;
+    },
+    loadDoc: (doc) => this.#loadDoc(doc),
+    sectPrPosInCurrentSection: () => this.#sections.sectionSectPrPos(),
+    hideContextTab: () => this.#hideHeaderFooterContextTab(),
+    spellingSchedule: () => this.#spelling.schedule(),
+    spellingRun: () => this.#spelling.run(),
+    isPageField: (child) => DocenDocument.isPageField(child),
+  });
   #stageHost?: HTMLElement;
   readonly #a11yMirror = new A11yMirror();
   #a11yTimer?: number;
@@ -636,26 +591,11 @@ class DocenDocument extends AddinHost<Editor> {
   #fileInput?: HTMLInputElement;
   #imageInput?: HTMLInputElement;
   #pictureInput?: HTMLInputElement;
-  /** Cached doc nodeSize + Office-style word count so caret-move transactions
-   *  don't re-walk the whole document (recomputed only when content changes). */
-  #lastDocSize = -1;
-  #lastWords = 0;
-  /** Idle pass that refreshes #lastWords after content changes (see
-   *  STATUS_WORD_COUNT_IDLE_MS). */
-  #wordCountTimer?: ReturnType<typeof setTimeout>;
   /** Pending frame for the coalesced host UI sync — one chrome pass per
    *  animation frame instead of one per transaction (see #scheduleUiSync). */
   #uiSyncFrame = 0;
   /** A pending UI sync still owes the status-bar language a refresh. */
   #uiSelectionDirty = false;
-  /** Idle pass that re-rasterizes the Navigation pane's page thumbnails. */
-  #navThumbTimer?: ReturnType<typeof setTimeout>;
-  /** Signature (page count : current page : thumbnail generation) of the last
-   *  <docen-nav-pages> push — skips rebuilding the pane's list when nothing it
-   *  shows actually changed. */
-  #navPagesKey = "";
-  #navThumbGen = 0;
-  #navThumbs: (string | null)[] = [];
   #unobserveLang?: () => void;
   /** Tears down the shared settings-store subscription (header re-stamp +
    *  `docen:settings-change` forwarding). */
@@ -677,8 +617,6 @@ class DocenDocument extends AddinHost<Editor> {
   #painterSticky = false;
   #painterClickAt = 0;
   #painterStrokeTimer?: ReturnType<typeof setTimeout>;
-  /** Current zoom level (percent) applied by the page stage's slot sizing. */
-  #zoom = 100;
   /** Cached unwrapped JSON (host.getJSON result). Invalidated on every user/doc
    *  change; recomputed lazily. Saves the editor.getJSON walk on every
    *  save/autosave/getJSON call. */
@@ -689,10 +627,6 @@ class DocenDocument extends AddinHost<Editor> {
    *  variant — main content type, extension, picker MIME — so a macro-enabled
    *  or template document round-trips as itself instead of being mislabelled. */
   #docxVariant: DocxVariant = "docx";
-  /** The header/footer story under edit (null = none). `#storyPage` is the
-   *  anchor page the story edits in place on. */
-  #storyKind: StoryKind | null = null;
-  #storyPage = -1;
   /** Word's Display for Review state (Review → Tracking): how tracked changes
    *  project onto the canvas, optionally scoped to one reviewer's revisions.
    *  Pure display state — the marks in the document are untouched. */
@@ -830,12 +764,6 @@ class DocenDocument extends AddinHost<Editor> {
     if (ribbon) ribbon.setAttribute("mode", "always-shown");
   };
 
-  /** Status-bar zoom slider → apply the new zoom level. Named (not inline) so it
-   *  can be removed on disconnect. */
-  readonly #onZoomChange = (event: CustomEvent<{ zoom: number }>): void => {
-    this.#setZoom(event.detail.zoom);
-  };
-
   /** Ctrl+wheel zoom over the page area (Word/Office behavior). Captured ahead
    *  of the stage shell's wheel handling, which stops propagation for its own
    *  scroll — plain wheel keeps scrolling; only the Ctrl chord zooms. */
@@ -843,7 +771,7 @@ class DocenDocument extends AddinHost<Editor> {
     if (!event.ctrlKey && !event.metaKey) return;
     event.preventDefault();
     event.stopImmediatePropagation();
-    this.#setZoom(this.#zoom + (event.deltaY < 0 ? 10 : -10));
+    this.#setZoom(this.#status.getZoom() + (event.deltaY < 0 ? 10 : -10));
   };
 
   /** Ctrl+= / Ctrl+- / Ctrl+0 zoom, Ctrl+F find (Word behavior). Zoom is
@@ -964,10 +892,10 @@ class DocenDocument extends AddinHost<Editor> {
     const key = event.key;
     if (key === "+" || key === "=") {
       event.preventDefault();
-      this.#setZoom(this.#zoom + 10);
+      this.#setZoom(this.#status.getZoom() + 10);
     } else if (key === "-" || key === "_") {
       event.preventDefault();
-      this.#setZoom(this.#zoom - 10);
+      this.#setZoom(this.#status.getZoom() - 10);
     } else if (key === "0") {
       event.preventDefault();
       this.#setZoom(100);
@@ -1490,320 +1418,38 @@ class DocenDocument extends AddinHost<Editor> {
     }
   }
 
-  /** The loaded document's styles model (doc.attrs.styles), or null. */
   #docStyles(editor: Editor): StylesOptions | null {
-    return (editor.state.doc.attrs?.styles as StylesOptions | undefined) ?? null;
+    return this.#styles.docStyles(editor);
   }
 
-  /** A style's display name: built-in styles show Word's localized name
-   *  (BUILT_IN_STYLE_KEYS), everything else shows the document's own name
-   *  (the id as the fallback). */
-  #styleDisplayName(id: string, name: unknown): string {
-    const key = id.toLowerCase();
-    const builtin = BUILT_IN_STYLE_KEYS[key];
-    // A renamed built-in (explicit name off the OOXML default) shows as-is;
-    // otherwise the built-in key localizes.
-    const def = BUILT_IN_DEFAULT_NAMES[key];
-    if (
-      def &&
-      typeof name === "string" &&
-      name.trim() &&
-      name.trim().toLowerCase() !== def.toLowerCase()
-    )
-      return name.trim();
-    if (builtin) return t(builtin, this);
-    return typeof name === "string" && name ? name : id;
-  }
-
-  /** The paragraph-style id at the caret (the HeadingLevel literal carried on
-   *  `heading` for heading paragraphs, the pStyle id on `style` otherwise). */
   #currentStyleId(editor: Editor): string | null {
-    const attrs = editor.getAttributes("paragraph") as {
-      heading?: unknown;
-      style?: unknown;
-    };
-    if (typeof attrs.heading === "string" && attrs.heading) return attrs.heading;
-    if (typeof attrs.style === "string" && attrs.style) return attrs.style;
-    return null;
+    return this.#styles.currentStyleId(editor);
   }
 
-  /** Mirror the paragraph style at the caret into the Styles gallery — its
-   *  value is the current paragraph's style id (the HeadingLevel literal
-   *  carried on `heading` for heading paragraphs, the pStyle id on `style`
-   *  otherwise, or "Normal" when the paragraph carries none). The gallery
-   *  outlines the entry matching the value (Word's applied-style card). */
   #syncStyleControl(): void {
-    const editor = this.editor;
-    if (!editor) return;
-    const value = this.#currentStyleId(editor) || "Normal";
-    const cb = this.shadowRoot?.querySelector<HTMLElement>('docen-ribbon-gallery[event="style"]');
-    if (cb && cb.getAttribute("value") !== value) cb.setAttribute("value", value);
-    // The cards carry each style's effective formatting, so the items must
-    // track the document's styles model — the ribbon template bakes one
-    // snapshot at build time (usually before the document loads). Rebuild only
-    // when the model object is replaced (load / style-set switch / modify
-    // style): the identity guard keeps caret-only transactions from
-    // recomputing the basedOn merges.
-    const styles = this.#docStyles(editor);
-    if (cb && styles && styles !== this.#galleryStyles) {
-      this.#galleryStyles = styles;
-      const items = styleGalleryItems(styles).map((item) => {
-        const text = this.#styleDisplayName(item.value ?? "", item.text);
-        // The card renders preview.text (the label inside the card), item.text
-        // is the menu/tooltip name — both follow the same display naming.
-        return { ...item, text, preview: { ...item.preview, text } };
-      });
-      cb.setAttribute("items", JSON.stringify(items));
-    }
-    // The Styles pane's highlight follows the caret's paragraph style.
-    const pane = this.shadowRoot?.querySelector("docen-styles-pane") as
-      | (HTMLElement & { setCurrent(id: string): void })
-      | null;
-    pane?.setCurrent(value);
+    this.#styles.syncStyleControl();
   }
-
-  /** The styles model identity currently rendered into the Styles gallery —
-   *  skips the rebuild until the model object is replaced. */
-  #galleryStyles?: StylesOptions;
 
   // ── Styles pane / Modify Style dialog / Style Inspector ──────────────────
 
-  /** The styles model as the document opened with — the Design tab's style-set
-   *  gallery restores it from here ("default" entry). */
-  #stylesSnapshot: string | null = null;
-
-  /** Build the Styles pane's list from the document's styles model: every
-   *  paragraph style (custom + built-in named), each row previewed with the
-   *  formatting its basedOn chain merges to. */
   #renderStylesPane(): void {
-    const pane = this.shadowRoot?.querySelector("docen-styles-pane") as
-      | (HTMLElement & { renderStyles(state: StylesPaneState): void })
-      | null;
-    const editor = this.editor;
-    if (!pane || !editor) return;
-    const styles = this.#docStyles(editor);
-    const byId = styles ? indexParagraphStyles(styles) : new Map();
-    const entries = [...byId.entries()].map(([id, style]) => {
-      const run = mergeStyleChain(byId, id).run as Record<string, unknown>;
-      return {
-        id,
-        name: this.#styleDisplayName(id, style.name),
-        preview: {
-          font: typeof run.font === "string" ? run.font : undefined,
-          size: typeof run.size === "number" ? run.size : undefined,
-          bold: run.bold === true,
-          italic: run.italic === true,
-          color: typeof run.color === "string" ? run.color : undefined,
-          underline: !!run.underline,
-        },
-      };
-    });
-    // A paragraph without heading/pStyle attrs carries the document's default
-    // paragraph style (Word highlights "Normal" in that case).
-    const currentId =
-      this.#currentStyleId(editor) ??
-      defaultParagraphStyleId(styles) ??
-      (byId.has("Normal") ? "Normal" : "");
-    pane.renderStyles({ entries, currentId });
+    this.#styles.renderStylesPane();
   }
 
-  /** Push the selection's style stack to the pane's inspector view: the
-   *  paragraph style, the hyperlink character style (the docx editing model
-   *  has no other character-style carrier), and the run marks at the
-   *  selection as the direct-formatting list. */
   #renderStylesInspector(): void {
-    const pane = this.shadowRoot?.querySelector("docen-styles-pane") as
-      | (HTMLElement & { renderInspector(data: StylesInspectorData): void })
-      | null;
-    const editor = this.editor;
-    if (!pane || !editor) return;
-    const styles = this.#docStyles(editor);
-    const byId = styles ? indexParagraphStyles(styles) : new Map();
-    const styleId = this.#currentStyleId(editor);
-    const marks = editor.state.selection.$from.marks();
-    const characterStyle = marks.some((m) => m.type.name === "link")
-      ? t("styleName.hyperlink", this)
-      : null;
-    const direct: string[] = [];
-    for (const mark of marks) {
-      const attrs = mark.attrs as Record<string, unknown>;
-      if (mark.type.name === "textStyle") {
-        const { font, size, color } = attrs;
-        if (typeof font === "string") direct.push(`${t("fontDialog.font", this)}: ${font}`);
-        if (typeof size === "number") direct.push(`${t("fontDialog.size", this)}: ${size} pt`);
-        if (typeof color === "string")
-          direct.push(`${t("modifyStyleDialog.color", this)}: #${color}`);
-        continue;
-      }
-      const label = MARK_LABELS[mark.type.name];
-      if (label) direct.push(t(label, this));
-    }
-    pane.renderInspector({
-      paragraphStyle: styleId
-        ? this.#styleDisplayName(styleId, byId.get(styleId)?.name)
-        : t("styleName.normal", this),
-      characterStyle,
-      direct,
-    });
+    this.#styles.renderStylesInspector();
   }
 
-  /** Prefill and open the Modify Style dialog for one style. The fields read
-   *  the style's OWN definition (not the merged chain) — Word shows what the
-   *  style itself says, leaving inherited values blank. */
   #openModifyStyle(id: string): void {
-    const dialog = this.shadowRoot?.querySelector("docen-modify-style-dialog") as
-      | (HTMLElement & { show(state: ModifyStyleState): void })
-      | null;
-    const editor = this.editor;
-    if (!dialog || !editor || !id) return;
-    const styles = this.#docStyles(editor);
-    const byId = styles ? indexParagraphStyles(styles) : new Map();
-    const style = byId.get(id);
-    const run = (style?.run ?? {}) as Record<string, unknown>;
-    const underline = run.underline as { type?: unknown } | undefined;
-    // The w:pPr block only exists on the paragraph side of the StyleEntry union.
-    const paragraph = (style as { paragraph?: Record<string, unknown> } | undefined)?.paragraph;
-    const spacing = (paragraph?.spacing ?? {}) as Record<string, unknown>;
-    const indent = (paragraph?.indent ?? {}) as Record<string, unknown>;
-    const choices: StyleChoice[] = [...byId.entries()]
-      .map(([cid, cs]) => ({ id: cid, name: this.#styleDisplayName(cid, cs.name) }))
-      .sort((a, b) => a.name.localeCompare(b.name));
-    const color = run.color as string | { val?: unknown } | undefined;
-    // The line buttons are multiples (240ths of a line); the atLeast/exact
-    // rules have no button and stay blank (the Paragraph dialog edits them).
-    const lineMultiple = spacing.lineRule == null || spacing.lineRule === "auto";
-    const state: ModifyStyleState = {
-      id,
-      name: this.#styleDisplayName(id, style?.name),
-      choices,
-      basedOn: (style?.basedOn as string | undefined) ?? null,
-      next: (style?.next as string | undefined) ?? null,
-      font: resolveFontName(run.font),
-      size: typeof run.size === "number" ? run.size : null,
-      bold: run.bold === true,
-      italic: run.italic === true,
-      underline: underline?.type != null,
-      color: typeof color === "string" ? color : typeof color?.val === "string" ? color.val : null,
-      alignment: (paragraph?.alignment as string | undefined) ?? null,
-      lineSpacing: lineMultiple && typeof spacing.line === "number" ? spacing.line : null,
-      indentLeft: typeof indent.left === "number" ? indent.left : null,
-      indentRight: typeof indent.right === "number" ? indent.right : null,
-      spacingBefore: typeof spacing.before === "number" ? spacing.before : null,
-      spacingAfter: typeof spacing.after === "number" ? spacing.after : null,
-      quickFormat: (style as { quickFormat?: boolean } | undefined)?.quickFormat === true,
-      autoRedefine: (style as { autoRedefine?: boolean } | undefined)?.autoRedefine === true,
-      // The gallery's merged effective run (basedOn chain + docDefaults) is
-      // also the preview's formatting — same source, same CSS.
-      previewCss: styleGalleryItems(styles).find((item) => item.value === id)?.preview?.css,
-    };
-    state.description = this.#styleDescription(state, byId);
-    dialog.show(state);
+    this.#styles.openModifyStyle(id);
   }
 
-  /** Prefill and open the New Style dialog. */
   #openNewStyle(): void {
-    const dialog = this.shadowRoot?.querySelector("docen-new-style-dialog") as
-      | (HTMLElement & { show(state: NewStyleState): void })
-      | null;
-    const editor = this.editor;
-    if (!dialog || !editor) return;
-    const styles = this.#docStyles(editor);
-    const byId = styles ? indexParagraphStyles(styles) : new Map();
-    const choices: StyleChoice[] = [...byId.entries()]
-      .map(([cid, cs]) => ({ id: cid, name: this.#styleDisplayName(cid, cs.name) }))
-      .sort((a, b) => a.name.localeCompare(b.name));
-
-    let num = 1;
-    while ([...byId.values()].some((s) => s.name?.toLowerCase() === `style ${num}`.toLowerCase())) {
-      num++;
-    }
-
-    dialog.show({
-      choices,
-      defaultName: `Style ${num}`,
-      type: "paragraph",
-      basedOn: "Normal",
-      next: "Normal",
-    });
+    this.#styles.openNewStyle();
   }
 
-  /** The description under the preview — the style's own definition read out
-   *  the way Word's description box does: the basedOn/next pointers, then the
-   *  comma list of the formatting this dialog edits. */
-  #styleDescription(state: ModifyStyleState, byId: Map<string, StyleEntry>): string {
-    const styleName = (sid: string | null): string | null => {
-      if (!sid) return null;
-      const entry = byId.get(sid);
-      return entry ? this.#styleDisplayName(sid, entry.name) : sid;
-    };
-    const lines: string[] = [];
-    const basedOn = styleName(state.basedOn);
-    const next = styleName(state.next);
-    if (basedOn) lines.push(`${t("modifyStyleDialog.basedOn", this)} ${basedOn}`);
-    if (next) lines.push(`${t("modifyStyleDialog.next", this)} ${next}`);
-    const parts: string[] = [];
-    if (state.font) parts.push(state.font);
-    if (state.size != null) parts.push(`${state.size} ${t("unit.pt", this)}`);
-    if (state.bold) parts.push(t("ribbon.cmd.bold", this));
-    if (state.italic) parts.push(t("ribbon.cmd.italic", this));
-    if (state.underline) parts.push(t("ribbon.cmd.underline", this));
-    if (state.color) parts.push(`#${state.color}`);
-    const alignKeys: Record<string, string> = {
-      center: "ribbon.cmd.align-center",
-      right: "ribbon.cmd.align-right",
-      both: "ribbon.cmd.justify",
-      left: "ribbon.cmd.align-left",
-    };
-    if (state.alignment) parts.push(t(alignKeys[state.alignment] ?? "ribbon.cmd.align-left", this));
-    const lineKeys: Record<number, string> = {
-      240: "modifyStyleDialog.lineSingle",
-      360: "modifyStyleDialog.line15",
-      480: "modifyStyleDialog.lineDouble",
-    };
-    if (state.lineSpacing != null) {
-      const key = lineKeys[state.lineSpacing];
-      parts.push(
-        key ? t(key, this) : `${state.lineSpacing / 240} ${t("modifyStyleDialog.lineTimes", this)}`,
-      );
-    }
-    if (state.spacingBefore != null)
-      parts.push(
-        `${t("modifyStyleDialog.before", this)} ${state.spacingBefore / 20} ${t("unit.pt", this)}`,
-      );
-    if (state.spacingAfter != null)
-      parts.push(
-        `${t("modifyStyleDialog.after", this)} ${state.spacingAfter / 20} ${t("unit.pt", this)}`,
-      );
-    if (parts.length) lines.push(parts.join(", "));
-    return lines.join("\n");
-  }
-
-  /** The Modify Style dialog's Format > Font/Paragraph — open that dialog in
-   *  style mode: the fields prefill from the style's own definition and OK
-   *  retargets the style (`data-for-style` marker read by the OK routers).
-   *  The Modify Style dialog stays open underneath (both are native modal
-   *  dialogs; closing the child restores it, mid-edit fields intact). */
   #openStyleFormat(id: string, target: "font" | "paragraph"): void {
-    const editor = this.editor;
-    if (!editor || !id) return;
-    const styles = this.#docStyles(editor);
-    const style = styles ? indexParagraphStyles(styles).get(id) : undefined;
-    if (target === "paragraph") {
-      const dialog = this.shadowRoot?.querySelector("docen-paragraph-dialog") as
-        | (HTMLElement & {
-            show(attrs?: Record<string, unknown>, opts?: { styleId?: string }): void;
-          })
-        | null;
-      // StyleEntry unions the paragraph/character shapes — the w:pPr block
-      // only exists on the paragraph side.
-      const paragraph = (style as { paragraph?: Record<string, unknown> } | undefined)?.paragraph;
-      dialog?.show(paragraph ?? {}, { styleId: id });
-    } else {
-      const dialog = this.shadowRoot?.querySelector("docen-font-dialog") as
-        | (HTMLElement & { show(state: FontDialogPatch, opts?: { styleId?: string }): void })
-        | null;
-      dialog?.show(fontPatchOfRun((style?.run ?? {}) as Record<string, unknown>), { styleId: id });
-    }
+    this.#styles.openStyleFormat(id, target);
   }
 
   /** The Paragraph dialog's OK — a style-target open (Format > Paragraph)
@@ -1845,22 +1491,12 @@ class DocenDocument extends AddinHost<Editor> {
     if (detail?.event === "style" && detail.value) this.#openModifyStyle(detail.value);
   };
 
-  /** Capture the opened styles model (called from #renderDoc). */
   #snapshotStyles(): void {
-    const styles = this.editor ? this.#docStyles(this.editor) : null;
-    this.#stylesSnapshot = styles ? JSON.stringify(styles) : null;
+    this.#styles.snapshotStyles();
   }
 
-  /** Restore the styles model captured at open (the style-set gallery's
-   *  "document default" entry) — the same doc-attrs write path as
-   *  #applyStylesAttr, so the restore rides undo and re-renders chrome. */
   #restoreStylesSnapshot(): void {
-    const editor = this.editor;
-    if (!editor || this.#stylesSnapshot === null) return;
-    editor.view.dispatch(
-      editor.state.tr.setDocAttribute("styles", JSON.parse(this.#stylesSnapshot)),
-    );
-    this.#renderChrome();
+    this.#styles.restoreStylesSnapshot();
   }
 
   async connectedCallback(): Promise<void> {
@@ -1890,7 +1526,7 @@ class DocenDocument extends AddinHost<Editor> {
     if (initialZoom) this.#setZoom(Number(initialZoom) || 100);
     this.shadowRoot
       ?.querySelector<HTMLElement>("docen-status-bar")
-      ?.addEventListener("zoom:change", this.#onZoomChange as EventListener);
+      ?.addEventListener("zoom:change", this.#status.onZoomChange as EventListener);
     // The proofing surfaces: the status-bar book opens the pane; the pane's
     // actions (replace/ignore/add/step) come back as events.
     this.shadowRoot
@@ -2007,21 +1643,7 @@ class DocenDocument extends AddinHost<Editor> {
           };
         },
         read: (kind, slot, page) => this.#readStorySource(kind, slot, page),
-        entered: (kind, slot, page) => {
-          this.#storyKind = kind;
-          this.#storyPage = page;
-          this.#stage?.setStoryEdit({
-            kind,
-            label: t(kind === "header" ? "story.header" : "story.footer", this),
-          });
-          this.#showHeaderFooterContextTab();
-          // Word re-checks against the story being edited. entered() runs
-          // before the bridge registers the story (the strut's onDoc needs
-          // the story kind set), so the check must wait out the synchronous
-          // entry — by then the active editor is the story, or (rolled back
-          // entry) the body again.
-          queueMicrotask(() => this.#spelling.run());
-        },
+        entered: (kind, slot, page) => this.#stories.enter(kind, slot, page),
         onDoc: (kind, slot, json) => this.#renderStoryFurniture(kind, slot, json),
         exit: ({ kind, slot, json, dirty }) => this.#exitStory(kind, slot, json, dirty),
       },
@@ -2124,9 +1746,9 @@ class DocenDocument extends AddinHost<Editor> {
     // title bar is re-stamped per #renderChrome): a caret trigger fills its
     // list with the live depths, an entry rewinds/advances that many steps.
     this.shadowRoot!.addEventListener("click", this.#onHistoryClick as EventListener);
-    this.#fileInput.addEventListener("change", this.#onFileChange);
-    this.#imageInput.addEventListener("change", this.#onImageChange);
-    this.#pictureInput.addEventListener("change", this.#onPictureChange);
+    this.#fileInput.addEventListener("change", this.#io.onFileChange);
+    this.#imageInput.addEventListener("change", this.#io.onImageChange);
+    this.#pictureInput.addEventListener("change", this.#io.onPictureChange);
     // Outline (Headings tab) → jump to the clicked heading.
     this.shadowRoot!.querySelector("docen-outline")?.addEventListener(
       "outline:select",
@@ -2260,11 +1882,11 @@ class DocenDocument extends AddinHost<Editor> {
     );
     this.shadowRoot!.querySelector("docen-hyphenation-dialog")?.addEventListener(
       "hyphenation:ok",
-      this.#onHyphenationOk as EventListener,
+      this.#insert.onHyphenationOk as EventListener,
     );
     this.shadowRoot!.querySelector("docen-tabs-dialog")?.addEventListener(
       "tabs:ok",
-      this.#onTabsOk as EventListener,
+      this.#insert.onTabsOk as EventListener,
     );
     // Bookmark dialog — add, delete, goto.
     const bmEl = this.shadowRoot!.querySelector("docen-bookmark-dialog");
@@ -2464,7 +2086,7 @@ class DocenDocument extends AddinHost<Editor> {
     );
     this.shadowRoot!.querySelector("docen-paragraph-dialog")?.addEventListener(
       "paragraph:open-tabs",
-      this.#openTabsDialog as EventListener,
+      this.#insert.openTabsDialog as EventListener,
     );
     // Paragraph dialog's Set As Default — the patch lands on the Normal style.
     this.shadowRoot!.querySelector("docen-paragraph-dialog")?.addEventListener(
@@ -2496,7 +2118,7 @@ class DocenDocument extends AddinHost<Editor> {
     // click opens it.
     this.shadowRoot!.querySelector("docen-zoom-dialog")?.addEventListener(
       "zoom:ok",
-      this.#onZoomOk as EventListener,
+      this.#status.onZoomOk as EventListener,
     );
     // Paste Special dialog — the format pick re-runs #paste in that mode.
     this.shadowRoot!.querySelector("docen-paste-special-dialog")?.addEventListener(
@@ -2536,18 +2158,18 @@ class DocenDocument extends AddinHost<Editor> {
     );
     this.shadowRoot!.querySelector("docen-status-bar")?.addEventListener(
       "zoom:open",
-      this.#onZoomOpen as EventListener,
+      this.#status.onZoomOpen as EventListener,
     );
     // Status-bar word count → the statistics dialog (Word).
     this.shadowRoot!.querySelector("docen-status-bar")?.addEventListener(
       "wordcount:open",
-      this.#onWordCountOpen as EventListener,
+      this.#status.onWordCountOpen as EventListener,
     );
     // Status-bar view shortcuts (Word's Reading / Print Layout / Web Layout
     // buttons) — the same `view` attribute the ribbon's View tab writes.
     this.shadowRoot!.querySelector("docen-status-bar")?.addEventListener(
       "view:select",
-      this.#onViewSelect as EventListener,
+      this.#status.onViewSelect as EventListener,
     );
 
     // Re-render header + ribbon when the page locale (<html lang>) changes.
@@ -2590,187 +2212,20 @@ class DocenDocument extends AddinHost<Editor> {
     this.dispatchEvent(new CustomEvent("docen:ready", { bubbles: true, composed: true }));
   }
 
-  #slotsKeyOf(kind: StoryKind): "sectionHeaders" | "sectionFooters" {
-    return kind === "header" ? "sectionHeaders" : "sectionFooters";
-  }
-
-  /** The story's source JSON — the section owning `page` holds the slots
-   *  (Word: the band double-clicked edits that page's section, regardless of
-   *  where the caret sits); a section without stamped slots is linked to the
-   *  previous one, so the walk merges the first content found per slot, and
-   *  an absent slot falls back to the default slot's (what the page displays
-   *  until the edit breaks the tie). */
   #readStorySource(kind: StoryKind, slot: StorySlot, page: number): JSONContent[] {
-    const editor = this.editor;
-    if (!editor) return [];
-    const merged: { default?: JSONContent[]; first?: JSONContent[]; even?: JSONContent[] } = {};
-    for (let i = this.#sectionOfPage[page] ?? 0; i >= 0; i--) {
-      const pos = this.#sectPrPosOfSection(i);
-      const attrs =
-        pos >= 0
-          ? (editor.state.doc.nodeAt(pos)?.attrs as Record<string, unknown> | undefined)
-          : (editor.state.doc.attrs as Record<string, unknown> | undefined);
-      const group = attrs?.[this.#slotsKeyOf(kind)] as
-        | { default?: JSONContent[]; first?: JSONContent[]; even?: JSONContent[] }
-        | undefined;
-      if (!group) continue;
-      merged.default ??= group.default;
-      merged.first ??= group.first;
-      merged.even ??= group.even;
-    }
-    return merged[slot] ?? merged.default ?? [];
+    return this.#stories.readSource(kind, slot, page);
   }
 
-  /** A story keystroke's render path: patch the slot into a copy of the doc
-   *  JSON and re-run the full pipeline — the body re-flows because the
-   *  header/footer it edits pushes on it (Word: typing in a header moves the
-   *  body live). The fresh furniture stack goes back to the story's map. */
   #renderStoryFurniture(kind: StoryKind, slot: StorySlot, json: JSONContent[]): void {
-    const bridge = this.#bridge;
-    const stage = this.#stage;
-    if (!bridge || !stage || this.#storyKind !== kind) return;
-    const raw = bridge.editor.getJSON();
-    const key = this.#slotsKeyOf(kind);
-    // The story edits the section its anchor page belongs to (Word: the band
-    // double-clicked) — patch that section's slots, not the doc's: a doc-level
-    // write compiles into the LAST section, and a mid-document story would
-    // never reach the stack the band reads. getJSON()'s objects carry live PM
-    // attrs by reference — patchSectionSlots copies along the walked path, so
-    // the editor state never mutates without a transaction (no render, no
-    // undo, no docen:change).
-    const sectionIndex = this.#sectionOfPage[this.#storyPage] ?? 0;
-    const patched = patchSectionSlots(raw, sectionIndex, key, slot, json);
-    const doc = patched ?? {
-      ...raw,
-      attrs: {
-        ...(raw.attrs as Record<string, unknown>),
-        [key]: {
-          ...((raw.attrs as Record<string, unknown>)[key] as object | undefined),
-          [slot]: json,
-        },
-      },
-    };
-    const run = this.#projectAndLayout(doc);
-    this.#pages = run.pages;
-    this.#sectionOfPage = run.sectionOfPage;
-    this.#flow = run.sections[0]?.flow;
-    stage.sync(run.pages, run.sections, run.sectionOfPage, run.background);
-    bridge.updatePages(run.pages, this.#pageOriginOf(run.sections, run.sectionOfPage));
-    const band = stage.furnitureBand(kind, this.#storyPage);
-    bridge.updateStoryMap(
-      band ? stage.furnitureStack(kind, this.#storyPage) : null,
-      band ?? { top: 0, bottom: 0, paintY: 0 },
-    );
-    // The story's transactions never cross the main editor, so the render
-    // tail that schedules the body's re-check never runs for them — schedule
-    // here (debounced; the check reads the active story).
-    this.#spelling.schedule();
-  }
-
-  /** The doc position of the paragraph closing the given section (0-based —
-   *  the Nth sectionProperties paragraph in document order), or -1 when that
-   *  section closes at the body end (its sectPr lives on the doc node). */
-  #sectPrPosOfSection(sectionIndex: number): number {
-    const editor = this.editor;
-    if (!editor) return -1;
-    let seen = -1;
-    let target = -1;
-    editor.state.doc.descendants((node, pos) => {
-      if (target >= 0) return false;
-      if (
-        node.type.name === "paragraph" &&
-        (node.attrs as { sectionProperties?: unknown }).sectionProperties != null
-      ) {
-        seen++;
-        if (seen === sectionIndex) {
-          target = pos;
-          return false;
-        }
-      }
-      return true;
-    });
-    return target;
-  }
-
-  /** Write a finished story's JSON back. The story edits the section its
-   *  anchor page belongs to — the caret is no address here (exiting by
-   *  clicking another page's body moves it). An earlier section's slots live
-   *  on its closing sectPr paragraph and go through a plain setNodeMarkup
-   *  transaction — one undo step. The final section closes at the body end
-   *  and its slots live on the doc node, which no step can address
-   *  (nodeAt(0) is the first child) — they land through #loadDoc's state
-   *  rebuild, the same path setJSON takes (history resets with it, like any
-   *  document load). */
-  #persistStory(kind: StoryKind, slot: StorySlot, json: JSONContent[], anchorPage: number): void {
-    const bridge = this.#bridge;
-    if (!bridge) return;
-    const key = this.#slotsKeyOf(kind);
-    const slots = (attrs: Record<string, unknown>): Record<string, unknown> => ({
-      ...(attrs[key] as object | undefined),
-      [slot]: json,
-    });
-    const sectionIndex = this.#sectionOfPage[anchorPage] ?? 0;
-    const target = this.#sectPrPosOfSection(sectionIndex);
-    if (target < 0) {
-      const raw = bridge.editor.getJSON();
-      this.#loadDoc({
-        ...raw,
-        attrs: {
-          ...(raw.attrs as Record<string, unknown>),
-          [key]: slots(raw.attrs as Record<string, unknown>),
-        },
-      } as JSONContent);
-      return;
-    }
-    bridge.editor.commands.command(({ state: s, dispatch }) => {
-      const node = s.doc.nodeAt(target)!;
-      dispatch?.(
-        s.tr.setNodeMarkup(target, undefined, { ...node.attrs, [key]: slots(node.attrs) }),
-      );
-      return true;
-    });
+    this.#stories.renderFurniture(kind, slot, json);
   }
 
   #exitStory(kind: StoryKind, slot: StorySlot, json: JSONContent[], dirty: boolean): void {
-    this.#hideHeaderFooterContextTab();
-    this.#stage?.setStoryEdit(null);
-    this.#storyKind = null;
-    if (dirty) this.#persistStory(kind, slot, json, this.#storyPage);
-    this.#storyPage = -1;
-    // Back to the body's issues (the persist above re-laid the doc first).
-    this.#spelling.run();
+    this.#stories.exit(kind, slot, json, dirty);
   }
 
-  /** Write a slots group through a transaction: the group lives on the
-   *  current section's sectPr paragraph when there is one, else on the doc
-   *  node (the #loadDoc state-rebuild path — the doc node is not step
-   *  addressable; see #persistStory). */
-  #writeSlots(key: "sectionHeaders" | "sectionFooters", group: Record<string, unknown>): void {
-    const bridge = this.#bridge;
-    const editor = this.editor;
-    if (!bridge || !editor) return;
-    const { doc, tr } = editor.state;
-    const targetPos = this.#sections.sectionSectPrPos();
-    if (targetPos != null) {
-      const node = doc.nodeAt(targetPos);
-      if (node) {
-        tr.setNodeMarkup(targetPos, undefined, { ...node.attrs, [key]: group });
-        editor.view.dispatch(tr);
-        return;
-      }
-    }
-    const raw = bridge.editor.getJSON();
-    this.#loadDoc({
-      ...raw,
-      attrs: { ...(raw.attrs as Record<string, unknown>), [key]: group },
-    } as JSONContent);
-  }
-
-  /** Remove Header / Remove Footer — drop the story's whole slots group from
-   *  the current section (Word removes the content; the slot stops
-   *  rendering on every page). */
   #removeStory(kind: StoryKind): void {
-    this.#writeSlots(this.#slotsKeyOf(kind), {});
+    this.#stories.remove(kind);
   }
 
   /** Is this inline passthrough atom a PAGE (not NUMPAGES/PAGEREF) field? */
@@ -2787,90 +2242,16 @@ class DocenDocument extends AddinHost<Editor> {
     }
   }
 
-  /** The slots group as #writeSlots addresses it (same container semantics:
-   *  the current section's sectPr paragraph, else the doc node). */
-  #readSlotsGroup(key: "sectionHeaders" | "sectionFooters"): Record<string, unknown> {
-    const editor = this.editor;
-    if (!editor) return {};
-    const targetPos = this.#sections.sectionSectPrPos();
-    const group = (attrs: Record<string, unknown> | undefined): Record<string, unknown> =>
-      (attrs?.[key] as Record<string, unknown> | undefined) ?? {};
-    if (targetPos != null) {
-      const node = editor.state.doc.nodeAt(targetPos);
-      if (node) return group(node.attrs as Record<string, unknown>);
-    }
-    return group(editor.state.doc.attrs as Record<string, unknown>);
-  }
-
-  /** Remove Page Numbers — strip the PAGE field atoms from every slot of
-   *  both stories (Word deletes the fields, leaving their paragraphs). */
   #removePageNumbers(): void {
-    const strip = (blocks: unknown): unknown => {
-      const json = blocks as JSONContent[] | undefined;
-      if (!Array.isArray(json)) return blocks;
-      return json.map((block) =>
-        block.type === "paragraph"
-          ? {
-              ...block,
-              content: (block.content ?? []).filter((c) => !DocenDocument.isPageField(c)),
-            }
-          : block,
-      );
-    };
-    for (const key of ["sectionHeaders", "sectionFooters"] as const) {
-      const group = this.#readSlotsGroup(key);
-      const next: Record<string, unknown> = {};
-      for (const slot of ["default", "first", "even"] as const) {
-        if (group[slot] !== undefined) next[slot] = strip(group[slot]);
-      }
-      this.#writeSlots(key, next);
-    }
+    this.#stories.removePageNumbers();
   }
 
-  /** Word's furniture overflow rule: a header taller than the top margin
-   *  pushes the body down, a taller footer pushes it up — each page by its
-   *  own slot's LAID stack (the first page by the first slot when titlePage
-   *  asks for one, even pages by the even slot). Slots without their own
-   *  content fall back to the default stack (OOXML reference semantics),
-   *  matching the stage's paint fallback — the heights are the same layout
-   *  pass the painter's bands come from. */
   #pageInsets(
     flow: ProjectedFlowBox,
     furniture: ProjectedPageFurniture | undefined,
     laid: LaidFurnitureSection | undefined,
   ): FlowPageInsets | undefined {
-    if (!furniture) return undefined;
-    const topMargin = flow.contentTopPx;
-    const bottomMargin = flow.pageHeightPx - flow.contentTopPx - flow.contentHeightPx;
-    const headerDistance = furniture.headerDistancePx ?? 48;
-    const footerDistance = furniture.footerDistancePx ?? 48;
-    const height = (kind: "header" | "footer", slot: 0 | 1 | 2): number | undefined =>
-      laid?.[kind][slot]?.heightPx;
-    const inset = (headerPx: number | undefined, footerPx: number | undefined) => {
-      const top = Math.max(0, headerDistance + (headerPx ?? 0) - topMargin);
-      const bottom = Math.max(0, footerDistance + (footerPx ?? 0) - bottomMargin);
-      return top > 0 || bottom > 0
-        ? { topPx: Math.round(top), bottomPx: Math.round(bottom) }
-        : undefined;
-    };
-    const def = inset(height("header", 0), height("footer", 0));
-    if (!def) return undefined;
-    const out: FlowPageInsets = { default: def };
-    if (furniture.titlePage) {
-      out.first =
-        inset(
-          height("header", 1) ?? height("header", 0),
-          height("footer", 1) ?? height("footer", 0),
-        ) ?? undefined;
-    }
-    if (furniture.evenAndOddHeaders) {
-      out.even =
-        inset(
-          height("header", 2) ?? height("header", 0),
-          height("footer", 2) ?? height("footer", 0),
-        ) ?? undefined;
-    }
-    return out;
+    return pageInsets(flow, furniture, laid);
   }
 
   /** The PM node position of a drawing hit's target — the host paragraph's
@@ -3008,217 +2389,17 @@ class DocenDocument extends AddinHost<Editor> {
     if (ribbon) ribbon.toggleAttribute("hidden", read);
   }
 
-  /** The canvas pipeline's projection half, shared by every layout path:
-   *  compile → project (one section per document section) → lay each
-   *  section's furniture ONCE (the insets and the painter's bands share the
-   *  pass) → assemble the flow inputs. Pure preparation — no pagination. */
-  #projectFlowSections(doc: JSONContent): ProjectedFlowInputs {
-    // Word's Options → Display "Show hidden text" (w:vanish): hidden runs
-    // project suppressed (no advance, no ink) unless the shared settings
-    // store asks for their display — read per projection, so a store change
-    // reaches the next render.
-    const showHiddenText = getSettings().writing.showHiddenText;
-    this.#hiddenTextShown = showHiddenText;
-    // The active document theme's font pair feeds the projection's fallback
-    // for text with no explicit font (body → minor, headings → major).
-    const themeId = (this.#documentSettings().theme as { id?: string } | undefined)?.id;
-    const themeFonts = themeId ? THEMES[themeId]?.fonts : undefined;
-    // Balloons are print-layout chrome: Draft/Web/Read project inline markup
-    // only (Word hides the markup area outside Print Layout / Web Layout has
-    // no margin at all).
-    const balloonsOn = this.#balloons !== "none" && this.#viewMode() === "print";
-    const { sections, background } = projectDocumentOptions(
-      compileDocument(this.#mergedView(doc)),
-      // Word's Display for Review: "simple" is also the all-marks projection
-      // minus the review chrome Word draws outside the flow, so only an
-      // actual filter (or the change-type palette, or balloons) needs the
-      // non-default pass. "simple" maps to "all" inside that pass: the canvas
-      // has no simple-markup chrome of its own, and simple must never hide
-      // the marks it is supposed to summarize.
-      this.#markupView !== "simple" ||
-        this.#markupAuthors ||
-        this.#markupColors !== "author" ||
-        balloonsOn
-        ? {
-            view: this.#markupView === "simple" ? "all" : this.#markupView,
-            authors: this.#markupAuthors ?? undefined,
-            colors: this.#markupColors,
-            ...(balloonsOn ? { balloons: this.#balloons } : {}),
-          }
-        : undefined,
-      // Alt+F9: every field projects its instruction instead of the result.
-      this.#fieldCodes,
-      // Options → Display: hidden runs render with their dotted marker
-      // instead of being suppressed.
-      showHiddenText,
-      this.#hyphenation,
-      themeFonts,
-    );
-    const stageSections: (ProjectedSection & CanvasStageSection)[] = sections.map((section) => ({
-      ...section,
-    }));
-    // The continuous views (Web Layout / Read Mode) re-box every section to
-    // the viewport width and lay it as ONE unbounded page — Word's web view
-    // has no page breaks, and its text width follows the window (page margins
-    // kept as the gutters). Furniture is a print concept: no insets. Columns
-    // stay a print-layout feature in this pass.
-    const mode = this.#viewMode();
-    const continuous = mode === "web" || mode === "read";
-    if (continuous) {
-      // The scroll surface's width (the document area — the stage host is
-      // width:fit-content and only reports the pages' own width) minus the
-      // page gutter on each side.
-      const area = this.shadowRoot?.querySelector<HTMLElement>("docen-document-area");
-      const availW = Math.max(320, (area?.clientWidth ?? 794) - 48);
-      for (const section of stageSections) {
-        // Columns stay a print-layout feature: drop them at the source so
-        // every downstream consumer (flow opts, separator painting) lays a
-        // single-column stream.
-        section.columns = undefined;
-        const marginL = section.flow.contentLeftPx;
-        const marginR =
-          section.flow.pageWidthPx - section.flow.contentLeftPx - section.flow.contentWidthPx;
-        section.flow = {
-          ...section.flow,
-          pageWidthPx: availW,
-          contentWidthPx: Math.max(200, availW - marginL - marginR),
-        };
-      }
-    }
-    const laidFurniture = layFurnitureSections(stageSections, browserFontMetrics);
-    stageSections.forEach((section, i) => {
-      section.furnitureLaid = laidFurniture[i];
-    });
-    const flowSections = stageSections.map((section) => {
-      const pageInsets = continuous
-        ? undefined
-        : this.#pageInsets(section.flow, section.furniture, section.furnitureLaid);
-      return {
-        blocks: section.blocks,
-        ...(section.type ? { type: section.type } : {}),
-        opts: {
-          ...section.flow,
-          columns: section.columns,
-          footnoteDefinitions: section.footnoteDefinitions,
-          endnoteDefinitions: section.endnoteDefinitions,
-          endnotePlacement: (section as { endnotePlacement?: "sectEnd" | "docEnd" })
-            .endnotePlacement,
-          ...(continuous ? { unbounded: true, contentHeightPx: 1_000_000 } : {}),
-          ...(pageInsets ? { pageInsets } : {}),
-        },
-      };
-    });
-    return { sections: stageSections, background, flowSections, viewMode: mode, continuous };
-  }
-
-  /** The layout half in one synchronous drain — the pagination walk over the
-   *  projected flow inputs, plus the continuous views' page-height correction
-   *  (the unbounded layout reports where the content ends; the host sizes the
-   *  page from it). */
-  #laySections(projected: ProjectedFlowInputs): {
-    pages: FlowPage[];
-    sectionOfPage: number[];
-  } {
-    const { pages, sectionOfPage } = layoutFlowSections(projected.flowSections, this.#measurer);
-    if (projected.continuous) {
-      // Size each continuous page to where its content actually ends plus the
-      // bottom margin.
-      pages.forEach((page, i) => {
-        const section = projected.sections[sectionOfPage[i] ?? 0];
-        if (!section || page.contentBottomPx == null) return;
-        const flow = section.flow;
-        const bottomMargin = flow.pageHeightPx - flow.contentTopPx - flow.contentHeightPx;
-        flow.pageHeightPx = Math.max(
-          flow.pageHeightPx,
-          Math.ceil(page.contentBottomPx) + flow.contentTopPx + bottomMargin,
-        );
-      });
-    }
-    return { pages, sectionOfPage };
-  }
-
-  /** The canvas pipeline's projection + layout half, shared by the full
-   *  render and the story's live re-render. The layout half runs through the
-   *  pagination-feedback pass, so fields paint from live numbers. */
   #projectAndLayout(doc: JSONContent): {
     pages: FlowPage[];
     sectionOfPage: number[];
     sections: (ProjectedSection & CanvasStageSection)[];
     background?: ProjectedPageBackground;
   } {
-    const projected = this.#projectFlowSections(doc);
-    const resolved = this.#resolveFields(projected, this.#laySections(projected), doc);
-    return {
-      pages: resolved.pages,
-      sectionOfPage: resolved.sectionOfPage,
-      sections: projected.sections,
-      background: projected.background,
-    };
+    return this.#render.projectAndLayout(doc);
   }
 
-  /** The per-render field context base: one fixed clock for the whole render
-   *  (DATE/TIME stay stable while a single layout settles) plus the document
-   *  state the evaluators read — core properties, filename, revision, custom
-   *  properties. Word/char counts are edit-time values (NUMWORDS/NUMCHARS are
-   *  not live fields), so the render base skips their text walk. */
-  #renderFieldBase(doc: JSONContent): Omit<FieldContext, "frame" | "sequences"> {
-    const attrs = (doc.attrs ?? {}) as {
-      core?: Record<string, unknown>;
-      documentExtras?: Record<string, unknown>;
-    };
-    const core = attrs.core ?? {};
-    const revision = finiteNumber(core.revision);
-    const custom = customPropertiesOf(attrs.documentExtras);
-    return {
-      now: new Date(),
-      core,
-      ...(this.filename != null && this.filename !== "" ? { filename: this.filename } : {}),
-      ...(revision != null ? { revision } : {}),
-      ...(custom ? { customProperties: custom } : {}),
-    };
-  }
-
-  /** The pagination-feedback loop: resolve the live numbering fields against
-   *  the pages just laid, and re-lay when a resolution rewrote measured text
-   *  (the resolved value changes where a field breaks). Bounded by
-   *  {@link FIELD_RESOLVE_PASSES}; returns the final pages plus the pages
-   *  whose painted field values changed (the incremental path repaints just
-   *  those). In field-code view (Alt+F9) the resolver resolves nothing, so
-   *  code atoms stay untouched and no re-layout rides the toggle. */
-  #resolveFields(
-    projected: ProjectedFlowInputs,
-    laid: { pages: FlowPage[]; sectionOfPage: number[] },
-    doc: JSONContent,
-  ): { pages: FlowPage[]; sectionOfPage: number[]; dirty?: number[] } {
-    return resolvePageFieldsBounded(
-      laid.pages,
-      projected.sections,
-      laid.sectionOfPage,
-      liveFieldResolver(this.#renderFieldBase(doc), this.#fieldCodes),
-      () => this.#laySections(projected),
-      FIELD_RESOLVE_PASSES,
-    );
-  }
-
-  /** The pagination's view of a document position — the FieldFrame the field
-   *  evaluators read (shown page number, page count, section number/span, the
-   *  section's numFmt). Undefined before the first layout or when the caret
-   *  map has no page for the position. */
   #fieldFrame(pos: number): FieldFrame | undefined {
-    const pageIndex = this.#bridge?.pageOf(pos);
-    if (pageIndex == null || pageIndex < 0 || pageIndex >= this.#pages.length) return undefined;
-    const sections = this.#lastRun?.sections ?? [];
-    const section = this.#sectionOfPage[pageIndex] ?? 0;
-    const offsets = computePageNumberOffsets(sections, this.#sectionOfPage);
-    const sectionPages = this.#sectionOfPage.reduce((n, s) => (s === section ? n + 1 : n), 0);
-    const format = sections[section]?.pageNumbering?.format;
-    return {
-      page: pageIndex + 1 + (offsets[section] ?? 0),
-      pageCount: this.#pages.length,
-      section: section + 1,
-      sectionPages,
-      ...(format ? { pageFormat: format } : {}),
-    };
+    return this.#render.fieldFrame(pos);
   }
 
   /** Alt+F9 — Word's field-code display: every field projects its instruction
@@ -3228,167 +2409,15 @@ class DocenDocument extends AddinHost<Editor> {
     this.#renderDoc(this.getJSON());
   }
 
-  /** The page→section origin resolver the bridge's caret maps need (each
-   *  page's own section's content-box origin). */
   #pageOriginOf(
     sections: readonly (ProjectedSection & CanvasStageSection)[],
     sectionOfPage: readonly number[],
   ): (page: number) => { contentLeftPx: number; contentTopPx: number } {
-    return (page) => {
-      const flow = sections[sectionOfPage[page] ?? 0]?.flow;
-      if (!flow) return { contentLeftPx: 0, contentTopPx: 0 };
-      if (flow.mirrorMargins && page % 2 === 1) {
-        return {
-          contentLeftPx: flow.pageWidthPx - flow.contentLeftPx - flow.contentWidthPx,
-          contentTopPx: flow.contentTopPx,
-        };
-      }
-      return flow;
-    };
+    return this.#stories.pageOriginOf(sections, sectionOfPage);
   }
 
-  /** The canvas pipeline — the single render entry the bridge's transactions
-   *  and the loaders share: compile → project → layout → paint, then re-arm
-   *  the caret map against the fresh geometry. Page-level diff: only pages
-   *  whose laid-out content changed repaint (the rest keep their canvas), so
-   *  a keystroke costs one page, not one per scrolled-into-view page. */
   #renderDoc(doc: JSONContent): void {
-    if (!this.#stageHost) return;
-    const seq = ++this.#renderSeq;
-    const projected = this.#projectFlowSections(doc);
-    // A first render in a paged view (the open path) paints page-by-page:
-    // the layout walk yields sealed pages, the stage appends their slots per
-    // time slice, and the veil lifts over the first slice — an open shows its
-    // first screens in seconds instead of blocking until the last page is
-    // laid. Any render landing mid-walk (a transaction, a view switch) bumps
-    // the sequence; the walk drops and this entry re-runs from the top.
-    if (!this.#lastRun && !projected.continuous) {
-      void this.#renderDocIncremental(projected, seq, doc);
-      return;
-    }
-    const laid = this.#resolveFields(projected, this.#laySections(projected), doc);
-    const run = {
-      pages: laid.pages,
-      sectionOfPage: laid.sectionOfPage,
-      sections: projected.sections,
-      background: projected.background,
-      viewMode: projected.viewMode,
-    };
-    this.#scheduleA11yMirror(projected.sections);
-    const prev = this.#lastRun;
-    this.#lastRun = run;
-    this.#pages = run.pages;
-    this.#sectionOfPage = run.sectionOfPage;
-    this.#flow = run.sections[0]?.flow;
-    const stage = this.#armStage(run);
-    // Anything structural (section geometry, page background, section count)
-    // repaints everything — the per-page diff only skips pages whose
-    // placement, section, AND background are all unchanged. A page-count
-    // shift is deliberately NOT structural: deleting across a pagination
-    // boundary bounces the count between renders, and a full repaint per
-    // bounce is the visible flicker of holding Backspace. dirtyPagesOf
-    // covers count changes positionally (pages past either end stay dirty;
-    // the trailing slots' lifecycles are handled in sync). The overlapping
-    // page range still compares its section map: a deletion may pull a later
-    // section onto an existing page slot, which changes its flow/furniture.
-    // Furniture compares on the projected options, not the laid stacks (the
-    // stacks derive from them plus the already-compared flow width); the
-    // frame CSS (background/borders) re-stamps on every sync and needs no
-    // diff.
-    const structural =
-      !prev ||
-      prev.viewMode !== run.viewMode ||
-      prev.sectionOfPage.some(
-        (section, index) =>
-          index < run.sectionOfPage.length && section !== run.sectionOfPage[index],
-      ) ||
-      prev.background?.color !== run.background?.color ||
-      prev.background?.image !== run.background?.image ||
-      prev.sections.length !== run.sections.length ||
-      prev.sections.some((s, i) => !deepEq(s.flow, run.sections[i]!.flow)) ||
-      prev.sections.some((s, i) => !deepEq(s.furniture, run.sections[i]!.furniture)) ||
-      prev.sections.some((s, i) => !deepEq(s.lineNumbers, run.sections[i]!.lineNumbers)) ||
-      prev.sections.some((s, i) => !deepEq(s.pageNumbering, run.sections[i]!.pageNumbering)) ||
-      prev.sections.some((s, i) => !deepEq(s.columns, run.sections[i]!.columns));
-    const dirty = structural ? undefined : dirtyPagesOf(prev.pages, run.pages);
-    stage.sync(run.pages, run.sections, run.sectionOfPage, run.background, dirty);
-    this.#bridge?.updatePages(run.pages, this.#pageOriginOf(run.sections, run.sectionOfPage));
-    this.#afterLayout();
-  }
-
-  /** The paged first render: consume {@link layoutSectionsIncremental} in
-   *  ~12ms slices, syncing the stage's growing page list each slice (painted
-   *  pages keep their canvas — only the slice's tail is dirty). The first
-   *  slice lifts the opening veil and hands the painted pages a caret map;
-   *  the finished walk records the run and arms the panes without a second
-   *  sync. A render starting mid-walk bumps the sequence and this walk just
-   *  drops — that render re-projects and takes over. */
-  async #renderDocIncremental(
-    projected: ProjectedFlowInputs,
-    seq: number,
-    doc: JSONContent,
-  ): Promise<void> {
-    const stage = this.#armStage(projected);
-    const pages: FlowPage[] = [];
-    const sectionOfPage: number[] = [];
-    const origin = this.#pageOriginOf(projected.sections, sectionOfPage);
-    const iterator = layoutSectionsIncremental(projected.flowSections, this.#measurer);
-    let done = false;
-    while (!done) {
-      const painted = pages.length;
-      const deadline = performance.now() + LAYOUT_SLICE_MS;
-      let step = iterator.next();
-      while (!step.done) {
-        pages.push(step.value.page);
-        sectionOfPage.push(step.value.section);
-        if (performance.now() >= deadline) break;
-        step = iterator.next();
-      }
-      if (step.done) done = true;
-      // Another render started, or the element went away — the walk is dead.
-      if (seq !== this.#renderSeq || !this.isConnected) return;
-      stage.sync(
-        pages,
-        projected.sections,
-        sectionOfPage,
-        projected.background,
-        Array.from({ length: painted }, () => false),
-      );
-      if (painted === 0) {
-        // First slice: real pages are on screen — lift the veil and give the
-        // painted range a caret map so clicks and typing already work.
-        this.#setProgress();
-        this.#bridge?.updatePages(pages, origin);
-      }
-      if (done) break;
-      await new Promise((resolve) => requestAnimationFrame(() => resolve(null)));
-    }
-    // The whole page list is known now: resolve the live numbering fields
-    // against it and repaint just the pages whose painted values changed. A
-    // resolution that rewrote measured text (SECTION/SECTIONPAGES width)
-    // re-lays synchronously — the pages array is then a fresh one.
-    const resolved = this.#resolveFields(projected, { pages, sectionOfPage }, doc);
-    if (seq !== this.#renderSeq || !this.isConnected) return;
-    const finalPages = resolved.pages;
-    const finalSectionOfPage = resolved.sectionOfPage;
-    const finalOrigin = this.#pageOriginOf(projected.sections, finalSectionOfPage);
-    if (finalPages !== pages) {
-      stage.sync(finalPages, projected.sections, finalSectionOfPage, projected.background);
-    } else if (resolved.dirty && resolved.dirty.length > 0) {
-      const dirty = finalPages.map((_, index) => resolved.dirty!.includes(index));
-      stage.sync(finalPages, projected.sections, finalSectionOfPage, projected.background, dirty);
-    }
-    this.#lastRun = {
-      pages: finalPages,
-      sectionOfPage: finalSectionOfPage,
-      sections: projected.sections,
-      background: projected.background,
-      viewMode: projected.viewMode,
-    };
-    this.#pages = finalPages;
-    this.#sectionOfPage = finalSectionOfPage;
-    this.#bridge?.updatePages(finalPages, finalOrigin);
-    this.#afterLayout();
+    this.#render.renderDoc(doc);
   }
 
   /** Create the stage on first use and refresh its per-render context —
@@ -3405,7 +2434,7 @@ class DocenDocument extends AddinHost<Editor> {
       background: p.background,
     });
     this.#stage.onAddTabStop = (posTw) => this.#addTabStopAt(posTw);
-    this.#stage.onOpenTabsDialog = () => this.#openTabsDialog();
+    this.#stage.onOpenTabsDialog = () => this.#insert.openTabsDialog();
     // Viewport virtualization → overlay culling (the bridge paints squiggles,
     // selection and search only on pages the stage keeps painted).
     this.#stage.onLiveChange = (page, live) => this.#bridge?.setPageLive(page, live);
@@ -3422,7 +2451,7 @@ class DocenDocument extends AddinHost<Editor> {
     // level here — push it in before the first sync sizes the slots. The
     // `show-marks` and `view` attributes get the same once-over (idempotent
     // setters; the read-only + chrome trimming rides #applyView's gate).
-    if (this.#stage.zoom !== this.#zoom) this.#stage.setZoom(this.#zoom);
+    if (this.#stage.zoom !== this.#status.getZoom()) this.#stage.setZoom(this.#status.getZoom());
     if (this.hasAttribute("show-marks")) this.#stage.setShowMarks(true);
     if (this.#stage.viewMode !== p.viewMode) {
       this.#stage.setViewMode(p.viewMode);
@@ -3432,52 +2461,13 @@ class DocenDocument extends AddinHost<Editor> {
     return this.#stage;
   }
 
-  /** The hidden semantic mirror, off the render's critical path: a full
-   *  rebuild is O(document) DOM, so a keystroke must not pay it — it lands on
-   *  a short debounce instead (screen readers read settled text). */
-  #scheduleA11yMirror(sections: readonly { blocks: unknown }[]): void {
-    clearTimeout(this.#a11yTimer);
-    this.#a11yTimer = window.setTimeout(() => {
-      this.#a11yTimer = undefined;
-      try {
-        this.#a11yMirror.update({
-          sections: sections.map((s) => ({ blocks: s.blocks })),
-        } as any);
-      } catch {
-        // Ignore a11y mirror update errors in non-browser environments
-      }
-    }, 250);
-  }
-
-  /** The panes-and-status tail both render paths run after their final sync. */
-  #afterLayout(): void {
-    // w:updateFields (Options → Update fields on open): one Update All Fields
-    // against the freshly pinned pagination. Deferred to this tail because the
-    // command's REF/PAGEREF lookups read the bridge's page map, which the
-    // just-finished render updated. It dispatches only when a cache changed —
-    // no render loop.
-    if (this.#updateFieldsOnOpen) {
-      this.#updateFieldsOnOpen = false;
-      this.#dialogs.updateAllFields();
-    }
-    this.#updateStatus();
-    if (this.getTaskpaneState("a11y")) {
-      (this.shadowRoot?.querySelector("docen-a11y-checker-pane") as any)?.check(this.getJSON());
-    }
-    this.#comments.syncCommentsPane();
-    this.#revisions.syncRevisionsPane();
-    this.#spelling.schedule();
-    this.#syncStatusLanguage();
-    this.#syncActiveTabStops();
-  }
-
   /** The previous render's flow result — the diff base for the next one. */
   #lastRun?: {
     pages: FlowPage[];
     sectionOfPage: number[];
     sections: (ProjectedSection & CanvasStageSection)[];
     background?: ProjectedPageBackground;
-    viewMode: "print" | "web" | "draft" | "read";
+    viewMode?: "print" | "web" | "draft" | "read";
   };
 
   /** Bumped by every render — an incremental layout walk compares its capture
@@ -3493,9 +2483,9 @@ class DocenDocument extends AddinHost<Editor> {
     this.shadowRoot?.removeEventListener("command", this.#onCommand as EventListener);
     this.shadowRoot?.removeEventListener("item-context", this.#onItemContext as EventListener);
     this.shadowRoot?.removeEventListener("change", this.#onChange as EventListener);
-    this.#fileInput?.removeEventListener("change", this.#onFileChange);
-    this.#imageInput?.removeEventListener("change", this.#onImageChange);
-    this.#pictureInput?.removeEventListener("change", this.#onPictureChange);
+    this.#fileInput?.removeEventListener("change", this.#io.onFileChange);
+    this.#imageInput?.removeEventListener("change", this.#io.onImageChange);
+    this.#pictureInput?.removeEventListener("change", this.#io.onPictureChange);
     this.shadowRoot
       ?.querySelector("docen-outline")
       ?.removeEventListener("outline:select", this.#navigation.onOutlineSelect as EventListener);
@@ -3539,10 +2529,10 @@ class DocenDocument extends AddinHost<Editor> {
       ?.removeEventListener("line-numbers:ok", this.#sections.onLineNumbersOk as EventListener);
     this.shadowRoot
       ?.querySelector("docen-hyphenation-dialog")
-      ?.removeEventListener("hyphenation:ok", this.#onHyphenationOk as EventListener);
+      ?.removeEventListener("hyphenation:ok", this.#insert.onHyphenationOk as EventListener);
     this.shadowRoot
       ?.querySelector("docen-tabs-dialog")
-      ?.removeEventListener("tabs:ok", this.#onTabsOk as EventListener);
+      ?.removeEventListener("tabs:ok", this.#insert.onTabsOk as EventListener);
     const bmEl = this.shadowRoot?.querySelector("docen-bookmark-dialog");
     bmEl?.removeEventListener("bookmark:add", this.onBookmarkAdd as EventListener);
     bmEl?.removeEventListener("bookmark:delete", this.onBookmarkDelete as EventListener);
@@ -3609,7 +2599,7 @@ class DocenDocument extends AddinHost<Editor> {
       ?.removeEventListener("paragraph:default", this.#dialogs.onParagraphDefault as EventListener);
     this.shadowRoot
       ?.querySelector("docen-paragraph-dialog")
-      ?.removeEventListener("paragraph:open-tabs", this.#openTabsDialog as EventListener);
+      ?.removeEventListener("paragraph:open-tabs", this.#insert.openTabsDialog as EventListener);
     this.shadowRoot
       ?.querySelector("docen-paste-special-dialog")
       ?.removeEventListener("paste-special:ok", this.#onPasteSpecialOk as EventListener);
@@ -3648,19 +2638,19 @@ class DocenDocument extends AddinHost<Editor> {
       ?.removeEventListener("link:ok", this.#onLinkOk as EventListener);
     this.shadowRoot
       ?.querySelector("docen-zoom-dialog")
-      ?.removeEventListener("zoom:ok", this.#onZoomOk as EventListener);
+      ?.removeEventListener("zoom:ok", this.#status.onZoomOk as EventListener);
     this.shadowRoot
       ?.querySelector("docen-status-bar")
-      ?.removeEventListener("zoom:open", this.#onZoomOpen as EventListener);
+      ?.removeEventListener("zoom:open", this.#status.onZoomOpen as EventListener);
     this.shadowRoot
       ?.querySelector("docen-status-bar")
-      ?.removeEventListener("wordcount:open", this.#onWordCountOpen as EventListener);
+      ?.removeEventListener("wordcount:open", this.#status.onWordCountOpen as EventListener);
     this.shadowRoot
       ?.querySelector<HTMLElement>("docen-status-bar")
-      ?.removeEventListener("zoom:change", this.#onZoomChange as EventListener);
+      ?.removeEventListener("zoom:change", this.#status.onZoomChange as EventListener);
     this.shadowRoot
       ?.querySelector("docen-status-bar")
-      ?.removeEventListener("view:select", this.#onViewSelect as EventListener);
+      ?.removeEventListener("view:select", this.#status.onViewSelect as EventListener);
     this.#stageHost?.removeEventListener("wheel", this.#onWheel as EventListener, {
       capture: true,
     });
@@ -3675,13 +2665,8 @@ class DocenDocument extends AddinHost<Editor> {
     this.#fontSyncCleanup = undefined;
     this.#settingsOff?.();
     this.#settingsOff = undefined;
-    clearTimeout(this.#autosaveTimer);
-    clearTimeout(this.#wordCountTimer);
-    this.#wordCountTimer = undefined;
-    // A timed-out recount must re-run on reconnect, even at the same docSize.
-    this.#lastDocSize = -1;
-    clearTimeout(this.#navThumbTimer);
-    this.#navThumbTimer = undefined;
+    this.#chrome.dispose();
+    this.#status.dispose();
     this.#stopFormatPainter();
     this.#stopBorderPainting();
     this.#stopShapeDrawing();
@@ -3696,292 +2681,34 @@ class DocenDocument extends AddinHost<Editor> {
 
   // ── Quick Access Toolbar (title bar) ──────────────────────────────────────
 
-  /** The shown QAT ids, persisted across sessions; falls back to Word's
-   *  default trio when nothing (or anything stale) is stored. */
-  #qatIds(): string[] {
-    try {
-      const raw = localStorage.getItem(QAT_STORAGE_KEY);
-      if (raw) {
-        const ids = JSON.parse(raw) as unknown;
-        if (
-          Array.isArray(ids) &&
-          ids.length > 0 &&
-          ids.every((id) => QAT_CANDIDATES.some((c) => c.id === id))
-        ) {
-          return ids as string[];
-        }
-      }
-    } catch {
-      // Private mode / disabled storage — defaults only.
-    }
-    return [...QAT_DEFAULT];
-  }
-
   #toggleQat(id: string): void {
-    const cur = this.#qatIds();
-    const next = cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id];
-    try {
-      localStorage.setItem(QAT_STORAGE_KEY, JSON.stringify(next));
-    } catch {
-      // Storage unavailable — the bar still toggles for this session.
-    }
-    // Re-stamp the header so the bar and the menu's checkmarks follow.
-    this.#renderChrome();
+    this.#chrome.toggleQat(id);
   }
 
   // ── Auto-save (title bar switch) ──────────────────────────────────────────
 
-  /** Debounces content changes into a localStorage backup while auto-save is
-   *  on. The switch state and the backup are both per-filename so concurrent
-   *  documents don't overwrite each other. */
-  #autosaveTimer?: number;
-
   #autosaveEnabled(): boolean {
-    try {
-      return localStorage.getItem(AUTOSAVE_ON_KEY) === "1";
-    } catch {
-      return false;
-    }
+    return this.#chrome.autosaveEnabled();
   }
 
   #setAutosave(on: boolean): void {
-    try {
-      localStorage.setItem(AUTOSAVE_ON_KEY, on ? "1" : "0");
-      if (on) this.#scheduleAutosave();
-      else {
-        clearTimeout(this.#autosaveTimer);
-        localStorage.removeItem(this.#autosaveKey());
-      }
-    } catch {
-      // Storage unavailable — the switch still flips for this session.
-    }
-  }
-
-  #autosaveKey(): string {
-    return `docen:autosave:${this.getAttribute("filename") ?? "document"}`;
+    this.#chrome.setAutosave(on);
   }
 
   #loadPersistedHistory(): void {
-    try {
-      const raw = localStorage.getItem(`${this.#autosaveKey()}:history`);
-      if (raw) {
-        const parsed = JSON.parse(raw);
-        if (Array.isArray(parsed)) {
-          this.#versionSnapshots = parsed.slice(0, 20);
-        }
-      }
-    } catch {
-      // Storage unavailable
-    }
+    this.#chrome.loadPersistedHistory();
   }
 
   #scheduleAutosave(): void {
-    if (!this.#autosaveEnabled() || !this.editor) return;
-    clearTimeout(this.#autosaveTimer);
-    this.#autosaveTimer = window.setTimeout(() => {
-      try {
-        const curDoc = this.editor?.getJSON();
-        if (curDoc) {
-          const json = JSON.stringify(curDoc);
-          if (json.length <= AUTOSAVE_MAX_CHARS) localStorage.setItem(this.#autosaveKey(), json);
-          this.#versionSnapshots.unshift({
-            id: `v-${Date.now()}`,
-            timestamp: new Date().toISOString(),
-            author: this.settings.identity.name || "User",
-            isAutosave: true,
-            doc: curDoc,
-          });
-          if (this.#versionSnapshots.length > 20) this.#versionSnapshots.pop();
-          try {
-            localStorage.setItem(
-              `${this.#autosaveKey()}:history`,
-              JSON.stringify(this.#versionSnapshots),
-            );
-          } catch {}
-        }
-      } catch {
-        // Quota exceeded — keep the last good backup, retry on the next change.
-      }
-    }, 1500);
+    this.#chrome.scheduleAutosave();
   }
 
-  #renderHeader(): string {
-    // The store is the identity source; an explicit `user` attribute overrides
-    // it for display (Options edits the store, the attribute remains a host knob).
-    const identity = this.settings.identity;
-    const user = identity.name;
-    const avatar = this.getAttribute("avatar") ?? "";
-    const filename = this.getAttribute("filename") ?? t("header.doc-name", this);
-    const initial = identity.initials || user.trim().charAt(0).toUpperCase();
-    const avatarMarkup = avatar
-      ? `<img class="avatar avatar-img" src="${escapeHtml(avatar)}" alt="" />`
-      : initial
-        ? `<span class="avatar">${escapeHtml(initial)}</span>`
-        : "";
-    const autosave = t("header.autosave", this);
-    const qatIds = this.#qatIds();
-    // Undo/redo render as icon-only split buttons (Word's QAT shape): the
-    // primary runs one step, the 14px caret opens the history flyout
-    // (#fillHistory fills it on open). An empty stack hides the caret through
-    // data-history-empty (documentStyles; Word shows no flyout for a fresh
-    // document) — #updateStatus keeps the flag in step with the depths, the
-    // header doesn't rebuild per transaction.
-    const editorForDepth = this.#bridge?.activeEditor() ?? this.editor;
-    const depthOf = (kind: "undo" | "redo"): number =>
-      !editorForDepth
-        ? 0
-        : kind === "undo"
-          ? undoDepth(editorForDepth.state)
-          : redoDepth(editorForDepth.state);
-    const qatButtons = QAT_CANDIDATES.filter((c) => qatIds.includes(c.id))
-      .map((c) => {
-        if (c.id === "undo" || c.id === "redo") {
-          return `<docen-ribbon-split-button icon="${c.icon}" label="${t(c.labelKey, this)}" event="${c.id}" icon-only data-history="${c.id}" items="[]"${depthOf(c.id) === 0 ? " data-history-empty" : ""}></docen-ribbon-split-button>`;
-        }
-        return `<docen-ribbon-button icon="${c.icon}" label="${t(c.labelKey, this)}" event="${c.id}" icon-only></docen-ribbon-button>`;
-      })
-      .join("");
-    const qatMenuItems = QAT_CANDIDATES.map((c) => {
-      const on = qatIds.includes(c.id);
-      // `checked` drives Fluent's checkmark glyph and the change event;
-      // aria-checked is kept in sync by the element internals.
-      return `<fluent-menu-item role="menuitemcheckbox" ${on ? "checked" : ""} data-qat="${c.id}">${t(c.labelKey, this)}</fluent-menu-item>`;
-    }).join("");
-    return `
-          <div slot="start" style="display:flex;align-items:center;gap:4px">
-            <span style="font-weight:600;font-size:13px;padding-inline:6px">${t("header.brand", this)}</span>
-            <span class="autosave-label">${autosave}</span>
-            <fluent-switch data-event="autosave" ${this.#autosaveEnabled() ? "checked" : ""} aria-label="${autosave}"></fluent-switch>
-            ${qatButtons}
-            <!-- The customize caret and the file menu detach from the QAT
-                 cluster (the row's 4px gap would read the caret as the last
-                 button's split dropdown, and butt it against the file name). -->
-            <fluent-menu style="margin-inline-start:4px">
-              <fluent-menu-button
-                slot="trigger"
-                appearance="subtle"
-                icon-only
-                class="qat-customize"
-                title="${t("header.qat-customize", this)}"
-              ></fluent-menu-button>
-              <fluent-menu-list>${qatMenuItems}</fluent-menu-list>
-            </fluent-menu>
-            <fluent-menu style="margin-inline-start:10px">
-              <fluent-menu-button
-                slot="trigger"
-                appearance="subtle"
-                style="max-width:36vw;overflow:hidden;white-space:nowrap"
-                title="${escapeHtml(filename)}"
-              >${escapeHtml(filename)}</fluent-menu-button>
-              <fluent-menu-list>
-                <fluent-menu-item data-event="new">${t("header.new", this)}</fluent-menu-item>
-                <fluent-menu-item data-event="new-from-template">${t("header.new-from-template", this)}</fluent-menu-item>
-                <fluent-divider role="separator" aria-orientation="horizontal" orientation="horizontal"></fluent-divider>
-                <fluent-menu-item data-event="open">${t("header.open", this)}</fluent-menu-item>
-                <fluent-divider role="separator" aria-orientation="horizontal" orientation="horizontal"></fluent-divider>
-                <fluent-menu-item data-event="save-as">${t("header.save-as", this)}</fluent-menu-item>
-                <fluent-menu-item data-event="version-history">${t("header.version-history", this)}</fluent-menu-item>
-                <fluent-menu-item data-event="save-as-template">${t("header.save-as-template", this)}</fluent-menu-item>
-                <fluent-menu-item data-event="save-as-markdown">${t("header.save-as-markdown", this)}</fluent-menu-item>
-                <fluent-menu-item data-event="save-as-rtf">${t("header.save-as-rtf", this)}</fluent-menu-item>
-                <fluent-menu-item data-event="save-as-html">${t("header.save-as-html", this)}</fluent-menu-item>
-                <fluent-menu-item data-event="save-as-txt">${t("header.save-as-txt", this)}</fluent-menu-item>
-                <fluent-menu-item data-event="save-as-odt">${t("header.save-as-odt", this)}</fluent-menu-item>
-                <fluent-menu-item data-event="save-as-pdf">${t("header.save-as-pdf", this)}</fluent-menu-item>
-                <fluent-divider role="separator" aria-orientation="horizontal" orientation="horizontal"></fluent-divider>
-                <fluent-menu-item data-event="print">${t("header.print", this)}</fluent-menu-item>
-                <fluent-divider role="separator" aria-orientation="horizontal" orientation="horizontal"></fluent-divider>
-                <fluent-menu-item data-event="share">${t("header.share", this)}</fluent-menu-item>
-                <fluent-divider role="separator" aria-orientation="horizontal" orientation="horizontal"></fluent-divider>
-                <fluent-menu-item data-event="properties">${t("header.properties", this)}</fluent-menu-item>
-                <fluent-menu-item data-event="inspect-document">${t("header.inspect", this)}</fluent-menu-item>
-                <fluent-divider role="separator" aria-orientation="horizontal" orientation="horizontal"></fluent-divider>
-                <fluent-menu-item data-event="options">${t("header.options", this)}</fluent-menu-item>
-                <fluent-menu-item data-event="close">${t("header.close", this)}</fluent-menu-item>
-              </fluent-menu-list>
-            </fluent-menu>
-          </div>
-          <docen-command-search slot="search"></docen-command-search>
-          <div slot="end" style="display:flex;align-items:center;gap:4px">
-            <span style="display:inline-flex;align-items:center;gap:6px;padding-inline:6px">${avatarMarkup}${escapeHtml(user)}</span>
-          </div>`;
-  }
-
-  /** Stamp the header + ribbon markup for the active locale (re-run on lang change). */
   #renderChrome(): void {
-    const root = this.shadowRoot;
-    // FAST fires @attr change callbacks during element upgrade, BEFORE the
-    // template is stamped (connectedCallback runs after) — the shadowRoot
-    // exists but is empty, so the title-bar query is null. Bail until stamped;
-    // connectedCallback's explicit call does the first render.
-    const titleBar = root?.querySelector("docen-title-bar");
-    if (!root || !titleBar) return;
-    const styles = this.editor?.state.doc.attrs?.styles ?? null;
-    titleBar.innerHTML = this.#renderHeader();
-    // Built-in tabs (Home/Insert/… with the live style gallery) come from
-    // ribbonTabs; external add-ins layer their own tabs on top via
-    // mergeRibbonSchema. The default add-in contributes no ribbon, so without
-    // extra add-ins this is just the built-in set.
-    const tabs = [
-      ...ribbonTabs(styles, { revisionAuthors: this.#revisionAuthors() }),
-      ...mergeRibbonSchema(this.addins),
-    ];
-    const ribbonEl = root.querySelector("docen-ribbon")!;
-    // Pass the workspace as the i18n scope so labels resolve against
-    // `<docen-workspace lang>` (forwarded from `<docen-document lang>`)
-    // rather than `<html lang>`. `closest()` can't reach the workspace from
-    // inside this fragment (shadow boundary + not yet inserted), so the
-    // workspace element must be handed in explicitly.
-    ribbonEl.replaceChildren(
-      renderRibbonFromSchema(
-        tabs,
-        ribbonActions(),
-        root.querySelector("docen-workspace") ?? document.documentElement,
-      ),
-    );
-    // Feed the full ribbon schema (built-in tabs + addin contributions) to the
-    // command search so it can flatten and index every command. Re-runs on
-    // lang/addin change since #renderChrome is the single chrome re-stamp.
-    const searchEl = root.querySelector("docen-command-search") as
-      | (HTMLElement & { setTabs(tabs: readonly unknown[], scope: Element | null): void })
-      | null;
-    // Pass the workspace as the i18n scope so command labels resolve against
-    // `<docen-workspace lang>` (forwarded from `<docen-document lang>`) — the
-    // same scope the ribbon uses just above.
-    searchEl?.setTabs(tabs, root.querySelector("docen-workspace"));
-    this.#applyRibbonGreying();
-    this.#syncEditModeMenu();
-    this.#syncStoryMenus();
-    this.#syncMarkupMenus();
-    // The ribbon DOM was rebuilt from scratch — drop the stale context-tab
-    // tracking, then re-append them if the selection is inside a table.
-    this.#contextTabIds.clear();
-    this.#syncContextTabs();
-    this.#syncCellSize();
-    this.#syncDrawingSize();
-    this.#syncFormatButtons();
-    this.#syncDrawingMenus();
-    this.#syncQuickPartsMenu();
-    this.#renderPanes();
+    this.#chrome.renderChrome();
   }
 
-  /** Fill a QAT history flyout with one entry per available step. PM's history
-   *  keeps no per-item labels, so entries read "Edit N"; picking entry N
-   *  arrives as the undo/redo command carrying its step count (#onCommand,
-   *  Word's flyout shape). */
   #fillHistory(kind: "undo" | "redo"): void {
-    const editor = this.#bridge?.activeEditor() ?? this.editor;
-    const split = this.shadowRoot?.querySelector(
-      `docen-ribbon-split-button[data-history="${kind}"]`,
-    );
-    if (!editor || !split) return;
-    const depth = kind === "undo" ? undoDepth(editor.state) : redoDepth(editor.state);
-    const label = t("header.history-item", this);
-    const items: Array<{ text: string; value: string }> = [];
-    for (let steps = depth; steps >= 1; steps--) {
-      items.push({ text: label.replace("{0}", String(steps)), value: String(steps) });
-    }
-    split.setAttribute("items", JSON.stringify(items));
+    this.#chrome.fillHistory(kind);
   }
 
   /** Shadow-root click delegation for the history flyouts: the split's caret
@@ -4004,692 +2731,58 @@ class DocenDocument extends AddinHost<Editor> {
     this.#renderChrome();
   }
 
-  /** Stamp pane titles + status text for the active locale (re-run on lang change). */
-  #renderPanes(): void {
-    const root = this.shadowRoot;
-    if (!root) return;
-    const navPane = root.querySelector('docen-task-pane[position="start"]');
-    if (navPane) navPane.setAttribute("title", t("pane.navigation", this));
-    const propsPane = root.querySelector('docen-task-pane[position="end"]');
-    if (propsPane) propsPane.setAttribute("title", t("pane.properties", this));
-    // The end-rail panes — the static template's title attrs are English
-    // literals, so every pane's title is stamped here for the locale.
-    for (const [part, key] of [
-      ["comments-pane", "pane.comments"],
-      ["revisions-pane", "pane.revisions"],
-      ["clipboard-pane", "pane.clipboard"],
-      ["proofing-pane", "pane.proofing"],
-      ["thesaurus-pane", "pane.thesaurus"],
-      ["styles-pane", "pane.styles"],
-    ] as const) {
-      root.querySelector(`docen-task-pane[part="${part}"]`)?.setAttribute("title", t(key, this));
-    }
-    // Status bar is dynamic (page count / caret page / zoom) — re-stamp it so a
-    // locale change re-localizes the text too.
-    this.#updateStatus();
-  }
-
-  /** Add-in ids currently registered from the `addins` attribute. Tracked so
-   *  editing the attribute at runtime removes add-ins that fell out (addAddin
-   *  alone is idempotent on add but can't detect a deletion). */
-  #addinAttrIds = new Set<string>();
-
-  /** Sync external add-ins with the `addins` JSON attribute: register new ids,
-   *  remove ids no longer present. JSON can't carry functions, so only ribbon
-   *  data contributions cross this boundary; command handlers stay in JS
-   *  (addAddin with a full object). */
   #applyAddinsAttr(): void {
-    const raw = this.getAttribute("addins");
-    const next = new Set<string>();
-    if (raw) {
-      let parsed: unknown;
-      try {
-        parsed = JSON.parse(raw);
-      } catch {
-        return;
-      }
-      if (Array.isArray(parsed)) {
-        for (const item of parsed) {
-          if (
-            item &&
-            typeof item === "object" &&
-            typeof (item as { id?: unknown }).id === "string"
-          ) {
-            const id = (item as { id: string }).id;
-            next.add(id);
-            if (!this.#addinAttrIds.has(id)) this.addAddin(item as DocenAddin<this>);
-          }
-        }
-      }
-    }
-    // Remove add-ins that fell out of the attribute (covers editing it to drop
-    // a tab at runtime, or removing the attribute entirely).
-    for (const id of this.#addinAttrIds) {
-      if (!next.has(id)) this.removeAddin(id);
-    }
-    this.#addinAttrIds = next;
+    this.#chrome.applyAddinsAttr();
   }
 
-  /** Apply the `theme` attribute: switch the Fluent theme
-   *  (light/dark/high-contrast/teams-*). */
   #applyThemeAttr(value: string): void {
-    applyTheme(resolveTheme(value));
+    this.#chrome.applyThemeAttr(value);
   }
 
-  /** Grey out ribbon commands that have no handler (skeleton buttons). Runs
-   *  after every ribbon re-stamp; fresh elements start un-disabled, so this is
-   *  the single place `disabled` is applied. Only controls that support
-   *  `disabled` (button/split-button/toggle-button) are greyed — combobox /
-   *  color-picker lack it and live in wired tabs anyway. */
-  #applyRibbonGreying(): void {
-    const ribbon = this.shadowRoot?.querySelector("docen-ribbon");
-    if (!ribbon) return;
-    const wired = this.#wiredCommands();
-    ribbon
-      .querySelectorAll<HTMLElement>(
-        "docen-ribbon-button[event], docen-ribbon-split-button[event], docen-ribbon-toggle-button[event], docen-ribbon-menu[event]",
-      )
-      .forEach((el) => {
-        const event = el.getAttribute("event");
-        if (!event) return;
-        // A composite (split/menu) stays live while ANY drop-down variant
-        // resolves to a wired command — greying the host would bury its live
-        // items (the AutoFit split's face has no action, its three variants
-        // do). A face-only split keeps its caret and opens the menu instead.
-        const liveItems =
-          el.tagName === "DOCEN-RIBBON-SPLIT-BUTTON" || el.tagName === "DOCEN-RIBBON-MENU"
-            ? this.#ribbonMenuItems(el).some(
-                (item) => !item.disabled && wired.has(item.event ?? event),
-              )
-            : false;
-        if (wired.has(event) || liveItems) {
-          el.removeAttribute("disabled");
-          // A face with no action of its own opens the drop-down instead:
-          // either its own event is unwired while the variants are live, or
-          // the handler only exists for the variants' values (Columns).
-          const faceOnly =
-            el.tagName === "DOCEN-RIBBON-SPLIT-BUTTON" && FACE_ONLY_SPLITS.has(event);
-          if (faceOnly || (liveItems && !wired.has(event)))
-            el.setAttribute("primary-opens-menu", "");
-          else el.removeAttribute("primary-opens-menu");
-        } else {
-          el.setAttribute("disabled", "");
-          el.removeAttribute("primary-opens-menu");
-        }
-      });
-    // The merge controls need a recipient data source (Word grays them the
-    // same way until Select Recipients has run).
-    const hasSource = this.#merge.recipients() !== null;
-    for (const event of [
-      "merge-field",
-      "address-block",
-      "greeting-line",
-      "preview-results",
-      "first-record",
-      "last-record",
-      "finish-merge",
-    ]) {
-      ribbon
-        .querySelectorAll<HTMLElement>(`[event="${event}"]`)
-        .forEach((el) => el.toggleAttribute("disabled", !hasSource));
-    }
-    // The ribbon DOM here is fresh (rebuilt or extended) — force the arrange
-    // pass to re-read the selection instead of trusting the diff cache.
-    this.#arrangeGrey = null;
-    this.#syncArrangeGreying();
-    // Same for the format toggles: fresh elements start un-pressed, so the
-    // signature cache must not skip the re-stamp below.
-    this.#formatButtonsKey = "";
-  }
-
-  /** The previous arrange pass's selection class (floating "f" / inline "i"),
-   *  so the per-transaction sync touches the DOM only on a change; null
-   *  forces a re-run (a fresh ribbon DOM starts un-greyed). */
-  #arrangeGrey: string | null = null;
-  /** The previous format toggles' [event, lit] signature — the DOM sweep is
-   *  skipped while it is unchanged; "" forces a re-run after a re-stamp. */
-  #formatButtonsKey = "";
-
-  /** Word greys the Arrange group by selection: Align/z-order need a floating
-   *  drawing, Wrap Text and Position also serve an inline drawing (they
-   *  convert it), Rotate also an inline picture. The static pass can't see
-   *  the selection, so this runs per transaction (and after every ribbon
-   *  re-stamp). */
   #syncArrangeGreying(): void {
-    const ribbon = this.shadowRoot?.querySelector("docen-ribbon");
-    if (!ribbon || !this.editor) return;
-    const state = this.editor.state;
-    const floating = floatingDrawingAt(state) != null;
-    const inlineImage = !floating && inlineImageAt(state) != null;
-    const inlineDrawing = !floating && !inlineImage && inlineDrawingAt(state) != null;
-    const key = `${floating ? "f" : ""}${inlineImage ? "i" : ""}${inlineDrawing ? "d" : ""}`;
-    if (key === this.#arrangeGrey) return;
-    this.#arrangeGrey = key;
-    for (const el of ribbon.querySelectorAll<HTMLElement>(
-      "docen-ribbon-button[event], docen-ribbon-menu[event], docen-ribbon-split-button[event]",
-    )) {
-      const event = el.getAttribute("event") ?? "";
-      const live = FLOATING_ONLY.has(event)
-        ? floating
-        : FLOATING_OR_INLINE.has(event)
-          ? floating || inlineImage || inlineDrawing
-          : FLOATING_OR_INLINE_IMAGE.has(event)
-            ? floating || inlineImage
-            : null;
-      // Events outside the two sets keep the static pass's decision.
-      if (live == null) continue;
-      el.toggleAttribute("disabled", !live);
-    }
+    this.#chrome.syncArrangeGreying();
   }
 
-  /** Re-stamp the Home tab's format toggles (Bold/Italic/…/alignment) against
-   *  the caret/selection — Word's lit buttons. Runs per transaction after
-   *  #syncArrangeGreying; toggleAttribute is a no-op on a same-value attr, so
-   *  an unchanged state doesn't re-fire the component. The [event, lit] rows
-   *  are the pass's only inputs, so an unchanged signature skips the DOM
-   *  sweep (a ribbon re-stamp resets the cache — see #applyRibbonGreying). */
   #syncFormatButtons(): void {
-    const state = this.editor?.state;
-    if (!state) return;
-    const rows: [string, boolean][] = [
-      ...formatToggleStatesOf(state),
-      ["show-marks", this.hasAttribute("show-marks")],
-      // The format painter lights while armed (Word: the button stays lit
-      // until the paint lands / sticky mode ends) — the host attribute is
-      // its truth, same as show-marks.
-      ["format-painter", this.hasAttribute("format-painter")],
-      // Markdown input mode — the host flag is its truth (the Options
-      // dialog writes it without a click, so the sync re-stamps both ways).
-      ["markdown-input", this.#markdown],
-    ];
-    const key = rows.map(([event, on]) => (on ? `${event}|` : `${event},`)).join("");
-    if (key === this.#formatButtonsKey) return;
-    this.#formatButtonsKey = key;
-    for (const [event, on] of rows) {
-      for (const el of this.shadowRoot?.querySelectorAll<HTMLElement>(
-        // A lit row may land on a plain toggle (bold) or on a split whose
-        // primary carries the face ([pressed-face] guards the rest — underline
-        // / bullet / ordered lists are the only opt-ins today).
-        `docen-ribbon-toggle-button[event="${event}"], docen-ribbon-split-button[pressed-face][event="${event}"]`,
-      ) ?? []) {
-        el.toggleAttribute("pressed", on);
-      }
-    }
+    this.#chrome.syncFormatButtons();
   }
 
-  /** A composite control's parsed `items` attribute (menu variants), empty on
-   *  malformed JSON so a typo greys the control rather than crashing. */
-  #ribbonMenuItems(el: HTMLElement): {
-    checked?: boolean;
-    disabled?: boolean;
-    event?: string;
-    value?: string;
-  }[] {
-    try {
-      return JSON.parse(el.getAttribute("items") ?? "[]") as {
-        checked?: boolean;
-        disabled?: boolean;
-        event?: string;
-        value?: string;
-      }[];
-    } catch {
-      return [];
-    }
-  }
-
-  /** Re-stamp the drawing state menus' checked rows against the selection —
-   *  Wrap Text / Position (picture and shape tabs), Chart Type / Legend, and
-   *  the shape Text Direction menu report the drawing's current mode (Word's
-   *  checked gallery row). Runs per transaction after #syncContextTabs (the
-   *  menus only exist while a drawing tab is stamped) — a same-value
-   *  setAttribute fires no attr-changed callback, so an unchanged state
-   *  doesn't re-render the menu. */
   #syncDrawingMenus(): void {
-    const state = this.editor?.state;
-    if (!state) return;
-    const chart = chartMenuValueOf(state);
-    const rows: [event: string, value: string | null][] = [
-      ["wrap", wrapMenuValueOf(state)],
-      ["position", positionMenuValueOf(state)],
-      ["chart-type", chart?.type ?? null],
-      ["chart-legend", chart?.legend ?? null],
-      ["shape-text-direction", textDirectionMenuValueOf(state)],
-    ];
-    for (const [event, value] of rows) {
-      for (const el of this.shadowRoot?.querySelectorAll<HTMLElement>(
-        `docen-ribbon-menu[event="${event}"]`,
-      ) ?? []) {
-        const items = this.#ribbonMenuItems(el).map((item) =>
-          item.value == null ? item : { ...item, checked: item.value === value },
-        );
-        const json = JSON.stringify(items);
-        if (json !== el.getAttribute("items")) el.setAttribute("items", json);
-      }
-    }
+    this.#chrome.syncDrawingMenus();
   }
 
-  /** Re-stamp the Insert → Text → Quick Parts menu with the document's
-   *  building blocks grouped by gallery (Word's Explore Quick Parts), greying
-   *  Save Selection without a selection. Runs per transaction and after
-   *  #renderChrome rebuilds the ribbon (the static seed carries no blocks). */
   #syncQuickPartsMenu(): void {
-    const menu = this.shadowRoot?.querySelector<HTMLElement>(
-      'docen-ribbon-menu[event="quick-parts"]',
-    );
-    if (!menu) return;
-    const editor = this.#bridge?.activeEditor() ?? this.editor;
-    const blocks = editor ? blocksOfDocAttrs(editor.state.doc.attrs) : [];
-    const selection = editor?.state.selection;
-    const editable = editor?.isEditable ?? false;
-    const items: RibbonMenuItem[] = [
-      {
-        text: t("ribbon.opt.save-quick-part", this),
-        value: "save",
-        event: "save-quick-part",
-        disabled: !editable || !selection || selection.empty,
-      },
-      {
-        text: t("ribbon.opt.building-blocks-organizer", this),
-        value: "organizer",
-        event: "building-blocks-organizer",
-        disabled: blocks.length === 0,
-      },
-    ];
-    for (const group of groupBlocksByGallery(blocks)) {
-      items.push({ text: t(`buildingBlock.gallery.${group.gallery}`, this), header: true });
-      for (const block of group.blocks) {
-        items.push({ text: block.name, value: block.id, event: "quick-parts" });
-      }
-    }
-    const json = JSON.stringify(items);
-    if (json !== menu.getAttribute("items")) menu.setAttribute("items", json);
+    this.#chrome.syncQuickPartsMenu();
   }
 
-  /** Re-stamp the tab-row "Editing" menu so its label + checked item match the
-   *  editor's live editable state (initial render, after a switch, and on
-   *  locale change — #renderChrome re-stamps the ribbon, so this runs after
-   *  #applyRibbonGreying to override the static default items). */
   #syncEditModeMenu(): void {
-    const menu = this.shadowRoot?.querySelector('docen-ribbon-menu[event="edit-mode"]');
-    if (!menu) return;
-    const editable = this.editor?.isEditable ?? true;
-    menu.setAttribute("label", t(editable ? "ribbon.opt.editing" : "ribbon.opt.viewing", this));
-    menu.setAttribute(
-      "items",
-      JSON.stringify([
-        {
-          text: t("ribbon.opt.editing", this),
-          event: "edit-mode",
-          value: "edit",
-          checked: editable,
-        },
-        {
-          text: t("ribbon.opt.viewing", this),
-          event: "edit-mode",
-          value: "view",
-          checked: !editable,
-        },
-      ]),
-    );
+    this.#chrome.syncEditModeMenu();
   }
 
-  /** The document's revision authors (w:ins/@w:author, document order,
-   *  deduped) — the Specific People menu's entries. */
-  #revisionAuthors(): string[] {
-    if (!this.editor) return [];
-    const seen = new Set<string>();
-    for (const r of collectRevisions(this.editor.state.doc)) {
-      if (r.author !== "") seen.add(r.author);
-    }
-    return [...seen];
-  }
-
-  /** Re-stamp the Review → Tracking display controls so label + checked match
-   *  the live Display for Review state (the #syncEditModeMenu pattern — runs
-   *  on every chrome re-stamp, right after the greying pass). */
   #syncMarkupMenus(): void {
-    const root = this.shadowRoot;
-    const display = root?.querySelector('docen-ribbon-split-button[event="display-for-review"]');
-    if (!display) return;
-    const view = this.#markupView;
-    const viewKey = {
-      simple: "simple-marks",
-      all: "all-marks",
-      none: "no-marks",
-      original: "original-marks",
-    }[view];
-    display.setAttribute("label", t(`ribbon.opt.${viewKey}`, this));
-    display.setAttribute(
-      "items",
-      JSON.stringify(
-        (
-          [
-            ["simple", "simple-marks"],
-            ["all", "all-marks"],
-            ["none", "no-marks"],
-            ["original", "original-marks"],
-          ] as const
-        ).map(([value, key]) => ({
-          text: t(`ribbon.opt.${key}`, this),
-          event: "display-for-review",
-          value,
-          checked: value === view,
-        })),
-      ),
-    );
-    const authors = this.#revisionAuthors();
-    const filtered = this.#markupAuthors;
-    display
-      .closest("docen-ribbon-group")
-      ?.querySelector<HTMLElement>('docen-ribbon-menu[event="review-specific-people"]')
-      ?.setAttribute(
-        "items",
-        JSON.stringify([
-          {
-            text: t("ribbon.opt.all-reviewers", this),
-            event: "review-specific-people",
-            value: "all",
-            checked: filtered == null,
-          },
-          ...authors.map((a) => ({
-            text: a,
-            event: "review-specific-people",
-            value: a,
-            checked: filtered?.includes(a) ?? false,
-          })),
-        ]),
-      );
-    // Markup Colors: the two palette entries with their live check.
-    const colors = this.#markupColors;
-    display
-      .closest("docen-ribbon-group")
-      ?.querySelector<HTMLElement>('docen-ribbon-menu[event="markup-colors"]')
-      ?.setAttribute(
-        "items",
-        JSON.stringify(
-          (
-            [
-              ["author", "by-author"],
-              ["changeType", "by-change-type"],
-            ] as const
-          ).map(([value, key]) => ({
-            text: t(`ribbon.opt.${key}`, this),
-            event: "markup-colors",
-            value,
-            checked: value === colors,
-          })),
-        ),
-      );
-    // Show Markup → Balloons: the four scope entries with their live check.
-    const balloons = this.#balloons;
-    display
-      .closest("docen-ribbon-group")
-      ?.querySelector<HTMLElement>('docen-ribbon-menu[event="show-markup"]')
-      ?.setAttribute(
-        "items",
-        JSON.stringify(
-          (
-            [
-              ["all", "balloons-all"],
-              ["comments", "balloons-comments"],
-              ["revisions", "balloons-revisions"],
-              ["none", "balloons-none"],
-            ] as const
-          ).map(([value, key]) => ({
-            text: t(`ribbon.opt.${key}`, this),
-            event: "show-markup",
-            value,
-            checked: value === balloons,
-          })),
-        ),
-      );
+    this.#chrome.syncMarkupMenus();
   }
 
-  /** Re-stamp the Header/Footer split drop-downs with live checked flags —
-   *  the slot-visibility items read sectionProperties (titlePage /
-   *  evenAndOddHeaders), which the static ribbon schema can't carry. Runs on
-   *  every chrome re-stamp and every transaction (a flag toggle flips its
-   *  check on the next pass). */
   #syncStoryMenus(): void {
-    const attrs = this.editor?.state.doc.attrs as
-      | {
-          sectionProperties?: { titlePage?: boolean };
-          documentExtras?: { settings?: { evenAndOddHeaders?: boolean } };
-        }
-      | undefined;
-    // titlePage is a sectPr flag; evenAndOddHeaders lives in settings.xml
-    // (toggled through documentExtras — see SectionsCommands.toggleSectionFlag).
-    const sp = attrs?.sectionProperties;
-    const oddEven = attrs?.documentExtras?.settings?.evenAndOddHeaders;
-    const stamp = (kind: "header" | "footer"): void => {
-      const el = this.shadowRoot?.querySelector(`docen-ribbon-split-button[event="${kind}"]`);
-      if (!el) return;
-      el.setAttribute(
-        "items",
-        JSON.stringify([
-          {
-            text: t(kind === "header" ? "ribbon.opt.edit-header" : "ribbon.opt.edit-footer", this),
-            value: "edit",
-          },
-          {
-            text: t(
-              kind === "header" ? "ribbon.opt.remove-header" : "ribbon.opt.remove-footer",
-              this,
-            ),
-            value: kind === "header" ? "remove-header" : "remove-footer",
-          },
-          {
-            text: t("ribbon.opt.different-first", this),
-            value: "title-page",
-            checked: !!sp?.titlePage,
-          },
-          {
-            text: t("ribbon.opt.odd-even", this),
-            value: "odd-even",
-            checked: !!oddEven,
-          },
-        ]),
-      );
-    };
-    stamp("header");
-    stamp("footer");
-    // While a story is open the chrome re-stamp may have rebuilt the ribbon —
-    // re-hang the context tab and mirror the flags into its checkboxes.
-    if (this.#storyKind != null) {
-      this.#showHeaderFooterContextTab();
-      const titleCb = this.shadowRoot?.querySelector(
-        'docen-ribbon-checkbox[event="header-option"][value="title-page"]',
-      );
-      titleCb?.toggleAttribute("checked", !!sp?.titlePage);
-      const oddEvenCb = this.shadowRoot?.querySelector(
-        'docen-ribbon-checkbox[event="header-option"][value="odd-even"]',
-      );
-      oddEvenCb?.toggleAttribute("checked", !!oddEven);
-    }
-  }
-
-  /** Word's Header & Footer Tools — append the contextual tab while a story
-   *  is open and activate it (Word drops you on the tab); idempotent across
-   *  chrome re-stamps. */
-  #showHeaderFooterContextTab(): void {
-    const root = this.shadowRoot;
-    const tablist = root?.querySelector("fluent-tablist");
-    const ribbon = root?.querySelector("docen-ribbon");
-    if (!root || !tablist || !ribbon) return;
-    if (tablist.querySelector("#header-footer-tab")) return;
-    const scope = root.querySelector("docen-workspace") ?? this;
-    const built = buildContextualTab(headerFooterContextTab(), scope);
-    tablist.append(built.tab);
-    ribbon.append(built.panel);
-    tablist.setAttribute("activeid", "header-footer-tab");
-    this.#applyRibbonGreying();
+    this.#chrome.syncStoryMenus();
   }
 
   #hideHeaderFooterContextTab(): void {
-    const root = this.shadowRoot;
-    const tablist = root?.querySelector("fluent-tablist");
-    const ribbon = root?.querySelector("docen-ribbon");
-    if (!root || !tablist || !ribbon) return;
-    if (!tablist.querySelector("#header-footer-tab")) return;
-    if (tablist.getAttribute("activeid") === "header-footer-tab")
-      tablist.setAttribute("activeid", DEFAULT_RIBBON_TAB);
-    tablist.querySelector("#header-footer-tab")?.remove();
-    ribbon.querySelector('docen-ribbon-panel[value="header-footer-tab"]')?.remove();
-    this.#applyRibbonGreying();
+    this.#chrome.hideHeaderFooterContextTab();
   }
 
-  /** Mirror the caret cell's live width/height into the Cell Size combos —
-   *  Word behavior: the boxes report the selection's column width and row
-   *  height (in the locale's unit system), not a fixed default. Runs on every
-   *  chrome re-stamp and transaction (via #setupFontSync). */
   #syncCellSize(): void {
-    const root = this.shadowRoot;
-    const widthEl = root?.querySelector('docen-ribbon-combobox[event="cell-width"]');
-    const heightEl = root?.querySelector('docen-ribbon-combobox[event="cell-height"]');
-    const editor = this.editor;
-    if ((!widthEl && !heightEl) || !editor) return;
-    const anchor = tableAncestry(editor.state);
-    if (!anchor) return;
-    const scope = root?.querySelector("docen-workspace") ?? this;
-    const { $from } = editor.state.selection;
-    if (widthEl) {
-      const widths = ($from.node(anchor.tableAt).attrs as { columnWidths?: number[] | null })
-        .columnWidths;
-      const col = $from.index(anchor.rowAt);
-      const tw = widths != null && col < widths.length ? widths[col] : undefined;
-      widthEl.setAttribute("value", tw != null ? formatMeasureTwip(tw, scope) : "");
-    }
-    if (heightEl) {
-      const h = ($from.node(anchor.rowAt).attrs as { height?: { value?: number } | null }).height;
-      heightEl.setAttribute(
-        "value",
-        h?.value != null ? formatMeasureTwip(h.value, scope) : useCmUnits(scope) ? "自动" : "auto",
-      );
-    }
+    this.#chrome.syncCellSize();
   }
 
-  /** Mirror the selected drawing's live width/height into the Picture/Shape
-   *  Format Size combos — Word behavior: the boxes report the selection's
-   *  extent in the locale's unit system and follow every resize. Runs on
-   *  every chrome re-stamp and transaction (via #setupFontSync). */
   #syncDrawingSize(): void {
-    const root = this.shadowRoot;
-    const widthEl = root?.querySelector('docen-ribbon-input[event="drawing-width"]');
-    const heightEl = root?.querySelector('docen-ribbon-input[event="drawing-height"]');
-    const editor = this.editor;
-    if ((!widthEl && !heightEl) || !editor) return;
-    const sel = editor.state.selection;
-    if (!(sel instanceof NodeSelection)) return;
-    const name = sel.node.type.name;
-    const attrs = sel.node.attrs as Record<string, unknown>;
-    // An image's extent lives in px attrs (15 tw to the px at 96 DPI); a
-    // shape/group/chart's in its payload transformation EMU (635 to the tw).
-    let pair: { w: unknown; h: unknown; tw: (v: number) => number } | null = null;
-    if (name === "image") pair = { w: attrs.width, h: attrs.height, tw: (v) => v * 15 };
-    else if (name === "wpsShape" || name === "wpgGroup" || name === "chart") {
-      const t = (attrs[name] as Record<string, unknown> | undefined)?.transformation as
-        | Record<string, unknown>
-        | undefined;
-      pair = { w: t?.width, h: t?.height, tw: (v) => v / 635 };
-    }
-    if (!pair) return;
-    const scope = root?.querySelector("docen-workspace") ?? this;
-    const show = (el: Element | null | undefined, v: unknown): void => {
-      el?.setAttribute(
-        "value",
-        typeof v === "number" && v > 0 ? formatMeasureTwip(pair!.tw(v), scope) : "",
-      );
-    };
-    show(widthEl, pair.w);
-    show(heightEl, pair.h);
+    this.#chrome.syncDrawingSize();
   }
 
-  /** Contextual tab ids currently appended to the ribbon (Word's Table Tools).
-   *  Non-empty ⇔ the selection is inside a table; #syncContextTabs diffs this
-   *  against that fact so the per-transaction pass is a cheap equality check. */
-  #contextTabIds = new Set<string>();
-
-  /** Word's Table Tools + Equation Tools — append/remove the contextual tabs as
-   *  the selection enters/leaves their owning context (a table, or a math
-   *  atom). Runs per transaction (via #setupFontSync) and after every chrome
-   *  re-stamp (#renderChrome, which clears the tracking set because the ribbon
-   *  DOM was rebuilt). */
   #syncContextTabs(): void {
-    const root = this.shadowRoot;
-    const tablist = root?.querySelector("fluent-tablist");
-    const ribbon = root?.querySelector("docen-ribbon");
-    if (!root || !tablist || !ribbon) return;
-    const scope = root.querySelector("docen-workspace") ?? this;
-    // The tab ids the current selection calls for (a picture selection and a
-    // math selection never coexist; a picture inside a table keeps both —
-    // Word's Table Tools stay up with Picture Tools).
-    const want = new Map<string, RibbonTab>();
-    if (this.editor) {
-      const state = this.editor.state;
-      const drawing = drawingSelectionKind(state);
-      if (drawing === "picture") want.set("picture-format", pictureFormatTab());
-      else if (drawing === "chart") want.set("chart-design", chartDesignTab());
-      else if (drawing) want.set("shape-format", shapeFormatTab());
-      if (tableAncestry(state)) for (const tab of tableContextTabs(scope)) want.set(tab.id, tab);
-      else if (mathAtomAt(state)) want.set("equation", equationContextTab());
-    }
-    const present = this.#contextTabIds;
-    const changed = want.size !== present.size || [...want.keys()].some((id) => !present.has(id));
-    if (!changed) return;
-    // Retire the tabs whose context the selection left (activeid first, so
-    // the tablist never holds an id with no matching tab).
-    const active = tablist.getAttribute("activeid") ?? "";
-    if (present.has(active) && !want.has(active))
-      tablist.setAttribute("activeid", DEFAULT_RIBBON_TAB);
-    for (const id of present) {
-      if (want.has(id)) continue;
-      // A retiring panel's Fluent controls may be mid-teardown in their own
-      // blur handlers (clicking away from a combobox detaches its popover,
-      // then the selection transaction lands here) — the removal races that
-      // cleanup, so a node lost along the way is fine. The tab goes last so
-      // it still retires even when the panel's teardown throws.
-      try {
-        ribbon.querySelector(`docen-ribbon-panel[value="${id}"]`)?.remove();
-      } catch {
-        /* the blur handler already tore it down */
-      }
-      try {
-        tablist.querySelector(`#${id}`)?.remove();
-      } catch {
-        /* the blur handler already tore it down */
-      }
-    }
-    // Append the fresh arrivals and activate them (Word drops you on the tab).
-    let firstNew: string | null = null;
-    for (const [id, tab] of want) {
-      if (present.has(id)) continue;
-      const built = buildContextualTab(tab, scope);
-      tablist.append(built.tab);
-      ribbon.append(built.panel);
-      firstNew = firstNew ?? id;
-    }
-    if (firstNew) tablist.setAttribute("activeid", firstNew);
-    present.clear();
-    for (const id of want.keys()) present.add(id);
-    this.#applyRibbonGreying();
+    this.#chrome.syncContextTabs();
   }
 
-  /** The full set of wired command names (Tiptap dispatch + locally handled +
-   *  addin commands). External add-ins register non-Tiptap actions (e.g. open a
-   *  URL) via `commands`; their keys count as wired so {@link #applyRibbonGreying}
-   *  doesn't disable the controls that dispatch them. */
-  #wiredCommands(): Set<string> {
-    const wired = new Set<string>([...WIRED_DISPATCH, ...LOCAL_HANDLED]);
-    for (const addin of this.addins) {
-      if (!addin.commands) continue;
-      for (const key of Object.keys(addin.commands)) wired.add(key);
-    }
-    return wired;
-  }
-
-  /** Dispatch a cancelable event; returns true when a host preventDefaulted it
-   *  (i.e. took over the action). Lets save/open/print/new work out-of-box yet
-   *  stay overridable. */
   #emitCancelable(
     name:
       | "docen:save"
@@ -4700,14 +2793,7 @@ class DocenDocument extends AddinHost<Editor> {
       | "docen:close",
     detail?: { format?: SaveFormat },
   ): boolean {
-    const event = new CustomEvent(name, {
-      bubbles: true,
-      composed: true,
-      cancelable: true,
-      detail,
-    });
-    this.dispatchEvent(event);
-    return event.defaultPrevented;
+    return this.#chrome.emitCancelable(name, detail);
   }
 
   /** docen:change — fired on every doc-changing transaction (autosave driver,
@@ -4731,9 +2817,8 @@ class DocenDocument extends AddinHost<Editor> {
     }
   };
 
-  /** Toggle a task pane open/closed (ribbon View → toggle-navigation). */
   #togglePane(id: TaskPaneId): void {
-    this.#setTaskpane(id, !this.getTaskpaneState(id));
+    this.#chrome.togglePane(id);
   }
 
   /** Parse the declarative `section-properties` / `styles` attributes (JSON).
@@ -4789,230 +2874,21 @@ class DocenDocument extends AddinHost<Editor> {
     this.#renderChrome();
   }
 
-  /** Apply a zoom level (percent, clamped 10–500) to the page stage and
-   *  refresh the status bar. The stage sizes its slots to the scaled page
-   *  directly (no CSS zoom — bitmaps stay 1:1 with screen pixels at every
-   *  level). Idempotent (no-op on no change) and dispatches
-   *  `docen:zoom-change` on a real flip — so the host, status-bar slider, and
-   *  external listeners stay in sync through one funnel (Office
-   *  `Office.Document.zoom.set` equivalent). */
   #setZoom(pct: number): void {
-    const next = Math.max(10, Math.min(500, Math.round(pct)));
-    if (next === this.#zoom) return;
-    this.#zoom = next;
-    this.#stage?.setZoom(next);
-    // The frames resized under the overlays — re-place them at the new scale.
-    this.#bridge?.replaceOverlays();
-    this.#updateStatus();
-    this.dispatchEvent(
-      new CustomEvent("docen:zoom-change", {
-        bubbles: true,
-        composed: true,
-        detail: { zoom: this.#zoom },
-      }),
-    );
+    this.#status.setZoom(pct);
   }
-
-  /** Resolve a zoom preset to a percent. Numeric presets map directly; the
-   *  geometric ones read the stage viewport against the flow box (layout px
-   *  at 100%) — page width fills the area width, text width fills it with the
-   *  content column, one page fits the whole sheet into the visible height. */
-  #zoomPreset(preset: string): void {
-    if (/^\d+$/.test(preset)) return this.#setZoom(Number(preset));
-    const area = this.shadowRoot?.querySelector("docen-document-area");
-    const flow = this.#flow;
-    if (!area || !flow) return;
-    if (preset === "page-width") return this.#setZoom((area.clientWidth / flow.pageWidthPx) * 100);
-    if (preset === "text-width")
-      return this.#setZoom((area.clientWidth / flow.contentWidthPx) * 100);
-    if (preset === "fit-page") {
-      // Whole sheet visible: the net content-box height (clientHeight includes
-      // the area's paddings, which would clip the page edges otherwise).
-      const style = getComputedStyle(area);
-      const visible =
-        area.clientHeight -
-        Number.parseFloat(style.paddingTop) -
-        Number.parseFloat(style.paddingBottom);
-      return this.#setZoom(
-        Math.min(area.clientWidth / flow.pageWidthPx, visible / flow.pageHeightPx) * 100,
-      );
-    }
-  }
-
-  /** The Zoom dialog (View → Zoom, the status-bar percent click) — prefilled
-   *  with the current zoom; the commit applies the preset or free percent. */
-  #showZoomDialog(): void {
-    (
-      this.shadowRoot?.querySelector("docen-zoom-dialog") as { show(zoom: number): void } | null
-    )?.show(this.#zoom);
-  }
-
-  readonly #onZoomOk = (event: CustomEvent<string | number>): void => {
-    if (typeof event.detail === "number") this.#setZoom(event.detail);
-    else this.#zoomPreset(event.detail);
-  };
-
-  readonly #onZoomOpen = (): void => {
-    this.#showZoomDialog();
-  };
-
-  readonly #onWordCountOpen = (): void => {
-    this.#showWordCount();
-  };
-
-  /** A status-bar view button (the detail names the status-bar's view:
-   *  "reading" | "print" | "web") → the `view` attribute. */
-  readonly #onViewSelect = (event: CustomEvent<{ view?: string }>): void => {
-    const v = event.detail?.view;
-    this.setAttribute("view", v === "reading" ? "read" : v === "web" ? "web" : "print");
-  };
 
   /** Paste Special's pick — re-run the paste in the picked format. */
   readonly #onPasteSpecialOk = (event: CustomEvent<PasteSpecialFormat>): void => {
     void this.#clipboard.pasteSpecial(event.detail);
   };
 
-  /** Refresh the status bar to mirror Word's bottom row: the left cluster is
-   *  the caret's section, then "Page X of Y", then the word count; the right
-   *  cluster is the zoom slider value + percent. Runs from the coalesced UI
-   *  sync (caret moves, a re-render changes the page count) and on zoom /
-   *  locale change. The word count is cached by doc nodeSize and refreshed on
-   *  an idle pass, so typing never re-walks the full document. */
   #updateStatus(): void {
-    const root = this.shadowRoot;
-    if (!root) return;
-    const bar = root.querySelector<HTMLElement>("docen-status-bar");
-    const editor = this.editor;
-    const page = editor ? (this.#bridge?.pageOf(editor.state.selection.from) ?? -1) + 1 : 0;
-    const total = this.#pages.length;
-    // The caret's section: the section its page belongs to (1-based).
-    const section = page > 0 ? (this.#sectionOfPage[page - 1] ?? 0) + 1 : 1;
-    // Word count is cached by doc nodeSize so caret moves skip re-walking the
-    // full document (CharacterCount.words() regexes all text). A content
-    // change only schedules the idle recount; the bar keeps the last finished
-    // count until it lands.
-    const docSize = editor?.state.doc.nodeSize ?? 0;
-    if (docSize !== this.#lastDocSize) {
-      this.#lastDocSize = docSize;
-      if (docSize === 0) this.#lastWords = 0;
-      else this.#scheduleWordCount();
-    }
-    let wordsVal = String(this.#lastWords);
-    if (editor && !editor.state.selection.empty) {
-      const selText = editor.state.doc.textBetween(
-        editor.state.selection.from,
-        editor.state.selection.to,
-        " ",
-      );
-      const selWords = (selText.trim().match(/\S+/g) || []).length;
-      wordsVal = `${selWords} / ${this.#lastWords}`;
-    }
-    // Push the numeric state to <docen-status-bar>; it localizes + renders.
-    // Guard each write — re-stamping an unchanged attribute re-renders the bar
-    // for nothing (the pass runs per frame while typing).
-    if (bar) {
-      const attrs: Record<string, string> = {
-        section: String(section),
-        page: String(page || 1),
-        total: String(total || 1),
-        words: wordsVal,
-        zoom: String(this.#zoom),
-        view: this.#viewMode(),
-      };
-      for (const [name, value] of Object.entries(attrs)) {
-        if (bar.getAttribute(name) !== value) bar.setAttribute(name, value);
-      }
-    }
-    // The QAT history carets follow the undo/redo depths live (the header
-    // only rebuilds on chrome renders — Word hides the flyout on an empty
-    // stack; documentStyles' [data-history-empty] rule drops the caret).
-    const liveEditor = this.#bridge?.activeEditor() ?? editor;
-    for (const [kind, depth] of [
-      ["undo", liveEditor ? undoDepth(liveEditor.state) : 0],
-      ["redo", liveEditor ? redoDepth(liveEditor.state) : 0],
-    ] as const) {
-      root
-        .querySelector(`docen-ribbon-split-button[data-history="${kind}"]`)
-        ?.toggleAttribute("data-history-empty", depth === 0);
-    }
-    // The pane's page list follows the page count / current page immediately;
-    // its thumbnails (one PNG encode per page) refresh on an idle pass.
-    this.#pushNavPages(total, page || 1);
-    if (this.getTaskpaneState("navigation")) this.#scheduleNavThumbnails();
-    if (this.getTaskpaneState("reveal")) {
-      this.#updateRevealFormatting();
-    }
+    this.#status.updateStatus();
   }
 
-  /** Recount the Office-style word count once typing pauses (debounced). The
-   *  recount re-runs #updateStatus so the bar picks the number up. */
-  #scheduleWordCount(): void {
-    if (this.#wordCountTimer !== undefined) return;
-    this.#wordCountTimer = setTimeout(() => {
-      this.#wordCountTimer = undefined;
-      const cc = this.editor?.storage.characterCount as { words?: () => number } | undefined;
-      this.#lastWords = cc?.words?.() ?? 0;
-      this.#updateStatus();
-    }, STATUS_WORD_COUNT_IDLE_MS);
-  }
-
-  /** Push page count / current page / cached thumbnails to the Navigation
-   *  pane — skipped entirely when none of them changed. */
-  #pushNavPages(total: number, current: number): void {
-    const navPages = this.shadowRoot?.querySelector("docen-nav-pages") as
-      | (HTMLElement & {
-          setPageCount(count: number, current?: number, thumbnails?: (string | null)[]): void;
-        })
-      | null;
-    if (!navPages || total <= 0) return;
-    const key = `${total}:${current}:${this.#navThumbGen}`;
-    if (key === this.#navPagesKey) return;
-    this.#navPagesKey = key;
-    navPages.setPageCount(total, current, this.#navThumbs);
-  }
-
-  /** Re-rasterize the Navigation pane's thumbnails on an idle pass (only
-   *  while the pane is open — the pages' canvas PNGs are expensive). */
-  #scheduleNavThumbnails(): void {
-    if (this.#navThumbTimer !== undefined) return;
-    this.#navThumbTimer = setTimeout(() => {
-      this.#navThumbTimer = undefined;
-      const total = this.#pages.length;
-      if (total === 0 || !this.getTaskpaneState("navigation")) return;
-      const thumbs: (string | null)[] = [];
-      for (let i = 0; i < total; i++) {
-        thumbs.push(this.#stage?.pageThumbnail(i) ?? null);
-      }
-      this.#cacheNavThumbs(thumbs);
-      this.#pushNavPages(
-        total,
-        (this.#bridge?.pageOf(this.editor?.state.selection.from ?? 0) ?? 0) + 1,
-      );
-    }, NAV_THUMB_IDLE_MS);
-  }
-
-  /** Adopt a freshly rasterized thumbnail set as the Navigation pane's cache
-   *  (the generation bump makes the next #pushNavPages re-render the list). */
-  #cacheNavThumbs(thumbs: (string | null)[]): void {
-    this.#navThumbs = thumbs;
-    this.#navThumbGen += 1;
-  }
-
-  /** Rasterize every page (forcing off-screen slots through one render pass)
-   *  and feed the Navigation pane real thumbnails for the whole document. The
-   *  sync `#updateStatus` path only fills pages whose canvas already exists;
-   *  this is the pane-open completion that covers the rest. */
-  async #refreshNavThumbnails(): Promise<void> {
-    const stage = this.#stage;
-    if (!this.shadowRoot?.querySelector("docen-nav-pages") || !stage) return;
-    if (this.#pages.length === 0) return;
-    const thumbs = await stage.pageThumbnails();
-    if (thumbs.length === 0) return;
-    this.#cacheNavThumbs(thumbs);
-    this.#pushNavPages(
-      this.#pages.length,
-      (this.#bridge?.pageOf(this.editor?.state.selection.from ?? 0) ?? 0) + 1,
-    );
+  #refreshNavThumbnails(): Promise<void> {
+    return this.#status.refreshNavThumbnails();
   }
 
   /** Word Count (Review tab) — compute the document statistics twice (Word's
@@ -5090,84 +2966,6 @@ class DocenDocument extends AddinHost<Editor> {
     });
   }
 
-  #showWordCount(): void {
-    const editor = this.editor;
-    const dialog = this.shadowRoot?.querySelector("docen-word-count-dialog") as
-      | (HTMLElement & { stats?: string; statsExtra?: string; show(): void })
-      | undefined;
-    if (!editor || !dialog) return;
-    // Walk the doc once: paragraphs/text under a wpsShape subtree or inside a
-    // textbox node are the textbox bucket, everything else the body bucket.
-    let bodyText = "";
-    let bodyParas = 0;
-    let shapeText = "";
-    let shapeParas = 0;
-    const walk = (node: PMNode, inShape: boolean): void => {
-      const shape = inShape || node.type.name === "wpsShape" || node.type.name === "textbox";
-      if (node.type.name === "paragraph") {
-        if (shape) {
-          shapeParas++;
-          shapeText += `${node.textContent}\n`;
-        } else {
-          bodyParas++;
-          bodyText += `${node.textContent}\n`;
-        }
-        return;
-      }
-      node.forEach((child) => walk(child, shape));
-    };
-    walk(editor.state.doc, false);
-    // Footnotes/endnotes — documentExtras note bodies are paragraph JSON.
-    const extras =
-      (
-        editor.state.doc.attrs as {
-          documentExtras?: {
-            footnotes?: Array<{ children?: JSONContent[] }>;
-            endnotes?: Array<{ children?: JSONContent[] }>;
-          };
-        }
-      ).documentExtras ?? {};
-    let notesText = "";
-    let notesParas = 0;
-    const jsonText = (node: JSONContent): string =>
-      (typeof node.text === "string" ? node.text : "") +
-      (node.content ?? []).map(jsonText).join("");
-    for (const channel of [extras.footnotes, extras.endnotes]) {
-      for (const note of channel ?? []) {
-        for (const para of note.children ?? []) {
-          notesParas++;
-          notesText += `${jsonText(para)}\n`;
-        }
-      }
-    }
-    const counted = (text: string, paras: number): WordCountStats => ({
-      pages: this.#pages.length,
-      words: wordCounter(text),
-      charsWithSpaces: textCounter(text),
-      charsNoSpaces: textCounter(text.replace(/\s+/g, "")),
-      paragraphs: paras,
-      lines: this.#layoutLines(),
-    });
-    dialog.stats = JSON.stringify(counted(bodyText, bodyParas));
-    const merged = {
-      text: bodyText + shapeText + notesText,
-      paras: bodyParas + shapeParas + notesParas,
-    };
-    dialog.statsExtra = JSON.stringify(counted(merged.text, merged.paras));
-    dialog.show();
-  }
-
-  /** The laid-out line total (paragraph blocks across every page). */
-  #layoutLines(): number {
-    let lines = 0;
-    for (const page of this.#pages) {
-      for (const item of page.items) {
-        if (item.block.kind === "paragraph") lines += item.block.lines.length;
-      }
-    }
-    return lines;
-  }
-
   /** Symbol dialog Insert → drop the picked character at the caret (the
    *  dialog stays open, Word-style, so several symbols can go in a row). */
   readonly #onSymbolInsert = (event: CustomEvent<{ char?: string }>): void => {
@@ -5178,99 +2976,19 @@ class DocenDocument extends AddinHost<Editor> {
   };
 
   #setHyphenation(mode: "none" | "auto" | "manual"): void {
-    if (mode === "none") {
-      this.#hyphenation = { ...this.#hyphenation, auto: false };
-      this.#renderDoc(this.getJSON());
-    } else if (mode === "auto") {
-      this.#hyphenation = { ...this.#hyphenation, auto: true };
-      this.#renderDoc(this.getJSON());
-    } else if (mode === "manual") {
-      this.#openHyphenationOptions();
-    }
+    this.#insert.setHyphenation(mode);
   }
 
   #openHyphenationOptions(): void {
-    const dialog = this.shadowRoot?.querySelector<DocenHyphenationDialog>(
-      "docen-hyphenation-dialog",
-    );
-    dialog?.show(this.#hyphenation);
+    this.#insert.openHyphenationOptions();
   }
 
   #insertSoftHyphen(): void {
-    this.#bridge?.focus();
-    this.editor?.commands.insertContent("\u00AD");
+    this.#insert.insertSoftHyphen();
   }
 
-  readonly #onHyphenationOk = (event: CustomEvent<HyphenationDialogOptions>): void => {
-    if (!event.detail) return;
-    this.#hyphenation = {
-      auto: event.detail.auto,
-      doNotHyphenateCaps: event.detail.doNotHyphenateCaps,
-      zoneTw: event.detail.zoneTw,
-      limit: event.detail.limit,
-    };
-    this.#renderDoc(this.getJSON());
-  };
-
-  #openTabsDialog = (): void => {
-    const dialog = this.shadowRoot?.querySelector<DocenTabsDialog>("docen-tabs-dialog");
-    if (!dialog) return;
-    const state = this.editor?.state;
-    let tabStops: Array<{
-      position: number;
-      type: "left" | "center" | "right" | "decimal" | "bar";
-      leader?: "dot" | "heavy" | "hyphen" | "middleDot" | "underscore";
-    }> = [];
-    if (state) {
-      state.doc.nodesBetween(state.selection.from, state.selection.to, (node) => {
-        if (node.type.name === "paragraph" && Array.isArray(node.attrs.tabStops)) {
-          tabStops = node.attrs.tabStops;
-          return false;
-        }
-      });
-    }
-    const doc = this.getJSON() as { settings?: { defaultTabStop?: number } } | null;
-    const defaultTabStop = doc?.settings?.defaultTabStop ?? 720;
-    dialog.show({ tabStops, defaultTabStop });
-  };
-
-  readonly #onTabsOk = (
-    event: CustomEvent<{
-      tabStops?: Array<{ position: number; type?: string; leader?: string }>;
-      defaultTabStop?: number;
-    }>,
-  ): void => {
-    const { tabStops, defaultTabStop } = event.detail ?? {};
-    if (tabStops !== undefined) {
-      this.editor?.commands["set-paragraph-tabs"](tabStops);
-    }
-    if (defaultTabStop !== undefined) {
-      const doc = this.getJSON() as { settings?: Record<string, unknown> } | null;
-      if (doc) {
-        doc.settings = { ...doc.settings, defaultTabStop };
-        this.setJSON(doc);
-      }
-    }
-    this.#syncActiveTabStops();
-    this.#bridge?.focus();
-  };
-
   #addTabStopAt(posTw: number): void {
-    const state = this.editor?.state;
-    if (!state) return;
-    let currentStops: Array<{ position: number; type?: string; leader?: string }> = [];
-    state.doc.nodesBetween(state.selection.from, state.selection.to, (node) => {
-      if (node.type.name === "paragraph" && Array.isArray(node.attrs.tabStops)) {
-        currentStops = [...node.attrs.tabStops];
-        return false;
-      }
-    });
-    const nextStops = currentStops.filter((s) => Math.abs((s.position ?? 0) - posTw) >= 15);
-    nextStops.push({ position: posTw, type: "left" });
-    nextStops.sort((a, b) => (a.position ?? 0) - (b.position ?? 0));
-    this.editor?.commands["set-paragraph-tabs"](nextStops);
-    this.#syncActiveTabStops();
-    this.#bridge?.focus();
+    this.#insert.addTabStopAt(posTw);
   }
 
   readonly #onSelectionUpdateForTabs = (): void => {
@@ -5278,25 +2996,7 @@ class DocenDocument extends AddinHost<Editor> {
   };
 
   #syncActiveTabStops(): void {
-    if (!this.#stage) return;
-    const state = this.editor?.state;
-    if (!state) return;
-    let stops: Array<{
-      positionPx: number;
-      type: "left" | "center" | "right" | "decimal" | "bar";
-    }> = [];
-    state.doc.nodesBetween(state.selection.from, state.selection.to, (node) => {
-      if (node.type.name === "paragraph" && Array.isArray(node.attrs.tabStops)) {
-        stops = node.attrs.tabStops.map(
-          (s: { position?: number; type?: "left" | "center" | "right" | "decimal" | "bar" }) => ({
-            positionPx: (s.position ?? 0) / 15,
-            type: s.type ?? "left",
-          }),
-        );
-        return false;
-      }
-    });
-    this.#stage.setActiveTabStops(stops);
+    this.#insert.syncActiveTabStops();
   }
 
   // The Paragraph dialog's OK — stamp its patch onto every selected paragraph
@@ -5307,43 +3007,7 @@ class DocenDocument extends AddinHost<Editor> {
   // run's values). Underline falls back to the textStyle attr channel when no
   // underline mark is present (both carry the same w:u shape).
   #runStateOf(state: EditorState): FontDialogPatch {
-    const seen = new Map<string, Record<string, unknown>>();
-    state.doc.nodesBetween(state.selection.from, state.selection.to, (node) => {
-      if (seen.size > 0) return false;
-      if (!node.isText) return true;
-      for (const m of node.marks)
-        if (!seen.has(m.type.name)) seen.set(m.type.name, m.attrs as Record<string, unknown>);
-      return false;
-    });
-    const ts = seen.get("textStyle") ?? {};
-    const um = seen.get("underline") as
-      | { style?: string | null; color?: string | null }
-      | undefined;
-    const tsU = ts.underline as { type?: string; color?: string } | undefined;
-    const str = (v: unknown): string | null => (typeof v === "string" && v ? v : null);
-    return {
-      font: str(ts.font),
-      size: typeof ts.size === "number" || typeof ts.size === "string" ? String(ts.size) : null,
-      bold: seen.has("bold") || ts.bold === true,
-      italic: seen.has("italic") || ts.italic === true,
-      underlineStyle: um
-        ? (str(um.style) ?? "single")
-        : tsU && tsU.type && tsU.type !== "none"
-          ? tsU.type
-          : null,
-      underlineColor: um ? str(um.color) : str(tsU?.color),
-      strike: seen.has("strike") || ts.strike === true,
-      doubleStrike: ts.doubleStrike === true,
-      superscript: seen.has("superscript"),
-      subscript: seen.has("subscript"),
-      smallCaps: ts.smallCaps === true,
-      allCaps: ts.allCaps === true,
-      hidden: ts.vanish === true,
-      shadow: ts.shadow === true || Boolean(ts.shadow),
-      outline: ts.outline === true || Boolean(ts.outline),
-      emboss: ts.emboss === true,
-      imprint: ts.imprint === true,
-    };
+    return this.#insert.runStateOf(state);
   }
 
   // The table grid's pick (hover grid or the classic dialog shape) — the
@@ -5354,62 +3018,16 @@ class DocenDocument extends AddinHost<Editor> {
     target?.commands["insert-table"]?.({ rows, cols });
   };
 
-  /** Insert Bookmark: open the Bookmark dialog. */
   #insertBookmark(): void {
-    this.#openBookmarkDialog();
+    this.#insert.insertBookmark();
   }
 
-  /** Insert → Equation — drop one placeholder template (fraction / script /
-   *  radical / sum / integral) at the caret as a mathInline atom (Word's
-   *  Insert → Symbols → Equation gallery). Each argument is an empty run —
-   *  the □ slot; the radical's absent degree reads as the square root
-   *  (degHide follows). Round-trips through DOCX via the node's
-   *  parseDocxInline/compile pair; the projection paints the structured
-   *  elements (or the placeholder box when a shape has none). */
   #insertEquation(template: string): void {
-    const editor = this.editor;
-    if (!editor) return;
-    const seed = equationSeed(template);
-    if (!seed) return;
-    const node = editor.schema.nodeFromJSON(seed);
-    // One transaction: insert the atom and wrap it in a NodeSelection — the
-    // selection rides the new atom, keeping the equation context tab alive
-    // (a bare insert leaves the caret behind it and the tab would blink off).
-    const pos = editor.state.selection.from;
-    const tr = editor.state.tr.insert(pos, node);
-    tr.setSelection(NodeSelection.create(tr.doc, pos));
-    editor.view.dispatch(tr.scrollIntoView());
+    this.#insert.insertEquation(template);
   }
 
-  /** The equation context tab's symbol grid: drop the glyph at the caret.
-   *  When the selection rides the math atom, hand the selection back to it
-   *  afterwards — the atom shifts by the inserted glyph — so the tab stays
-   *  up and symbols can be typed in a run. (insertContent would replace the
-   *  NodeSelection's whole atom, so this goes through the transaction.) */
   #insertEquationSymbol(char: string): void {
-    const editor = this.editor;
-    if (!editor || !char) return;
-    const touching = mathAtomAt(editor.state);
-    if (!touching) {
-      editor.commands.insertContent(char);
-      return;
-    }
-    // A caret inserts at its edge; a NodeSelection appends after the atom
-    // (the formula stays put). The atom shifts by the glyph when the insert
-    // lands before it — aim the selection back accordingly.
-    const onAtom = editor.state.selection instanceof NodeSelection;
-    const insertAt = onAtom ? touching.pos + touching.node.nodeSize : editor.state.selection.from;
-    const backAt = insertAt <= touching.pos ? touching.pos + char.length : touching.pos;
-    const tr = editor.state.tr.insertText(
-      char,
-      insertAt,
-      onAtom ? insertAt : editor.state.selection.to,
-    );
-    const $back = tr.doc.resolve(backAt);
-    if ($back.nodeAfter?.type.name === "inlinePassthrough") {
-      tr.setSelection(NodeSelection.create(tr.doc, backAt));
-    }
-    editor.view.dispatch(tr.scrollIntoView());
+    this.#insert.insertEquationSymbol(char);
   }
 
   /** Merge-field dialog commit — seed the picked field at the caret. */
@@ -5418,14 +3036,8 @@ class DocenDocument extends AddinHost<Editor> {
     if (name) this.#merge.insertMergeField(name);
   };
 
-  /** The render's preview view — the document JSON with every merge field's
-   *  chevron swapped to the previewed recipient's value (identity when the
-   *  preview is off). Runs before compile so measure and paint agree. */
   #mergedView(doc: JSONContent): JSONContent {
-    const row = this.#merge.previewRow();
-    if (row === null) return doc;
-    const recipients = this.#merge.recipients();
-    return recipients ? applyRecipientsRow(doc, recipients, row) : doc;
+    return this.#insert.mergedView(doc);
   }
 
   /** Finish & Merge — assemble one document from the recipient rows (Word's
@@ -5484,21 +3096,8 @@ class DocenDocument extends AddinHost<Editor> {
     URL.revokeObjectURL(url);
   }
 
-  /** Insert → Link / Ctrl+K / right-click Edit Link: open the hyperlink dialog
-   *  prefilled from the selection — its text and the link mark riding it (a
-   *  caret inside a link edits the whole one via extendMarkRange at commit). */
   #insertLink(): void {
-    const editor = this.#bridge?.activeEditor() ?? this.editor;
-    if (!editor) return;
-    const { empty, from, to } = editor.state.selection;
-    (
-      this.shadowRoot?.querySelector("docen-link-dialog") as {
-        show(values?: Partial<LinkValues>): void;
-      } | null
-    )?.show({
-      text: empty ? "" : editor.state.doc.textBetween(from, to, " "),
-      href: editor.getAttributes("link").href as string | undefined,
-    });
+    this.#insert.insertLink();
   }
 
   // The Link dialog's OK — Word's Insert Link semantics: an empty address
@@ -5559,74 +3158,16 @@ class DocenDocument extends AddinHost<Editor> {
     return typeof href === "string" && href ? href : null;
   }
 
-  /** Ctrl+Click / Open Hyperlink on a `#name` link — place the caret past the
-   *  matching bookmarkStart atom and scroll it into view (Word scrolls to the
-   *  bookmark). No matching bookmark is a no-op. */
   #jumpToBookmark(name: string): void {
-    const editor = this.editor;
-    if (!editor) return;
-    let target: number | null = null;
-    editor.state.doc.descendants((child, pos) => {
-      if (target != null || child.type.name !== "inlinePassthrough") return;
-      try {
-        const data = JSON.parse(String(child.attrs?.data ?? "{}")) as {
-          bookmarkStart?: { name?: string };
-        };
-        if (data.bookmarkStart?.name === name) target = pos + child.nodeSize;
-      } catch {
-        // opaque verbatim blob — not a bookmark
-      }
-    });
-    if (target == null) return;
-    this.#setTextSelection(target);
-    this.#bridge?.scrollIntoView(target);
+    this.#insert.jumpToBookmark(name);
   }
 
-  /** References → Next Footnote: place the caret on the next
-   *  footnote/endnote reference after the selection (document order); none is
-   *  a no-op (Word steps through its notes without wrapping). */
   #jumpNextNote(): void {
-    const editor = this.editor;
-    if (!editor) return;
-    const { from } = editor.state.selection;
-    let target: number | null = null;
-    editor.state.doc.descendants((child, pos) => {
-      if (target != null) return false;
-      if (pos <= from || child.type.name !== "inlinePassthrough") return;
-      try {
-        const data = JSON.parse(String(child.attrs?.data ?? "{}")) as Record<string, unknown>;
-        if ("footnoteReference" in data || "endnoteReference" in data) target = pos;
-      } catch {
-        // opaque verbatim blob — not a note reference
-      }
-    });
-    // After the leaf atom (pos is its left edge) so the caret sits past it.
-    if (target != null) {
-      this.#setTextSelection(target + 1);
-      this.#bridge?.scrollIntoView(target + 1);
-    }
+    this.#insert.jumpNextNote();
   }
 
-  /** References → Previous Footnote: place the caret on the previous
-   *  footnote/endnote reference before the selection (document order). */
   #jumpPreviousNote(): void {
-    const editor = this.editor;
-    if (!editor) return;
-    const { from } = editor.state.selection;
-    let target: number | null = null;
-    editor.state.doc.descendants((child, pos) => {
-      if (pos >= from || child.type.name !== "inlinePassthrough") return;
-      try {
-        const data = JSON.parse(String(child.attrs?.data ?? "{}")) as Record<string, unknown>;
-        if ("footnoteReference" in data || "endnoteReference" in data) target = pos;
-      } catch {
-        // opaque verbatim blob — not a note reference
-      }
-    });
-    if (target != null) {
-      this.#setTextSelection(target + 1);
-      this.#bridge?.scrollIntoView(target + 1);
-    }
+    this.#insert.jumpPreviousNote();
   }
 
   /** Right-click on the canvas — Word's context menu, rebuilt per click.
@@ -5846,13 +3387,6 @@ class DocenDocument extends AddinHost<Editor> {
     menu.setAttribute("items", JSON.stringify(items));
   };
 
-  /** Insert → Text Box / Shapes: a standalone wps shape run, floating
-   *  wrap-none. Without a rect (Text Box, and the drawer's landing spot for
-   *  a bare click it cannot resolve) the shape centers on the page at Word's
-   *  2" × 1.2" default; a draw rect (page-local px) fixes both. The text box
-   *  carries Word's plain look — white fill, accent-1 hairline — and an
-   *  editable empty body (the PM `content`); a gallery shape carries its
-   *  preset geometry with the accent fill instead. */
   #insertShapeAt(
     preset: string | undefined,
     rect?: {
@@ -5865,194 +3399,36 @@ class DocenDocument extends AddinHost<Editor> {
       flipV?: boolean;
     },
   ): void {
-    // Insert into the story the caret lives in — a header/footer story must
-    // receive the shape, not the stale main-doc selection behind it.
-    const editor = this.#bridge?.activeEditor() ?? this.editor;
-    if (!editor) return;
-    const geometry: Record<string, unknown> = rect
-      ? {
-          transformation: {
-            width: Math.max(1, Math.round(rect.w * EMU_PER_PX)),
-            height: Math.max(1, Math.round(rect.h * EMU_PER_PX)),
-            // A line drawn right-to-left / bottom-to-top mirrors its diagonal
-            // (the preset path always runs corner to corner, top-left first).
-            ...(rect.flipH ? { flipHorizontal: true } : {}),
-            ...(rect.flipV ? { flipVertical: true } : {}),
-          },
-          floating: {
-            horizontalPosition: { relative: "page", offset: Math.round(rect.x * EMU_PER_PX) },
-            verticalPosition: { relative: "page", offset: Math.round(rect.y * EMU_PER_PX) },
-            wrap: { type: "none" },
-          },
-        }
-      : {
-          // Word's plain text box default: 2" × 1.2".
-          transformation: { width: 1828800, height: 1097280 },
-          floating: {
-            horizontalPosition: { relative: "page", align: "center" },
-            verticalPosition: { relative: "page", align: "center" },
-            wrap: { type: "none" },
-          },
-        };
-    if (preset) {
-      geometry.geometry = preset;
-      // The theme's accent-1 pair (fill + its darkened outline) — the same
-      // look Word gives a fresh shape; the projection paints flat hex.
-      geometry.fill = { type: "solid", color: "4472C4" };
-      geometry.outline = { color: "2F528F", width: 12700 };
-    } else {
-      geometry.fill = { type: "solid", color: "FFFFFF" };
-      geometry.outline = { color: "4472C4", width: 12700 };
-    }
-    editor.commands.insertContentAt(editor.state.selection.from, {
-      type: "wpsShape",
-      attrs: { wpsShape: geometry },
-      content: [{ type: "paragraph" }],
-    } as JSONContent);
+    this.#insert.insertShapeAt(preset, rect);
   }
 
-  /** WordArt — a centered text box whose single run carries the preset look
-   *  (large, bold, theme accent); Word 2013+ models WordArt the same way. */
   #insertWordArt(): void {
-    const editor = this.#bridge?.activeEditor() ?? this.editor;
-    if (!editor) return;
-    editor.commands.insertContentAt(editor.state.selection.from, {
-      type: "wpsShape",
-      attrs: {
-        wpsShape: {
-          transformation: { width: 3657600, height: 914400 },
-          fill: { type: "solid", color: "FFFFFF" },
-          outline: { color: "4472C4", width: 12700 },
-          floating: {
-            horizontalPosition: { relative: "page", align: "center" },
-            verticalPosition: { relative: "page", align: "center" },
-            wrap: { type: "none" },
-          },
-        },
-      },
-      content: [
-        {
-          type: "paragraph",
-          content: [
-            {
-              type: "text",
-              text: t("wordArt.placeholder", this),
-              marks: [{ type: "textStyle", attrs: { size: 48, bold: true, color: "4472C4" } }],
-            },
-          ],
-        },
-      ],
-    } as JSONContent);
+    this.#insert.insertWordArt();
   }
 
-  /** Blank Page — two page breaks at the caret: the rest of the current page
-   *  stays empty and a full empty page follows (Word's Blank Page). */
   #insertBlankPage(): void {
-    const editor = this.#bridge?.activeEditor() ?? this.editor;
-    if (!editor) return;
-    editor
-      .chain()
-      .insertContentAt(editor.state.selection.from, { type: "pageBreak" } as JSONContent)
-      .insertContentAt(editor.state.selection.from, { type: "pageBreak" } as JSONContent)
-      .run();
+    this.#insert.insertBlankPage();
   }
 
-  /** Cover Page — a title block at the document start (title/subtitle/author/
-   *  company/date, centered and oversized) followed by a page break. */
   #insertCoverPage(): void {
-    const editor = this.#bridge?.activeEditor() ?? this.editor;
-    if (!editor) return;
-    const centered = (text: string, attrs: Record<string, unknown>): JSONContent =>
-      ({
-        type: "paragraph",
-        attrs: { alignment: "center" },
-        content: text ? [{ type: "text", text, marks: [{ type: "textStyle", attrs }] }] : undefined,
-      }) as JSONContent;
-    editor.commands.insertContentAt(1, [
-      { type: "paragraph" } as JSONContent,
-      centered(t("coverPage.title", this), { size: 56, bold: true, color: "2E74B5" }),
-      centered(t("coverPage.subtitle", this), { size: 28, color: "595959" }),
-      { type: "paragraph" } as JSONContent,
-      centered(t("coverPage.author", this), { size: 24 }),
-      centered(t("coverPage.company", this), { size: 22, color: "595959" }),
-      centered(
-        new Intl.DateTimeFormat(undefined, {
-          year: "numeric",
-          month: "long",
-          day: "numeric",
-        }).format(new Date()),
-        { size: 22 },
-      ),
-      { type: "pageBreak" } as JSONContent,
-    ]);
+    this.#insert.insertCoverPage();
   }
 
-  /** Date and Time — static formatted text, or a DATE field ("update
-   *  automatically") whose cached result renders on canvas and refreshes
-   *  when Word updates fields. */
   #insertDateTime(detail: { text: string; instruction?: string }): void {
-    const editor = this.#bridge?.activeEditor() ?? this.editor;
-    if (!editor || !detail?.text) return;
-    const node: JSONContent = detail.instruction
-      ? ({
-          type: "inlinePassthrough",
-          attrs: {
-            data: JSON.stringify({
-              simpleField: { instruction: detail.instruction, cachedValue: detail.text },
-            }),
-          },
-        } as JSONContent)
-      : ({ type: "text", text: detail.text } as JSONContent);
-    editor.commands.insertContentAt(editor.state.selection.from, node);
+    this.#insert.insertDateTime(detail);
   }
 
-  /** Custom Table of Contents — run the toc command with the dialog's picks,
-   *  then the same repaginate-and-update pass the plain toc uses. */
   #insertCustomToc(detail: {
     headingRange: string;
     leader: string;
     showPageNumbers: boolean;
     alignPageNumbers: boolean;
   }): void {
-    const editor = this.#bridge?.activeEditor() ?? this.editor;
-    if (!editor) return;
-    const pageOf = (pos: number): number | null => {
-      const page = this.#bridge?.pageOf(pos);
-      return typeof page === "number" ? page + 1 : null;
-    };
-    const tabPositionTw = this.#flow
-      ? Math.round(this.#flow.contentWidthPx / twipToPx(1))
-      : undefined;
-    if (editor.commands.toc(pageOf, tabPositionTw, detail)) {
-      requestAnimationFrame(() =>
-        requestAnimationFrame(() => editor.commands["update-toc"](pageOf, tabPositionTw)),
-      );
-    }
+    this.#insert.insertCustomToc(detail);
   }
 
-  /** Object → Text from File — read a plain-text file in at the caret, one
-   *  paragraph per line (Word's Insert File). */
   #insertFileText(): void {
-    const input = this.shadowRoot?.querySelector<HTMLInputElement>("#text-input");
-    if (!input) return;
-    input.onchange = () => {
-      const file = input.files?.[0];
-      input.value = "";
-      if (!file) return;
-      void file.text().then((text) => {
-        const editor = this.#bridge?.activeEditor() ?? this.editor;
-        if (!editor || !text) return;
-        const paragraphs = text.split(/\r\n|\n|\r/).map(
-          (line) =>
-            ({
-              type: "paragraph",
-              content: line ? [{ type: "text", text: line }] : undefined,
-            }) as JSONContent,
-        );
-        editor.commands.insertContentAt(editor.state.selection.from, paragraphs);
-      });
-    };
-    input.click();
+    this.#insert.insertFileText();
   }
 
   /** Event → handler tables for the extracted host-command domains. Built on
@@ -6071,7 +3447,7 @@ class DocenDocument extends AddinHost<Editor> {
               focus: () => this.#bridge!.focus(),
             }
           : undefined,
-      element: () => this,
+      element: () => this as HTMLElement,
       rerender: () => {
         this.#bridge?.replaceOverlays();
       },
@@ -6094,10 +3470,10 @@ class DocenDocument extends AddinHost<Editor> {
           openPropertiesDialog: () => this.#openPropertiesDialog(),
           openSearch: () => this.#navigation.openSearch(),
           openFindReplace: () => this.#navigation.openFindReplace(),
-          zoom: () => this.#zoom,
+          zoom: () => this.#status.getZoom(),
           setZoom: (pct) => this.#setZoom(pct),
-          showZoomDialog: () => this.#showZoomDialog(),
-          zoomPreset: (preset) => this.#zoomPreset(preset),
+          showZoomDialog: () => this.#status.showZoomDialog(),
+          zoomPreset: (preset) => this.#status.zoomPreset(preset),
           docProtected: () => this.#docProtected,
           syncEditModeMenu: () => this.#syncEditModeMenu(),
           setShowMarks: (on) => this.setShowMarks(on),
@@ -6131,7 +3507,7 @@ class DocenDocument extends AddinHost<Editor> {
           editor: () => this.editor,
           bridge: () => this.#bridge,
           flow: () => this.#flow,
-          element: () => this,
+          element: () => this as HTMLElement,
           openNoteSettings: () => this.#openNoteSettings(),
           markIndexEntry: (target) => this.#references.markIndexEntry(target),
           markCitation: (target) => this.#references.markCitation(target),
@@ -6148,7 +3524,7 @@ class DocenDocument extends AddinHost<Editor> {
           insertBookmark: () => this.#insertBookmark(),
         },
         mailMerge: {
-          element: () => this,
+          element: () => this as HTMLElement,
           recipients: () => this.#merge.recipients(),
           insertAddressBlock: () => this.#merge.insertAddressBlock(),
           insertGreetingLine: () => this.#merge.insertGreetingLine(),
@@ -6189,7 +3565,7 @@ class DocenDocument extends AddinHost<Editor> {
         },
         proofing: {
           editor: () => this.editor,
-          showWordCount: () => this.#showWordCount(),
+          showWordCount: () => this.#status.showWordCount(),
           spellingRun: () => this.#spelling.run(),
           setTaskpane: (id, open) => this.#setTaskpane(id, open),
           spellingIssues: () => this.#spelling.issues(),
@@ -6213,7 +3589,7 @@ class DocenDocument extends AddinHost<Editor> {
         clipboard: {
           editor: () => this.editor,
           activeEditor: () => this.#bridge?.activeEditor() ?? this.editor,
-          element: () => this,
+          element: () => this as HTMLElement,
           copySelection: (cut) => this.#bridge?.copySelection(cut),
           paste: (textOnly) => this.#clipboard.paste(textOnly),
           togglePane: (id) => this.#togglePane(id),
@@ -6232,7 +3608,7 @@ class DocenDocument extends AddinHost<Editor> {
         drawing: {
           editor: () => this.editor,
           activeEditor: () => this.#bridge?.activeEditor() ?? this.editor,
-          element: () => this,
+          element: () => this as HTMLElement,
           showCompressPictures: () => this.#showCompressPictures(),
           armTransparentPick: () => this.#armTransparentPick(),
           drawingMulti: () => this.#bridge?.drawingMulti(),
@@ -6248,7 +3624,7 @@ class DocenDocument extends AddinHost<Editor> {
           insertWordArt: () => this.#insertWordArt(),
         },
         tables: {
-          element: () => this,
+          element: () => this as HTMLElement,
           editor: () => this.editor,
           activeEditor: () => this.#bridge?.activeEditor() ?? this.editor,
           contentWidthPx: () => this.#flow?.contentWidthPx,
@@ -6267,7 +3643,7 @@ class DocenDocument extends AddinHost<Editor> {
           armBorderPainter: (erase) => this.#armBorderPainter(erase),
         },
         dialogs: {
-          element: () => this,
+          element: () => this as HTMLElement,
           activeEditor: () => this.#bridge?.activeEditor() ?? this.editor,
           docStyles: (editor) => this.#docStyles(editor),
           runState: (state) => this.#runStateOf(state),
@@ -6287,7 +3663,7 @@ class DocenDocument extends AddinHost<Editor> {
           editor: () => this.editor,
           bridge: () => this.#bridge,
           activeEditor: () => this.#bridge?.activeEditor() ?? this.editor,
-          storyPage: () => this.#storyPage,
+          storyPage: () => this.#stories.page(),
           toggleSectionFlag: (flag) => this.#sections.toggleSectionFlag(flag),
           removeStory: (kind) => this.#removeStory(kind),
           removePageNumbers: () => this.#removePageNumbers(),
@@ -6317,7 +3693,7 @@ class DocenDocument extends AddinHost<Editor> {
   #buildingBlocksView(): BuildingBlocksHostView {
     const active = (): Editor | null | undefined => this.#bridge?.activeEditor() ?? this.editor;
     return {
-      element: () => this,
+      element: () => this as HTMLElement,
       editable: () => active()?.isEditable === true,
       blocks: () => (this.editor ? blocksOfDocAttrs(this.editor.state.doc.attrs) : []),
       setBlocks: (blocks) => {
@@ -6757,12 +4133,8 @@ class DocenDocument extends AddinHost<Editor> {
     }
   }
 
-  /** Mirror the caret's proofing language into the status bar (Word shows the
-   *  selection's language there). */
   #syncStatusLanguage(): void {
-    this.shadowRoot
-      ?.querySelector("docen-status-bar")
-      ?.setAttribute("language", proofingLanguageName(this.#caretLanguage().value));
+    this.#status.syncStatusLanguage();
   }
 
   /** Options dialog 确定 — commit the UI language + theme + the user identity
@@ -7271,7 +4643,7 @@ class DocenDocument extends AddinHost<Editor> {
       charsWithSpaces: textCounter(bodyText),
       charsNoSpaces: textCounter(bodyText.replace(/\s+/g, "")),
       paragraphs: bodyParas,
-      lines: this.#layoutLines(),
+      lines: this.#status.layoutLines(),
       revision: typeof core.revision === "number" ? core.revision : 1,
     };
     (
@@ -7319,285 +4691,36 @@ class DocenDocument extends AddinHost<Editor> {
     );
   }
 
-  /** Open the OS file picker. The accept filter on the input element covers
-   *  .docx/.md/.markdown; #onFileChange routes the chosen file by extension
-   *  via open(). */
   #pickFile(): void {
-    this.#fileInput?.click();
+    this.#io.pickFile();
   }
 
-  readonly #onFileChange = (event: Event): void => {
-    const input = event.target as HTMLInputElement;
-    const file = input.files?.[0];
-    // Reset so picking the same file twice still fires `change`.
-    input.value = "";
-    if (!file) return;
-    // Surface the detection/parse refusal (unsupported type, Flat OPC XML)
-    // instead of dropping it as an unhandled rejection.
-    void this.open(file).catch((err: unknown) => {
-      window.alert(this.#openRefusalMessage(err));
-    });
-  };
-
-  /** The alert text for an open refusal: the two detection refusals resolve
-   *  through the editor i18n table (en/zh), anything else surfaces its own
-   *  message. */
-  #openRefusalMessage(err: unknown): string {
-    if (err instanceof OpenFormatError) {
-      if (err.code === "flat-opc") return t("open.flat-opc-unsupported", this);
-      return t("open.unsupported", this).replace("{name}", err.file ?? "(unknown)");
-    }
-    return err instanceof Error ? err.message : String(err);
-  }
-
-  /** Insert the picked image as a data URL. Width/height are left unset — the
-   *  canvas renders the natural size, and prepareImages fills them on DOCX
-   *  export. */
-  readonly #onImageChange = (event: Event): void => {
-    const input = event.target as HTMLInputElement;
-    const file = input.files?.[0];
-    input.value = "";
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = (): void => {
-      // readAsDataURL always yields a string — the guard narrows the union.
-      if (typeof reader.result !== "string") return;
-      const src = reader.result;
-      // Natural size → attrs, clamped to the content width (Word inserts at
-      // natural size but never wider than the frame, keeping the aspect).
-      // Without explicit dimensions renderDocx falls back to a flat 400×300,
-      // which distorts every non-default-shaped picture.
-      const img = new Image();
-      img.onload = (): void => {
-        this.#bridge?.focus();
-        const contentW = this.#flow?.contentWidthPx ?? 620;
-        const scale = Math.min(1, contentW / Math.max(1, img.naturalWidth));
-        this.editor?.commands.insertContent({
-          type: "image",
-          attrs: {
-            src,
-            width: Math.round(img.naturalWidth * scale),
-            height: Math.round(img.naturalHeight * scale),
-          },
-        });
-      };
-      img.src = src;
-    };
-    reader.readAsDataURL(file);
-  };
-
-  /** Swap the selected image's source for the picked file (Change Picture):
-   *  the frame keeps its size, the crop resets — the command side owns both. */
-  readonly #onPictureChange = (event: Event): void => {
-    const input = event.target as HTMLInputElement;
-    const file = input.files?.[0];
-    input.value = "";
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = (): void => {
-      if (typeof reader.result !== "string") return;
-      this.#bridge?.focus();
-      this.editor?.commands["change-picture"](reader.result);
-    };
-    reader.readAsDataURL(file);
-  };
-
-  /** Save the document in the given format via the native Save As dialog
-   *  (showSaveFilePicker) when available so the user picks the location and name;
-   *  falls back to a plain download otherwise. The header filename is updated to
-   *  match the saved name. Defaults to the open document's own docx-family
-   *  variant (docm/dotx/dotm save as themselves). */
   async #saveAs(format: Exclude<SaveFormat, "pdf"> = this.#docxVariant): Promise<void> {
-    const cfg = SAVE_FORMATS[format];
-    let data: BlobPart;
-    if (format === "markdown") {
-      data = this.saveMarkdown();
-    } else if (format === "rtf") {
-      data = this.saveRTF();
-    } else if (format === "html") {
-      data = this.saveHTML();
-    } else if (format === "txt") {
-      data = this.savePlainText();
-    } else if (format === "odt") {
-      data = (await this.saveODT()) as unknown as BlobPart;
-    } else {
-      data = (await this.saveDOCX(format)) as unknown as BlobPart;
-    }
-    await this.#saveBlob(data, cfg, true);
+    return this.#io.saveAs(format);
   }
 
-  /** File menu → Save as Template: a `.dotx` download of the current document
-   *  (template main-part content type via the packer variant). Export-shaped —
-   *  the working document keeps its name and format. */
   async #saveAsTemplate(): Promise<void> {
-    const data = await this.saveDOCX("dotx");
-    await this.#saveBlob(data as BlobPart, SAVE_FORMATS.dotx, false);
+    return this.#io.saveAsTemplate();
   }
 
-  /** Write a finished blob out through the File System Access picker (adopting
-   *  the picked name as the filename when `adoptName`), falling back to a
-   *  plain download where the picker doesn't exist. `adoptName` is false for
-   *  format exports (PDF) — saving a copy doesn't rename the document. */
-  async #saveBlob(
-    data: BlobPart,
-    cfg: { description: string; mime: string; ext: string },
-    adoptName: boolean,
-  ): Promise<void> {
-    const blob = new Blob([data], { type: cfg.mime });
-    const suggestedName = suggestedFileName(
-      this.getAttribute("filename")?.trim() || t("header.doc-name", this),
-      cfg,
-    );
-    const picker = (
-      window as unknown as {
-        showSaveFilePicker?: (opts: {
-          suggestedName?: string;
-          types?: Array<{ description?: string; accept: Record<string, string[]> }>;
-        }) => Promise<{
-          name: string;
-          createWritable: () => Promise<{
-            write: (data: Blob | BufferSource | string) => Promise<void>;
-            close: () => Promise<void>;
-          }>;
-        }>;
-      }
-    ).showSaveFilePicker;
-    if (picker) {
-      try {
-        const handle = await picker({
-          suggestedName,
-          types: [{ description: cfg.description, accept: { [cfg.mime]: [cfg.ext] } }],
-        });
-        const writable = await handle.createWritable();
-        await writable.write(blob);
-        await writable.close();
-        if (adoptName) {
-          this.setAttribute("filename", handle.name);
-          this.#renderChrome();
-        }
-        return;
-      } catch {
-        // The user cancelled the picker (AbortError) or it was blocked — do NOT
-        // fall back to a download, which would save despite the cancel. The
-        // download fallback below only covers browsers without the picker.
-        return;
-      }
-    }
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = suggestedName;
-    a.click();
-    URL.revokeObjectURL(url);
-  }
-
-  /** Export as PDF (filename menu → Export as PDF): the paginated print
-   *  snapshots flatten into a PDF blob. Same view round-trip as #print — a
-   *  non-print view re-projects into print shape for the snapshot, then falls
-   *  back. The export never renames the document. */
   async #saveAsPdf(): Promise<void> {
-    const mode = this.#viewMode();
-    if (mode !== "print") {
-      this.#stage?.setViewMode("print");
-      this.#renderDoc(this.getJSON());
-    }
-    const shots = (await this.#stage?.printSnapshots()) ?? [];
-    if (mode !== "print") {
-      this.#stage?.setViewMode(mode);
-      this.#renderDoc(this.getJSON());
-    }
-    if (shots.length === 0) return;
-    const pageLayers = extractPdfPageLayers(
-      this.#pages,
-      this.#lastRun?.sections ?? [],
-      this.#sectionOfPage,
-    );
-    const shotsWithLayers = shots.map((shot, i) => ({
-      ...shot,
-      textSpans: pageLayers[i]?.textSpans,
-      links: pageLayers[i]?.links,
-    }));
-    const embeddedFonts =
-      this.#fonts.size > 0
-        ? await buildEmbeddedPdfFonts(
-            pageLayers.flatMap((layer) => layer.textSpans),
-            [...this.#fonts.values()].map((entry) => ({
-              family: entry.family,
-              fontData: entry.fontData,
-            })),
-          )
-        : [];
-    const title = this.getAttribute("filename") ?? t("header.doc-name", this);
-    const blob = await pagesToPdf(shotsWithLayers, {
-      metadata: { title, author: "Docen" },
-      tagged: true,
-      ...(embeddedFonts.length > 0 ? { embeddedFonts } : {}),
-    });
-    await this.#saveBlob(blob, SAVE_FORMATS.pdf, false);
+    return this.#io.saveAsPdf();
   }
 
-  /** Filename menu → Share: the Web Share sheet where the platform has one
-   *  (title only — the document body is not uploaded); otherwise copy the
-   *  document URL (Word for the web's share = share a link). */
   async #share(): Promise<void> {
-    const title = this.getAttribute("filename") ?? t("header.doc-name", this);
-    const nav = navigator as Navigator & { share?: (data: ShareData) => Promise<void> };
-    if (typeof nav.share === "function") {
-      try {
-        await nav.share({ title });
-        return;
-      } catch {
-        return; // the user dismissed the sheet (AbortError)
-      }
-    }
-    try {
-      await navigator.clipboard.writeText(location.href);
-    } catch {
-      // Clipboard denied — nothing else to offer.
-    }
+    return this.#io.share();
   }
 
-  /** Filename menu → Close: end the editing session. A host takes over via
-   *  docen:close; otherwise the document resets to a blank slate (Word's Close
-   *  closes the window — the browser element's equivalent). Unsaved work is
-   *  confirmed away — there is no dirty-save model to offer. */
   #closeDocument(): void {
-    if (this.#emitCancelable("docen:close")) return;
-    if (this.#jsonDirty && !window.confirm(t("close.confirm", this))) return;
-    this.setAttribute("filename", t("header.doc-name", this));
-    this.#renderChrome();
-    this.#docxVariant = "docx";
-    this.setJSON({ type: "doc", content: [{ type: "paragraph" }] });
+    this.#io.closeDocument();
   }
 
-  /** The Document Inspector's scan: comment cards in documentExtras and the
-   *  distinct revision records (w:ins/w:del/w:rPrChange ids, paragraph
-   *  w:pPrChange records included) in the doc. */
   #inspectFindings(): { comments: number; revisions: number } {
-    const comments = (
-      (this.editor?.state.doc.attrs ?? {}) as {
-        documentExtras?: { comments?: unknown[] };
-      }
-    ).documentExtras?.comments?.length;
-    const ids = new Set<string>();
-    if (this.editor) {
-      for (const revision of collectRevisions(this.editor.state.doc)) {
-        ids.add(`${revision.type}:${String(revision.id)}`);
-      }
-    }
-    return { comments: comments ?? 0, revisions: ids.size };
+    return this.#io.inspectFindings();
   }
 
-  /** Filename menu → Inspect Document (Word's 检查问题): scan, then show the
-   *  findings dialog; its removal buttons come back as events (#onInspect). */
   #inspectDocument(): void {
-    const dialog = this.shadowRoot?.querySelector("docen-inspect-dialog") as unknown as {
-      setAttribute(name: string, value: string): void;
-      show(): void;
-    } | null;
-    if (!dialog) return;
-    dialog.setAttribute("findings", JSON.stringify(this.#inspectFindings()));
-    dialog.show();
+    this.#io.inspectDocument();
   }
 
   /** The inspector dialog's removal buttons — clear comments / accept all
@@ -7614,248 +4737,46 @@ class DocenDocument extends AddinHost<Editor> {
     dialog?.setAttribute("findings", JSON.stringify(this.#inspectFindings()));
   };
 
-  /** Print only the document pages — never the ribbon/chrome. Each page
-   *  canvas rasterizes into a hidden print-only iframe (one image per page at
-   *  the page's true paper size, @page margin 0), so the browser's print
-   *  dialog receives exactly the paginated document, like Word's print
-   *  output. */
   async #print(): Promise<void> {
-    // Printing always outputs the paginated Print Layout pages (Word prints
-    // the paper document whatever the view) — a continuous view re-projects
-    // into print shape for the snapshot, then falls back.
-    const mode = this.#viewMode();
-    if (mode !== "print") {
-      this.#stage?.setViewMode("print");
-      this.#renderDoc(this.getJSON());
-    }
-    const shots = (await this.#stage?.printSnapshots()) ?? [];
-    if (mode !== "print") {
-      this.#stage?.setViewMode(mode);
-      this.#renderDoc(this.getJSON());
-    }
-    if (shots.length === 0) return;
-    const first = shots[0]!;
-    const frame = document.createElement("iframe");
-    Object.assign(frame.style, {
-      position: "fixed",
-      right: "0",
-      bottom: "0",
-      width: "0",
-      height: "0",
-      border: "0",
-    });
-    document.body.append(frame);
-    const doc = frame.contentDocument!;
-    doc.open();
-    doc.write(`<!doctype html><html><head><title>${this.getAttribute("filename") ?? "Document"}</title><style>
-      @page { size: ${first.width / 96}in ${first.height / 96}in; margin: 0; }
-      html, body { margin: 0; }
-      img { display: block; width: 100%; }
-      .pg { page-break-after: always; break-after: page; }
-      .pg:last-child { page-break-after: auto; break-after: auto; }
-    </style></head><body>`);
-    for (const s of shots) doc.write(`<div class="pg"><img src="${s.url}"></div>`);
-    doc.write("</body></html>");
-    doc.close();
-    frame.onload = () => {
-      const win = frame.contentWindow;
-      if (!win) return;
-      const cleanup = (): void => frame.remove();
-      win.addEventListener("afterprint", cleanup, { once: true });
-      win.focus();
-      win.print();
-      // afterprint can lag behind the dialog closing — sweep after a grace.
-      setTimeout(cleanup, 30_000);
-    };
+    return this.#io.print();
   }
 
-  /** Common load path for openDOCX/openMarkdown: adopt a filename, replace the
-   *  whole doc node. The #loadDoc wake-up transaction re-renders the canvas
-   *  through the bridge. A doc without sectionProperties (parseMarkdown
-   *  output, hand-built JSON) lacks the document-level defaults too — doc
-   *  styles, page geometry, docGrid — so every heading renders as plain body
-   *  text. Normalize on the way in, same gate as setJSON: a parseDOCX payload
-   *  carries its own styles/section properties and is left untouched
-   *  (normalizeDocument keeps existing attrs keys). */
-  #applyOpenedJSON(json: JSONContent, filename?: string): void {
-    if (filename) this.setAttribute("filename", filename);
-    if (!(json.attrs as { sectionProperties?: unknown } | undefined)?.sectionProperties) {
-      json = normalizeDocument(json);
-    }
-    this.#loadDoc(json);
-  }
-
-  /** Load a file into the editor, auto-detecting its format: the docx family
-   *  (.docx/.docm/.dotx/.dotm) or Markdown (.md/.markdown). This is the single
-   *  entry point the filename-menu "Open…" uses; openDOCX/openMarkdown remain
-   *  for when the caller already knows the format (e.g. loading a server-fetched
-   *  docx buffer that has no filename). Throws on a Flat OPC .xml and on an
-   *  unrecognized extension. */
   async open(file: File): Promise<void> {
-    const format = detectOpenFormat(file);
-    if (format === "markdown") return this.openMarkdown(file);
-    if (format === "rtf") return this.openRTF(file);
-    if (format === "text") return this.openPlainText(file);
-    return this.openDOCX(file, format);
+    return this.#io.open(file);
   }
 
-  /** Load a docx-family document (.docx/.docm/.dotx/.dotm) into the editor from
-   *  a File or a buffer (ArrayBuffer / Uint8Array). A File also adopts its name
-   *  as the filename; a bare buffer carries no name. `variant` names the package
-   *  kind (the detected extension; docx by default) and becomes the document's
-   *  save format — macro parts ride through parseDOCX either way. parseDOCX is
-   *  async (office-open 0.14): a File is passed through whole and its bytes are
-   *  read inside the parse. While loading, an "Opening <name>" veil covers the
-   *  canvas (Office shows the same message for a slow open) and the scroller
-   *  stays frozen until the document is ready. */
   async openDOCX(
     input: File | ArrayBuffer | Uint8Array,
     variant: DocxVariant = "docx",
   ): Promise<void> {
-    const name = input instanceof File ? input.name : undefined;
-    this.#setProgress(t("status.opening", this).replace("{name}", name ?? "DOCX"));
-    try {
-      // parseDOCX blocks the main thread (File read included) — yield two
-      // frames so the veil paints before the freeze (the bar's sweep is
-      // compositor-driven and keeps moving through it).
-      await this.#nextFrame();
-      const json = await parseDOCX(input);
-      // Adopt the variant only after a successful parse — a failed open must
-      // not relabel the still-open document's save format.
-      this.#docxVariant = variant;
-      this.#applyOpenedJSON(json, name);
-      await this.#nextFrame();
-      this.#setProgress();
-    } catch (err) {
-      this.#setProgress();
-      throw err;
-    }
+    return this.#io.openDOCX(input, variant);
   }
 
-  /** New from Template → load the picked built-in template's model JSON as a
-   *  fresh document. The template bodies are localized to the active UI locale;
-   *  the new document takes the template's name (Word names a template-born
-   *  document after the template) and the standard docx save format. */
   #newFromTemplate(id: string): void {
-    const template = findTemplate(id);
-    if (!template) return;
-    const locale = templateLocale(this.lang || document.documentElement.lang);
-    this.#docxVariant = "docx";
-    this.#applyOpenedJSON(template.build(locale), `${t(template.nameKey, this)}.docx`);
+    this.#io.newFromTemplate(id);
   }
-  /** Filename menu → New from Template: open the built-in template gallery. */
   #openTemplateDialog(): void {
-    const dialog = this.shadowRoot?.querySelector("docen-template-dialog") as unknown as {
-      show(): void;
-    } | null;
-    dialog?.show();
+    this.#io.openTemplateDialog();
   }
 
-  /** Load a Markdown file/string into the editor. A File adopts its name as the
-   *  filename; a bare string carries no name. */
   async openMarkdown(input: File | string): Promise<void> {
-    const name = typeof input === "string" ? undefined : input.name;
-    this.#setProgress(t("status.opening", this).replace("{name}", name ?? "Markdown"));
-    try {
-      const text = typeof input === "string" ? input : await input.text();
-      await this.#nextFrame();
-      // Markdown has no docx-family variant — a new document saves as .docx.
-      this.#docxVariant = "docx";
-      this.#applyOpenedJSON(parseMarkdown(text), name);
-      await this.#nextFrame();
-      this.#setProgress();
-    } catch (err) {
-      this.#setProgress();
-      throw err;
-    }
+    return this.#io.openMarkdown(input);
   }
 
-  /** Load an RTF file/string into the editor. A File adopts its name as the
-   *  filename; a bare string carries no name. */
   async openRTF(input: File | string): Promise<void> {
-    const name = typeof input === "string" ? undefined : input.name;
-    this.#setProgress(t("status.opening", this).replace("{name}", name ?? "RTF"));
-    try {
-      const text = typeof input === "string" ? input : await input.text();
-      await this.#nextFrame();
-      this.#docxVariant = "docx";
-      this.#applyOpenedJSON(parseRTF(text), name);
-      await this.#nextFrame();
-      this.#setProgress();
-    } catch (err) {
-      this.#setProgress();
-      throw err;
-    }
+    return this.#io.openRTF(input);
   }
 
-  /** Load a Plain Text file/string into the editor. A File adopts its name as the
-   *  filename; a bare string carries no name. */
   async openPlainText(input: File | string): Promise<void> {
-    const name = typeof input === "string" ? undefined : input.name;
-    this.#setProgress(t("status.opening", this).replace("{name}", name ?? "Text"));
-    try {
-      const text = typeof input === "string" ? input : await input.text();
-      await this.#nextFrame();
-      this.#docxVariant = "docx";
-      this.#applyOpenedJSON(parsePlainText(text), name);
-      await this.#nextFrame();
-      this.#setProgress();
-    } catch (err) {
-      this.#setProgress();
-      throw err;
-    }
+    return this.#io.openPlainText(input);
   }
 
-  /** Open progress on the canvas veil — a label + indeterminate Fluent
-   *  progress bar centered over the document area (Word centers its opening
-   *  spinner the same way). Byte reads are a sliver of the load and parse/
-   *  layout report nothing, so the bar never fakes a percentage. Clearing
-   *  hides the veil. */
   #setProgress(label?: string): void {
-    const root = this.shadowRoot;
-    const veil = root?.querySelector<HTMLElement>(".load-veil");
-    if (!veil || !root) return;
-    if (label == null) {
-      veil.hidden = true;
-      return;
-    }
-    const labelEl = root.querySelector<HTMLElement>(".load-veil .load-label");
-    if (!labelEl) return;
-    veil.hidden = false;
-    labelEl.textContent = label;
+    this.#io.setProgress(label);
   }
 
-  /** Two rAFs — enough for the current progress state to paint before a
-   *  synchronous block (parseDOCX) freezes the frame. */
-  #nextFrame(): Promise<void> {
-    return new Promise((resolve) =>
-      requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
-    );
-  }
-
-  /** Serialize the current document to a DOCX buffer. `variant` selects the
-   *  package kind (default: the open document's own — a .docm saves as a .docm,
-   *  a .dotx as a .dotx) and stamps the main-part content type; macro parts
-   *  carried from the source stay in the package.
-   *
-   *  Host-registered fonts are embedded (word/fontTable.xml + obfuscated
-   *  word/fonts/fontN.odttf parts) when their OS/2 fsType permits it — the
-   *  engine writes the parts/relationships. */
   async saveDOCX(variant: DocxVariant = this.#docxVariant): Promise<Uint8Array> {
-    const fonts =
-      this.#fonts.size > 0
-        ? prepareEmbeddedFonts(
-            [...this.#fonts.values()].map((entry) => ({
-              family: entry.family,
-              fontData: entry.fontData,
-            })),
-          )
-        : [];
-    const buffer = await generateDOCX(this.getJSON(), {
-      variant,
-      ...(fonts.length > 0 ? { document: { fonts } } : {}),
-    });
-    return buffer as unknown as Uint8Array;
+    return this.#io.saveDOCX(variant);
   }
 
   /**
@@ -7879,170 +4800,39 @@ class DocenDocument extends AddinHost<Editor> {
 
   /** Serialize the current document to a Markdown string. */
   saveMarkdown(): string {
-    return generateMarkdown(this.getJSON());
+    return this.#io.saveMarkdown();
   }
 
-  /** Serialize the current document to an RTF string. */
   saveRTF(): string {
-    return generateRTF(this.getJSON());
+    return this.#io.saveRTF();
   }
 
-  /** Serialize the current document to an HTML string. */
   saveHTML(options?: HtmlGenerateOptions): string {
-    return generateHTML(this.getJSON(), options);
+    return this.#io.saveHTML(options);
   }
 
-  /** Serialize the current document to plain text. */
   savePlainText(): string {
-    return generatePlainText(this.getJSON());
+    return this.#io.savePlainText();
   }
 
-  /** Serialize the current document to an OpenDocument Text (.odt) zip buffer. */
   async saveODT(): Promise<Uint8Array> {
-    return generateODT(this.getJSON());
+    return this.#io.saveODT();
   }
 
-  /** Current document as Tiptap JSON. Cached — recomputed only after a doc
-   *  change (see #onTransaction). */
   getJSON(): JSONContent {
-    const editor = this.editor;
-    if (!editor) return {} as JSONContent;
-    if (this.#jsonDirty || this.#cachedJSON === undefined) {
-      this.#cachedJSON = editor.getJSON();
-      this.#jsonDirty = false;
-    }
-    return this.#cachedJSON;
+    return this.#io.getJSON();
   }
 
-  /** Replace the document with Tiptap JSON. */
   setJSON(json: JSONContent): void {
-    // A hand-built JSON (not from parseDOCX) lacks office-open's document-level
-    // schema defaults — doc.attrs.styles (docDefaults body font/size/spacing)
-    // and doc.attrs.sectionProperties (page size/margins/docGrid linePitch).
-    // Without them the document has no body font, no page geometry, and no grid
-    // for snapToGrid to pitch against. Normalize once on the way in; a doc that
-    // already carries sectionProperties (a parseDOCX/getJSON round-trip) is a
-    // no-op (normalizeDocument shallow-merges user attrs over defaults).
-    if (!(json.attrs as { sectionProperties?: unknown } | undefined)?.sectionProperties) {
-      json = normalizeDocument(json);
-    }
-    this.#loadDoc(json);
-    this.#renderChrome();
+    this.#io.setJSON(json);
   }
 
-  /** Replace the whole doc node (content + doc-level attrs) via a fresh
-   *  EditorState. Tiptap's setContent only swaps content and drops doc-level
-   *  attrs; this carries them (styles/core/sectionProperties). updateState
-   *  bypasses appendTransaction/onTransaction, so extensions that react to doc
-   *  changes wouldn't wake — dispatch a docChanged tr (re-stamp the first
-   *  block's attrs, a no-op visually) to trigger them: Outline re-reports the
-   *  anchor list, and the bridge's raf-merged onDoc re-renders the canvas. */
   #loadDoc(doc: JSONContent): void {
-    const editor = this.editor;
-    if (!editor) return;
-    // New document — invalidate the JSON cache.
-    this.#jsonDirty = true;
-    editor.view.updateState(
-      EditorState.create({ doc: editor.schema.nodeFromJSON(doc), plugins: editor.state.plugins }),
-    );
-    // NOTE: no isDestroyed guard — the viewless editor's `isDestroyed` getter
-    // defaults to true (it reads editorView, which element:null never sets).
-    // updateState bypasses appendTransaction, so extensions that react to doc
-    // changes wouldn't wake. Dispatch a docChanged tr to fire them. The tr
-    // re-stamps the LAST leaf block's OWN attrs — a true no-op (same node,
-    // same attrs) — so nothing is clobbered.
-    const state = editor.state;
-    // Last textblock/leaf block (deepest, rightmost) for the re-stamp — found
-    // by descending the rightmost-child chain (O(depth)) instead of a full
-    // nodesBetween scan (O(n)).
-    const last = this.#lastMarkupTarget(state.doc);
-    if (last) {
-      // addToHistory:false — this re-stamp is an intentional no-op (same node,
-      // same attrs) whose sole purpose is to fire appendTransaction (updateState
-      // bypasses it). Left in history, it plants a no-op undo entry at the stack
-      // bottom (undo returns true but changes nothing); excluding it keeps the
-      // undo stack clean after load.
-      editor.view.dispatch(
-        state.tr.setNodeMarkup(last.pos, undefined, last.attrs).setMeta("addToHistory", false),
-      );
-    } else {
-      // An empty document has no markup target — render directly.
-      this.#renderDoc(editor.getJSON());
-    }
-    // The style-set gallery's "document default" restores the styles model the
-    // document loaded with — captured at this load boundary (state settled),
-    // never per layout, or the preset commands' own re-renders would overwrite
-    // the snapshot and the restore would replay the current state.
-    this.#snapshotStyles();
-    // Document settings ride documentExtras.settings — re-read the protection
-    // at this load boundary (a previous document's state must not leak), then
-    // re-derive editability. Word also forces revision tracking on when a
-    // document opens under a tracked-changes restriction.
-    const settings = this.#documentSettings();
-    const docProtection = settings.documentProtection as
-      | {
-          edit?: string;
-          hash?: string;
-          formatting?: boolean;
-        }
-      | undefined;
-    const protection = docProtection?.edit;
-    this.#docProtected = protection === "readOnly" || protection === "comments";
-    this.#protectionMode = protection;
-    if (protection === "trackedChanges") {
-      editor.commands["track-changes"](true);
-    }
-    const pane = this.shadowRoot?.querySelector("docen-restrict-editing-pane") as {
-      setProtectionState?(state: any, hash?: string): void;
-    } | null;
-    if (pane && protection && protection !== "none") {
-      pane.setProtectionState?.(
-        {
-          isEnforced: true,
-          type: protection,
-          formattingRestricted: Boolean(docProtection?.formatting),
-        },
-        docProtection?.hash,
-      );
-    }
-    // w:updateFields — Word updates fields when the document opens. Arm the
-    // flag here; the first completed render consumes it (fresh page map).
-    if (settings.updateFields === true) this.#updateFieldsOnOpen = true;
-    // Restore persisted document theme if present
-    const theme = settings.theme as { id?: string; kind?: string } | undefined;
-    if (theme?.id) {
-      this.#applyDocumentTheme(theme.kind || "theme", theme.id, false);
-    }
-    this.#syncEditable();
+    this.#io.loadDoc(doc);
   }
 
-  /** The open document's settings.xml slice, as stored in
-   *  doc.attrs.documentExtras.settings (the toggleSectionFlag channel). */
   #documentSettings(): Record<string, unknown> {
-    const attrs = (this.editor?.state.doc.attrs ?? {}) as {
-      documentExtras?: { settings?: Record<string, unknown> };
-    };
-    return attrs.documentExtras?.settings ?? {};
-  }
-
-  /** Last textblock/leaf block (deepest, rightmost) for the #loadDoc re-stamp
-   *  hack — the re-stamp target that fires the extension wake-up. Runs only on
-   *  load (setJSON/openDOCX), not per edit, so the walk cost is amortized over
-   *  the load itself. */
-  #lastMarkupTarget(doc: import("@tiptap/pm/model").Node): {
-    pos: number;
-    attrs: Record<string, unknown>;
-  } | null {
-    let last: { pos: number; attrs: Record<string, unknown> } | null = null;
-    doc.nodesBetween(0, doc.content.size, (node, pos) => {
-      if (node.isText) return;
-      if (node.isTextblock || node.isLeaf) {
-        last = { pos, attrs: node.attrs as Record<string, unknown> };
-      }
-      // Don't descend into textblocks (their text isn't a markup target).
-      return node.isTextblock ? false : undefined;
-    });
-    return last;
+    return this.#io.documentSettings();
   }
 
   /** The underlying Tiptap editor (for advanced, direct control). */
@@ -8128,6 +4918,9 @@ class DocenDocument extends AddinHost<Editor> {
         (this.shadowRoot?.querySelector("docen-a11y-checker-pane") as any)?.check(this.getJSON());
       } else if (id === "reveal") {
         this.#updateRevealFormatting();
+      } else if (id === "proofing") {
+        // The pane skips updates while hidden — it needs the current list.
+        this.#spelling.syncPane();
       } else if (id === "navigation") {
         if (this.#pages.length > 0) {
           const total = this.#pages.length;
@@ -8135,8 +4928,8 @@ class DocenDocument extends AddinHost<Editor> {
           for (let i = 0; i < total; i++) {
             thumbs.push(this.#stage?.pageThumbnail(i) ?? null);
           }
-          this.#cacheNavThumbs(thumbs);
-          this.#pushNavPages(
+          this.#status.cacheNavThumbs(thumbs);
+          this.#status.pushNavPages(
             total,
             (this.#bridge?.pageOf(this.editor?.state.selection.from ?? 0) ?? 0) + 1,
           );
@@ -8164,9 +4957,8 @@ class DocenDocument extends AddinHost<Editor> {
     this.#setZoom(pct);
   }
 
-  /** Current zoom level (percent). */
   getZoom(): number {
-    return this.#zoom;
+    return this.#status.getZoom();
   }
 
   // ── Formatting marks (method + event; boolean `show-marks` attribute) ──
