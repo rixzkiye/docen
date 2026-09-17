@@ -313,16 +313,19 @@ export class CanvasStage {
           this.onLiveChange?.(slotIndex, record.isIntersecting);
         }
       },
-      // The IO root is the SCROLL CONTAINER (the stage host's parent), not the
+      // The IO root is the SCROLL CONTAINER (the document area), not the
       // viewport: rootMargin only widens the root's clip rect, and an
       // intermediate overflow:auto box re-clips it — pages below the scroller's
-      // visible area would never pre-render against a viewport root. The
+      // visible area would never pre-render against a viewport root. A
+      // full-height wrapper between the host and the scroller (the context
+      // menu's layer) makes every page intersect it, which turns the whole
+      // virtualization off — the real scroller is the only honest root. The
       // margins (order top/right/bottom/left) pre-render ahead of BOTH scroll
       // directions: downward for fast scrolls, and upward because deletion
       // pulls content up — the viewport effectively scans upward through the
       // doc, and a one-sided margin there shows blank pages while holding
       // Backspace.
-      { root: stage.parentElement, rootMargin: "150% 0px 150% 0px" },
+      { root: this.#scrollRoot, rootMargin: "150% 0px 150% 0px" },
     );
     // Leafer samples devicePixelRatio at App creation and misses a cross-
     // monitor / browser-zoom change, leaving the canvas CSS-stretched (blurry

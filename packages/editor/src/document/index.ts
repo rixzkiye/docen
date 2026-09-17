@@ -4891,6 +4891,9 @@ class DocenDocument extends AddinHost<Editor> {
         (this.shadowRoot?.querySelector("docen-a11y-checker-pane") as any)?.check(this.getJSON());
       } else if (id === "reveal") {
         this.#updateRevealFormatting();
+      } else if (id === "proofing") {
+        // The pane skips updates while hidden — it needs the current list.
+        this.#spelling.syncPane();
       } else if (id === "navigation") {
         if (this.#pages.length > 0) {
           const total = this.#pages.length;

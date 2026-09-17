@@ -35,7 +35,14 @@ interface UnifiedProofingEntry {
   from: number;
   to: number;
   word: string;
-  suggestions: string[];
+  /** Replacement candidates. Spelling entries leave this unset until the
+   *  pane actually shows the entry: {@link spellSuggestions} scans the whole
+   *  lexicon, and on a large document the eager per-issue pass (thousands of
+   *  words × lexicon) stalls the renderer for minutes. Grammar replacements
+   *  arrive with the rule and are free. */
+  suggestions?: string[];
+  /** The issue's proofing language — the suggestion scan's lexicon selector. */
+  lang?: string;
   category: "spelling" | "grammar" | "style";
   message?: string;
   ruleId?: string;
@@ -175,7 +182,8 @@ export class SpellingCommands {
         from: issue.from,
         to: issue.to,
         word: issue.word,
-        suggestions: spellSuggestions(issue.word, 5, issue.lang),
+        // Deferred to #syncPane (the pane shows one issue at a time).
+        lang: issue.lang,
         category: "spelling",
       });
     }
@@ -203,6 +211,20 @@ export class SpellingCommands {
     this.#unifiedEntries = list;
   }
 
+  /** An entry's suggestion list, computed on first display and cached on the
+   *  entry — the lexicon scan is O(lexicon), so it must not run for issues
+   *  the pane is not showing. */
+  #suggestionsOf(entry: UnifiedProofingEntry): string[] {
+    return (entry.suggestions ??=
+      entry.kind === "spelling" ? spellSuggestions(entry.word, 5, entry.lang) : []);
+  }
+
+  /** The proofing task pane just opened — push the current issue list into it
+   *  ({@link #syncPane} skips the work while the pane is hidden). */
+  syncPane(): void {
+    this.#syncPane();
+  }
+
   /** Push the active issue into the proofing pane when it's open. */
   #syncPane(): void {
     const pane = this.host.element().shadowRoot?.querySelector("docen-spelling-pane") as
@@ -218,11 +240,19 @@ export class SpellingCommands {
         })
       | null;
     if (!pane) return;
+    // The pane rides its task pane, which is mounted hidden: writing entries
+    // into a hidden Lit element re-renders it for nothing, and the active
+    // entry's lexicon scan is the most expensive part of a proofing run. The
+    // host re-syncs the moment the pane opens (SpellingCommands.syncPane).
+    const host = pane.closest("docen-task-pane") as (HTMLElement & { open?: boolean }) | null;
+    if (host && !host.open) return;
     const entries = this.#unifiedEntries;
     pane.total = entries.length;
-    pane.entries = entries.map((e) => ({
+    pane.entries = entries.map((e, index) => ({
       word: e.word,
-      suggestions: e.suggestions,
+      // Only the shown entry pays for the lexicon scan; the pane's list view
+      // (category/word) never reads another entry's suggestions.
+      suggestions: index === this.#active ? this.#suggestionsOf(e) : [],
       category: e.category,
       message: e.message,
     }));
