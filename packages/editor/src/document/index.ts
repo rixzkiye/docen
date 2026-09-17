@@ -265,6 +265,14 @@ const FIELD_RESOLVE_PASSES = 3;
 /** Double-click window (ms) — the format painter's sticky toggle and the
  *  bare-click stroke deferral both track the system double-click time. */
 const PAINTER_DOUBLE_CLICK_MS = 500;
+/** Idle delay (ms) before the status bar re-walks the document for the word
+ *  count — CharacterCount.words() regexes every text node, so the typing path
+ *  keeps the last finished count and recounts once typing pauses. */
+const STATUS_WORD_COUNT_IDLE_MS = 200;
+/** Idle delay (ms) before the Navigation pane's page thumbnails re-rasterize.
+ *  Each thumbnail is a full PNG encode of a page canvas — far too heavy for
+ *  the per-keystroke path even when the pane is open. */
+const NAV_THUMB_IDLE_MS = 250;
 
 /** The projection half's output — the flow inputs both the synchronous drain
  *  and the incremental walk lay. */
@@ -631,6 +639,22 @@ class DocenDocument extends AddinHost<Editor> {
    *  don't re-walk the whole document (recomputed only when content changes). */
   #lastDocSize = -1;
   #lastWords = 0;
+  /** Idle pass that refreshes #lastWords after content changes (see
+   *  STATUS_WORD_COUNT_IDLE_MS). */
+  #wordCountTimer?: ReturnType<typeof setTimeout>;
+  /** Pending frame for the coalesced host UI sync — one chrome pass per
+   *  animation frame instead of one per transaction (see #scheduleUiSync). */
+  #uiSyncFrame = 0;
+  /** A pending UI sync still owes the status-bar language a refresh. */
+  #uiSelectionDirty = false;
+  /** Idle pass that re-rasterizes the Navigation pane's page thumbnails. */
+  #navThumbTimer?: ReturnType<typeof setTimeout>;
+  /** Signature (page count : current page : thumbnail generation) of the last
+   *  <docen-nav-pages> push — skips rebuilding the pane's list when nothing it
+   *  shows actually changed. */
+  #navPagesKey = "";
+  #navThumbGen = 0;
+  #navThumbs: (string | null)[] = [];
   #unobserveLang?: () => void;
   /** Tears down the shared settings-store subscription (header re-stamp +
    *  `docen:settings-change` forwarding). */
@@ -1384,34 +1408,59 @@ class DocenDocument extends AddinHost<Editor> {
 
   /** Mirror the font name / size and paragraph style at the caret into the
    *  ribbon comboboxes — Word behavior: the boxes report the formatting at the
-   *  cursor, not a fixed default. Re-runs on every editor transaction (caret
-   *  moves, marks change). */
+   *  cursor, not a fixed default. Transactions only mark the chrome dirty; the
+   *  actual pass is coalesced to one per animation frame (caret moves, marks
+   *  change, doc edits all read the latest state in the same pass). */
   #setupFontSync(): void {
     const editor = this.editor;
     if (!editor) return;
-    const sync = (): void => {
-      this.#syncFontControls();
-      this.#syncStyleControl();
-      this.#syncStoryMenus();
-      this.#syncContextTabs();
-      // After #syncContextTabs: the first transaction that enters a table is
-      // also the one that appends the Table Layout panel — the combos only
-      // exist from that pass on. The drawing Size combos ride the same pass.
-      this.#syncCellSize();
-      this.#syncDrawingSize();
-      // Selection-sensitive greying: the arrange group's liveness depends on
-      // what the selection points at, which no static pass sees.
-      this.#syncArrangeGreying();
-      this.#syncFormatButtons();
-      this.#syncDrawingMenus();
-      this.#syncQuickPartsMenu();
-      this.#updateStatus();
-    };
+    const sync = (): void => this.#scheduleUiSync();
     editor.on("transaction", sync);
-    sync();
+    this.#syncUiChrome();
     this.#fontSyncCleanup = (): void => {
       editor.off("transaction", sync);
+      if (this.#uiSyncFrame !== 0) {
+        cancelAnimationFrame(this.#uiSyncFrame);
+        this.#uiSyncFrame = 0;
+      }
     };
+  }
+
+  /** Mark the host chrome dirty; the work runs once on the next frame. A
+   *  typing burst fires a transaction per keystroke, but the comboboxes,
+   *  greying, and status bar only need the state the frame renders. */
+  #scheduleUiSync(): void {
+    if (this.#uiSyncFrame !== 0) return;
+    this.#uiSyncFrame = requestAnimationFrame(() => {
+      this.#uiSyncFrame = 0;
+      this.#syncUiChrome();
+    });
+  }
+
+  /** The host's per-transaction UI pass: caret formatting in the ribbon,
+   *  context tabs / story menus, button greying, and the status bar. */
+  #syncUiChrome(): void {
+    this.#syncFontControls();
+    this.#syncStyleControl();
+    this.#syncStoryMenus();
+    this.#syncContextTabs();
+    // After #syncContextTabs: the first transaction that enters a table is
+    // also the one that appends the Table Layout panel — the combos only
+    // exist from that pass on. The drawing Size combos ride the same pass.
+    this.#syncCellSize();
+    this.#syncDrawingSize();
+    // Selection-sensitive greying: the arrange group's liveness depends on
+    // what the selection points at, which no static pass sees.
+    this.#syncArrangeGreying();
+    this.#syncFormatButtons();
+    this.#syncDrawingMenus();
+    this.#syncQuickPartsMenu();
+    if (this.#uiSelectionDirty) {
+      this.#uiSelectionDirty = false;
+      // The status-bar language mirrors the caret's proofing language (Word).
+      this.#syncStatusLanguage();
+    }
+    this.#updateStatus();
   }
 
   #syncFontControls(): void {
@@ -3611,6 +3660,12 @@ class DocenDocument extends AddinHost<Editor> {
     this.#settingsOff?.();
     this.#settingsOff = undefined;
     clearTimeout(this.#autosaveTimer);
+    clearTimeout(this.#wordCountTimer);
+    this.#wordCountTimer = undefined;
+    // A timed-out recount must re-run on reconnect, even at the same docSize.
+    this.#lastDocSize = -1;
+    clearTimeout(this.#navThumbTimer);
+    this.#navThumbTimer = undefined;
     this.#stopFormatPainter();
     this.#stopBorderPainting();
     this.#stopShapeDrawing();
@@ -4066,12 +4121,18 @@ class DocenDocument extends AddinHost<Editor> {
     // pass to re-read the selection instead of trusting the diff cache.
     this.#arrangeGrey = null;
     this.#syncArrangeGreying();
+    // Same for the format toggles: fresh elements start un-pressed, so the
+    // signature cache must not skip the re-stamp below.
+    this.#formatButtonsKey = "";
   }
 
   /** The previous arrange pass's selection class (floating "f" / inline "i"),
    *  so the per-transaction sync touches the DOM only on a change; null
    *  forces a re-run (a fresh ribbon DOM starts un-greyed). */
   #arrangeGrey: string | null = null;
+  /** The previous format toggles' [event, lit] signature — the DOM sweep is
+   *  skipped while it is unchanged; "" forces a re-run after a re-stamp. */
+  #formatButtonsKey = "";
 
   /** Word greys the Arrange group by selection: Align/z-order need a floating
    *  drawing, Wrap Text and Position also serve an inline drawing (they
@@ -4108,8 +4169,9 @@ class DocenDocument extends AddinHost<Editor> {
   /** Re-stamp the Home tab's format toggles (Bold/Italic/…/alignment) against
    *  the caret/selection — Word's lit buttons. Runs per transaction after
    *  #syncArrangeGreying; toggleAttribute is a no-op on a same-value attr, so
-   *  an unchanged state doesn't re-fire the component. `show-marks` is a
-   *  chrome flag, not an editor state — the host attribute is its truth. */
+   *  an unchanged state doesn't re-fire the component. The [event, lit] rows
+   *  are the pass's only inputs, so an unchanged signature skips the DOM
+   *  sweep (a ribbon re-stamp resets the cache — see #applyRibbonGreying). */
   #syncFormatButtons(): void {
     const state = this.editor?.state;
     if (!state) return;
@@ -4124,6 +4186,9 @@ class DocenDocument extends AddinHost<Editor> {
       // dialog writes it without a click, so the sync re-stamps both ways).
       ["markdown-input", this.#markdown],
     ];
+    const key = rows.map(([event, on]) => (on ? `${event}|` : `${event},`)).join("");
+    if (key === this.#formatButtonsKey) return;
+    this.#formatButtonsKey = key;
     for (const [event, on] of rows) {
       for (const el of this.shadowRoot?.querySelectorAll<HTMLElement>(
         // A lit row may land on a plain toggle (bold) or on a split whose
@@ -4634,9 +4699,11 @@ class DocenDocument extends AddinHost<Editor> {
    *  are skipped. */
   readonly #onTransaction = (props: { transaction: Transaction }): void => {
     // The status-bar language mirrors the caret's proofing language (Word).
+    // Marked dirty here and flushed with the frame's UI sync (the listener
+    // #setupFontSync registers already schedules the frame).
     if (props.transaction.selectionSet) {
-      this.#syncStatusLanguage();
-      this.#updateStatus();
+      this.#uiSelectionDirty = true;
+      this.#scheduleUiSync();
     }
     if (props.transaction.docChanged) {
       this.#jsonDirty = true;
@@ -4791,10 +4858,10 @@ class DocenDocument extends AddinHost<Editor> {
 
   /** Refresh the status bar to mirror Word's bottom row: the left cluster is
    *  the caret's section, then "Page X of Y", then the word count; the right
-   *  cluster is the zoom slider value + percent. Runs on every transaction
-   *  (caret moves, a re-render changes the page count) and on zoom / locale
-   *  change. The word count is cached by doc nodeSize so caret moves skip
-   *  re-walking the full document. */
+   *  cluster is the zoom slider value + percent. Runs from the coalesced UI
+   *  sync (caret moves, a re-render changes the page count) and on zoom /
+   *  locale change. The word count is cached by doc nodeSize and refreshed on
+   *  an idle pass, so typing never re-walks the full document. */
   #updateStatus(): void {
     const root = this.shadowRoot;
     if (!root) return;
@@ -4805,12 +4872,14 @@ class DocenDocument extends AddinHost<Editor> {
     // The caret's section: the section its page belongs to (1-based).
     const section = page > 0 ? (this.#sectionOfPage[page - 1] ?? 0) + 1 : 1;
     // Word count is cached by doc nodeSize so caret moves skip re-walking the
-    // full document (CharacterCount.words() regexes all text).
+    // full document (CharacterCount.words() regexes all text). A content
+    // change only schedules the idle recount; the bar keeps the last finished
+    // count until it lands.
     const docSize = editor?.state.doc.nodeSize ?? 0;
     if (docSize !== this.#lastDocSize) {
-      const cc = editor?.storage.characterCount as { words?: () => number } | undefined;
-      this.#lastWords = cc?.words?.() ?? 0;
       this.#lastDocSize = docSize;
+      if (docSize === 0) this.#lastWords = 0;
+      else this.#scheduleWordCount();
     }
     let wordsVal = String(this.#lastWords);
     if (editor && !editor.state.selection.empty) {
@@ -4823,13 +4892,20 @@ class DocenDocument extends AddinHost<Editor> {
       wordsVal = `${selWords} / ${this.#lastWords}`;
     }
     // Push the numeric state to <docen-status-bar>; it localizes + renders.
+    // Guard each write — re-stamping an unchanged attribute re-renders the bar
+    // for nothing (the pass runs per frame while typing).
     if (bar) {
-      bar.setAttribute("section", String(section));
-      bar.setAttribute("page", String(page || 1));
-      bar.setAttribute("total", String(total || 1));
-      bar.setAttribute("words", wordsVal);
-      bar.setAttribute("zoom", String(this.#zoom));
-      bar.setAttribute("view", this.#viewMode());
+      const attrs: Record<string, string> = {
+        section: String(section),
+        page: String(page || 1),
+        total: String(total || 1),
+        words: wordsVal,
+        zoom: String(this.#zoom),
+        view: this.#viewMode(),
+      };
+      for (const [name, value] of Object.entries(attrs)) {
+        if (bar.getAttribute(name) !== value) bar.setAttribute(name, value);
+      }
     }
     // The QAT history carets follow the undo/redo depths live (the header
     // only rebuilds on chrome renders — Word hides the flyout on an empty
@@ -4843,17 +4919,67 @@ class DocenDocument extends AddinHost<Editor> {
         .querySelector(`docen-ribbon-split-button[data-history="${kind}"]`)
         ?.toggleAttribute("data-history-empty", depth === 0);
     }
-    const navPages = root.querySelector("docen-nav-pages") as any;
-    if (navPages && total > 0) {
+    // The pane's page list follows the page count / current page immediately;
+    // its thumbnails (one PNG encode per page) refresh on an idle pass.
+    this.#pushNavPages(total, page || 1);
+    if (this.getTaskpaneState("navigation")) this.#scheduleNavThumbnails();
+    if (this.getTaskpaneState("reveal")) {
+      this.#updateRevealFormatting();
+    }
+  }
+
+  /** Recount the Office-style word count once typing pauses (debounced). The
+   *  recount re-runs #updateStatus so the bar picks the number up. */
+  #scheduleWordCount(): void {
+    if (this.#wordCountTimer !== undefined) return;
+    this.#wordCountTimer = setTimeout(() => {
+      this.#wordCountTimer = undefined;
+      const cc = this.editor?.storage.characterCount as { words?: () => number } | undefined;
+      this.#lastWords = cc?.words?.() ?? 0;
+      this.#updateStatus();
+    }, STATUS_WORD_COUNT_IDLE_MS);
+  }
+
+  /** Push page count / current page / cached thumbnails to the Navigation
+   *  pane — skipped entirely when none of them changed. */
+  #pushNavPages(total: number, current: number): void {
+    const navPages = this.shadowRoot?.querySelector("docen-nav-pages") as
+      | (HTMLElement & {
+          setPageCount(count: number, current?: number, thumbnails?: (string | null)[]): void;
+        })
+      | null;
+    if (!navPages || total <= 0) return;
+    const key = `${total}:${current}:${this.#navThumbGen}`;
+    if (key === this.#navPagesKey) return;
+    this.#navPagesKey = key;
+    navPages.setPageCount(total, current, this.#navThumbs);
+  }
+
+  /** Re-rasterize the Navigation pane's thumbnails on an idle pass (only
+   *  while the pane is open — the pages' canvas PNGs are expensive). */
+  #scheduleNavThumbnails(): void {
+    if (this.#navThumbTimer !== undefined) return;
+    this.#navThumbTimer = setTimeout(() => {
+      this.#navThumbTimer = undefined;
+      const total = this.#pages.length;
+      if (total === 0 || !this.getTaskpaneState("navigation")) return;
       const thumbs: (string | null)[] = [];
       for (let i = 0; i < total; i++) {
         thumbs.push(this.#stage?.pageThumbnail(i) ?? null);
       }
-      navPages.setPageCount(total, page || 1, thumbs);
-    }
-    if (this.getTaskpaneState("reveal")) {
-      this.#updateRevealFormatting();
-    }
+      this.#cacheNavThumbs(thumbs);
+      this.#pushNavPages(
+        total,
+        (this.#bridge?.pageOf(this.editor?.state.selection.from ?? 0) ?? 0) + 1,
+      );
+    }, NAV_THUMB_IDLE_MS);
+  }
+
+  /** Adopt a freshly rasterized thumbnail set as the Navigation pane's cache
+   *  (the generation bump makes the next #pushNavPages re-render the list). */
+  #cacheNavThumbs(thumbs: (string | null)[]): void {
+    this.#navThumbs = thumbs;
+    this.#navThumbGen += 1;
   }
 
   /** Rasterize every page (forcing off-screen slots through one render pass)
@@ -4861,15 +4987,15 @@ class DocenDocument extends AddinHost<Editor> {
    *  sync `#updateStatus` path only fills pages whose canvas already exists;
    *  this is the pane-open completion that covers the rest. */
   async #refreshNavThumbnails(): Promise<void> {
-    const navPages = this.shadowRoot?.querySelector("docen-nav-pages") as any;
     const stage = this.#stage;
-    if (!navPages || !stage || this.#pages.length === 0) return;
+    if (!this.shadowRoot?.querySelector("docen-nav-pages") || !stage) return;
+    if (this.#pages.length === 0) return;
     const thumbs = await stage.pageThumbnails();
     if (thumbs.length === 0) return;
-    navPages.setPageCount(
+    this.#cacheNavThumbs(thumbs);
+    this.#pushNavPages(
       this.#pages.length,
       (this.#bridge?.pageOf(this.editor?.state.selection.from ?? 0) ?? 0) + 1,
-      thumbs,
     );
   }
 
@@ -7982,17 +8108,16 @@ class DocenDocument extends AddinHost<Editor> {
       } else if (id === "reveal") {
         this.#updateRevealFormatting();
       } else if (id === "navigation") {
-        const navPages = this.shadowRoot?.querySelector("docen-nav-pages") as any;
-        if (navPages && this.#pages.length > 0) {
+        if (this.#pages.length > 0) {
           const total = this.#pages.length;
           const thumbs: (string | null)[] = [];
           for (let i = 0; i < total; i++) {
             thumbs.push(this.#stage?.pageThumbnail(i) ?? null);
           }
-          navPages.setPageCount(
+          this.#cacheNavThumbs(thumbs);
+          this.#pushNavPages(
             total,
             (this.#bridge?.pageOf(this.editor?.state.selection.from ?? 0) ?? 0) + 1,
-            thumbs,
           );
           // Off-screen pages have no canvas yet — rasterize every page once so
           // the pane shows real thumbnails for the whole document, not just
