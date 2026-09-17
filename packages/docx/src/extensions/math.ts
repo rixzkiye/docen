@@ -99,6 +99,11 @@ export function convertOMMLToLinear(math: unknown): string {
   if (!math || typeof math !== "object") return "";
 
   const rec = math as Record<string, unknown>;
+  // A math run operand: either a bare `{ text }` or office-open's structured
+  // `{ text, properties }` (the m:rPr style a parsed formula carries). Both
+  // linearize to their text — the properties stay on the verbatim `math` attr
+  // that compile re-emits, so dropping them here loses nothing.
+  if (typeof rec.text === "string") return rec.text;
   if (rec.fraction && typeof rec.fraction === "object") {
     const f = rec.fraction as Record<string, unknown>;
     const num = Array.isArray(f.numerator) ? f.numerator.map(convertOMMLToLinear).join("") : "";

@@ -390,3 +390,90 @@ describe("drop cap framePr round-trip", () => {
     });
   });
 });
+
+describe("notes schema order (w:pPr before w:r)", () => {
+  /**
+   * CT_P requires w:pPr first; office-open's endnote writer used to inject its
+   * reference run before it (`<w:p><w:r>…<w:endnoteRef/>…</w:r><w:pPr>`), a
+   * Word-repair risk on every endnote-bearing export. Both a model-carried
+   * reference and the engine-injected one must land after the properties.
+   */
+  it("emits the endnote reference runs after the paragraph properties", () => {
+    const doc: DocumentOptions = {
+      sections: [{ children: [{ paragraph: { text: "body" } }] }],
+      endnotes: [
+        {
+          id: 1,
+          children: [
+            {
+              paragraph: {
+                style: "EndnoteText",
+                children: [{ children: [{ endnoteRef: true }] }, { text: " with mark" }],
+              },
+            },
+          ],
+        },
+        {
+          id: 2,
+          children: [{ paragraph: { style: "EndnoteText", children: [{ text: " no mark" }] } }],
+        },
+      ],
+    };
+    const zip = unzipSync(generateDOCXSync(resolveDocument(doc), { prepare: false }));
+    const xml = new TextDecoder().decode(zip["word/endnotes.xml"]);
+    const notes = [...xml.matchAll(/<w:endnote w:id="[12]">(.*?)<\/w:endnote>/gs)];
+    expect(notes).toHaveLength(2);
+    for (const note of notes) {
+      const body = note[1]!;
+      const pPr = body.indexOf("<w:pPr>");
+      const run = body.indexOf("<w:r");
+      expect(pPr, note[0]).toBeGreaterThanOrEqual(0);
+      expect(pPr, note[0]).toBeLessThan(run);
+      expect(body).toContain("<w:endnoteRef/>");
+    }
+  });
+});
+
+describe("embedded-font relationship escaping", () => {
+  /**
+   * A relationship Target is a URI: a font family name with spaces, `&`, `"`,
+   * angle brackets or CJK must not leak raw into fontTable.xml.rels. The
+   * engine escapes each path segment; the parser decodes it again so the font
+   * bytes and family name survive the round-trip.
+   */
+  it("escapes a hostile family name and round-trips the font bytes", () => {
+    const family = 'Hostile & <Font> "Q" (v2)';
+    const data = new Uint8Array(Array.from({ length: 128 }, (_, i) => (i * 11 + 5) % 256));
+    const json = resolveDocument({ sections: [{ children: [{ paragraph: { text: "x" } }] }] });
+    const gen1 = generateDOCXSync(json, {
+      prepare: false,
+      document: { fonts: [{ name: family, data }] },
+    }) as Uint8Array;
+    const decoder = new TextDecoder();
+    const zip1 = unzipSync(gen1);
+    const rels1 = decoder.decode(zip1["word/_rels/fontTable.xml.rels"]);
+    const target1 = /Target="([^"]+)"/.exec(rels1)?.[1] ?? "";
+    expect(target1).toContain("%20");
+    expect(target1).toContain("%26");
+    expect(target1).not.toMatch(/[ "&<>]/);
+    // The ZIP item name equals the escaped Target: readers resolve the Target
+    // as a URI and look up the part by that exact name (python-docx and
+    // LibreOffice both reject an unescaped part name behind an escaped
+    // Target).
+    const part1 = `word/${target1}`;
+    expect(zip1[part1]).toBeDefined();
+
+    const reparsed = parseDOCXSync(gen1) as JSONContent;
+    const fonts = (
+      reparsed.attrs?.documentExtras as { fonts?: { name?: string; data?: Uint8Array }[] }
+    )?.fonts;
+    expect(fonts?.[0]?.name).toBe(family);
+    expect(fonts?.[0]?.data?.byteLength).toBeGreaterThan(0);
+
+    const gen2 = generateDOCXSync(reparsed, { prepare: false }) as Uint8Array;
+    const zip2 = unzipSync(gen2);
+    const rels2 = decoder.decode(zip2["word/_rels/fontTable.xml.rels"]);
+    expect(/Target="([^"]+)"/.exec(rels2)?.[1]).toBe(target1);
+    expect(zip2[part1]).toEqual(zip1[part1]);
+  });
+});

@@ -33,7 +33,9 @@ import type { Extensions, JSONContent } from "../core";
 import { docxExtensions } from "../core";
 import { memberNodeToGroupChild } from "../extensions/group-members";
 import { buildListLevels, isGeneratedListReference } from "../extensions/list-numbering";
+import { decodePassthroughData, encodePassthroughData } from "../extensions/passthrough";
 import type { ParseBlockRule, ParseInlineRule, ResolveContext } from "../extensions/types";
+import { foldWpsShapeName } from "../extensions/wps-shape";
 import { prepareDocument, type PrepareStep } from "./prepare";
 import { buildTextBlock } from "./styles";
 
@@ -709,10 +711,12 @@ export class DocxManager {
         return { textbox: { ...box, children: boxChildren } };
       }
       case "passthrough": {
-        // Opaque SectionChild (rawXml/bookmark/toc/altChunk/…) round-tripped verbatim.
+        // Opaque SectionChild (rawXml/bookmark/toc/altChunk/…) round-tripped
+        // verbatim; binary leaves (OLE embed bytes, …) are revived from the
+        // codec's base64 marker.
         const data = (node.attrs?.data as string) ?? "{}";
         try {
-          return JSON.parse(data) as SectionChild;
+          return decodePassthroughData<SectionChild>(data);
         } catch {
           return null;
         }
@@ -972,10 +976,11 @@ export class DocxManager {
           break;
         case "inlinePassthrough": {
           // Opaque inline ParagraphChild (bookmark/range markers, …) carried
-          // verbatim — reverse of resolveParagraphChild's fallback.
+          // verbatim — reverse of resolveParagraphChild's fallback. Binary
+          // leaves (an OLE object's embed bytes, …) revive from the codec.
           const data = (node.attrs?.data as string) ?? "{}";
           try {
-            const parsed = JSON.parse(data) as ParagraphChild;
+            const parsed = decodePassthroughData<ParagraphChild>(data);
             if (parsed) children.push(parsed);
           } catch {
             /* malformed JSON — drop */
@@ -1040,11 +1045,12 @@ export class DocxManager {
         }
         case "wpsShape": {
           // Editable text body: compileShapeBody (shared with the wpg group
-          // member compile) rebuilds wpsShape.children.
+          // member compile) rebuilds wpsShape.children. The editor-facing
+          // `name` folds into the OOXML slot (wps:cNvSpPr/@name).
           // Same .d.ts gap as tab:true above for the ParagraphChild union.
           const geometry = (node.attrs?.wpsShape ?? {}) as Record<string, unknown>;
           children.push({
-            wpsShape: { ...geometry, children: this.compileShapeBody(node) },
+            wpsShape: { ...foldWpsShapeName(geometry), children: this.compileShapeBody(node) },
           } as unknown as ParagraphChild);
           break;
         }
@@ -1242,9 +1248,10 @@ export class DocxManager {
     return this.resolvePassthrough(child);
   }
 
-  /** Wrap an opaque SectionChild in a passthrough atom (attrs.data = JSON). */
+  /** Wrap an opaque SectionChild in a passthrough atom (attrs.data = the
+   *  branch's JSON-safe encoding — see {@link encodePassthroughData}). */
   private resolvePassthrough(child: SectionChild): JSONContent {
-    return { type: "passthrough", attrs: { data: JSON.stringify(child) } };
+    return { type: "passthrough", attrs: { data: encodePassthroughData(child) } };
   }
 
   private resolveParagraph(opts: string | ParagraphOptions): JSONContent {
@@ -1336,7 +1343,7 @@ export class DocxManager {
     // round-trip stays byte-faithful — mirrors block resolvePassthrough, which
     // keeps every unrecognized SectionChild instead of dropping it. An
     // inline SDT used to be dropped here; carrying it restores the symmetry.
-    return { type: "inlinePassthrough", attrs: { data: JSON.stringify(child) } };
+    return { type: "inlinePassthrough", attrs: { data: encodePassthroughData(child) } };
   }
 
   private resolveRun(opts: RunOptions): JSONContent | JSONContent[] | null {
