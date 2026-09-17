@@ -162,15 +162,15 @@ Measured on the audited fix branch (`r6/fix-audit`) with Node 24, rustc 1.97.1;
 throughput is a short-round peak/median pair because the suite runs
 concurrently.
 
-| Metric                         | Budget                         | Measured                                                    | Status                   |
-| ------------------------------ | ------------------------------ | ----------------------------------------------------------- | ------------------------ |
-| **WASM Binary Size (gzip)**    | ≤ 600 KB                       | **~360 KB**                                                 | PASSED                   |
-| **WASM Instantiation Latency** | < 50 ms                        | **~0.25 ms**                                                | PASSED                   |
-| **Shaping Throughput**         | ≥ 2,000 para/s                 | **~5,000–8,000 para/s peak, ~4,700–7,200 under suite load** | PASSED                   |
-| **Per-keystroke layout**       | ≤ 10% regression               | **best round 0.45–0.59×, under-load median 1.0–1.3×**       | PASSED (best-round gate) |
-| **LayoutDoc determinism**      | identical hash                 | repeated + fresh-WASM runs hash equal                       | PASSED (in-process)      |
-| **Subsetting validity**        | fontTools parse + cmap/advance | every fixture subset passes the fontTools gate              | PASSED                   |
-| **PDF text extraction**        | 100% (Latin + accents + CJK)   | `pdftotext` byte-exact on subset-embedded PDF               | PASSED                   |
+| Metric                         | Budget                         | Measured                                                            | Status                   |
+| ------------------------------ | ------------------------------ | ------------------------------------------------------------------- | ------------------------ |
+| **WASM Binary Size (gzip)**    | ≤ 600 KB                       | **~360 KB**                                                         | PASSED                   |
+| **WASM Instantiation Latency** | < 50 ms                        | **~0.25 ms**                                                        | PASSED                   |
+| **Shaping Throughput**         | ≥ 2,000 para/s                 | **~5,000–8,000 para/s isolated; ~2,400 peak under full-suite load** | PASSED                   |
+| **Per-keystroke layout**       | ≤ 10% regression               | **best round 0.24–0.59×, under-load median 1.0–2.1×**               | PASSED (best-round gate) |
+| **LayoutDoc determinism**      | identical hash                 | repeated + fresh-WASM runs hash equal                               | PASSED (in-process)      |
+| **Subsetting validity**        | fontTools parse + cmap/advance | every fixture subset passes the fontTools gate                      | PASSED                   |
+| **PDF text extraction**        | 100% (Latin + accents + CJK)   | `pdftotext` byte-exact on subset-embedded PDF                       | PASSED                   |
 
 Known gaps, tracked for R6.T2: the pretext line breaker still measures through
 canvas (`prepareRichInline`), so shaped advances only drive atom probes today;

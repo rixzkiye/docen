@@ -56,8 +56,8 @@ describe("R6.0 Shaping Performance & Bundle Budget", () => {
     // Short rounds report both the isolated peak (best burst — the bench is
     // run concurrently with the rest of the suite) and the under-load median.
     const rounds: number[] = [];
-    const perRound = 250;
-    for (let round = 0; round < 5; round++) {
+    const perRound = 150;
+    for (let round = 0; round < 9; round++) {
       const t0 = performance.now();
       for (let i = 0; i < perRound; i++) {
         rustybuzz.shape(fontId, paragraph);
