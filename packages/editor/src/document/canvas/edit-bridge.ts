@@ -686,6 +686,47 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
   let liveKnown = false;
   let liveGeneration = 0;
   const isLive = (page: number): boolean => !liveKnown || livePages.has(page);
+
+  /** The live pages' position intervals — a binary-searchable cull index.
+   *  Each live page's interval runs to the next page's first position, so an
+   *  overlay query only needs one search instead of a caretRect probe (which
+   *  scans every paragraph). Only hides positions no live page covers. */
+  interface LivePageBounds {
+    /** The live frame page owning `pos`, or null when no live page reaches it. */
+    pageOf(pos: number): number | null;
+  }
+  let boundsCache: { map: CaretMap; liveGen: number; bounds: LivePageBounds } | null = null;
+  const livePageBounds = (s: Story & { map: CaretMap }): LivePageBounds | null => {
+    if (!liveKnown) return null;
+    if (boundsCache && boundsCache.map === s.map && boundsCache.liveGen === liveGeneration) {
+      return boundsCache.bounds;
+    }
+    const firsts = s.map.pageFirstPositions();
+    const rows: { frame: number; from: number; to: number }[] = [];
+    for (let i = 0; i < firsts.length; i++) {
+      const row = firsts[i]!;
+      // A furniture story's map has pseudo pages; the live set holds frame
+      // pages (anchor offset applied) — invert before asking the map.
+      const frame = s.anchorPage >= 0 ? row.page + s.anchorPage : row.page;
+      if (!livePages.has(frame)) continue;
+      rows.push({ frame, from: row.from, to: firsts[i + 1]?.from ?? Infinity });
+    }
+    const bounds: LivePageBounds = {
+      pageOf(pos: number): number | null {
+        if (rows.length === 0 || pos < rows[0]!.from) return null;
+        let lo = 0;
+        let hi = rows.length - 1;
+        while (lo < hi) {
+          const mid = (lo + hi + 1) >> 1;
+          if (rows[mid]!.from <= pos) lo = mid;
+          else hi = mid - 1;
+        }
+        return pos < rows[lo]!.to ? rows[lo]!.frame : null;
+      },
+    };
+    boundsCache = { map: s.map, liveGen: liveGeneration, bounds };
+    return bounds;
+  };
   let selectionCache: {
     key: string;
     map: unknown;
@@ -873,14 +914,15 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
     }
     const rects: OverlayRect[] = [];
     if (mapFresh(s)) {
+      const bounds = livePageBounds(s);
       for (const issue of spellingIssues) {
         // Cull before the rect walk: selectionRects scans every paragraph,
         // and a full-document issue list against a viewport-virtualized stage
-        // must not pay that per squiggle (the big-document cliff).
-        if (liveKnown) {
-          const probe = s.map.caretRect(issue.from);
-          if (!probe || !isLive(framePage(s, probe.page))) continue;
-        }
+        // must not pay that per squiggle (the big-document cliff). The live
+        // pages' position intervals bound the walk, so the cull is one binary
+        // search per issue — a caretRect probe here would itself scan every
+        // paragraph.
+        if (bounds && bounds.pageOf(issue.from) === null) continue;
         for (const r of s.map.selectionRects(issue.from, issue.to)) {
           const wave = { x: r.xPx, y: r.yPx + r.heightPx - 3, width: r.widthPx, height: 3 };
           const holes = opts.frontFloats?.(r.page) ?? [];
@@ -917,11 +959,9 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
     }
     const rects: OverlayRect[] = [];
     if (mapFresh(s)) {
+      const bounds = livePageBounds(s);
       for (const issue of grammarIssues) {
-        if (liveKnown) {
-          const probe = s.map.caretRect(issue.from);
-          if (!probe || !isLive(framePage(s, probe.page))) continue;
-        }
+        if (bounds && bounds.pageOf(issue.from) === null) continue;
         for (const r of s.map.selectionRects(issue.from, issue.to)) {
           const wave = { x: r.xPx, y: r.yPx + r.heightPx - 3, width: r.widthPx, height: 3 };
           const holes = opts.frontFloats?.(r.page) ?? [];
@@ -3651,15 +3691,18 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
       placeCaret();
     },
     /** Hand the host's fresh spell-check results to the overlay (the check
-     *  itself runs in the host, debounced per transaction). */
+     *  itself runs in the host, debounced per transaction). Placement is
+     *  coalesced onto the overlay rAF: a transaction both remaps the issue
+     *  ranges (this call) and re-renders (placeCaret), and placing twice in
+     *  the same frame re-walks every live issue's rects. */
     setSpellingIssues(issues: Array<{ from: number; to: number }>): void {
       spellingIssues = issues;
-      placeSpelling();
+      scheduleOverlayRefresh();
     },
     /** Hand the host's fresh grammar-check results to the overlay. */
     setGrammarIssues(issues: Array<{ from: number; to: number }>): void {
       grammarIssues = issues;
-      placeGrammar();
+      scheduleOverlayRefresh();
     },
     destroy(): void {
       if (main.raf) cancelAnimationFrame(main.raf);
