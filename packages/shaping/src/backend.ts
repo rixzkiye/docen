@@ -1,4 +1,3 @@
-import { CanvasBackend } from "./canvas-backend.js";
 import { RustybuzzBackend } from "./rustybuzz-backend.js";
 import type { ShapingBackend } from "./types.js";
 
@@ -18,9 +17,14 @@ export function getDefaultShapingBackendId(): string {
 }
 
 export function hasShapingBackend(id: string): boolean {
-  return backends.has(id) || id === "rustybuzz" || id === "canvas";
+  return backends.has(id) || id === "rustybuzz";
 }
 
+/**
+ * Resolve a shaping backend by id. The shipped backend is `rustybuzz` (the
+ * production WASM engine); the `harfbuzz` oracle backend is registered by the
+ * differential test only and is not part of the distributed bundle.
+ */
 export function getShapingBackend(id?: string): ShapingBackend {
   const targetId = id ?? defaultBackendId;
   const existing = backends.get(targetId);
@@ -31,11 +35,6 @@ export function getShapingBackend(id?: string): ShapingBackend {
   if (targetId === "rustybuzz") {
     const b = new RustybuzzBackend();
     backends.set("rustybuzz", b);
-    return b;
-  }
-  if (targetId === "canvas") {
-    const b = new CanvasBackend();
-    backends.set("canvas", b);
     return b;
   }
 

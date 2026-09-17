@@ -1,4 +1,44 @@
-import { isFontEmbeddingAllowed, isFontSubsettingAllowed } from "@docen/shaping";
+import { fontLicenseAllows, isFontEmbeddingAllowed, isFontSubsettingAllowed } from "@docen/shaping";
+import type { DocumentOptions } from "@office-open/docx";
+
+/** The engine's embedded-font option shape (its own interface is internal). */
+type EmbeddedFontOptions = NonNullable<DocumentOptions["fonts"]>[number];
+
+/** A host-registered font the DOCX compiler may embed. */
+export interface EmbeddableFontSource {
+  /** CSS/Word family name the run styles reference. */
+  readonly family: string;
+  readonly fontData: Uint8Array;
+  /** OS/2.fsType override; read from the bytes when omitted. */
+  readonly fsType?: number;
+}
+
+/**
+ * Prepare `DocumentOptions.fonts` for the DOCX compiler: every source whose
+ * OS/2 fsType permits embedding becomes a `word/fonts/fontN.odttf` part
+ * (obfuscation and fontTable/relationship wiring are the compiler's job).
+ * Restricted fonts (fsType bit 0x0002) are skipped — embedding them would
+ * violate the license. Full fonts are embedded, not subsets: DOCX consumers
+ * shape with the font's own GSUB/GPOS, which a glyf-only subset would drop.
+ */
+export function prepareEmbeddedFonts(
+  sources: readonly EmbeddableFontSource[],
+): NonNullable<DocumentOptions["fonts"]> {
+  const fonts: EmbeddedFontOptions[] = [];
+  let index = 1;
+  for (const source of sources) {
+    const fsType = source.fsType ?? fontLicenseAllows(source.fontData).fsType;
+    if (!isFontEmbeddingAllowed(fsType)) continue;
+    fonts.push({
+      name: source.family,
+      odttfPath: `word/fonts/font${index}.odttf`,
+      data: source.fontData,
+      fontKey: generateFontKey().replace(/[{}]/g, ""),
+    });
+    index++;
+  }
+  return fonts;
+}
 
 export interface EmbeddedDocxFont {
   readonly name: string;

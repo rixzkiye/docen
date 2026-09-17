@@ -61,6 +61,11 @@ export interface LaidOutGlyphRun {
   readonly fontId?: number;
   readonly fontName?: string;
   readonly fontSizePx: number;
+  /** The font's design units per em — the outline scale reference (calibri/
+   *  arial are 2048, most Noto faces 1000). */
+  readonly unitsPerEm?: number;
+  /** Variation coordinates the run was shaped at (outline interpolation). */
+  readonly variations?: readonly { readonly tag: string; readonly value: number }[];
   readonly direction?: "ltr" | "rtl" | "ttb" | "auto";
   readonly script?: string;
   readonly language?: string;

@@ -1,0 +1,24 @@
+[package]
+name = "docen-shaping-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+rustybuzz = { version = "0.20.1", default-features = false }
+read-fonts = { version = "0.44.0", default-features = false }
+skrifa = { version = "0.47.0", default-features = false, features = ["libm"] }
+
+[[bin]]
+name = "shaping_abi"
+path = "fuzz_targets/shaping_abi.rs"
+test = false
+doc = false
+bench = false
+
+[profile.release]
+debug = 1

@@ -316,8 +316,4 @@ export class RustybuzzBackend implements ShapingBackend {
     }
     return axes;
   }
-
-  subset(_fontId: number, _glyphIds: readonly number[]): Uint8Array {
-    return new Uint8Array(0);
-  }
 }

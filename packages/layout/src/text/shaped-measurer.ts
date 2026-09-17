@@ -1,10 +1,25 @@
 import type { PrepareOptions } from "@docen/pretext";
-import { FontManager, type FontRef } from "@docen/shaping";
+import { FontManager, createFontRefSync, type FontRef } from "@docen/shaping";
 
 import type { FontMetrics } from "../font";
+import { isCjkCodePoint, isCjkText } from "../font";
 import type { LayoutTextStyle } from "../layout-doc";
 import type { LaidOutGlyphRun } from "../layout-result";
-import { TextMeasurer, familyOfSlot, kerningActive, vertAlignedSizePx } from "./measure";
+import {
+  TextMeasurer,
+  characterScaleOf,
+  familyOfSlot,
+  kerningActive,
+  vertAlignedSizePx,
+} from "./measure";
+
+const GRAPHEME_SEGMENTER = new Intl.Segmenter(undefined, { granularity: "grapheme" });
+
+function countGraphemes(text: string): number {
+  let count = 0;
+  for (const _ of GRAPHEME_SEGMENTER.segment(text)) count++;
+  return count;
+}
 
 export function resolveOpenTypeFeatures(style: LayoutTextStyle): { tag: string; value: number }[] {
   const features: { tag: string; value: number }[] = [];
@@ -92,21 +107,48 @@ export function resolveFontVariations(
   return variations;
 }
 
-let globalShapingDefault = true;
+let globalShapingDefault = false;
 
 /**
  * Flag controlling deterministic OpenType shaping across docen.
- * Default is true (R6.8 default flip). Set to false to roll back to Canvas measureText.
+ *
+ * Default is `false` (canvas measureText — R6.4 audit: the laid-out glyph
+ * pipeline had no registered fonts, so a "default" shaped measurer was a
+ * no-op facade; the default returns to canvas until document-level parity,
+ * per-keystroke and cross-environment determinism gates are green).
+ * `setShapingEnabled(true)` opts in; `DOCEN_SHAPING_ENABLED=1` forces it on
+ * and `DOCEN_SHAPING_DISABLED=1` forces it off regardless of the flag.
  */
 export function setShapingEnabled(enabled: boolean): void {
   globalShapingDefault = enabled;
 }
 
 export function isShapingEnabled(): boolean {
-  if (typeof process !== "undefined" && process.env?.DOCEN_SHAPING_DISABLED === "1") {
-    return false;
+  if (typeof process !== "undefined") {
+    if (process.env?.DOCEN_SHAPING_DISABLED === "1") return false;
+    if (process.env?.DOCEN_SHAPING_ENABLED === "1") return true;
   }
   return globalShapingDefault;
+}
+
+/** The process-wide font manager every ShapedMeasurer shares unless it is
+ *  given its own — so a font registered once (editor host, tests) is visible
+ *  to the body, furniture and drawing measurers alike. */
+let defaultFontManager: FontManager | undefined;
+
+export function getShapingFontManager(): FontManager {
+  defaultFontManager ??= new FontManager({ enableOpfs: false });
+  return defaultFontManager;
+}
+
+/**
+ * Register font bytes for shaping in the shared manager. The WASM runtime
+ * must be initialized first (`await initShapingWasm()`).
+ */
+export function registerShapingFont(family: string, fontData: Uint8Array): FontRef {
+  const fontRef = createFontRefSync(fontData);
+  getShapingFontManager().registerActiveFont(family, fontRef);
+  return fontRef;
 }
 
 export interface ShapedMeasurerOptions {
@@ -116,15 +158,24 @@ export interface ShapedMeasurerOptions {
 }
 
 /**
- * Factory creating either a ShapedMeasurer (when shaping is enabled, default in R6.8)
- * or standard TextMeasurer (when shaping is explicitly rolled back).
+ * Factory creating a ShapedMeasurer when shaping is explicitly opted in
+ * (`enabled`/`optIn`) or the global flag is set, else the standard
+ * canvas-backed TextMeasurer.
  */
 export function createMeasurer(
   metrics: FontMetrics,
   options?: ShapedMeasurerOptions,
 ): TextMeasurer {
-  if (isShapingEnabled()) {
-    return new ShapedMeasurer(metrics, options);
+  if (options?.enabled === false || options?.optIn === false) {
+    return new TextMeasurer(metrics);
+  }
+  if (
+    options?.enabled === true ||
+    options?.optIn === true ||
+    options?.fontManager !== undefined ||
+    isShapingEnabled()
+  ) {
+    return new ShapedMeasurer(metrics, { ...options, enabled: true });
   }
   return new TextMeasurer(metrics);
 }
@@ -141,7 +192,7 @@ export class ShapedMeasurer extends TextMeasurer {
 
   constructor(metrics: FontMetrics, options?: ShapedMeasurerOptions) {
     super(metrics);
-    this.fontManager = options?.fontManager ?? new FontManager({ enableOpfs: false });
+    this.fontManager = options?.fontManager ?? getShapingFontManager();
     this.forcedEnabled = options?.enabled ?? options?.optIn;
   }
 
@@ -171,17 +222,32 @@ export class ShapedMeasurer extends TextMeasurer {
 
     const glyphRun = this.shapeRun(text, style);
     if (glyphRun) {
-      return glyphRun.totalAdvancePx;
+      // Match pretext's width math: letter spacing adds between graphemes
+      // (never after the last) and the w:w scale stretches the sum.
+      const spacing = style.letterSpacingPx ?? 0;
+      const spacingSum = spacing === 0 ? 0 : Math.max(0, countGraphemes(text) - 1) * spacing;
+      return (glyphRun.totalAdvancePx + spacingSum) * characterScaleOf(style);
     }
 
     return super.widthOf(text, style, whiteSpace);
   }
 
   /**
-   * Shape a run of text and produce a LaidOutGlyphRun.
+   * The shaped run for a laid-out run of text, when the measurer can shape it.
+   * `undefined` = the canvas measurer (or shaping off / no registered font) and
+   * the painter should keep using fillText.
    */
+  override glyphRunOf(text: string, style: LayoutTextStyle): LaidOutGlyphRun | undefined {
+    if (!this.enabled || !text) return undefined;
+    return this.shapeRun(text, style);
+  }
+
+  /** Shape a run of text and produce a LaidOutGlyphRun. */
   shapeRun(text: string, style: LayoutTextStyle): LaidOutGlyphRun | undefined {
     if (!this.enabled || !text) return undefined;
+    // The glyph painter places natural advances (plus justification stretch);
+    // letter spacing is not representable yet, so those runs stay canvas.
+    if (style.letterSpacingPx) return undefined;
 
     const rawSize =
       style.sizePx ??
@@ -195,7 +261,19 @@ export class ShapedMeasurer extends TextMeasurer {
     const effectiveStyle: LayoutTextStyle =
       style.sizePx !== undefined ? style : { ...style, sizePx: rawSize };
     const sizePx = vertAlignedSizePx(effectiveStyle);
-    const family = familyOfSlot(style.family, false);
+    // A slot family resolves by script: a mixed Latin+CJK run cannot be
+    // shaped faithfully with one face, so it stays canvas (the painter then
+    // paints the same mixed run with fillText).
+    if (typeof style.family !== "string") {
+      let hasCjk = false;
+      let hasNonCjk = false;
+      for (const ch of text) {
+        if (isCjkCodePoint(ch)) hasCjk = true;
+        else hasNonCjk = true;
+        if (hasCjk && hasNonCjk) return undefined;
+      }
+    }
+    const family = familyOfSlot(style.family, isCjkText(text));
     const direction = style.vertical ? "ttb" : (style.direction ?? "auto");
 
     const fontRef = this.getFont(family);
@@ -225,18 +303,22 @@ export class ShapedMeasurer extends TextMeasurer {
       const metrics = variations.length > 0 ? fontRef.getMetrics(variations) : fontRef.metrics;
       const scale = sizePx / (metrics.unitsPerEm || 1000);
       const isVertical = direction === "ttb";
+      const isRtl = direction === "rtl";
+      const totalAdvancePx = shapingRes.totalAdvance * scale;
 
-      let currentX = 0;
+      // HarfBuzz/rustybuzz returns RTL glyphs in visual order; the pen walks
+      // right-to-left so the first output glyph lands at the run's right edge.
+      let pen = 0;
       let currentY = 0;
       const glyphs = shapingRes.glyphs.map((g) => {
         const xAdvPx = g.xAdvance * scale;
-        const yAdvPx = Math.abs(g.yAdvance) * scale;
+        const advPx = isVertical ? Math.abs(g.yAdvance) * scale : xAdvPx;
         const xOffPx = g.xOffset * scale;
         const yOffPx = g.yOffset * scale;
-        const xPx = isVertical ? xOffPx : currentX + xOffPx;
+        const xPx = isVertical ? xOffPx : (isRtl ? totalAdvancePx - pen - advPx : pen) + xOffPx;
         const yPx = isVertical ? currentY + yOffPx : yOffPx;
-        currentX += xAdvPx;
-        currentY += yAdvPx;
+        pen += advPx;
+        if (isVertical) currentY += advPx;
 
         return {
           glyphId: g.glyphId,
@@ -250,14 +332,15 @@ export class ShapedMeasurer extends TextMeasurer {
         };
       });
 
-      const totalAdvancePx = shapingRes.totalAdvance * scale;
       const run: LaidOutGlyphRun = {
         fontId: fontRef.id,
         fontName: family,
         fontSizePx: sizePx,
+        unitsPerEm: metrics.unitsPerEm || 1000,
         direction,
         script: style.script,
         language: style.language,
+        ...(variations.length > 0 ? { variations } : {}),
         glyphs,
         totalAdvancePx,
       };

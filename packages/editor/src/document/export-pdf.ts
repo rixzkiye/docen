@@ -13,7 +13,15 @@ import {
   vertAlignBaselineShiftPx,
   vertAlignedSizePx,
 } from "@docen/layout";
-import { generateToUnicodeCMap } from "@docen/shaping";
+import {
+  generateToUnicodeCMap,
+  isFontEmbeddingAllowed,
+  isFontSubsettingAllowed,
+  readCmap,
+  readFontFsType,
+  readFontUnitsPerEm,
+  subsetFontWithPlan,
+} from "@docen/shaping";
 
 import type { CanvasStageSection } from "./canvas/stage";
 
@@ -58,11 +66,38 @@ export interface PdfPageShot {
   links?: PdfLinkAnnotation[];
 }
 
-/** One embedded subset font with its raw bytes and optional ToUnicode mapping. */
+/** One embedded subset font with its raw bytes and optional mappings.
+ *
+ *  Text spans are encoded as Identity-H with the UTF-16 code unit as the CID.
+ *  `cidToGid` maps each code unit to the subset's glyph ID (the PDF writer
+ *  emits it as a `/CIDToGIDMap` stream) and `toUnicodeMap` maps code units to
+ *  Unicode for extraction; without either, the identity ToUnicode CMap is
+ *  used and CIDs resolve through Identity-H substitution. */
 export interface PdfEmbeddedFont {
+  /** Base font name written into the PDF (spaces stripped). */
   readonly fontName: string;
+  /** CSS family used to route text spans to this face (substring match,
+   *  case-insensitive); defaults to `fontName`. */
+  readonly fontFamily?: string;
   readonly fontData: Uint8Array;
-  readonly toUnicodeMap?: Map<number, number> | [number, number][];
+  /** CID (UTF-16 code unit) → glyph ID in the embedded subset. */
+  readonly cidToGid?: ReadonlyMap<number, number>;
+  readonly toUnicodeMap?: Map<number, number | string> | [number, number][];
+  /** Font descriptor values (font units scaled to 1000/em by the writer). */
+  readonly unitsPerEm?: number;
+  readonly ascent?: number;
+  readonly descent?: number;
+  readonly bbox?: readonly [number, number, number, number];
+  /** OS/2 fsType the embedding decision was based on (diagnostics). */
+  readonly fsType?: number;
+}
+
+/** A host-registered font the PDF exporter may embed. */
+export interface PdfEmbeddableFontSource {
+  readonly family: string;
+  readonly fontData: Uint8Array;
+  /** OS/2.fsType override; read from the bytes when omitted. */
+  readonly fsType?: number;
 }
 
 /** Options for PDF document generation. */
@@ -223,9 +258,143 @@ function fontForSpan(span: PdfTextSpan): { fontName: string; isUnicode: boolean 
   return { fontName: "F1", isUnicode: false };
 }
 
+/** Build embedded PDF fonts from the host's registered font bytes.
+ *
+ *  Only fonts whose OS/2 fsType allows embedding are returned; subsetting is
+ *  applied when the license also allows it (otherwise the full font is
+ *  embedded). Each entry carries a `cidToGid` map so the writer can emit a
+ *  `/CIDToGIDMap` and text spans can keep UTF-16 code units as CIDs. */
+export function buildEmbeddedPdfFonts(
+  spans: readonly PdfTextSpan[],
+  sources: Iterable<PdfEmbeddableFontSource>,
+): PdfEmbeddedFont[] {
+  const byFamily = new Map<string, PdfEmbeddableFontSource>();
+  for (const source of sources) {
+    byFamily.set(source.family.trim().toLowerCase(), source);
+  }
+  if (byFamily.size === 0) return [];
+
+  const used = new Map<string, { source: PdfEmbeddableFontSource; codeUnits: Set<number> }>();
+  for (const span of spans) {
+    const family = span.fontFamily?.trim().toLowerCase();
+    if (!family) continue;
+    let source = byFamily.get(family);
+    if (!source) {
+      for (const [key, candidate] of byFamily) {
+        if (family.includes(key) || key.includes(family)) {
+          source = candidate;
+          break;
+        }
+      }
+    }
+    if (!source) continue;
+    const entry = used.get(source.family) ?? { source, codeUnits: new Set<number>() };
+    for (let i = 0; i < span.text.length; i++) entry.codeUnits.add(span.text.charCodeAt(i));
+    used.set(source.family, entry);
+  }
+
+  const fonts: PdfEmbeddedFont[] = [];
+  for (const { source, codeUnits } of used.values()) {
+    const fsType = source.fsType ?? readFontFsType(source.fontData);
+    if (!isFontEmbeddingAllowed(fsType)) continue;
+    const canSubset = isFontSubsettingAllowed(fsType);
+
+    const cmap = readCmap(source.fontData);
+    const usedGids = new Set<number>([0]);
+    for (const cu of codeUnits) {
+      const gid = cmap.get(cu);
+      if (gid !== undefined) usedGids.add(gid);
+    }
+
+    const cidToGid = new Map<number, number>();
+    let fontData = source.fontData;
+    let subsetted = false;
+    if (canSubset) {
+      // A malformed font must never break the export: fall back to the full
+      // font when subsetting throws.
+      let plan: ReturnType<typeof subsetFontWithPlan> | undefined;
+      try {
+        plan = subsetFontWithPlan(source.fontData, [...usedGids]);
+      } catch {
+        plan = undefined;
+      }
+      if (plan) {
+        fontData = plan.data;
+        subsetted = true;
+        for (const cu of codeUnits) {
+          const gid = cmap.get(cu);
+          const newGid = gid === undefined ? undefined : plan.glyphMap.get(gid);
+          if (newGid !== undefined) cidToGid.set(cu, newGid);
+        }
+      }
+    }
+    if (!subsetted) {
+      for (const cu of codeUnits) {
+        const gid = cmap.get(cu);
+        if (gid !== undefined) cidToGid.set(cu, gid);
+      }
+    }
+
+    const cleanName = source.family.replace(/[^A-Za-z0-9-]/g, "") || "Embedded";
+    fonts.push({
+      fontName: `${cleanName}${subsetted ? "Subset" : ""}`,
+      fontFamily: source.family,
+      fontData,
+      cidToGid,
+      unitsPerEm: readFontUnitsPerEm(source.fontData),
+      fsType,
+    });
+  }
+  return fonts;
+}
+
+/** Flate-encode a stream (zlib wrapper, PDF /FlateDecode); environments
+ *  without CompressionStream get the raw bytes and no filter. */
+async function flateEncode(data: Uint8Array): Promise<{ data: Uint8Array; filter: string }> {
+  if (typeof CompressionStream === "undefined" || typeof Response === "undefined") {
+    return { data, filter: "" };
+  }
+  try {
+    const stream = new Blob([data as unknown as BlobPart])
+      .stream()
+      .pipeThrough(new CompressionStream("deflate"));
+    const encoded = new Uint8Array(await new Response(stream).arrayBuffer());
+    return { data: encoded, filter: " /Filter /FlateDecode" };
+  } catch {
+    return { data, filter: "" };
+  }
+}
+
+/** The identity ToUnicode CMap used when the embedded font's CIDs are UTF-16
+ *  code units (extraction maps the CID straight back to its code point). */
+function identityToUnicodeCMap(): string {
+  return (
+    `/CIDInit /ProcSet findresource begin\n` +
+    `12 dict begin\n` +
+    `begincmap\n` +
+    `/CIDSystemInfo << /Registry (Adobe) /Ordering (UCS) /Supplement 0 >> def\n` +
+    `/CMapName /Custom-ToUnicode def\n` +
+    `/CMapType 2 def\n` +
+    `1 begincodespacerange\n` +
+    `<0000> <FFFF>\n` +
+    `endcodespacerange\n` +
+    `1 beginbfrange\n` +
+    `<0000> <FFFF> <0000>\n` +
+    `endbfrange\n` +
+    `endcmap\n` +
+    `CMapName currentdict /CMap defineresource pop\n` +
+    `end\n` +
+    `end\n`
+  );
+}
+
 /** Build the PDF blob from page snapshots, text layers, and link annotations.
  *  Pages keep their paper size (CSS px → pt at 72/96). The canvas image fills
- *  the page, with invisible text operators and link annotations overlaid. */
+ *  the page, with invisible text operators and link annotations overlaid.
+ *
+ *  Every object is allocated an ID up front and then written in ascending
+ *  object-number order: the xref table is indexed by object number, so the
+ *  write order and the allocation order must never diverge. */
 export async function pagesToPdf(
   shots: readonly PdfPageShot[],
   options?: PdfExportOptions,
@@ -235,9 +404,13 @@ export async function pagesToPdf(
   push("%PDF-1.4\n");
   push(new Uint8Array([0x25, 0xe2, 0xe3, 0xcf, 0xd3, 0x0a]));
 
-  const offsets: number[] = [0]; // object 0 is free
-  const record = (): void => {
-    offsets.push(offset());
+  interface PdfObject {
+    id: number;
+    parts: (string | Uint8Array)[];
+  }
+  const objects: PdfObject[] = [];
+  const addObject = (id: number, ...parts: (string | Uint8Array)[]): void => {
+    objects.push({ id, parts });
   };
 
   const jpegs = await Promise.all(shots.map((s) => jpegOf(s)));
@@ -252,7 +425,7 @@ export async function pagesToPdf(
   const isTagged = options?.tagged !== false;
   const structTreeRootId = isTagged ? allocId() : undefined;
 
-  // Standard Type 1 fonts + Unicode Type 0 font
+  // Standard Type 1 fonts + universal non-embedded Unicode Type 0 font
   const fontIds: Record<string, number> = {
     F1: allocId(),
     F2: allocId(),
@@ -266,11 +439,32 @@ export async function pagesToPdf(
     F10: allocId(),
     F_Uni: allocId(),
   };
-  const cidFontId = allocId();
-  const fontDescId = allocId();
-  const toUnicodeId = allocId();
-  const embeddedFont = options?.embeddedFonts?.[0];
-  const fontFileId = embeddedFont ? allocId() : undefined;
+  const uniCidFontId = allocId();
+  const uniFontDescId = allocId();
+  const uniToUnicodeId = allocId();
+
+  interface EmbeddedFontPlan {
+    readonly index: number;
+    readonly font: PdfEmbeddedFont;
+    readonly resourceName: string;
+    readonly type0Id: number;
+    readonly cidFontId: number;
+    readonly fontDescId: number;
+    readonly toUnicodeId: number;
+    readonly fontFileId: number;
+    readonly cidToGidId?: number;
+  }
+  const embeddedFonts: EmbeddedFontPlan[] = (options?.embeddedFonts ?? []).map((font, index) => ({
+    index,
+    font,
+    resourceName: `F_Emb${index}`,
+    type0Id: allocId(),
+    cidFontId: allocId(),
+    fontDescId: allocId(),
+    toUnicodeId: allocId(),
+    fontFileId: allocId(),
+    ...(font.cidToGid ? { cidToGidId: allocId() } : {}),
+  }));
 
   const infoId = allocId();
 
@@ -294,26 +488,27 @@ export async function pagesToPdf(
   }
 
   // 1. Catalog Object
-  record();
   let catDict = `<< /Type /Catalog /Pages ${pagesId} 0 R`;
   if (isTagged && structTreeRootId) {
     catDict += ` /MarkInfo << /Marked true >> /StructTreeRoot ${structTreeRootId} 0 R`;
   }
   catDict += ` >>\nendobj\n`;
-  push(`${catalogId} 0 obj\n${catDict}`);
+  addObject(catalogId, `${catalogId} 0 obj\n${catDict}`);
 
   // 2. Pages Object
-  record();
   const kids = pageAllocs.map((p) => `${p.pageId} 0 R`).join(" ");
-  push(`${pagesId} 0 obj\n<< /Type /Pages /Kids [ ${kids} ] /Count ${shots.length} >>\nendobj\n`);
+  addObject(
+    pagesId,
+    `${pagesId} 0 obj\n<< /Type /Pages /Kids [ ${kids} ] /Count ${shots.length} >>\nendobj\n`,
+  );
 
   // 3. StructTreeRoot Object (if tagged)
   if (isTagged && structTreeRootId) {
-    record();
     const allStructKids = pageAllocs
       .flatMap((p) => p.structElemIds.map((id) => `${id} 0 R`))
       .join(" ");
-    push(
+    addObject(
+      structTreeRootId,
       `${structTreeRootId} 0 obj\n<< /Type /StructTreeRoot /RoleMap << /H1 /H /H2 /H /H3 /H /H4 /H /P /P /Table /Table >> /K [ ${allStructKids} ] >>\nendobj\n`,
     );
   }
@@ -332,65 +527,92 @@ export async function pagesToPdf(
     ["F10", "Courier-Bold"],
   ];
   for (const [key, baseFont] of type1Fonts) {
-    record();
-    push(
+    addObject(
+      fontIds[key]!,
       `${fontIds[key]} 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /${baseFont} /Encoding /WinAnsiEncoding >>\nendobj\n`,
     );
   }
 
-  // Embedded Font Stream (if provided)
-  if (fontFileId && embeddedFont) {
-    record();
-    push(
-      `${fontFileId} 0 obj\n<< /Length ${embeddedFont.fontData.length} /Length1 ${embeddedFont.fontData.length} >>\nstream\n`,
+  // Embedded subset fonts: FontFile2 stream + ToUnicode + CIDToGIDMap + Type0.
+  for (const emb of embeddedFonts) {
+    const font = emb.font;
+    const baseFontName = font.fontName.replace(/\s+/g, "") || `EmbeddedFont${emb.index}`;
+    const data = font.fontData;
+    addObject(
+      emb.fontFileId,
+      `${emb.fontFileId} 0 obj\n<< /Length ${data.length} /Length1 ${data.length} >>\nstream\n`,
+      data,
+      "\nendstream\nendobj\n",
     );
-    push(embeddedFont.fontData);
-    push("\nendstream\nendobj\n");
+
+    const toUnicodeCMap = font.toUnicodeMap
+      ? generateToUnicodeCMap(font.toUnicodeMap, `Docen-ToUnicode-${emb.index}`)
+      : identityToUnicodeCMap();
+    addObject(
+      emb.toUnicodeId,
+      `${emb.toUnicodeId} 0 obj\n<< /Length ${toUnicodeCMap.length} >>\nstream\n${toUnicodeCMap}\nendstream\nendobj\n`,
+    );
+
+    let cidToGidRef = "";
+    if (font.cidToGid && font.cidToGid.size > 0 && emb.cidToGidId) {
+      let maxCid = 0;
+      for (const cid of font.cidToGid.keys()) {
+        if (cid > maxCid && cid <= 0xffff) maxCid = cid;
+      }
+      const raw = new Uint8Array((maxCid + 1) * 2);
+      const rawView = new DataView(raw.buffer);
+      for (const [cid, gid] of font.cidToGid) {
+        if (cid <= 0xffff) rawView.setUint16(cid * 2, gid & 0xffff);
+      }
+      const stream = await flateEncode(raw);
+      addObject(
+        emb.cidToGidId,
+        `${emb.cidToGidId} 0 obj\n<< /Length ${stream.data.length}${stream.filter} >>\nstream\n`,
+        stream.data,
+        "\nendstream\nendobj\n",
+      );
+      cidToGidRef = ` /CIDToGIDMap ${emb.cidToGidId} 0 R`;
+    }
+
+    const unitsPerEm = font.unitsPerEm && font.unitsPerEm > 0 ? font.unitsPerEm : 1000;
+    const fontScale = 1000 / unitsPerEm;
+    const bbox = font.bbox ?? [-1000, -1000, 2000, 2000];
+    const ascent = Math.round((font.ascent ?? 0.8 * unitsPerEm) * fontScale);
+    const descent = Math.round((font.descent ?? -0.2 * unitsPerEm) * fontScale);
+    addObject(
+      emb.type0Id,
+      `${emb.type0Id} 0 obj\n<< /Type /Font /Subtype /Type0 /BaseFont /${baseFontName} /Encoding /Identity-H /DescendantFonts [ ${emb.cidFontId} 0 R ] /ToUnicode ${emb.toUnicodeId} 0 R >>\nendobj\n`,
+    );
+    addObject(
+      emb.cidFontId,
+      `${emb.cidFontId} 0 obj\n<< /Type /Font /Subtype /CIDFontType2 /BaseFont /${baseFontName} /CIDSystemInfo << /Registry (Adobe) /Ordering (Identity) /Supplement 0 >> /FontDescriptor ${emb.fontDescId} 0 R /DW 1000${cidToGidRef} >>\nendobj\n`,
+    );
+    addObject(
+      emb.fontDescId,
+      `${emb.fontDescId} 0 obj\n<< /Type /FontDescriptor /FontName /${baseFontName} /Flags 4 /FontBBox [ ${bbox.join(" ")} ] /ItalicAngle 0 /Ascent ${ascent} /Descent ${descent} /CapHeight ${ascent} /StemV 80 /FontFile2 ${emb.fontFileId} 0 R >>\nendobj\n`,
+    );
   }
 
-  // Type 0 Unicode Font
-  const baseFontName = embeddedFont ? embeddedFont.fontName.replace(/\s+/g, "") : "Helvetica";
-  record();
-  push(
-    `${fontIds.F_Uni} 0 obj\n<< /Type /Font /Subtype /Type0 /BaseFont /${baseFontName} /Encoding /Identity-H /DescendantFonts [ ${cidFontId} 0 R ] /ToUnicode ${toUnicodeId} 0 R >>\nendobj\n`,
+  // Universal Type 0 Unicode Font (non-embedded fallback)
+  addObject(
+    fontIds.F_Uni!,
+    `${fontIds.F_Uni} 0 obj\n<< /Type /Font /Subtype /Type0 /BaseFont /Helvetica /Encoding /Identity-H /DescendantFonts [ ${uniCidFontId} 0 R ] /ToUnicode ${uniToUnicodeId} 0 R >>\nendobj\n`,
   );
 
-  // Descendant CIDFont
-  record();
-  push(
-    `${cidFontId} 0 obj\n<< /Type /Font /Subtype /CIDFontType2 /BaseFont /${baseFontName} /CIDSystemInfo << /Registry (Adobe) /Ordering (Identity) /Supplement 0 >> /FontDescriptor ${fontDescId} 0 R /DW 1000 >>\nendobj\n`,
+  addObject(
+    uniCidFontId,
+    `${uniCidFontId} 0 obj\n<< /Type /Font /Subtype /CIDFontType2 /BaseFont /Helvetica /CIDSystemInfo << /Registry (Adobe) /Ordering (Identity) /Supplement 0 >> /FontDescriptor ${uniFontDescId} 0 R /DW 1000 >>\nendobj\n`,
   );
 
-  // FontDescriptor
-  const fontFileRef = fontFileId ? ` /FontFile2 ${fontFileId} 0 R` : "";
-  record();
-  push(
-    `${fontDescId} 0 obj\n<< /Type /FontDescriptor /FontName /${baseFontName} /Flags 4 /FontBBox [ -1000 -1000 2000 2000 ] /ItalicAngle 0 /Ascent 800 /Descent -200 /CapHeight 800 /StemV 80${fontFileRef} >>\nendobj\n`,
+  addObject(
+    uniFontDescId,
+    `${uniFontDescId} 0 obj\n<< /Type /FontDescriptor /FontName /Helvetica /Flags 4 /FontBBox [ -1000 -1000 2000 2000 ] /ItalicAngle 0 /Ascent 800 /Descent -200 /CapHeight 800 /StemV 80 >>\nendobj\n`,
   );
 
-  // ToUnicode CMap Stream
-  const toUnicodeCMap = embeddedFont?.toUnicodeMap
-    ? generateToUnicodeCMap(embeddedFont.toUnicodeMap)
-    : `/CIDInit /ProcSet findresource begin\n` +
-      `12 dict begin\n` +
-      `begincmap\n` +
-      `/CIDSystemInfo << /Registry (Adobe) /Ordering (UCS) /Supplement 0 >> def\n` +
-      `/CMapName /Custom-ToUnicode def\n` +
-      `/CMapType 2 def\n` +
-      `1 begincodespacerange\n` +
-      `<0000> <FFFF>\n` +
-      `endcodespacerange\n` +
-      `1 beginbfrange\n` +
-      `<0000> <FFFF> <0000>\n` +
-      `endbfrange\n` +
-      `endcmap\n` +
-      `CMapName currentdict /CMap defineresource pop\n` +
-      `end\n` +
-      `end\n`;
-
-  record();
-  push(
-    `${toUnicodeId} 0 obj\n<< /Length ${toUnicodeCMap.length} >>\nstream\n${toUnicodeCMap}\nendstream\nendobj\n`,
+  const uniToUnicodeCMap = identityToUnicodeCMap();
+  addObject(
+    uniToUnicodeId,
+    `${uniToUnicodeId} 0 obj\n<< /Length ${uniToUnicodeCMap.length} >>\nstream\n${uniToUnicodeCMap}\nendstream\nendobj\n`,
   );
 
   // 5. Document Information Object (/Info)
@@ -400,15 +622,29 @@ export async function pagesToPdf(
   const producer = options?.metadata?.producer ?? "Docen PDF Engine";
   const dateStr = formatPdfDate();
 
-  record();
-  push(
+  addObject(
+    infoId,
     `${infoId} 0 obj\n<< /Title (${escapePdfString(title)}) /Author (${escapePdfString(author)}) /Creator (${escapePdfString(creator)}) /Producer (${escapePdfString(producer)}) /CreationDate (${dateStr}) >>\nendobj\n`,
   );
 
   // 6. Per-Page Objects
-  const fontEntries = Object.entries(fontIds)
-    .map(([k, id]) => `/${k} ${id} 0 R`)
-    .join(" ");
+  const fontEntries = [
+    ...Object.entries(fontIds).map(([k, id]) => `/${k} ${id} 0 R`),
+    ...embeddedFonts.map((emb) => `/${emb.resourceName} ${emb.type0Id} 0 R`),
+  ].join(" ");
+
+  const embeddedFontForSpan = (span: PdfTextSpan): EmbeddedFontPlan | undefined => {
+    if (embeddedFonts.length === 0) return undefined;
+    const family = (span.fontFamily ?? "").trim().toLowerCase();
+    if (family) {
+      const match = embeddedFonts.find((emb) => {
+        const target = (emb.font.fontFamily ?? emb.font.fontName).trim().toLowerCase();
+        return target.length > 0 && (family.includes(target) || target.includes(family));
+      });
+      if (match) return match;
+    }
+    return embeddedFonts[0];
+  };
 
   for (const [i, page] of jpegs.entries()) {
     const shot = shots[i]!;
@@ -431,8 +667,7 @@ export async function pagesToPdf(
     }
     pageDict += ` >>\nendobj\n`;
 
-    record();
-    push(`${alloc.pageId} 0 obj\n${pageDict}`);
+    addObject(alloc.pageId, `${alloc.pageId} 0 obj\n${pageDict}`);
 
     // Contents Stream
     let content = `q ${w} 0 0 ${h} 0 0 cm /Im0 Do Q\n`;
@@ -447,7 +682,11 @@ export async function pagesToPdf(
       for (let sIdx = 0; sIdx < spans.length; sIdx++) {
         const span = spans[sIdx]!;
         if (!span.text) continue;
-        const { fontName, isUnicode } = fontForSpan(span);
+        const embedded = embeddedFontForSpan(span);
+        const selected = embedded
+          ? { fontName: embedded.resourceName, isUnicode: true }
+          : fontForSpan(span);
+        const { fontName, isUnicode } = selected;
         const sizeStr = span.fontSize.toFixed(2);
         if (currentFont !== fontName || currentSize !== sizeStr) {
           content += `/${fontName} ${sizeStr} Tf\n`;
@@ -480,26 +719,27 @@ export async function pagesToPdf(
       }
     }
 
-    record();
-    push(
-      `${alloc.contentId} 0 obj\n<< /Length ${content.length} >>\nstream\n${content}\nendstream\nendobj\n`,
+    // /Length counts the UTF-8 bytes of the content stream, not its JS chars.
+    const contentLength = new TextEncoder().encode(content).length;
+    addObject(
+      alloc.contentId,
+      `${alloc.contentId} 0 obj\n<< /Length ${contentLength} >>\nstream\n${content}\nendstream\nendobj\n`,
     );
 
     // Image XObject
-    record();
-    push(
+    addObject(
+      alloc.imageId,
       `${alloc.imageId} 0 obj\n<< /Type /XObject /Subtype /Image /Width ${page.width} /Height ${page.height} ` +
         `/ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${page.jpeg.length} >>\nstream\n`,
+      page.jpeg,
+      "\nendstream\nendobj\n",
     );
-    push(page.jpeg);
-    push("\nendstream\nendobj\n");
 
     // Link Annotations
     for (let lIdx = 0; lIdx < (shot.links ?? []).length; lIdx++) {
       const link = shot.links![lIdx]!;
       const annotId = alloc.annotIds[lIdx]!;
       const [x1, y1, x2, y2] = link.rect;
-      record();
       let annotObj =
         `${annotId} 0 obj\n<< /Type /Annot /Subtype /Link ` +
         `/Rect [ ${x1.toFixed(2)} ${y1.toFixed(2)} ${x2.toFixed(2)} ${y2.toFixed(2)} ] ` +
@@ -510,22 +750,38 @@ export async function pagesToPdf(
         annotObj += ` /A << /Type /Action /S /URI /URI (${escapePdfString(link.url)}) >>`;
       }
       annotObj += ` >>\nendobj\n`;
-      push(annotObj);
+      addObject(annotId, annotObj);
     }
 
     // Structure Element (if tagged)
     if (isTagged && alloc.structElemIds.length > 0 && structTreeRootId) {
       const structElemId = alloc.structElemIds[0]!;
-      record();
-      push(
+      addObject(
+        structElemId,
         `${structElemId} 0 obj\n<< /Type /StructElem /S /P /P ${structTreeRootId} 0 R /Pg ${alloc.pageId} 0 R /K 0 >>\nendobj\n`,
       );
     }
   }
 
-  // 7. Xref Table & Trailer
+  // 7. Write every object in ascending ID order and record its byte offset.
+  const ordered = [...objects].sort((a, b) => a.id - b.id);
+  const offsets: number[] = Array.from({ length: nextId }, () => 0);
+  for (const object of ordered) {
+    if (offsets[object.id] !== 0) {
+      throw new Error(`PDF object ${object.id} written twice`);
+    }
+    offsets[object.id] = offset();
+    for (const part of object.parts) push(part);
+  }
+  for (let id = 1; id < nextId; id++) {
+    if (!offsets[id]) {
+      throw new Error(`PDF object ${id} was allocated but never written`);
+    }
+  }
+
+  // 8. Xref Table & Trailer
   const xrefStart = offset();
-  const size = offsets.length;
+  const size = nextId;
   let xref = `xref\n0 ${size}\n0000000000 65535 f \n`;
   for (let i = 1; i < size; i++) xref += `${xrefAt(offsets[i]!)} 00000 n \n`;
   xref += `trailer\n<< /Size ${size} /Root ${catalogId} 0 R /Info ${infoId} 0 R >>\nstartxref\n${xrefStart}\n%%EOF\n`;

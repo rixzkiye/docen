@@ -648,6 +648,13 @@ export function paintParagraph(
 
         let paintedGlyphs = false;
         if (item.glyphRun && item.glyphRun.glyphs.length > 0) {
+          // Target painted width (justified interval or the squeezed item
+          // width) vs the run's natural scaled advance — the glyph positions
+          // and x scale stretch by the ratio, matching how the Text path
+          // fills `intervalPx`/`squeezePx`.
+          const naturalPx = item.glyphRun.totalAdvancePx * scale;
+          const targetPx = intervalPx ?? item.widthPx;
+          const advanceScale = naturalPx > 0 && targetPx > 0 ? targetPx / naturalPx : 1;
           paintedGlyphs = paintGlyphRun(tree, item.glyphRun, {
             x: lineX + item.xPx,
             y: baseY + leaferBaselinePadPx(ownSize),
@@ -656,6 +663,7 @@ export function paintParagraph(
             strokeWidth,
             shadow,
             scaleX: scale !== 1 ? scale : undefined,
+            advanceScale,
           });
         }
 

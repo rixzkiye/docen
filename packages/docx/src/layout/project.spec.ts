@@ -2302,3 +2302,31 @@ describe("projectDocumentOptions theme fonts", () => {
     );
   });
 });
+
+describe("projectDocumentOptions bidi direction", () => {
+  it("maps w:bidi to the paragraph default direction and w:rtl to the run direction", () => {
+    const { blocks } = oneSection(
+      doc([
+        {
+          paragraph: {
+            bidirectional: true,
+            children: [
+              { text: "مرحبا" },
+              { text: "ltr run", rtl: false } as unknown as { text: string },
+            ],
+          },
+        },
+      ]),
+    );
+    const para = blocks[0];
+    expect(para?.kind).toBe("paragraph");
+    if (para?.kind !== "paragraph") return;
+    expect(para.bidi).toBe(true);
+    expect(para.defaultTextStyle?.direction).toBe("rtl");
+    const runs = para.inline.filter((inline) => inline.kind === "text");
+    // The bidi paragraph default reaches the run style; an explicit
+    // w:rtl val=0 cancels it (direct beats inherited).
+    expect(runs[0] && runs[0].kind === "text" ? runs[0].style.direction : undefined).toBe("rtl");
+    expect(runs[1] && runs[1].kind === "text" ? runs[1].style.direction : undefined).toBe("ltr");
+  });
+});

@@ -4,7 +4,7 @@
 ![npm downloads](https://img.shields.io/npm/dw/@docen/shaping)
 ![npm license](https://img.shields.io/npm/l/@docen/shaping)
 
-> Deterministic WebAssembly text shaping and font typography engine for docen. Backed by [`rustybuzz`](https://github.com/RazrFalcon/rustybuzz) (HarfBuzz-compatible OpenType shaping), [`read-fonts`](https://github.com/googlefonts/fontations) and [`skrifa`](https://github.com/googlefonts/fontations) (metrics, glyph vector outlines, variable axes), and zero-copy TrueType sfnt subsetting.
+> Deterministic WebAssembly text shaping and font typography engine for docen. Backed by [`rustybuzz`](https://github.com/RazrFalcon/rustybuzz) (HarfBuzz-compatible OpenType shaping), [`read-fonts`](https://github.com/googlefonts/fontations) and [`skrifa`](https://github.com/googlefonts/fontations) (metrics, glyph vector outlines, variable axes), and a TrueType sfnt subsetter that rebuilds `cmap`/`post` for remapped glyph IDs.
 
 Consumed by [`@docen/layout`](../layout/README.md)'s `ShapedMeasurer` for bit-exact layout advances and [`@docen/core`](../core/README.md)'s canvas stage for vector glyph rendering.
 
@@ -12,11 +12,11 @@ Consumed by [`@docen/layout`](../layout/README.md)'s `ShapedMeasurer` for bit-ex
 
 ## Features
 
-- **Cross-Platform Determinism:** Replaces browser-divergent `CanvasRenderingContext2D.measureText` with bit-exact OpenType shaping identical across Chromium, Firefox, Safari, and Node.js SSR.
+- **Cross-Platform Determinism:** Replaces browser-divergent `CanvasRenderingContext2D.measureText` with OpenType shaping. The shaped measurer is opt-in (`setShapingEnabled(true)` in `@docen/layout` or `DOCEN_SHAPING_ENABLED=1`) until the document-level parity, per-keystroke and cross-environment determinism gates are fully green; the canvas measurer remains the default.
 - **Complex Scripts & Direction:**
   - Multi-direction: LTR, RTL, TTB (vertical CJK with `vhea` / OpenType synthesis), BTT, and automatic Unicode script detection.
   - Full GSUB/GPOS shaping for Arabic cursive joining & mark positioning, Hebrew RTL Niqqud, Thai vowel reordering & mark stacking, Devanagari conjuncts & matras, Khmer coeng subscripts, and Latin ligature substitution (`fi`, `fl`, `ffi`, `ffl`).
-  - Verified against HarfBuzz CLI (`hb-shape`) and `harfbuzzjs` differential oracle.
+  - Verified by committed golden records regenerated with `test/generate-goldens.mjs` (harfbuzzjs oracle) and a live rustybuzz-vs-harfbuzzjs differential suite.
 - **OpenType Features & Variable Fonts:**
   - Standard and discretionary ligatures (`liga`, `clig`, `calt`, `dlig`, `hlig`).
   - Small caps (`smcp`) and all-caps (`c2sc`).
@@ -30,12 +30,12 @@ Consumed by [`@docen/layout`](../layout/README.md)'s `ShapedMeasurer` for bit-ex
   - Script-aware fallback chains (`Latn`, `Arab`, `Hani`, `Hebr`, `Thai`, `Deva`, `Khmr`) with missing-glyph diagnostics.
 - **Vector Outlines:** Extracts true Bézier glyph paths (`M`, `L`, `Q`, `C`, `Z`) via Skrifa for high-DPI vector canvas rendering.
 - **Embedding & Subsetting:**
-  - TrueType sfnt table subsetter with composite glyph closure, reducing font size by >66%.
+  - TrueType sfnt subsetter with composite glyph closure that rewrites `glyf`/`loca`/`hmtx`/`maxp`/`hhea`/`head`, rebuilds `cmap` (format 4 + 12) over the retained code points and rewrites `post` as version 3.0. `subsetFontWithPlan` returns the old→new glyph map for PDF `CIDToGIDMap` consumers.
   - Adobe ToUnicode CMap generation for searchable PDF exports.
   - ECMA-376 Part 4 §14.2.14 GUID obfuscation for DOCX `word/fontTable.xml`.
   - OpenType `fsType` licensing validation blocking restricted fonts (`0x0002`).
-- **Worker Offloading:** Dedicated `ShapingWorkerHandler` and `ShapingWorkerClient` for non-blocking asynchronous shaping in background Web Workers.
-- **Zero-Copy WASM ABI:** Direct shared WebAssembly linear memory layout with typed array views, achieving sub-millisecond startup and >3,000 paragraphs/second throughput.
+- **Worker Offloading:** `ShapingWorkerHandler` runs the engine inside any worker; `ShapingWorkerClient` speaks the correlated request/response protocol over a host-supplied `Worker`, transfers font bytes, and falls back to in-thread shaping (reported by `client.offloaded`) when no worker is supplied or initialization fails.
+- **Typed-Array WASM ABI:** Glyph, metrics, outline and string results are read through typed-array views over the WASM linear memory; font bytes are copied once at registration and deallocated immediately.
 
 ---
 
@@ -44,7 +44,7 @@ Consumed by [`@docen/layout`](../layout/README.md)'s `ShapedMeasurer` for bit-ex
 ```
 ┌──────────────────────────────────────────────────────────────┐
 │                    @docen/layout                             │
-│       createMeasurer() ──► ShapedMeasurer (Pretext)          │
+│       createMeasurer() ──► ShapedMeasurer (opt-in)           │
 └───────────────────────────────┬──────────────────────────────┘
                                 │ calls
 ┌───────────────────────────────▼──────────────────────────────┐
@@ -52,7 +52,7 @@ Consumed by [`@docen/layout`](../layout/README.md)'s `ShapedMeasurer` for bit-ex
 │  FontManager ──► FontRef ──► RustybuzzBackend                │
 │    │               │              │                          │
 │  FontCache       Subsetter        │ WebAssembly ABI          │
-│  (LRU + OPFS)   + ToUnicode       │ (Zero-Copy Pointers)     │
+│  (LRU + OPFS)   + ToUnicode       │ (typed-array views)      │
 └───────────────────────────────────┼──────────────────────────┘
                                     │
 ┌───────────────────────────────────▼──────────────────────────┐
@@ -71,13 +71,13 @@ Consumed by [`@docen/layout`](../layout/README.md)'s `ShapedMeasurer` for bit-ex
 ### 1. Basic Shaping
 
 ```ts
-import { loadShapingWasm, createFontRef } from "@docen/shaping";
+import { initShapingWasm, createFontRefSync } from "@docen/shaping";
 
 // Load and initialize WASM runtime
-await loadShapingWasm();
+await initShapingWasm();
 
-// Wrap font bytes into a FontRef
-const fontRef = createFontRef(fontBuffer);
+// Wrap font bytes into a FontRef (or `await createFontRef(bytes)`)
+const fontRef = createFontRefSync(fontBuffer);
 
 // Shape text with OpenType features
 const result = fontRef.shape("Office aesthetic fi 12345", {
@@ -112,19 +112,33 @@ const boldRun = fontRef.shape("Bold Run", {
 ### 3. Font Subsetting & CMap for PDF Export
 
 ```ts
-import { subsetFont, generateToUnicodeCMap } from "@docen/shaping";
+import { readCmap, subsetFontWithPlan, generateToUnicodeCMap } from "@docen/shaping";
 
-// Collect glyph IDs used in document
-const usedGlyphs = [0, 15, 23, 42, 88];
+// Collect the old glyph IDs used in the document (cmap lookup or shaped runs)
+const cmap = readCmap(fontBuffer);
+const usedGlyphs = [0, ...[...text].map((ch) => cmap.get(ch.codePointAt(0)!))];
+const { data: subsetBuffer, glyphMap } = subsetFontWithPlan(fontBuffer, usedGlyphs);
 
-// Produce compact subset font buffer
-const subsetBuffer = subsetFont(fontBuffer, usedGlyphs);
-
-// Generate Adobe ToUnicode CMap mapping glyph IDs to UTF-16
-const cmapStream = generateToUnicodeCMap(usedGlyphs, glyphToUnicodeMap);
+// Generate an Adobe ToUnicode CMap mapping CIDs to Unicode
+const cmapStream = generateToUnicodeCMap(new Map([[1, 0x0041]]));
 ```
 
+`subsetFont(buffer, glyphIds)` is the bytes-only form. CFF/bitmap fonts pass
+through unchanged (valid bytes; glyph IDs are not remapped), so embedders must
+use the returned `glyphMap` to address TrueType subsets.
+
 ### 4. Background Web Worker Offload
+
+Write the worker entry (five lines) and hand the Worker to the client; without
+one — or when it fails to initialize — the client shapes in-thread:
+
+```ts
+// shaping.worker.ts
+import { ShapingWorkerHandler } from "@docen/shaping";
+const handler = new ShapingWorkerHandler();
+self.onmessage = (event) =>
+  handler.handleMessage(event.data, (response, transfer) => self.postMessage(response, transfer));
+```
 
 ```ts
 import { ShapingWorkerClient } from "@docen/shaping";
@@ -132,10 +146,10 @@ import { ShapingWorkerClient } from "@docen/shaping";
 const worker = new Worker(new URL("./shaping.worker.ts", import.meta.url), { type: "module" });
 const client = new ShapingWorkerClient(worker);
 
-await client.init();
-await client.registerFont(1, fontBuffer);
+await client.init(); // falls back in-thread on worker failure
+await client.registerFont(fontBuffer);
 
-const result = await client.shape(1, "Text shaped off-thread", {
+const result = await client.shape(fontId, "Text shaped off-thread", {
   direction: "auto",
 });
 ```
@@ -144,12 +158,24 @@ const result = await client.shape(1, "Text shaped off-thread", {
 
 ## Performance Budgets
 
-| Metric                         | Budget         | Measured           | Status |
-| ------------------------------ | -------------- | ------------------ | ------ |
-| **WASM Binary Size (gzip)**    | ≤ 600 KB       | **~352 KB**        | PASSED |
-| **WASM Instantiation Latency** | < 50 ms        | **~0.3 ms**        | PASSED |
-| **Shaping Throughput**         | ≥ 2,000 para/s | **> 3,100 para/s** | PASSED |
-| **Subsetting Size Reduction**  | > 50%          | **> 66%**          | PASSED |
+Measured on the audited fix branch (`r6/fix-audit`) with Node 24, rustc 1.97.1;
+throughput is a short-round peak/median pair because the suite runs
+concurrently.
+
+| Metric                         | Budget                         | Measured                                                            | Status                   |
+| ------------------------------ | ------------------------------ | ------------------------------------------------------------------- | ------------------------ |
+| **WASM Binary Size (gzip)**    | ≤ 600 KB                       | **~360 KB**                                                         | PASSED                   |
+| **WASM Instantiation Latency** | < 50 ms                        | **~0.25 ms**                                                        | PASSED                   |
+| **Shaping Throughput**         | ≥ 2,000 para/s                 | **~5,000–8,000 para/s isolated; ~2,400 peak under full-suite load** | PASSED                   |
+| **Per-keystroke layout**       | ≤ 10% regression               | **best round 0.24–0.59×, under-load median 1.0–2.1×**               | PASSED (best-round gate) |
+| **LayoutDoc determinism**      | identical hash                 | repeated + fresh-WASM runs hash equal                               | PASSED (in-process)      |
+| **Subsetting validity**        | fontTools parse + cmap/advance | every fixture subset passes the fontTools gate                      | PASSED                   |
+| **PDF text extraction**        | 100% (Latin + accents + CJK)   | `pdftotext` byte-exact on subset-embedded PDF                       | PASSED                   |
+
+Known gaps, tracked for R6.T2: the pretext line breaker still measures through
+canvas (`prepareRichInline`), so shaped advances only drive atom probes today;
+cross-browser LayoutDoc hashing and bundled production fonts are not yet in
+place.
 
 ---
 

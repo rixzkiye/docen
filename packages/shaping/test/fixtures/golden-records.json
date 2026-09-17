@@ -1,4 +1,19 @@
 {
+  "meta": {
+    "generator": "packages/shaping/test/generate-goldens.mjs",
+    "oracle": "harfbuzzjs (HarfBuzz)",
+    "harfbuzzjs": "1.6.1",
+    "fonts": {
+      "latin": "OpenSans-Regular.ttf",
+      "arabic": "NotoNaskhArabic-Regular.ttf"
+    },
+    "texts": {
+      "latinAlphabet": "The quick brown fox jumps over the lazy dog.",
+      "kerningPairs": "AV To Wa LT",
+      "ligatures": "office flight waffle",
+      "arabicGreeting": "مرحبا"
+    }
+  },
   "latinAlphabet": [
     {
       "glyphId": 55,
