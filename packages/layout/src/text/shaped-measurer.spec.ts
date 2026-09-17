@@ -93,4 +93,56 @@ describe("R6.3 ShapedMeasurer (TextMeasurer with Opt-in Shaping)", () => {
 
     expect(run1).toBe(run2); // exact same cached object reference
   });
+
+  it("shapes RTL scripts with correct cluster and advance layout", () => {
+    const arabicPath = path.resolve(
+      __dirname,
+      "../../../shaping/test/fixtures/fonts/NotoNaskhArabic-Regular.ttf",
+    );
+    const arabicBytes = fs.readFileSync(arabicPath);
+    const arabicFont = createFontRefSync(arabicBytes);
+
+    const measurer = new ShapedMeasurer(fakeFontMetrics, { optIn: true });
+    measurer.registerFont("Noto Naskh Arabic", arabicFont);
+
+    const style: LayoutTextStyle = {
+      family: "Noto Naskh Arabic",
+      sizePx: 16,
+      direction: "rtl",
+    };
+
+    const run = measurer.shapeRun("العربية", style);
+    expect(run).toBeDefined();
+    expect(run?.direction).toBe("rtl");
+    expect(run?.totalAdvancePx).toBeGreaterThan(0);
+    expect(run?.glyphs.length).toBeGreaterThan(0);
+  });
+
+  it("shapes vertical text runs with top-to-bottom advances", () => {
+    const vertPath = path.resolve(
+      __dirname,
+      "../../../shaping/test/fixtures/fonts/NotoFangsongKSSVertical-Regular.ttf",
+    );
+    const vertBytes = fs.readFileSync(vertPath);
+    const vertFont = createFontRefSync(vertBytes);
+
+    const measurer = new ShapedMeasurer(fakeFontMetrics, { optIn: true });
+    measurer.registerFont("Noto Fangsong", vertFont);
+
+    const style: LayoutTextStyle = {
+      family: "Noto Fangsong",
+      sizePx: 20,
+      vertical: true,
+    };
+
+    const run = measurer.shapeRun("天地玄黃", style);
+    expect(run).toBeDefined();
+    expect(run?.direction).toBe("ttb");
+    expect(run?.totalAdvancePx).toBeGreaterThan(0);
+    // In vertical layout, yPx advances down the layout axis
+    expect(run?.glyphs.length).toBe(4);
+    for (let i = 1; i < run!.glyphs.length; i++) {
+      expect(run!.glyphs[i]!.yPx).toBeGreaterThan(run!.glyphs[i - 1]!.yPx);
+    }
+  });
 });

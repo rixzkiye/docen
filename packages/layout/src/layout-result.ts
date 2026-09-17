@@ -61,6 +61,9 @@ export interface LaidOutGlyphRun {
   readonly fontId?: number;
   readonly fontName?: string;
   readonly fontSizePx: number;
+  readonly direction?: "ltr" | "rtl" | "ttb" | "auto";
+  readonly script?: string;
+  readonly language?: string;
   readonly glyphs: readonly {
     readonly glyphId: number;
     readonly cluster: number;

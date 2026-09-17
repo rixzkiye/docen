@@ -73,45 +73,50 @@ export function itemGlyphLayoutFromRun(
   }
   utf8ToUtf16.push(text.length);
 
-  // Group glyphs by distinct cluster boundaries
-  interface ClusterInfo {
+  // Group glyphs by their cluster start character index
+  interface ClusterBounds {
     charStart: number;
     charEnd: number;
     startX: number;
     endX: number;
+    isRtl: boolean;
   }
 
-  const clusters: ClusterInfo[] = [];
-  const glyphs = glyphRun.glyphs;
+  const clusterMap = new Map<number, { minX: number; maxX: number }>();
+  const isRtl = glyphRun.direction === "rtl";
 
-  for (let i = 0; i < glyphs.length; i++) {
-    const g = glyphs[i]!;
-    const charStart = utf8ToUtf16[g.cluster] ?? g.cluster;
-    const startX = g.xPx;
-    // Find where this cluster ends in character space and pixel space
-    let nextCharStart = text.length;
-    let nextX = glyphRun.totalAdvancePx;
+  for (let i = 0; i < glyphRun.glyphs.length; i++) {
+    const g = glyphRun.glyphs[i]!;
+    const cStart = utf8ToUtf16[g.cluster] ?? g.cluster;
+    const gNextX =
+      i + 1 < glyphRun.glyphs.length ? glyphRun.glyphs[i + 1]!.xPx : glyphRun.totalAdvancePx;
+    const gMinX = Math.min(g.xPx, gNextX);
+    const gMaxX = Math.max(g.xPx, gNextX);
 
-    for (let j = i + 1; j < glyphs.length; j++) {
-      const nextG = glyphs[j]!;
-      const c = utf8ToUtf16[nextG.cluster] ?? nextG.cluster;
-      if (c !== charStart) {
-        nextCharStart = c;
-        nextX = nextG.xPx;
-        break;
-      }
+    const existing = clusterMap.get(cStart);
+    if (!existing) {
+      clusterMap.set(cStart, { minX: gMinX, maxX: gMaxX });
+    } else {
+      existing.minX = Math.min(existing.minX, gMinX);
+      existing.maxX = Math.max(existing.maxX, gMaxX);
     }
+  }
 
-    // Only record new cluster or merge glyphs in same cluster
-    const last = clusters[clusters.length - 1];
-    if (!last || last.charStart !== charStart) {
-      clusters.push({
-        charStart,
-        charEnd: nextCharStart,
-        startX,
-        endX: nextX,
-      });
-    }
+  // Sort distinct character starts
+  const sortedStarts = Array.from(clusterMap.keys()).sort((a, b) => a - b);
+  const clusters: ClusterBounds[] = [];
+
+  for (let i = 0; i < sortedStarts.length; i++) {
+    const cStart = sortedStarts[i]!;
+    const cEnd = i + 1 < sortedStarts.length ? sortedStarts[i + 1]! : text.length;
+    const bounds = clusterMap.get(cStart)!;
+    clusters.push({
+      charStart: cStart,
+      charEnd: cEnd,
+      startX: bounds.minX,
+      endX: bounds.maxX,
+      isRtl,
+    });
   }
 
   // Assign widths and xs to each grapheme based on cluster interpolation
@@ -130,10 +135,12 @@ export function itemGlyphLayoutFromRun(
     if (cluster) {
       const clusterSpan = Math.max(1, cluster.charEnd - cluster.charStart);
       const clusterWidth = Math.max(0, cluster.endX - cluster.startX);
-      const fracStart = (gStart - cluster.charStart) / clusterSpan;
+      const fracStart = cluster.isRtl
+        ? (cluster.charEnd - gStart - g.length) / clusterSpan
+        : (gStart - cluster.charStart) / clusterSpan;
       const fracLen = g.length / clusterSpan;
 
-      const gx = cluster.startX + fracStart * clusterWidth;
+      const gx = cluster.startX + Math.max(0, fracStart) * clusterWidth;
       const gw = fracLen * clusterWidth;
       xs.push(gx);
       widths.push(gw);

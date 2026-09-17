@@ -19,6 +19,15 @@ export interface ShapingResult {
 }
 
 /**
+ * Font vertical header metrics (vhea table) in font design units.
+ */
+export interface VerticalFontMetrics {
+  readonly ascender: number;
+  readonly descender: number;
+  readonly lineGap: number;
+}
+
+/**
  * Font horizontal and vertical metrics in font design units.
  */
 export interface FontMetrics {
@@ -28,6 +37,7 @@ export interface FontMetrics {
   readonly lineGap: number;
   readonly capHeight: number;
   readonly xHeight: number;
+  readonly vertical?: VerticalFontMetrics;
 }
 
 /**
@@ -58,8 +68,8 @@ export type PathCommand =
  * Options configuring text shaping behavior.
  */
 export interface ShapingOptions {
-  readonly direction?: "ltr" | "rtl";
-  readonly script?: string; // 4-char ISO 15924 tag, e.g. "Latn", "Arab"
+  readonly direction?: "ltr" | "rtl" | "ttb" | "btt" | "auto";
+  readonly script?: string; // 4-char ISO 15924 tag, e.g. "Latn", "Arab", "Hebr", "Thai", "Deva", "Khmr", "Hani"
   readonly language?: string; // BCP 47 or OpenType language tag
   readonly features?: readonly { readonly tag: string; readonly value: number }[];
   readonly size?: number;
