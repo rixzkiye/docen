@@ -6,7 +6,8 @@ import { fileURLToPath } from "node:url";
 
 import { beforeAll, describe, expect, it } from "vitest";
 
-import { RustybuzzBackend, initShapingWasm, readCmap, subsetFontWithPlan } from "../src/index.js";
+import { RustybuzzBackend, initShapingWasm } from "../src/index.js";
+import { readCmap, subsetFontWithPlan } from "../src/subsetter.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const fontsDir = path.join(__dirname, "fixtures/fonts");
