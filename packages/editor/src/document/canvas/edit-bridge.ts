@@ -386,6 +386,10 @@ export interface EditBridge {
    *  geometry — needed when the zoom rescales the frames without a
    *  selection transaction. */
   replaceOverlays(): void;
+  /** Viewport virtualization: the stage reports each page whose paint app
+   *  went live/dark — overlays only materialize on live pages (the caret map
+   *  stays document-wide). No pushes keep every page live (tests/SSR). */
+  setPageLive(page: number, live: boolean): void;
   /** Hand the host's spell-check results to the squiggle overlay (the check
    *  itself runs in the host, debounced per transaction). */
   setSpellingIssues(issues: Array<{ from: number; to: number }>): void;
@@ -674,27 +678,65 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
    *  the look, and a range sweep across the atom paints a line box wider
    *  than the drawing — Word shows no text highlight under it. */
   const selectionPool: PoolEntry[] = [];
+  // Viewport virtualization (pushed by the stage): overlays — selection,
+  // search, squiggles — only materialize on live pages; the caret map stays
+  // document-wide. Before the first push every page counts as live (tests and
+  // hosts that never virtualize keep the old behavior).
+  const livePages = new Set<number>();
+  let liveKnown = false;
+  let liveGeneration = 0;
+  const isLive = (page: number): boolean => !liveKnown || livePages.has(page);
+  let selectionCache: {
+    key: string;
+    map: unknown;
+    liveGen: number;
+    rects: OverlayRect[];
+  } | null = null;
+  let searchCache: {
+    state: unknown;
+    map: unknown;
+    liveGen: number;
+    rects: OverlayRect[];
+  } | null = null;
+  let overlayRaf = 0;
+
   const placeSelection = (): void => {
     const s = active();
+    const sel = s.editor.state.selection;
+    const key = `${sel.from}:${sel.to}:${
+      sel instanceof CellSelection ? "c" : sel instanceof NodeSelection ? "n" : "t"
+    }`;
+    if (
+      selectionCache &&
+      selectionCache.key === key &&
+      selectionCache.map === s.map &&
+      selectionCache.liveGen === liveGeneration
+    ) {
+      pooledPlace(selectionPool, selectionCache.rects, { zIndex: "4" });
+      return;
+    }
     const rects: OverlayRect[] = [];
     if (mapFresh(s)) {
-      const sel = s.editor.state.selection;
       const spans =
         sel instanceof CellSelection
           ? s.map.cellSelectionRects(sel)
           : sel instanceof NodeSelection || sel.from === sel.to
             ? []
             : s.map.selectionRects(sel.from, sel.to);
-      for (const r of spans)
+      for (const r of spans) {
+        const page = framePage(s, r.page);
+        if (!isLive(page)) continue;
         rects.push({
-          page: framePage(s, r.page),
+          page,
           x: r.xPx,
           y: r.yPx,
           width: r.widthPx,
           height: r.heightPx,
           background: "rgba(0,120,215,.25)",
         });
+      }
     }
+    selectionCache = { key, map: s.map, liveGen: liveGeneration, rects };
     pooledPlace(selectionPool, rects, { zIndex: "4" });
   };
 
@@ -708,23 +750,37 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
   const searchPool: PoolEntry[] = [];
   const placeSearch = (): void => {
     const s = active();
+    const state = s.editor.state;
+    if (
+      searchCache &&
+      searchCache.state === state &&
+      searchCache.map === s.map &&
+      searchCache.liveGen === liveGeneration
+    ) {
+      pooledPlace(searchPool, searchCache.rects, { zIndex: "3" });
+      return;
+    }
     const rects: OverlayRect[] = [];
     if (mapFresh(s)) {
-      const sel = s.editor.state.selection;
-      for (const deco of getMatchHighlights(s.editor.state).find()) {
+      const sel = state.selection;
+      for (const deco of getMatchHighlights(state).find()) {
         const { from, to } = deco as { from: number; to: number };
         const activeMatch = from <= sel.to && sel.from <= to;
-        for (const r of s.map.selectionRects(from, to))
+        for (const r of s.map.selectionRects(from, to)) {
+          const page = framePage(s, r.page);
+          if (!isLive(page)) continue;
           rects.push({
-            page: framePage(s, r.page),
+            page,
             x: r.xPx,
             y: r.yPx,
             width: r.widthPx,
             height: r.heightPx,
             background: activeMatch ? "rgba(255,141,35,.7)" : "rgba(255,213,79,.45)",
           });
+        }
       }
     }
+    searchCache = { state, map: s.map, liveGen: liveGeneration, rects };
     pooledPlace(searchPool, rects, { zIndex: "3" });
   };
 
@@ -747,6 +803,21 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
     "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='6' height='3'%3E" +
     "%3Cpath d='M0 2.5 L1.5 0.5 L3 2.5 L4.5 0.5 L6 2.5' fill='none' stroke='%230078d4'/%3E%3C/svg%3E\")";
   let grammarIssues: Array<{ from: number; to: number }> = [];
+  /** Placed-rect caches: the placement functions run on every caret move
+   *  (selectionUpdate + each render), while their inputs — the issue lists,
+   *  the caret map, and the live-page set — change far less often. */
+  let spellingCache: {
+    issues: unknown;
+    map: unknown;
+    liveGen: number;
+    rects: OverlayRect[];
+  } | null = null;
+  let grammarCache: {
+    issues: unknown;
+    map: unknown;
+    liveGen: number;
+    rects: OverlayRect[];
+  } | null = null;
 
   /** `r` minus every hole it meets — axis-aligned leftovers only (a 3px-tall
    *  squiggle cut by a float box keeps its left/right strips; a fully
@@ -783,9 +854,25 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
 
   const placeSpelling = (): void => {
     const s = active();
+    if (
+      spellingCache &&
+      spellingCache.issues === spellingIssues &&
+      spellingCache.map === s.map &&
+      spellingCache.liveGen === liveGeneration
+    ) {
+      pooledPlace(spellingPool, spellingCache.rects, { zIndex: "2" });
+      return;
+    }
     const rects: OverlayRect[] = [];
     if (mapFresh(s)) {
       for (const issue of spellingIssues) {
+        // Cull before the rect walk: selectionRects scans every paragraph,
+        // and a full-document issue list against a viewport-virtualized stage
+        // must not pay that per squiggle (the big-document cliff).
+        if (liveKnown) {
+          const probe = s.map.caretRect(issue.from);
+          if (!probe || !isLive(framePage(s, probe.page))) continue;
+        }
         for (const r of s.map.selectionRects(issue.from, issue.to)) {
           const wave = { x: r.xPx, y: r.yPx + r.heightPx - 3, width: r.widthPx, height: 3 };
           const holes = opts.frontFloats?.(r.page) ?? [];
@@ -801,14 +888,28 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
         }
       }
     }
+    spellingCache = { issues: spellingIssues, map: s.map, liveGen: liveGeneration, rects };
     pooledPlace(spellingPool, rects, { zIndex: "2" });
   };
 
   const placeGrammar = (): void => {
     const s = active();
+    if (
+      grammarCache &&
+      grammarCache.issues === grammarIssues &&
+      grammarCache.map === s.map &&
+      grammarCache.liveGen === liveGeneration
+    ) {
+      pooledPlace(grammarPool, grammarCache.rects, { zIndex: "2" });
+      return;
+    }
     const rects: OverlayRect[] = [];
     if (mapFresh(s)) {
       for (const issue of grammarIssues) {
+        if (liveKnown) {
+          const probe = s.map.caretRect(issue.from);
+          if (!probe || !isLive(framePage(s, probe.page))) continue;
+        }
         for (const r of s.map.selectionRects(issue.from, issue.to)) {
           const wave = { x: r.xPx, y: r.yPx + r.heightPx - 3, width: r.widthPx, height: 3 };
           const holes = opts.frontFloats?.(r.page) ?? [];
@@ -824,7 +925,34 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
         }
       }
     }
+    grammarCache = { issues: grammarIssues, map: s.map, liveGen: liveGeneration, rects };
     pooledPlace(grammarPool, rects, { zIndex: "2" });
+  };
+
+  /** Scroll/zoom brought new pages live: re-place the pooled overlays on the
+   *  next frame (one pass however many IO records land). */
+  const scheduleOverlayRefresh = (): void => {
+    if (overlayRaf) return;
+    overlayRaf = requestAnimationFrame(() => {
+      overlayRaf = 0;
+      placeSelection();
+      placeSearch();
+      placeSpelling();
+      placeGrammar();
+    });
+  };
+
+  // The IME anchor's geometry: `.input-layer` is a fixed overlay while page
+  // frames scroll inside the area, so `frameRect - hostRect` only moves on
+  // scroll/resize/zoom — cache the pair and skip the forced reflow (a
+  // getBoundingClientRect after the render's DOM writes flushes the whole
+  // shadow tree, the most expensive read on the typing path).
+  let anchorHost: { left: number; top: number } | null = null;
+  let anchorFrame: { el: Element; left: number; top: number } | null = null;
+  let anchorScale = -1;
+  const invalidateAnchor = (): void => {
+    anchorHost = null;
+    anchorFrame = null;
   };
 
   const placeCaret = (): void => {
@@ -861,11 +989,20 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
     caret.style.top = `${rect.yPx * scale}px`;
     caret.style.height = `${rect.heightPx * scale}px`;
     // Keep the textarea anchored at the caret so the IME candidate window
-    // opens at the typing point.
-    const hostRect = opts.inputHost.getBoundingClientRect();
-    const frameRect = frame.getBoundingClientRect();
-    ta.style.left = `${frameRect.left - hostRect.left + rect.xPx * scale}px`;
-    ta.style.top = `${frameRect.top - hostRect.top + rect.yPx * scale}px`;
+    // opens at the typing point. Cached host/frame offsets: reads only land
+    // after scroll/resize/zoom or when the caret changes page frame.
+    if (!anchorHost || anchorScale !== scale) {
+      const hostRect = opts.inputHost.getBoundingClientRect();
+      anchorHost = { left: hostRect.left, top: hostRect.top };
+      anchorScale = scale;
+      anchorFrame = null;
+    }
+    if (!anchorFrame || anchorFrame.el !== frame) {
+      const frameRect = frame.getBoundingClientRect();
+      anchorFrame = { el: frame, left: frameRect.left, top: frameRect.top };
+    }
+    ta.style.left = `${anchorFrame.left - anchorHost.left + rect.xPx * scale}px`;
+    ta.style.top = `${anchorFrame.top - anchorHost.top + rect.yPx * scale}px`;
     if (from !== s.lastCaretPos) {
       s.lastCaretPos = from;
       restartBlink();
@@ -3331,6 +3468,12 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
   opts.inputHost.append(shapeLineEl);
   opts.inputHost.append(shapePresetEl);
 
+  // The IME anchor's cached rects die on scroll (the page frames move under
+  // the fixed input layer) and on resize (both rects move).
+  const anchorScroller = opts.inputHost.parentElement ?? opts.host.parentElement;
+  anchorScroller?.addEventListener("scroll", invalidateAnchor, { passive: true });
+  window.addEventListener("resize", invalidateAnchor);
+
   return {
     editor,
     updatePages(pages, pageOrigin): void {
@@ -3478,6 +3621,16 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
     focus(): void {
       ta.focus();
     },
+    setPageLive(page: number, live: boolean): void {
+      const had = livePages.has(page);
+      liveKnown = true;
+      if (live) livePages.add(page);
+      else livePages.delete(page);
+      if (had !== live) {
+        liveGeneration++;
+        scheduleOverlayRefresh();
+      }
+    },
     replaceOverlays(): void {
       // A re-render under an open crop layer orphans its geometry — the
       // drawing layer drops the mode and re-places its overlays (the drag
@@ -3498,7 +3651,10 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
     },
     destroy(): void {
       if (main.raf) cancelAnimationFrame(main.raf);
+      if (overlayRaf) cancelAnimationFrame(overlayRaf);
       blink?.cancel();
+      anchorScroller?.removeEventListener("scroll", invalidateAnchor);
+      window.removeEventListener("resize", invalidateAnchor);
       main.editor.off("selectionUpdate", placeCaret);
       story?.editor.destroy();
       story = null;
