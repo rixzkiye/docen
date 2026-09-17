@@ -30,6 +30,7 @@ import {
   parsePlainText,
   parseRTF,
   prepareDocument,
+  prepareEmbeddedFonts,
   resolveFontName,
   selectionSlicePayload,
   type HtmlGenerateOptions,
@@ -54,11 +55,13 @@ import {
   EMU_PER_PX,
   layoutFlowSections,
   layoutSectionsIncremental,
+  registerShapingFont,
   twipToPx,
   type FlowPage,
   type FlowPageInsets,
   type FlowSection,
 } from "@docen/layout";
+import { initShapingWasm } from "@docen/shaping";
 import { attr, customElement } from "@microsoft/fast-element";
 import { redoDepth, undoDepth } from "@tiptap/pm/history";
 import type { Mark, Node as PMNode } from "@tiptap/pm/model";
@@ -156,7 +159,7 @@ import { SectionCommands } from "./commands/sections";
 import { SpellingCommands } from "./commands/spelling";
 import { THEMES } from "./commands/themes";
 import type { StylesInspectorData, StylesPaneState } from "./components/styles-pane";
-import { extractPdfPageLayers, pagesToPdf } from "./export-pdf";
+import { extractPdfPageLayers, buildEmbeddedPdfFonts, pagesToPdf } from "./export-pdf";
 import type { NewStyleDefinition } from "./extensions/commands";
 import type { ModifyStylePatch, ParagraphDialogPatch } from "./extensions/commands";
 import {
@@ -610,6 +613,9 @@ class DocenDocument extends AddinHost<Editor> {
   }> = [];
   #currentLandmarkIdx = 0;
   #measurer = createMeasurer(browserFontMetrics);
+  /** Host-registered font bytes by family — used for shaping (when opted in)
+   *  and for PDF/DOCX font embedding. */
+  readonly #fonts = new Map<string, Uint8Array>();
   #pages: readonly FlowPage[] = [];
   /** Page index → section index (the caret's section and per-page geometry
    *  read through it). */
@@ -7368,10 +7374,18 @@ class DocenDocument extends AddinHost<Editor> {
       textSpans: pageLayers[i]?.textSpans,
       links: pageLayers[i]?.links,
     }));
+    const embeddedFonts =
+      this.#fonts.size > 0
+        ? buildEmbeddedPdfFonts(
+            pageLayers.flatMap((layer) => layer.textSpans),
+            [...this.#fonts.entries()].map(([family, fontData]) => ({ family, fontData })),
+          )
+        : [];
     const title = this.getAttribute("filename") ?? t("header.doc-name", this);
     const blob = await pagesToPdf(shotsWithLayers, {
       metadata: { title, author: "Docen" },
       tagged: true,
+      ...(embeddedFonts.length > 0 ? { embeddedFonts } : {}),
     });
     await this.#saveBlob(blob, SAVE_FORMATS.pdf, false);
   }
@@ -7676,10 +7690,37 @@ class DocenDocument extends AddinHost<Editor> {
   /** Serialize the current document to a DOCX buffer. `variant` selects the
    *  package kind (default: the open document's own — a .docm saves as a .docm,
    *  a .dotx as a .dotx) and stamps the main-part content type; macro parts
-   *  carried from the source stay in the package. */
+   *  carried from the source stay in the package.
+   *
+   *  Host-registered fonts are embedded (word/fontTable.xml + obfuscated
+   *  word/fonts/fontN.odttf parts) when their OS/2 fsType permits it — the
+   *  engine writes the parts/relationships. */
   async saveDOCX(variant: DocxVariant = this.#docxVariant): Promise<Uint8Array> {
-    const buffer = await generateDOCX(this.getJSON(), { variant });
+    const fonts =
+      this.#fonts.size > 0
+        ? prepareEmbeddedFonts(
+            [...this.#fonts.entries()].map(([family, fontData]) => ({ family, fontData })),
+          )
+        : [];
+    const buffer = await generateDOCX(this.getJSON(), {
+      variant,
+      ...(fonts.length > 0 ? { document: { fonts } } : {}),
+    });
     return buffer as unknown as Uint8Array;
+  }
+
+  /**
+   * Register font bytes for deterministic shaping and export embedding.
+   * Pass the family name the document styles reference (e.g. "Calibri").
+   * Shaping only uses the font when it is opted in (`setShapingEnabled(true)`
+   * or `DOCEN_SHAPING_ENABLED=1`); PDF/DOCX export embeds it whenever the
+   * font's `fsType` allows.
+   */
+  async registerFont(family: string, fontData: Uint8Array): Promise<void> {
+    this.#fonts.set(family.toLowerCase(), fontData);
+    await initShapingWasm();
+    registerShapingFont(family, fontData);
+    this.#measurer.clearCache();
   }
 
   /** Serialize the current document to a Markdown string. */
