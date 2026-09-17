@@ -73,12 +73,19 @@ export function projectParagraph(p: BodyParagraph, ctx: ProjectContext): LayoutP
   // color/underline/strikethrough reach runs that carry no rPr of their own,
   // exactly as bold/italic already did.
   const chainDefRun = runStyleOf({ ...docRPr, ...chainRPr });
+  // The document theme's font pair supplies the family for text with no
+  // explicit font (body → minor, heading styles → major). This is the minimal
+  // theme-font consumer; a full `w:rFonts w:*Theme` resolution against a
+  // parsed theme1.xml is the follow-up.
+  const themeFamily = styleId?.startsWith("Heading")
+    ? ctx.themeFonts?.majorFont
+    : ctx.themeFonts?.minorFont;
   // The style chain's character effects, resolved once into the paragraph's
   // default run style — a run with no own rPr inherits them per field (the
   // same cascade rule bold/italic already follow). w:caps wins over
   // w:smallCaps; an explicit false on either leaves no token.
   const defaultTextStyle: LayoutTextStyle = {
-    family: toFamily(null, defFont) ?? {},
+    family: toFamily(null, defFont) ?? themeFamily ?? {},
     sizePx: ptToPx(markSizePt),
     bold: chainDefRun.bold,
     italic: chainDefRun.italic,
@@ -327,7 +334,12 @@ export function projectParagraph(p: BodyParagraph, ctx: ProjectContext): LayoutP
   const frame = (pPr.framePr as Rec) ?? (pPr.frame as Rec);
   const dropCapVal = str((pPr.dropCap as Rec)?.val ?? pPr.dropCap ?? frame?.dropCap);
   const dropCapLines = num((pPr.dropCap as Rec)?.lines ?? frame?.lines) ?? 3;
-  const dropCapDist = num((pPr.dropCap as Rec)?.distance ?? frame?.space ?? frame?.hSpace);
+  // office-open parses w:hSpace/w:vSpace into frame.space.{horizontal,vertical};
+  // older/legacy mirrors may carry hSpace directly.
+  const frameSpace = isRecord(frame?.space) ? frame.space : undefined;
+  const dropCapDist = num(
+    (pPr.dropCap as Rec)?.distance ?? frameSpace?.horizontal ?? frame?.hSpace,
+  );
   const dropCap =
     dropCapVal === "drop" || dropCapVal === "dropped"
       ? {

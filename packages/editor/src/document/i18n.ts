@@ -1672,6 +1672,8 @@ export const ribbonEn: AdditionalLanguage = {
     "reveal.landscape": "Landscape",
     "reveal.paperSize": "Paper Size:",
     "reveal.compareToSelection": "Compare to another selection",
+    "reveal.comparedTo": "Compared to the reference selection",
+    "reveal.noDifferences": "No differences from the reference selection",
 
     // Protection alerts & placeholders
     "protect.passwordPlaceholder": "Password",
@@ -3333,6 +3335,8 @@ export const ribbonZhCN: AdditionalLanguage = {
     "reveal.landscape": "横向",
     "reveal.paperSize": "纸张大小:",
     "reveal.compareToSelection": "与另一所选内容进行比较",
+    "reveal.comparedTo": "与参照所选内容比较",
+    "reveal.noDifferences": "与参照所选内容无差异",
 
     // Protection alerts & placeholders
     "protect.passwordPlaceholder": "密码",

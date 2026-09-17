@@ -890,6 +890,15 @@ export class DocxManager {
           }
           break;
         }
+        case "mathInline": {
+          // Reverse of MathInline's parseDocxInline rule: the MathInput rides
+          // the `math` attr verbatim.
+          const math = node.attrs?.math;
+          if (math && typeof math === "object") {
+            children.push({ math } as Record<string, unknown> as ParagraphChild);
+          }
+          break;
+        }
         case "sdtInline": {
           // Content-control container (reverse of the sdt inline rule); the
           // control settings ride attrs verbatim.

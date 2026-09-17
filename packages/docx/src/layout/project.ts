@@ -133,6 +133,7 @@ export function projectDocumentOptions(
   showFieldCodes?: boolean,
   showHiddenText?: boolean,
   hyphenation?: { auto?: boolean; doNotHyphenateCaps?: boolean; zoneTw?: number; limit?: number },
+  themeFonts?: { majorFont?: string; minorFont?: string },
 ): {
   sections: ProjectedSection[];
   background?: ProjectedPageBackground;
@@ -158,6 +159,7 @@ export function projectDocumentOptions(
 
   const ctx: ProjectContext = {
     styles: doc.styles,
+    ...(themeFonts ? { themeFonts } : {}),
     characterStyles: indexCharacterStyles(doc.styles),
     numberings: indexNumberings(doc.numbering),
     listCounters: new Map(),

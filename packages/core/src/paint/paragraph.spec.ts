@@ -472,3 +472,34 @@ describe("paintParagraph character effects", () => {
     expect(rects[0].props.fill).toBe("#1b1b1b");
   });
 });
+
+describe("paintParagraph drop caps", () => {
+  it("paints the lifted cap glyph exactly once, never in the flow", () => {
+    const root = paint(
+      para({
+        dropCap: { type: "dropped", lines: 3, distancePx: 0 },
+        dropCapGlyph: { text: "O", style: { family: "serif", sizePx: 16 } },
+        lines: [line(0, 0, "nce upon")],
+      }),
+    );
+    const texts = nodesOf(root, "Text");
+    const labels = texts.map((t) => t.props.text);
+    expect(labels.filter((t) => t === "O")).toHaveLength(1);
+    expect(labels).toContain("nce upon");
+    expect(labels.join("")).not.toContain("Once");
+    const cap = texts.find((t) => t.props.text === "O")!;
+    // The cap is enlarged past the run's own size.
+    expect(Number(cap.props.fontSize)).toBeGreaterThan(16);
+  });
+
+  it("paints no cap when the layout lifted no glyph (no fallback duplication)", () => {
+    const root = paint(
+      para({
+        dropCap: { type: "dropped", lines: 3, distancePx: 0 },
+        lines: [line(0, 0, "Once upon")],
+      }),
+    );
+    const labels = nodesOf(root, "Text").map((t) => t.props.text);
+    expect(labels).toEqual(["Once upon"]);
+  });
+});

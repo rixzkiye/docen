@@ -81,7 +81,7 @@ export const PARAGRAPH_CHILD_DISPOSITIONS = {
   bookmark: { passthrough: "inlinePassthrough atom" },
   chart: { editable: "chart node (ChartSpaceOptions verbatim; data/type adjustments ride attrs)" },
   smartArt: { passthrough: "inlinePassthrough atom" },
-  math: { passthrough: "inlinePassthrough atom" },
+  math: { editable: "MathInline node (MathInput verbatim; linear label derived)" },
   symbolRun: { passthrough: "inlinePassthrough atom" },
   footnoteReference: { passthrough: "inlinePassthrough atom" },
   endnoteReference: { passthrough: "inlinePassthrough atom" },

@@ -9,6 +9,7 @@ import {
   docxExtensions,
   generateDOCXSync,
   parseDOCX,
+  parseDOCXSync,
   resolveDocument,
 } from "../index";
 
@@ -354,5 +355,38 @@ describe("docm macro-part round-trip", () => {
     expect(zip["word/vbaProject.bin"]).toEqual(VBA);
     const xml = new TextDecoder().decode(zip["[Content_Types].xml"]);
     expect(xml).toContain(MAIN_DOCUMENT_CONTENT_TYPES.docm);
+  });
+});
+
+describe("drop cap framePr round-trip", () => {
+  it("writes w:hSpace/w:vSpace and parses the distances back", () => {
+    const json = {
+      type: "doc",
+      content: [
+        {
+          type: "paragraph",
+          attrs: {
+            dropCap: { val: "drop", lines: 3, distance: 200, vDistance: 40 },
+          },
+          content: [{ type: "text", text: "Once upon a time" }],
+        },
+      ],
+    };
+    const bytes = generateDOCXSync(json as never);
+    const xml = new TextDecoder().decode(unzipSync(bytes)["word/document.xml"]);
+    expect(xml).toContain('w:dropCap="drop"');
+    expect(xml).toContain('w:lines="3"');
+    expect(xml).toContain('w:hSpace="200"');
+    expect(xml).toContain('w:vSpace="40"');
+
+    const reparsed = parseDOCXSync(bytes) as never as {
+      content: Array<{ attrs?: Record<string, unknown> }>;
+    };
+    expect(reparsed.content[0]?.attrs?.dropCap).toEqual({
+      val: "drop",
+      lines: 3,
+      distance: 200,
+      vDistance: 40,
+    });
   });
 });

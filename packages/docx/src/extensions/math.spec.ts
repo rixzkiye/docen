@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { MathInline, convertLinearToOMML, convertOMMLToLinear } from "./math";
+import { MathInline, convertLinearToOMML, convertOMMLToLinear, parseDocxInline } from "./math";
 
 describe("Math extension and conversion", () => {
   it("converts fraction between linear and OMML format", () => {
@@ -60,5 +60,19 @@ describe("Math extension and conversion", () => {
     const attrs = (MathInline as any).config.addAttributes();
     expect(attrs).toHaveProperty("math");
     expect(attrs).toHaveProperty("linear");
+  });
+
+  it("claims the DOCX math branch but not the run-level math flag", () => {
+    const branch = { math: { fraction: { numerator: ["a"], denominator: ["b"] } } };
+    expect(parseDocxInline.match(branch as never, {} as never)).toBe(true);
+    // A plain run carrying the rPr `math: true` flag is not the branch.
+    expect(parseDocxInline.match({ math: true } as never, {} as never)).toBe(false);
+    expect(parseDocxInline.convert(branch as never, {} as never)).toEqual({
+      type: "mathInline",
+      attrs: {
+        math: { fraction: { numerator: ["a"], denominator: ["b"] } },
+        linear: "\\frac{a}{b}",
+      },
+    });
   });
 });

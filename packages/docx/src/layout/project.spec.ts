@@ -2239,3 +2239,66 @@ describe("projectDocumentOptions character effects", () => {
     expect(on[1]).toMatchObject({ style: { hidden: true } });
   });
 });
+
+describe("projectDocumentOptions theme fonts", () => {
+  const themeDoc: DocumentOptions = {
+    styles: { paragraphStyles: [{ id: "Normal", default: true }] },
+    sections: [
+      {
+        children: [
+          { paragraph: { text: "body" } },
+          { paragraph: { style: "Heading1", text: "head" } },
+        ],
+      },
+    ],
+  };
+  const THEME = { majorFont: "Aptos Display", minorFont: "Aptos" };
+  const familyOf = (block: unknown): unknown => {
+    const inline = (block as { inline?: Array<{ style?: { family?: unknown } }> }).inline;
+    const family = inline?.[0]?.style?.family;
+    if (typeof family !== "object" || family === null) return family;
+    const slots = family as { latin?: string; ascii?: string; eastAsia?: string };
+    return slots.latin ?? slots.ascii ?? slots.eastAsia;
+  };
+
+  it("falls back to the theme minor font for body text and major for headings", () => {
+    const { sections } = projectDocumentOptions(
+      themeDoc,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      THEME,
+    );
+    expect(familyOf(sections[0]!.blocks[0])).toBe("Aptos");
+    expect(familyOf(sections[0]!.blocks[1])).toBe("Aptos Display");
+  });
+
+  it("keeps an explicit run font over the theme fallback", () => {
+    const doc: DocumentOptions = {
+      ...themeDoc,
+      sections: [
+        {
+          children: [{ paragraph: { children: [{ text: "x", font: { ascii: "Calibri" } }] } }],
+        },
+      ],
+    };
+    const { sections } = projectDocumentOptions(
+      doc,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      THEME,
+    );
+    expect(familyOf(sections[0]!.blocks[0])).toBe("Calibri");
+  });
+
+  it("adds no fallback when no theme fonts are given", () => {
+    const { sections } = projectDocumentOptions(themeDoc);
+    const family = familyOf(sections[0]!.blocks[0]);
+    expect(family == null || (typeof family === "object" && Object.keys(family).length === 0)).toBe(
+      true,
+    );
+  });
+});

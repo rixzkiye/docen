@@ -23,6 +23,12 @@ export interface MarkupDisplay {
 /** Per-document projection context, resolved once and threaded down. */
 export interface ProjectContext {
   styles: StylesOptions | undefined;
+  /** The active document theme's font pair (documentExtras.settings.theme →
+   *  the editor's theme gallery). Runs with NO explicit font fall back to
+   *  minorFont (body) / majorFont (heading styles). This is the minimal
+   *  theme-font consumer: full `w:rFonts w:*Theme` resolution against a parsed
+   *  `theme1.xml` (per-run major/minor/asymmetric slots) is the follow-up. */
+  themeFonts?: { majorFont?: string; minorFont?: string };
   /** id → character style (w:style type="character") — a run's w:rStyle
    *  resolves its run props here (e.g. "Hyperlink" supplies the blue underline
    *  Word paints body links with, while a TOC entry's un-styled hyperlink
