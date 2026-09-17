@@ -24,6 +24,12 @@ import { DocAttrStep } from "@tiptap/pm/transform";
 import { freshChildEmu, memberEmuOf, unionBox, type Box } from "../../drawing";
 import { autotextMatch, blocksOfDocAttrs, type BuildingBlock } from "../building-blocks";
 import { CellSelection, cellsInRect } from "../canvas/cell-selection";
+import {
+  demoteHeadingAtCaret,
+  moveBlockDown,
+  moveBlockUp,
+  promoteHeadingAtCaret,
+} from "../commands/outline";
 
 /**
  * Document editor commands (Office.js-style "add-in commands") as native
@@ -64,6 +70,11 @@ declare module "@tiptap/core" {
       highlight: (value?: string) => ReturnType;
       code: () => ReturnType;
       "clear-format": () => ReturnType;
+      "copy-format": () => ReturnType;
+      "paste-format": () => ReturnType;
+      "underline-words": () => ReturnType;
+      "underline-double": () => ReturnType;
+      "small-caps": () => ReturnType;
       "font-name": (font?: string) => ReturnType;
       "font-size": (size?: string) => ReturnType;
       "grow-font": () => ReturnType;
@@ -76,6 +87,17 @@ declare module "@tiptap/core" {
       "justify-distribute": () => ReturnType;
       "indent-increase": () => ReturnType;
       "indent-decrease": () => ReturnType;
+      "hanging-indent-increase": () => ReturnType;
+      "hanging-indent-decrease": () => ReturnType;
+      "clear-paragraph-format": () => ReturnType;
+      "promote-heading": () => ReturnType;
+      "demote-heading": () => ReturnType;
+      "move-block-up": () => ReturnType;
+      "move-block-down": () => ReturnType;
+      "font-dialog": () => ReturnType;
+      "show-marks": () => ReturnType;
+      "new-comment": () => ReturnType;
+      "insert-footnote": (type?: string) => ReturnType;
       "direction-ltr": () => ReturnType;
       "direction-rtl": () => ReturnType;
       "set-paragraph-direction": (direction: "ltr" | "rtl") => ReturnType;
@@ -230,6 +252,11 @@ export const WIRED_DISPATCH: ReadonlySet<string> = new Set([
   "highlight",
   "code",
   "clear-format",
+  "copy-format",
+  "paste-format",
+  "underline-words",
+  "underline-double",
+  "small-caps",
   "font-name",
   "font-size",
   "grow-font",
@@ -241,6 +268,17 @@ export const WIRED_DISPATCH: ReadonlySet<string> = new Set([
   "justify-distribute",
   "indent-increase",
   "indent-decrease",
+  "hanging-indent-increase",
+  "hanging-indent-decrease",
+  "clear-paragraph-format",
+  "promote-heading",
+  "demote-heading",
+  "move-block-up",
+  "move-block-down",
+  "font-dialog",
+  "show-marks",
+  "new-comment",
+  "insert-footnote",
   "direction-ltr",
   "direction-rtl",
   "set-paragraph-direction",
@@ -2237,6 +2275,17 @@ function stampTableBorders(
  *  (。！？) honoured alongside ASCII .!?. */
 function transformCase(text: string, mode?: string): string {
   switch (mode) {
+    case "cycle": {
+      const hasUpper = /\p{Lu}/u.test(text);
+      const hasLower = /\p{Ll}/u.test(text);
+      if (hasUpper && !hasLower) {
+        return text.toLowerCase();
+      }
+      if (!hasUpper && hasLower) {
+        return text.replace(/\p{L}[\p{L}'-]*/gu, (w) => w.charAt(0).toUpperCase() + w.slice(1));
+      }
+      return text.toUpperCase();
+    }
     case "lower":
       return text.toLowerCase();
     case "upper":
@@ -2270,6 +2319,11 @@ function blockSliceOf(schema: Schema, block: BuildingBlock): Slice | null {
   }
 }
 
+let copiedFormatting: {
+  marks: readonly Mark[];
+  paraAttrs?: Record<string, unknown>;
+} | null = null;
+
 export const DocumentCommands = Extension.create({
   name: "documentCommands",
   addCommands() {
@@ -2287,6 +2341,93 @@ export const DocumentCommands = Extension.create({
         () =>
         ({ commands }) =>
           commands.toggleMark("underline"),
+      "underline-words":
+        () =>
+        ({ state, commands }) => {
+          let currentStyle: string | undefined;
+          state.doc.nodesBetween(state.selection.from, state.selection.to, (node) => {
+            const m = node.marks.find((mk) => mk.type.name === "underline");
+            if (m) currentStyle = (m.attrs.style as string) || "single";
+            return currentStyle === undefined;
+          });
+          if (currentStyle === "words") {
+            return commands.unsetMark("underline");
+          }
+          return commands.setMark("underline", { style: "words" });
+        },
+      "underline-double":
+        () =>
+        ({ state, commands }) => {
+          let currentStyle: string | undefined;
+          state.doc.nodesBetween(state.selection.from, state.selection.to, (node) => {
+            const m = node.marks.find((mk) => mk.type.name === "underline");
+            if (m) currentStyle = (m.attrs.style as string) || "single";
+            return currentStyle === undefined;
+          });
+          if (currentStyle === "double") {
+            return commands.unsetMark("underline");
+          }
+          return commands.setMark("underline", { style: "double" });
+        },
+      "small-caps":
+        () =>
+        ({ state, commands }) => {
+          let current: boolean | undefined;
+          state.doc.nodesBetween(state.selection.from, state.selection.to, (node) => {
+            const m = node.marks.find((mk) => mk.type.name === "textStyle");
+            if (m?.attrs.smallCaps !== undefined) current = Boolean(m.attrs.smallCaps);
+            return current === undefined;
+          });
+          const next = !current;
+          return commands.setMark("textStyle", { smallCaps: next ? true : null });
+        },
+      "copy-format":
+        () =>
+        ({ state }) => {
+          const { from, empty } = state.selection;
+          const $pos = state.doc.resolve(empty ? from : from + 1);
+          const marks = $pos.marks();
+          const $from = state.selection.$from;
+          let paraAttrs: Record<string, unknown> | undefined;
+          if ($from.parent.type.name === "paragraph") {
+            paraAttrs = { ...($from.parent.attrs as Record<string, unknown>) };
+            delete paraAttrs.sectionProperties;
+            delete paraAttrs.sectionHeaders;
+            delete paraAttrs.sectionFooters;
+          }
+          copiedFormatting = { marks, paraAttrs };
+          return true;
+        },
+      "paste-format":
+        () =>
+        ({ state, tr }) => {
+          if (!copiedFormatting) return false;
+          const { marks, paraAttrs } = copiedFormatting;
+          const { from, to, empty } = state.selection;
+          if (empty) {
+            tr.setStoredMarks(marks as Mark[]);
+          } else {
+            tr.removeMark(from, to, null);
+            for (const m of marks) {
+              tr.addMark(from, to, m);
+            }
+          }
+          if (paraAttrs) {
+            for (const { pos, node } of selectedParagraphs(state)) {
+              const current = node.attrs as Record<string, unknown>;
+              tr.setNodeMarkup(pos, undefined, {
+                ...current,
+                alignment: paraAttrs.alignment ?? current.alignment,
+                indent: paraAttrs.indent ? { ...(paraAttrs.indent as object) } : current.indent,
+                spacing: paraAttrs.spacing ? { ...(paraAttrs.spacing as object) } : current.spacing,
+                bullet: paraAttrs.bullet !== undefined ? paraAttrs.bullet : current.bullet,
+                numbering:
+                  paraAttrs.numbering !== undefined ? paraAttrs.numbering : current.numbering,
+              });
+            }
+          }
+          return true;
+        },
       // The underline split's style pick: "none" clears, a token applies the
       // pattern — merging over the current mark so the color survives. The
       // current mark comes from any run in the selection ($from.marks() is
@@ -2426,6 +2567,155 @@ export const DocumentCommands = Extension.create({
           }
           return touched;
         },
+      "hanging-indent-increase":
+        () =>
+        ({ state, tr }) => {
+          let touched = false;
+          for (const { pos, node } of selectedParagraphs(state)) {
+            const attrs = node.attrs as Record<string, unknown>;
+            const current = (attrs.indent ?? {}) as {
+              left?: number;
+              hanging?: number;
+              firstLine?: number;
+            };
+            const left = (current.left ?? 0) + INDENT_STEP_TWIPS;
+            const hanging = (current.hanging ?? 0) + INDENT_STEP_TWIPS;
+            tr.setNodeMarkup(pos, undefined, {
+              ...attrs,
+              indent: { ...current, left, hanging, firstLine: undefined },
+            });
+            touched = true;
+          }
+          return touched;
+        },
+      "hanging-indent-decrease":
+        () =>
+        ({ state, tr }) => {
+          let touched = false;
+          for (const { pos, node } of selectedParagraphs(state)) {
+            const attrs = node.attrs as Record<string, unknown>;
+            const current = (attrs.indent ?? {}) as {
+              left?: number;
+              hanging?: number;
+              firstLine?: number;
+            };
+            const left = Math.max(0, (current.left ?? 0) - INDENT_STEP_TWIPS);
+            const rawHanging = (current.hanging ?? 0) - INDENT_STEP_TWIPS;
+            const hanging = rawHanging > 0 ? rawHanging : undefined;
+            tr.setNodeMarkup(pos, undefined, {
+              ...attrs,
+              indent: { ...current, left, hanging, firstLine: undefined },
+            });
+            touched = true;
+          }
+          return touched;
+        },
+      "clear-paragraph-format":
+        () =>
+        ({ state, tr }) => {
+          const blocks = selectedParagraphs(state);
+          if (!blocks.length) return false;
+          for (const { pos, node } of blocks) {
+            const attrs = node.attrs as Record<string, unknown>;
+            tr.setNodeMarkup(pos, undefined, {
+              ...attrs,
+              alignment: null,
+              indent: null,
+              spacing: null,
+              shading: null,
+              border: null,
+            });
+          }
+          return true;
+        },
+      "promote-heading":
+        () =>
+        ({ editor, tr }) =>
+          promoteHeadingAtCaret(editor, tr),
+      "demote-heading":
+        () =>
+        ({ editor, tr }) =>
+          demoteHeadingAtCaret(editor, tr),
+      "move-block-up":
+        () =>
+        ({ editor, tr }) =>
+          moveBlockUp(editor, tr),
+      "move-block-down":
+        () =>
+        ({ editor, tr }) =>
+          moveBlockDown(editor, tr),
+      "font-dialog":
+        () =>
+        ({ editor }) => {
+          const hostEl =
+            (editor.options.element as HTMLElement | null)?.closest?.("docen-document") ??
+            (typeof document !== "undefined" ? document.querySelector("docen-document") : null);
+          if (hostEl) {
+            hostEl.dispatchEvent(
+              new CustomEvent("command", {
+                bubbles: true,
+                composed: true,
+                detail: { event: "font-dialog" },
+              }),
+            );
+            return true;
+          }
+          return false;
+        },
+      "show-marks":
+        () =>
+        ({ editor }) => {
+          const hostEl =
+            (editor.options.element as HTMLElement | null)?.closest?.("docen-document") ??
+            (typeof document !== "undefined" ? document.querySelector("docen-document") : null);
+          if (hostEl) {
+            hostEl.dispatchEvent(
+              new CustomEvent("command", {
+                bubbles: true,
+                composed: true,
+                detail: { event: "show-marks" },
+              }),
+            );
+            return true;
+          }
+          return false;
+        },
+      "new-comment":
+        () =>
+        ({ editor }) => {
+          const hostEl =
+            (editor.options.element as HTMLElement | null)?.closest?.("docen-document") ??
+            (typeof document !== "undefined" ? document.querySelector("docen-document") : null);
+          if (hostEl) {
+            hostEl.dispatchEvent(
+              new CustomEvent("command", {
+                bubbles: true,
+                composed: true,
+                detail: { event: "new-comment" },
+              }),
+            );
+            return true;
+          }
+          return false;
+        },
+      "insert-footnote":
+        (type) =>
+        ({ editor }) => {
+          const hostEl =
+            (editor.options.element as HTMLElement | null)?.closest?.("docen-document") ??
+            (typeof document !== "undefined" ? document.querySelector("docen-document") : null);
+          if (hostEl) {
+            hostEl.dispatchEvent(
+              new CustomEvent("command", {
+                bubbles: true,
+                composed: true,
+                detail: { event: "insert-footnote", value: type },
+              }),
+            );
+            return true;
+          }
+          return false;
+        },
       "direction-ltr":
         () =>
         ({ state, tr }) =>
@@ -2448,6 +2738,18 @@ export const DocumentCommands = Extension.create({
         ({ state, tr }) => {
           const blocks = selectedParagraphs(state);
           if (!blocks.length) return false;
+          if (mult === "toggle-before") {
+            for (const { pos, node } of blocks) {
+              const attrs = node.attrs as Record<string, unknown>;
+              const current = (attrs.spacing ?? {}) as Record<string, unknown>;
+              const hasBefore = Boolean(current.before && Number(current.before) > 0);
+              tr.setNodeMarkup(pos, undefined, {
+                ...attrs,
+                spacing: { ...current, before: hasBefore ? null : 240 },
+              });
+            }
+            return true;
+          }
           if (mult === "add-before" || mult === "add-after") {
             const key = mult === "add-before" ? "before" : "after";
             for (const { pos, node } of blocks) {
@@ -3830,18 +4132,33 @@ export const DocumentCommands = Extension.create({
       "change-case":
         (mode) =>
         ({ state, chain }) => {
-          const { from, to, empty } = state.selection;
-          if (empty) return false;
+          let { from, to, empty } = state.selection;
+          if (empty) {
+            const $from = state.selection.$from;
+            const textBefore = $from.parent.textBetween(0, $from.parentOffset);
+            const textAfter = $from.parent.textBetween(
+              $from.parentOffset,
+              $from.parent.content.size,
+            );
+            const matchBefore = /[\p{L}\p{N}'-]+$/u.exec(textBefore);
+            const matchAfter = /^[\p{L}\p{N}'-]+/u.exec(textAfter);
+            if (!matchBefore && !matchAfter) return false;
+            const wordStart = from - (matchBefore ? matchBefore[0].length : 0);
+            const wordEnd = to + (matchAfter ? matchAfter[0].length : 0);
+            from = wordStart;
+            to = wordEnd;
+          }
           const text = state.doc.textBetween(from, to, "");
           if (!text) return false;
           const out = transformCase(text, mode);
           if (out === text) return false;
-          const marks = state.selection.$from.marks();
+          const marks = state.doc.resolve(from).marks();
           return chain()
             .command(({ tr }) => {
               tr.replaceWith(from, to, state.schema.text(out, marks));
               return true;
             })
+            .setTextSelection({ from, to: from + out.length })
             .run();
         },
       // Sort the sibling blocks covered by the selection in ascending text

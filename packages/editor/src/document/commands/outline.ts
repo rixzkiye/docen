@@ -1,4 +1,5 @@
 import type { Editor } from "@docen/docx/core";
+import type { Transaction } from "@tiptap/pm/state";
 
 import type { OutlineItem } from "../components/outline";
 
@@ -32,22 +33,29 @@ export function filterOutlineByLevel(
  * Promote the heading under caret (Word's Promote / Alt+Shift+Left):
  * Decreases the heading level (e.g. Heading 3 → Heading 2, Heading 2 → Heading 1).
  */
-export function promoteHeadingAtCaret(editor: Editor): boolean {
-  const { $from } = editor.state.selection;
+export function promoteHeadingAtCaret(editor: Editor, customTr?: Transaction): boolean {
+  const tr = customTr ?? editor.state.tr;
+  const { $from } = tr.selection;
   for (let d = $from.depth; d > 0; d--) {
     const node = $from.node(d);
     if (node.type.name === "paragraph" || node.type.name === "heading") {
-      const style = String((node.attrs as { style?: string })?.style ?? "");
-      const match = /^Heading([1-9])$/.exec(style);
+      const current = String(
+        (node.attrs as { heading?: string; style?: string })?.heading ??
+          (node.attrs as { heading?: string; style?: string })?.style ??
+          "",
+      );
+      const match = /^Heading([1-9])$/.exec(current);
       if (match) {
         const lvl = parseInt(match[1]!, 10);
+        const nextHeading = lvl > 1 ? `Heading${lvl - 1}` : null;
         const nextStyle = lvl > 1 ? `Heading${lvl - 1}` : "Normal";
         const pos = $from.before(d);
-        const tr = editor.state.tr.setNodeMarkup(pos, undefined, {
+        tr.setNodeMarkup(pos, undefined, {
           ...node.attrs,
+          heading: nextHeading,
           style: nextStyle,
         });
-        editor.view.dispatch(tr);
+        if (!customTr) editor.view.dispatch(tr);
         return true;
       }
     }
@@ -59,22 +67,28 @@ export function promoteHeadingAtCaret(editor: Editor): boolean {
  * Demote the heading under caret (Word's Demote / Alt+Shift+Right):
  * Increases the heading level (e.g. Normal → Heading 1, Heading 1 → Heading 2, Heading 8 → Heading 9).
  */
-export function demoteHeadingAtCaret(editor: Editor): boolean {
-  const { $from } = editor.state.selection;
+export function demoteHeadingAtCaret(editor: Editor, customTr?: Transaction): boolean {
+  const tr = customTr ?? editor.state.tr;
+  const { $from } = tr.selection;
   for (let d = $from.depth; d > 0; d--) {
     const node = $from.node(d);
     if (node.type.name === "paragraph" || node.type.name === "heading") {
-      const style = String((node.attrs as { style?: string })?.style ?? "");
-      const match = /^Heading([1-9])$/.exec(style);
+      const current = String(
+        (node.attrs as { heading?: string; style?: string })?.heading ??
+          (node.attrs as { heading?: string; style?: string })?.style ??
+          "",
+      );
+      const match = /^Heading([1-9])$/.exec(current);
       const lvl = match ? parseInt(match[1]!, 10) : 0;
       if (lvl < 9) {
-        const nextStyle = `Heading${lvl + 1}`;
+        const nextHeading = `Heading${lvl + 1}`;
         const pos = $from.before(d);
-        const tr = editor.state.tr.setNodeMarkup(pos, undefined, {
+        tr.setNodeMarkup(pos, undefined, {
           ...node.attrs,
-          style: nextStyle,
+          heading: nextHeading,
+          style: nextHeading,
         });
-        editor.view.dispatch(tr);
+        if (!customTr) editor.view.dispatch(tr);
         return true;
       }
     }
@@ -86,12 +100,13 @@ export function demoteHeadingAtCaret(editor: Editor): boolean {
  * Move the current block up (Word's Alt+Shift+Up):
  * Swaps the current block with its previous sibling.
  */
-export function moveBlockUp(editor: Editor): boolean {
-  const { $from } = editor.state.selection;
+export function moveBlockUp(editor: Editor, customTr?: Transaction): boolean {
+  const tr = customTr ?? editor.state.tr;
+  const { $from } = tr.selection;
   const index = $from.index(0);
   if (index <= 0) return false;
 
-  const doc = editor.state.doc;
+  const doc = tr.doc;
   const prevNode = doc.child(index - 1);
   const currentNode = doc.child(index);
 
@@ -101,10 +116,9 @@ export function moveBlockUp(editor: Editor): boolean {
   }
   const curPos = prevPos + prevNode.nodeSize;
 
-  const tr = editor.state.tr;
   tr.delete(curPos, curPos + currentNode.nodeSize);
   tr.insert(prevPos, currentNode);
-  editor.view.dispatch(tr);
+  if (!customTr) editor.view.dispatch(tr);
   return true;
 }
 
@@ -112,10 +126,11 @@ export function moveBlockUp(editor: Editor): boolean {
  * Move the current block down (Word's Alt+Shift+Down):
  * Swaps the current block with its next sibling.
  */
-export function moveBlockDown(editor: Editor): boolean {
-  const { $from } = editor.state.selection;
+export function moveBlockDown(editor: Editor, customTr?: Transaction): boolean {
+  const tr = customTr ?? editor.state.tr;
+  const { $from } = tr.selection;
   const index = $from.index(0);
-  const doc = editor.state.doc;
+  const doc = tr.doc;
   if (index >= doc.childCount - 1) return false;
 
   const currentNode = doc.child(index);
@@ -127,10 +142,9 @@ export function moveBlockDown(editor: Editor): boolean {
   }
   const nextPos = curPos + currentNode.nodeSize;
 
-  const tr = editor.state.tr;
   tr.delete(nextPos, nextPos + nextNode.nodeSize);
   tr.insert(curPos, nextNode);
-  editor.view.dispatch(tr);
+  if (!customTr) editor.view.dispatch(tr);
   return true;
 }
 

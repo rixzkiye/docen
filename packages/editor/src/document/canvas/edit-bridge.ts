@@ -109,9 +109,8 @@ function wordUnitsForward(text: string, offset: number): number {
   const end = text.length;
   let i = offset;
   while (i < end && /\s/.test(text[i]!)) i++;
-  const wordStart = i;
   while (i < end && !/\s/.test(text[i]!)) i++;
-  return i - wordStart;
+  return i - offset;
 }
 
 /** A furniture edit story — the header/footer editing mode. One story at a
@@ -2836,6 +2835,129 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
     return { pos: $cell.pos, isLastInTable: dir > 0 && targetIdx >= cells.length };
   };
 
+  /** Finds the doc position of the first cell in the current table row (Word: Alt+Home). */
+  const firstCellInRowPos = (state: Editor["state"]): number | null => {
+    const $from = state.selection.$from;
+    const $cell = cellAt($from);
+    if (!$cell) return null;
+    const rowStart = $cell.before($cell.depth);
+    return TextSelection.near(state.doc.resolve(rowStart + 2)).from;
+  };
+
+  /** Finds the doc position of the last cell in the current table row (Word: Alt+End). */
+  const lastCellInRowPos = (state: Editor["state"]): number | null => {
+    const $from = state.selection.$from;
+    const $cell = cellAt($from);
+    if (!$cell) return null;
+    const rowStart = $cell.before($cell.depth);
+    const row = $cell.node($cell.depth);
+    let cellPos = rowStart + 1;
+    for (let i = 0; i < row.childCount - 1; i++) {
+      cellPos += row.child(i).nodeSize;
+    }
+    return TextSelection.near(state.doc.resolve(cellPos + 2)).from;
+  };
+
+  /** Finds the doc position of the first cell in the current table column (Word: Alt+PageUp). */
+  const firstCellInColPos = (state: Editor["state"]): number | null => {
+    const $from = state.selection.$from;
+    const $cell = cellAt($from);
+    if (!$cell) return null;
+    const table = $cell.node($cell.depth - 1);
+    const tableStart = $cell.before($cell.depth - 1);
+    const rowNode = $cell.node($cell.depth);
+    let colIndex = 0;
+    let cellPos = $cell.before($cell.depth) + 1;
+    for (let c = 0; c < rowNode.childCount; c++) {
+      if (cellPos === $cell.pos) {
+        colIndex = c;
+        break;
+      }
+      cellPos += rowNode.child(c).nodeSize;
+    }
+    const firstRow = table.child(0);
+    const targetCol = Math.min(colIndex, firstRow.childCount - 1);
+    let targetPos = tableStart + 2;
+    for (let c = 0; c < targetCol; c++) {
+      targetPos += firstRow.child(c).nodeSize;
+    }
+    return TextSelection.near(state.doc.resolve(targetPos + 1)).from;
+  };
+
+  /** Finds the doc position of the last cell in the current table column (Word: Alt+PageDown). */
+  const lastCellInColPos = (state: Editor["state"]): number | null => {
+    const $from = state.selection.$from;
+    const $cell = cellAt($from);
+    if (!$cell) return null;
+    const table = $cell.node($cell.depth - 1);
+    const tableStart = $cell.before($cell.depth - 1);
+    const rowNode = $cell.node($cell.depth);
+    let colIndex = 0;
+    let cellPos = $cell.before($cell.depth) + 1;
+    for (let c = 0; c < rowNode.childCount; c++) {
+      if (cellPos === $cell.pos) {
+        colIndex = c;
+        break;
+      }
+      cellPos += rowNode.child(c).nodeSize;
+    }
+    let rowPos = tableStart + 1;
+    for (let r = 0; r < table.childCount - 1; r++) {
+      rowPos += table.child(r).nodeSize;
+    }
+    const lastRow = table.child(table.childCount - 1);
+    const targetCol = Math.min(colIndex, lastRow.childCount - 1);
+    let targetPos = rowPos + 1;
+    for (let c = 0; c < targetCol; c++) {
+      targetPos += lastRow.child(c).nodeSize;
+    }
+    return TextSelection.near(state.doc.resolve(targetPos + 1)).from;
+  };
+
+  /** Builds normalized shortcut string matching {@link KEYBOARD_SHORTCUTS} format. */
+  const resolveShortcutCommand = (event: KeyboardEvent): string | undefined => {
+    const parts: string[] = [];
+    if (event.ctrlKey || event.metaKey) parts.push("Mod");
+    if (event.altKey) parts.push("Alt");
+    if (event.shiftKey) parts.push("Shift");
+
+    let key = event.key;
+    if (key === " " || key === "Space" || event.code === "Space") {
+      key = "Space";
+    }
+    if (key.length === 1) {
+      parts.push(key.toUpperCase());
+    } else {
+      parts.push(key);
+    }
+    const primary = parts.join("-");
+    if (KEYBOARD_SHORTCUTS[primary]) return KEYBOARD_SHORTCUTS[primary];
+
+    if (event.code && event.code.startsWith("Digit")) {
+      const digit = event.code.slice(5);
+      const dParts: string[] = [];
+      if (event.ctrlKey || event.metaKey) dParts.push("Mod");
+      if (event.altKey) dParts.push("Alt");
+      if (event.shiftKey) dParts.push("Shift");
+      dParts.push(digit);
+      const fallback = dParts.join("-");
+      if (KEYBOARD_SHORTCUTS[fallback]) return KEYBOARD_SHORTCUTS[fallback];
+    }
+
+    if (key.startsWith("Arrow")) {
+      const shortName = key.slice(5);
+      const aParts: string[] = [];
+      if (event.ctrlKey || event.metaKey) aParts.push("Mod");
+      if (event.altKey) aParts.push("Alt");
+      if (event.shiftKey) aParts.push("Shift");
+      aParts.push(shortName);
+      const fallback = aParts.join("-");
+      if (KEYBOARD_SHORTCUTS[fallback]) return KEYBOARD_SHORTCUTS[fallback];
+    }
+
+    return undefined;
+  };
+
   /** Scrolls the caret's page so the caret sits a third of the way down the
    *  workspace viewport — only when it is out of view (Home/End/PageUp/PageDown,
    *  find-next). A caret already visible keeps its position. */
@@ -2958,47 +3080,48 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
       });
       return;
     }
-    // F4 (Word Repeat) — retype the last text insertion at the caret.
+    // F4 (Word Repeat) — repeat last action (command or text insertion).
     if (event.key === "F4" && !event.ctrlKey && !event.metaKey && !event.altKey) {
       event.preventDefault();
       if (editable) {
-        const repeat = (active().editor.storage as { repeat?: string }).repeat;
-        if (repeat) insertText(repeat);
+        const storage = active().editor.storage as unknown as {
+          repeat?: string;
+          repeatAction?: {
+            type: "command" | "text";
+            name?: string;
+            value?: unknown;
+            text?: string;
+          };
+        };
+        if (storage.repeatAction?.type === "command" && storage.repeatAction.name) {
+          const [name, arg] = [
+            storage.repeatAction.name,
+            storage.repeatAction.value as string | undefined,
+          ];
+          const cmds = active().editor.commands as unknown as Record<
+            string,
+            ((arg?: string) => boolean) | undefined
+          >;
+          cmds[name]?.(arg);
+        } else {
+          const repeat = storage.repeatAction?.text ?? storage.repeat;
+          if (repeat) insertText(repeat);
+        }
       }
       return;
     }
-    // Plain function-key entries in the shared table (F3 = AutoText/Quick
-    // Parts). The modifier branch below only consults the table for Mod
-    // combos, so an unmodified table key is matched here (Shift+F3 is Word's
-    // change-case cycle, not AutoText).
-    if (!event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey) {
-      const fnCommand = KEYBOARD_SHORTCUTS[event.key];
-      if (fnCommand) {
-        event.preventDefault();
-        if (!editable) return;
-        const [name, arg] = fnCommand.split(":");
-        (
-          active().editor.commands as unknown as Record<
-            string,
-            ((arg?: string) => boolean) | undefined
-          >
-        )[name]?.(arg);
-        return;
-      }
-    }
     if (event.ctrlKey || event.metaKey) {
-      const key = event.key;
-      const lower = key.toLowerCase();
+      const lower = event.key.toLowerCase();
       // Modifier combos dispatch commands (registered in KEYBOARD_SHORTCUTS).
       // Undo / Redo
-      if (lower === "z") {
+      if (lower === "z" && !event.altKey) {
         event.preventDefault();
         if (!editable) return;
         if (event.shiftKey) active().editor.commands.redo();
         else active().editor.commands.undo();
         return;
       }
-      if (lower === "y") {
+      if (lower === "y" && !event.altKey && !event.shiftKey) {
         event.preventDefault();
         if (!editable) return;
         active().editor.commands.redo();
@@ -3006,7 +3129,7 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
       }
       // Select all — without this the browser default selects the 1px
       // textarea's (empty) contents and the press is lost.
-      if (lower === "a") {
+      if (lower === "a" && !event.altKey && !event.shiftKey) {
         event.preventDefault();
         active().editor.commands.command(({ state, dispatch }) =>
           selectAll(state as never, dispatch),
@@ -3014,7 +3137,7 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
         return;
       }
       // Mod-K: Insert / edit hyperlink (Word standard).
-      if (lower === "k") {
+      if (lower === "k" && !event.shiftKey && !event.altKey) {
         event.preventDefault();
         opts.host.dispatchEvent(
           new CustomEvent("command", {
@@ -3025,37 +3148,31 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
         );
         return;
       }
-      // Mod-D: Font dialog (Word standard).
-      if (lower === "d" && !event.shiftKey) {
-        event.preventDefault();
+    }
+    const command = resolveShortcutCommand(event);
+    if (command) {
+      if (!editable) return;
+      event.preventDefault();
+      const [name, arg] = command.split(":");
+      const cmds = active().editor.commands as unknown as Record<
+        string,
+        ((arg?: string) => boolean) | undefined
+      >;
+      let handled = false;
+      if (typeof cmds[name] === "function") {
+        handled = Boolean(cmds[name]!(arg));
+      }
+      if (!handled) {
         opts.host.dispatchEvent(
           new CustomEvent("command", {
             bubbles: true,
             composed: true,
-            detail: { event: "font-dialog" },
+            detail: { event: name, value: arg },
           }),
         );
-        return;
       }
-      // Viewless editors have no EditorView, so nothing dispatches Tiptap's
-      // per-extension keyboard shortcuts — match the shared table here (the
-      // DocenKeymap extension serves the same table on a DOM route). Named
-      // keys keep their spelling ("Mod-Enter"); single characters uppercase
-      // ("Mod-B") — a blanket toUpperCase turned Enter into "ENTER" and
-      // silently dead-matched the table.
-      const combo = `Mod${event.shiftKey ? "-Shift" : ""}-${key.length === 1 ? lower.toUpperCase() : key}`;
-      const command = KEYBOARD_SHORTCUTS[combo];
-      if (command) {
-        if (!editable) return;
-        event.preventDefault();
-        const [name, arg] = command.split(":");
-        (
-          active().editor.commands as unknown as Record<
-            string,
-            ((arg?: string) => boolean) | undefined
-          >
-        )[name]?.(arg);
-      }
+      const storage = active().editor.storage as unknown as Record<string, unknown>;
+      storage.repeatAction = { type: "command", name, value: arg };
       return;
     }
     const extend = event.shiftKey;
@@ -3077,34 +3194,87 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
         }
         apply(hStep(active().editor.state, head(), 1, event.ctrlKey || event.metaKey), extend);
         break;
-      case "ArrowUp":
+      case "ArrowUp": {
         event.preventDefault();
-        apply(vStep(head(), -1), extend);
+        if (event.ctrlKey || event.metaKey) {
+          const $pos = active().editor.state.doc.resolve(head());
+          let target: number;
+          if ($pos.parent.isTextblock && $pos.pos > $pos.start()) {
+            target = $pos.start();
+          } else {
+            const beforePos = $pos.depth > 0 ? $pos.before() : 0;
+            if (beforePos > 1) {
+              const prev = TextSelection.near(active().editor.state.doc.resolve(beforePos - 1), -1);
+              target = prev.$from.start();
+            } else {
+              target = 0;
+            }
+          }
+          apply(target, extend);
+          scrollIntoView(target);
+        } else {
+          apply(vStep(head(), -1), extend);
+        }
         break;
-      case "ArrowDown":
+      }
+      case "ArrowDown": {
         event.preventDefault();
-        apply(vStep(head(), 1), extend);
+        if (event.ctrlKey || event.metaKey) {
+          const $pos = active().editor.state.doc.resolve(head());
+          let target: number;
+          const afterPos = $pos.depth > 0 ? $pos.after() : $pos.doc.content.size;
+          if (afterPos < $pos.doc.content.size - 1) {
+            const next = TextSelection.near(active().editor.state.doc.resolve(afterPos + 1), 1);
+            target = next.$from.start();
+          } else {
+            target = $pos.doc.content.size;
+          }
+          apply(target, extend);
+          scrollIntoView(target);
+        } else {
+          apply(vStep(head(), 1), extend);
+        }
         break;
+      }
       case "Home": {
         event.preventDefault();
-        const target =
-          event.ctrlKey || event.metaKey ? 0 : edgeTarget(active().editor.state, head(), false);
+        let target: number;
+        if (event.altKey && cellAt(active().editor.state.selection.$from)) {
+          target = firstCellInRowPos(active().editor.state) ?? 0;
+        } else if (event.ctrlKey || event.metaKey) {
+          target = 0;
+        } else {
+          target = edgeTarget(active().editor.state, head(), false);
+        }
         apply(target, extend);
         scrollIntoView(target);
         break;
       }
       case "End": {
         event.preventDefault();
-        const target =
-          event.ctrlKey || event.metaKey
-            ? active().editor.state.doc.content.size
-            : edgeTarget(active().editor.state, head(), true);
+        let target: number;
+        if (event.altKey && cellAt(active().editor.state.selection.$from)) {
+          target =
+            lastCellInRowPos(active().editor.state) ?? active().editor.state.doc.content.size;
+        } else if (event.ctrlKey || event.metaKey) {
+          target = active().editor.state.doc.content.size;
+        } else {
+          target = edgeTarget(active().editor.state, head(), true);
+        }
         apply(target, extend);
         scrollIntoView(target);
         break;
       }
       case "PageUp": {
         event.preventDefault();
+        if (event.altKey && cellAt(active().editor.state.selection.$from)) {
+          const target = firstCellInColPos(active().editor.state);
+          if (target != null) {
+            apply(target, extend);
+            scrollIntoView(target);
+            break;
+          }
+        }
         const map = active().map;
         if (map?.valid) {
           const cur = head();
@@ -3118,6 +3288,14 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
       }
       case "PageDown": {
         event.preventDefault();
+        if (event.altKey && cellAt(active().editor.state.selection.$from)) {
+          const target = lastCellInColPos(active().editor.state);
+          if (target != null) {
+            apply(target, extend);
+            scrollIntoView(target);
+            break;
+          }
+        }
         const map = active().map;
         if (map?.valid) {
           const cur = head();
@@ -3133,6 +3311,12 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
         if (editable) {
           event.preventDefault();
           deleteForward(event.ctrlKey || event.metaKey);
+        }
+        break;
+      case "Backspace":
+        if (editable && (event.ctrlKey || event.metaKey)) {
+          event.preventDefault();
+          backspace(true);
         }
         break;
       // Leaving a furniture story (Word: Esc = Close Header and Footer).
@@ -3184,6 +3368,10 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
         // 1. Table navigation: Tab moves to next cell; in the last cell, it inserts a new row below.
         const $cell = cellAt($from);
         if ($cell) {
+          if (event.ctrlKey || event.metaKey) {
+            if (editable) insertText("\t");
+            break;
+          }
           const adj = adjacentCellPos(active().editor.state, event.shiftKey ? -1 : 1);
           if (adj) {
             if (adj.isLastInTable) {
