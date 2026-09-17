@@ -134,6 +134,80 @@ export const parseDocxBlock: ParseBlockRule<Extract<SectionChild, { table: Table
   convert: (child, ctx) => resolveTable(child.table, ctx),
 };
 
+/**
+ * Materialize `rowSpan` as the canonical vMerge model. office-open's writer
+ * expands a `rowSpan: N` cell into a vMerge restart plus one continue cell in
+ * each spanned row (computeVerticalMergeCells), but its parser only ever
+ * produces that expanded form — a resolve pass that carried `rowSpan` through
+ * verbatim lost the merge entirely (no continuation cells existed), and
+ * passing it on to compile would re-expand on top of them. Expanding here
+ * mirrors the writer: the restart cell drops `rowSpan`, continuations land at
+ * the same grid column of the following rows. Input rows/cells are never
+ * mutated.
+ */
+function expandRowSpans(rows: Record<string, unknown>[]): Record<string, unknown>[] {
+  const out = rows.map((row) => ({
+    ...row,
+    cells: Array.isArray(row.cells) ? [...(row.cells as unknown[])] : row.cells,
+  }));
+  const pending = new Map<number, { index: number; cell: Record<string, unknown> }[]>();
+  out.forEach((row, rowIndex) => {
+    const cells = row.cells as unknown[] | undefined;
+    if (!Array.isArray(cells)) return;
+    let columnIndex = 0;
+    cells.forEach((entry, cellIndex) => {
+      const cell = entry as Record<string, unknown>;
+      const span = typeof cell.rowSpan === "number" && cell.rowSpan > 1 ? cell.rowSpan : 0;
+      const columnSpan =
+        typeof cell.columnSpan === "number" && cell.columnSpan > 1 ? cell.columnSpan : 1;
+      if (span === 0) {
+        columnIndex += columnSpan;
+        return;
+      }
+      const { rowSpan: _expanded, ...rest } = cell;
+      cells[cellIndex] = { ...rest, verticalMerge: rest.verticalMerge ?? "restart" };
+      for (let step = 1; step < span && rowIndex + step < out.length; step++) {
+        const target = out[rowIndex + step];
+        if (!Array.isArray(target.cells)) continue;
+        const list = pending.get(rowIndex + step) ?? [];
+        list.push({
+          index: insertIndexForColumn(target.cells as Record<string, unknown>[], columnIndex),
+          cell: {
+            ...(rest.borders !== undefined ? { borders: rest.borders } : {}),
+            ...(rest.columnSpan !== undefined ? { columnSpan: rest.columnSpan } : {}),
+            children: [],
+            verticalMerge: "continue",
+          },
+        });
+        pending.set(rowIndex + step, list);
+      }
+      columnIndex += columnSpan;
+    });
+  });
+  for (const [rowIndex, list] of pending) {
+    const cells = out[rowIndex]!.cells as unknown[];
+    list.sort((a, b) => a.index - b.index);
+    let offset = 0;
+    for (const entry of list) cells.splice(entry.index + offset++, 0, entry.cell);
+  }
+  return out;
+}
+
+/** The cell index covering `columnIndex` in a row — before the first cell
+ *  whose cumulative grid span passes the column, else at the end. Mirrors
+ *  office-open's findInsertIndex for vMerge continuation placement. */
+function insertIndexForColumn(cells: Record<string, unknown>[], columnIndex: number): number {
+  let covered = 0;
+  for (let i = 0; i < cells.length; i++) {
+    const cell = cells[i]!;
+    // sdt/customXml-wrapped rows carry no grid cells to count.
+    if ("sdt" in cell || "customXml" in cell) continue;
+    covered += typeof cell.columnSpan === "number" && cell.columnSpan > 1 ? cell.columnSpan : 1;
+    if (covered > columnIndex) return i;
+  }
+  return cells.length;
+}
+
 /** Resolve a table SectionChild into a Tiptap table node. A cell is itself a
  *  SectionChild[] block stream, resolved recursively via ctx. */
 function resolveTable(tableOpts: TableOptions, ctx: ResolveContext): JSONContent {
@@ -143,7 +217,7 @@ function resolveTable(tableOpts: TableOptions, ctx: ResolveContext): JSONContent
   // The walk below reads rows/cells reflectively (attrs parse + span
   // bookkeeping) and treats the sdt/customXml/marker row variants the same as
   // cell rows, so it views them as attribute records.
-  const rows = tableOpts.rows as unknown as Record<string, unknown>[];
+  const rows = expandRowSpans(tableOpts.rows as unknown as Record<string, unknown>[]);
 
   // Pull the referenced table style's tblBorders/tblCellMar in: office-open
   // leaves table.borders/margins reflecting only the table's own tblPr, so

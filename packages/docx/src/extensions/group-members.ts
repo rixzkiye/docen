@@ -14,8 +14,9 @@ import { cleanAttrs } from "../converters/styles";
 import type { JSONContent } from "../core";
 import { mediaOfSrc } from "./image";
 import { MEDIA_INLINE_LIMIT, registerMediaBlob } from "./media-registry";
+import { decodePassthroughData, encodePassthroughData } from "./passthrough";
 import type { ResolveContext } from "./types";
-import { resolveWpsShape } from "./wps-shape";
+import { foldWpsShapeName, resolveWpsShape } from "./wps-shape";
 
 /**
  * Group member mapping — the two legs between office-open's
@@ -132,7 +133,7 @@ export function groupChildToMemberNode(
   }
 
   if (child.type === "chart" || child.type === "contentPart") {
-    return { type: "inlinePassthrough", attrs: { data: JSON.stringify(child) } };
+    return { type: "inlinePassthrough", attrs: { data: encodePassthroughData(child) } };
   }
 
   // Raster/svg picture member — same payload contract as the top-level image
@@ -186,10 +187,14 @@ export function memberNodeToGroupChild(
     if (!isRecord(transformation)) return null;
     // fill/outline compile into the shape data (the child-level extension is
     // an alternative carrier of the same field — one authority is enough).
+    // The editor-facing `name` folds into the OOXML nonVisualProperties slot.
     return cleanAttrs({
       type: "wps",
       transformation: dataTransformOf(transformation as unknown as MediaTransformation),
-      data: { ...data, children: compileBody(node) },
+      data: {
+        ...foldWpsShapeName(data),
+        children: compileBody(node),
+      },
     }) as unknown as GroupChildMediaData;
   }
 
@@ -209,7 +214,7 @@ export function memberNodeToGroupChild(
 
   if (node.type === "inlinePassthrough") {
     try {
-      return JSON.parse((attrs.data as string) ?? "null") as GroupChildMediaData;
+      return decodePassthroughData<GroupChildMediaData>((attrs.data as string) ?? "null");
     } catch {
       return null;
     }

@@ -1,7 +1,15 @@
+import { unzipSync } from "@office-open/core";
 import type { DocumentOptions, SectionChild } from "@office-open/docx";
 import { describe, expect, it } from "vitest";
 
-import { compileDocument, docxExtensions, resolveDocument } from "../index";
+import {
+  compileDocument,
+  docxExtensions,
+  generateDOCXSync,
+  parseDOCXSync,
+  resolveDocument,
+  type JSONContent,
+} from "../index";
 
 /**
  * VML text box (w:pict > v:shape > v:textbox) round-trips: the box's own data
@@ -85,11 +93,37 @@ describe("textbox", () => {
     expect(node.content?.length).toBeGreaterThan(0);
   });
 
-  // NOTE: no byte-level generate→parse test here on purpose. office-open
-  // stringifies a textbox as `w:p > w:r > w:pict` (run-level per
-  // EG_RunInnerContent) while its parser only claims a pict that is a DIRECT
-  // child of w:p, so a generated file reads back as a pict blob — the
-  // textbox branch type also lacks the shape detail fields (filled,
-  // insetmode, shape id) a lossless promotion needs. Symmetrizing that pair
-  // is its own batch; this suite pins the resolve/compile contract only.
+  // The engine's writer emits the box as w:p > w:r > w:pict (pict is an
+  // EG_RunInnerContent); the reader now promotes that run-level textbox pict
+  // back to the { textbox } branch, so the box is native on both legs.
+  it("round-trips through the OPC package as a native textbox", () => {
+    const json: JSONContent = {
+      type: "doc",
+      content: [
+        {
+          type: "textbox",
+          attrs: { textbox: { style: { width: "200pt", height: "100pt" } } },
+          content: [
+            {
+              type: "paragraph",
+              content: [{ type: "text", text: "VML 文本框内容" }],
+            },
+          ],
+        },
+      ],
+    };
+    const gen1 = generateDOCXSync(json, { prepare: false }) as Uint8Array;
+    const xml = new TextDecoder().decode(unzipSync(gen1)["word/document.xml"]);
+    expect(xml).toContain("txbxContent");
+    expect(xml).toContain("VML 文本框内容");
+
+    const reparsed = parseDOCXSync(gen1);
+    const box = reparsed.content?.find((n) => n.type === "textbox");
+    expect(box?.content?.[0]?.content?.[0]?.text).toBe("VML 文本框内容");
+
+    // Second cycle: the box stays the native branch, not a pict passthrough.
+    const reparsed2 = parseDOCXSync(generateDOCXSync(reparsed, { prepare: false }) as Uint8Array);
+    expect(reparsed2.content?.some((n) => n.type === "textbox")).toBe(true);
+    expect(reparsed2.content?.some((n) => n.type === "inlinePassthrough")).toBe(false);
+  });
 });
