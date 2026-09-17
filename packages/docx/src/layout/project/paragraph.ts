@@ -84,9 +84,13 @@ export function projectParagraph(p: BodyParagraph, ctx: ProjectContext): LayoutP
   // default run style — a run with no own rPr inherits them per field (the
   // same cascade rule bold/italic already follow). w:caps wins over
   // w:smallCaps; an explicit false on either leaves no token.
+  // w:bidi drives the paragraph direction; runs inherit it unless they carry
+  // their own w:rtl (direct beats inherited).
+  const bidi = pPr.bidirectional === true || chainPPr.bidirectional === true;
   const defaultTextStyle: LayoutTextStyle = {
     family: toFamily(null, defFont) ?? themeFamily ?? {},
     sizePx: ptToPx(markSizePt),
+    ...(bidi ? { direction: "rtl" as const } : {}),
     bold: chainDefRun.bold,
     italic: chainDefRun.italic,
     color: chainDefRun.color,
@@ -314,7 +318,6 @@ export function projectParagraph(p: BodyParagraph, ctx: ProjectContext): LayoutP
       inlineIndex: -1,
     });
   }
-  const bidi = pPr.bidirectional === true || chainPPr.bidirectional === true;
   const textDir = str(pPr.textDirection ?? chainPPr.textDirection);
   const textDirection =
     textDir === "tbRl" || textDir === "btLr" || textDir === "lrTb" ? textDir : undefined;
@@ -367,7 +370,7 @@ export function projectParagraph(p: BodyParagraph, ctx: ProjectContext): LayoutP
     borders: borders.top || borders.right || borders.bottom || borders.left ? borders : undefined,
     shadingFill,
     markSizePx: markSize != null ? ptToPx(markSize) : undefined,
-    defaultTextStyle: bidi ? { ...defaultTextStyle, direction: "rtl" } : defaultTextStyle,
+    defaultTextStyle,
     snapToGrid: typeof pPr.snapToGrid === "boolean" ? pPr.snapToGrid : null,
     align: alignOf(pick([pPr, chainPPr, docPPr], "alignment")),
     keepLines: pPr.keepLines === true || chainPPr.keepLines === true,
