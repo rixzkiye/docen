@@ -48,19 +48,18 @@ const attrDataJson = (name: string) => ({
   },
 });
 
-/** Decoded src cache, keyed by the node's attrs object itself: Node.toJSON
- *  carries attrs by reference, so untouched images keep a stable identity
- *  across transactions and the megabyte atob runs once per image, not once
- *  per keystroke. A src-content Map thrashes here instead — the corpus can
- *  hold more images than any bounded entry count, and content-hashing
- *  megabyte keys each pass costs as much as the decode. When the editor
- *  rewrites the attrs (image replaced), the old object dies and the entry
- *  is collected with it. Callers must not mutate the returned arrays — the
- *  cache hands out shared instances. */
-const decodedByAttrs = new WeakMap<object, Uint8Array>();
+/** Decoded src cache, keyed by the src VALUE: Node.toJSON deep-copies the
+ *  attrs container on every getJSON, so object identity cannot drive reuse
+ *  across transactions — the data-URL string is the stable key (V8 caches
+ *  its content hash after the first lookup, which the saved atob + byte copy
+ *  dwarfs). Bounded FIFO: a corpus can hold more images than any sensible
+ *  entry count. Callers must not mutate the returned arrays — the cache
+ *  hands out shared instances. */
+const decodedBySrc = new Map<string, Uint8Array>();
+const DECODED_SRC_CAP = 64;
 
-function decodedBytesOf(attrs: object, src: string): Uint8Array | undefined {
-  const hit = decodedByAttrs.get(attrs);
+function decodedBytesOf(src: string): Uint8Array | undefined {
+  const hit = decodedBySrc.get(src);
   if (hit) return hit;
   const comma = src.indexOf(",");
   if (comma < 0) return undefined;
@@ -68,7 +67,11 @@ function decodedBytesOf(attrs: object, src: string): Uint8Array | undefined {
     const bin = atob(src.slice(comma + 1));
     const bytes = new Uint8Array(bin.length);
     for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-    decodedByAttrs.set(attrs, bytes);
+    if (decodedBySrc.size >= DECODED_SRC_CAP) {
+      const oldest = decodedBySrc.keys().next().value;
+      if (oldest !== undefined) decodedBySrc.delete(oldest);
+    }
+    decodedBySrc.set(src, bytes);
     return bytes;
   } catch {
     return undefined;
@@ -77,18 +80,20 @@ function decodedBytesOf(attrs: object, src: string): Uint8Array | undefined {
 
 /** src → the embedded media {type, bytes}: a registered blob: URL resolves
  *  through the media registry (the bytes never left); a data URL decodes
- *  through the shared attrs-identity cache. Shared by renderDocx and the
+ *  through the shared src cache. Shared by renderDocx and the
  *  wpg-group member compile (group-members). */
-export function mediaOfSrc(
-  attrs: object,
-  src: string | undefined,
-): { type: string; bytes: Uint8Array } | undefined {
+export function mediaOfSrc(src: string | undefined):
+  | {
+      type: string;
+      bytes: Uint8Array;
+    }
+  | undefined {
   const media = src ? mediaBytesOf(src) : undefined;
   if (media) return { type: media.type, bytes: media.bytes };
   if (src?.startsWith("data:image/")) {
     const match = src.match(/^data:image\/([\w.+-]+);base64,/);
     if (match) {
-      const bytes = decodedBytesOf(attrs, src);
+      const bytes = decodedBytesOf(src);
       if (bytes) return { type: match[1] === "jpeg" ? "jpg" : match[1], bytes };
     }
   }
@@ -111,7 +116,7 @@ export function renderDocx(node: JSONContent): Record<string, unknown> | null {
   // cache so the projection downstream sees a stable bytes identity across
   // transactions.
   const src = attrs.src as string | undefined;
-  const media = mediaOfSrc(attrs, src);
+  const media = mediaOfSrc(src);
   if (media) {
     imageOpts.type = media.type;
     imageOpts.data = media.bytes;
