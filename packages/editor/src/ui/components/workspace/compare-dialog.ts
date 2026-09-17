@@ -91,7 +91,7 @@ const template = html<DocenCompareDialog>`
     heading="${(x) =>
       x.mode === "combine" ? t("compare.combineDialogTitle", x) : t("compare.dialogTitle", x)}"
   >
-    <div class="compare-body" slot="body">
+    <div class="compare-body">
       <div class="section-title">${(x) => t("compare.originalDocument", x)}</div>
       <div class="file-row">
         <div class="file-inputs">
@@ -146,7 +146,7 @@ const template = html<DocenCompareDialog>`
         >
       </div>
     </div>
-    <div class="footer" slot="footer">
+    <div class="footer" slot="action">
       <fluent-button appearance="primary" @click="${(x) => x.onCompare()}">
         ${(x) => (x.mode === "combine" ? t("compare.combineButton", x) : t("compare.compareButton", x))}
       </fluent-button>

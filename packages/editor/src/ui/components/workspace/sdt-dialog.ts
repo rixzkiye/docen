@@ -63,7 +63,7 @@ const styles = css`
 
 const template = html<DocenSdtDialog>`
   <docen-dialog ${ref("dialog")} modal heading="${(x) => t("sdt.dialogTitle", x)}">
-    <div class="sdt-body" slot="body">
+    <div class="sdt-body">
       <div class="section-title">${(x) => t("sdt.general", x)}</div>
       <div class="row">
         <label class="label">${(x) => t("sdt.title", x)}:</label>
@@ -96,7 +96,7 @@ const template = html<DocenSdtDialog>`
         </fluent-checkbox>
       </div>
     </div>
-    <div class="footer" slot="footer">
+    <div class="footer" slot="action">
       <fluent-button appearance="primary" @click="${(x) => x.onOk()}"
         >${(x) => t("dialog.ok", x)}</fluent-button
       >

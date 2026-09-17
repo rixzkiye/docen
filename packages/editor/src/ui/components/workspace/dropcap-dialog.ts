@@ -93,7 +93,7 @@ const styles = css`
 
 const template = html<DocenDropCapDialog>`
   <docen-dialog ${ref("dialog")} modal heading="${(x) => t("dropcap.dialogTitle", x)}">
-    <div class="dropcap-body" slot="body">
+    <div class="dropcap-body">
       <div class="section-title">${(x) => t("dropcap.position", x)}</div>
       <div class="positions">
         <div
@@ -145,7 +145,7 @@ const template = html<DocenDropCapDialog>`
         <input type="number" min="0" max="72" step="1" value="0" ${ref("distanceInput")} />
       </div>
     </div>
-    <div class="footer" slot="footer">
+    <div class="footer" slot="action">
       <fluent-button appearance="primary" @click="${(x) => x.onOk()}"
         >${(x) => t("dialog.ok", x)}</fluent-button
       >

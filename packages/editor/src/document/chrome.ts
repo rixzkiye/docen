@@ -20,6 +20,11 @@ export const documentStyles = css`
     /* Anchors the input layer (see the template comment there). */
     position: relative;
   }
+  docen-workspace {
+    flex: 1 1 auto;
+    min-height: 0;
+    height: 100%;
+  }
   .input-layer {
     position: absolute;
     inset: 0;
