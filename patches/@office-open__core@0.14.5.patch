@@ -1,0 +1,19 @@
+diff --git a/dist/index.mjs b/dist/index.mjs
+index 410ae640f0584a85da256717f8d3b73a48cf57a6..da0fc27955005b2fff5e3c863e9041af3009b539 100644
+--- a/dist/index.mjs
++++ b/dist/index.mjs
+@@ -2649,6 +2649,14 @@ function dropDanglingPassthroughRels(files, passthroughRelationships) {
+ 		if (!match) continue;
+ 		const resolved = resolveRelationshipTarget(rel.source, rel.target);
+ 		if (paths.has(resolved.toLowerCase())) continue;
++		// A Target is a URI: a part whose name carries spaces/non-ASCII is
++		// referenced percent-encoded, so compare the decoded form too before
++		// treating the relationship as dangling.
++		let decoded = resolved;
++		try {
++			decoded = resolved.split("/").map(decodeURIComponent).join("/");
++		} catch {}
++		if (decoded !== resolved && paths.has(decoded.toLowerCase())) continue;
+ 		const stripped = xml.slice(0, match.index) + xml.slice(match.index + match[1].length);
+ 		const rewritten = encoder.encode(stripped);
+ 		files[relsPath] = Array.isArray(entry) ? [rewritten, entry[1]] : rewritten;
