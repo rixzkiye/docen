@@ -26,6 +26,7 @@ export * from "./paint/image";
 export * from "./paint/drawing";
 export * from "./paint/table";
 export * from "./paint/paragraph";
+export * from "./paint/glyph-painter";
 
 export function paintScene(tree: IGroup, items: readonly FlowItem[], ctx: PaintContext): void {
   // One content-positioned group holds the item leaves (origin = the content

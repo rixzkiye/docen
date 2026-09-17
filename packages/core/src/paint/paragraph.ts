@@ -26,6 +26,7 @@ import { Box, Ellipse, Group, Line, Path, Rect, Text, type IGroup } from "leafer
 
 import type { PaintColumn, PaintContext } from "./context";
 import { paintDrawing, paintMembers, recordDrawingHit } from "./drawing";
+import { paintGlyphRun } from "./glyph-painter";
 import { addCroppedImage, addDecodedImage } from "./image";
 import { strokePropsOf } from "./line";
 import { paintMath } from "./math";
@@ -645,82 +646,90 @@ export function paintParagraph(
           };
         }
 
-        const textEl = new Text({
-          x: lineX + item.xPx,
-          // A raised/lowered run (w:vertAlign — the footnote reference) paints
-          // at the scaled size on a shifted baseline; the scaling itself is
-          // the shared vertAlignedSizePx so measure and paint agree. A ruby
-          // base sinks below the annotation space reserved at the line top.
-          y: baseY,
-          // width ONLY on justified/squeezed items (their stretch interval
-          // or compressed width): a width on every line would let Leafer
-          // wrap the slice again with its own metrics (a phantom second
-          // line). textWrap "none" keeps the interval from wrapping; height
-          // keeps the element paintable (height 0 is skipped by Leafer).
-          // w:w scales the element horizontally (scaleX), so the interval
-          // compensates by /scale to end where the layout measured it.
-          width:
-            intervalPx != null
-              ? intervalPx / scale
+        let paintedGlyphs = false;
+        if (item.glyphRun && item.glyphRun.glyphs.length > 0) {
+          paintedGlyphs = paintGlyphRun(tree, item.glyphRun, {
+            x: lineX + item.xPx,
+            y: baseY + leaferBaselinePadPx(ownSize),
+            fill,
+            stroke,
+            strokeWidth,
+            shadow,
+            scaleX: scale !== 1 ? scale : undefined,
+          });
+        }
+
+        if (!paintedGlyphs) {
+          const textEl = new Text({
+            x: lineX + item.xPx,
+            y: baseY,
+            width:
+              intervalPx != null
+                ? intervalPx / scale
+                : squeezePx != null
+                  ? squeezePx / scale
+                  : undefined,
+            textWrap: intervalPx != null || squeezePx != null ? "none" : undefined,
+            textAlign: rights
+              ? justifyPerGrapheme(display)
+                ? "both-letter"
+                : "both-justify"
               : squeezePx != null
-                ? squeezePx / scale
+                ? "both-letter"
                 : undefined,
-          textWrap: intervalPx != null || squeezePx != null ? "none" : undefined,
-          // CJK items spread per glyph (both-letter); Latin items spread
-          // per word gap (both-justify — Leafer's word mode, Word's Latin
-          // justification). "both" keeps the single-row Text justifiable —
-          // and compresses when the interval is narrower than the glyphs
-          // (the squeeze path).
-          textAlign: rights
-            ? justifyPerGrapheme(display)
-              ? "both-letter"
-              : "both-justify"
-            : squeezePx != null
-              ? "both-letter"
+            height: Math.max(1, line.heightPx),
+            text: label,
+            fill,
+            ...(stroke ? { stroke, strokeWidth } : {}),
+            ...(shadow ? { shadow } : {}),
+            textDecoration: inline.style.strikethrough
+              ? underlinePatternOf(inline.style)
+                ? "delete"
+                : inline.style.underline
+                  ? "under-delete"
+                  : "delete"
+              : underlinePatternOf(inline.style)
+                ? undefined
+                : inline.style.underline
+                  ? "under"
+                  : undefined,
+            fontFamily: family,
+            fontSize: ownSize,
+            lineHeight: ownSize,
+            fontWeight: inline.style.bold ? 700 : 400,
+            italic: inline.style.italic,
+            letterSpacing: inline.style.letterSpacingPx
+              ? { type: "px", value: inline.style.letterSpacingPx }
               : undefined,
-          height: Math.max(1, line.heightPx),
-          text: label,
-          fill,
-          ...(stroke ? { stroke, strokeWidth } : {}),
-          ...(shadow ? { shadow } : {}),
-          // Leafer's textDecoration only knows the single line — a patterned
-          // or colored w:u strokes its own path below (paintUnderlinePattern).
-          // Single keeps the native path: the 91-page parity baseline rides on
-          // its metrics.
-          textDecoration: inline.style.strikethrough
-            ? underlinePatternOf(inline.style)
-              ? "delete"
-              : inline.style.underline
-                ? "under-delete"
-                : "delete"
-            : underlinePatternOf(inline.style)
-              ? undefined
-              : inline.style.underline
-                ? "under"
-                : undefined,
-          fontFamily: family,
-          fontSize: ownSize,
-          // Leafer's default 150% line spacing half-leads the glyphs ~0.25×
-          // fontSize below the line-box top the layout handed over (text-box
-          // text riding low). The px form pins one line's spacing to the font
-          // size — the percent form (`{ type: "percent" }`) silently blanks
-          // every body Text when combined with an explicit height.
-          lineHeight: ownSize,
-          // Numbers only: Leafer's fontWeight setter treats strings as named
-          // weights ("bold"/"thin"…) and silently maps unknown strings to 400,
-          // so a string "700" would lose bold. Italic is the `italic` boolean
-          // property — there is no fontStyle.
-          fontWeight: inline.style.bold ? 700 : 400,
-          italic: inline.style.italic,
-          letterSpacing: inline.style.letterSpacingPx
-            ? { type: "px", value: inline.style.letterSpacingPx }
-            : undefined,
-          // w:w — Word's character scale stretches the glyphs (and their
-          // spacing) horizontally about the run's left edge; the vertical
-          // metrics stay the font's. Absent = natural width.
-          ...(scale !== 1 ? { scaleX: scale, origin: "left" as const } : {}),
-        });
-        tree.add(textEl);
+            ...(scale !== 1 ? { scaleX: scale, origin: "left" as const } : {}),
+          });
+          tree.add(textEl);
+        } else {
+          if (inline.style.strikethrough && !underlinePatternOf(inline.style)) {
+            tree.add(
+              new Line({
+                x: lineX + item.xPx,
+                y: baseY + leaferBaselinePadPx(ownSize) - ownSize * 0.3,
+                width: intervalPx ?? item.widthPx,
+                stroke: fill,
+                strokeWidth: Math.max(1, Math.round(ownSize / 16)),
+                hittable: false,
+              }),
+            );
+          }
+          if (inline.style.underline && !underlinePatternOf(inline.style)) {
+            tree.add(
+              new Line({
+                x: lineX + item.xPx,
+                y: baseY + leaferBaselinePadPx(ownSize) + ownSize * 0.08,
+                width: intervalPx ?? item.widthPx,
+                stroke: inline.style.underlineColor ? `#${inline.style.underlineColor}` : fill,
+                strokeWidth: Math.max(1, Math.round(ownSize / 16)),
+                hittable: false,
+              }),
+            );
+          }
+        }
         if (inline.style.reflection) {
           const refl = inline.style.reflection;
           tree.add(
