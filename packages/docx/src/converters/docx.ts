@@ -201,6 +201,32 @@ export interface RunPropMark {
  *  itself, so the format restore set excludes it. */
 const FORMAT_CHANGE_MARK = "formatChange";
 
+/** Identity memo for {@link compileDocument} — a re-compile against a JSON
+ *  tree whose unchanged subtrees are referentially stable (see the editor's
+ *  `pmNodeToJSON`) skips the whole subtree walk. Two entry kinds: per
+ *  top-level body child (JSON object identity → compiled output + the list
+ *  references it consumed) and per assembled section (input identities →
+ *  the exact section object). Anything the cache cannot prove unchanged
+ *  re-compiles — correct over fast. */
+export interface CompileCache {
+  children: WeakMap<
+    object,
+    { child: SectionChild | SectionChild[] | null; refs: readonly string[] }
+  >;
+  sections: {
+    children: readonly SectionChild[];
+    inputs: readonly unknown[];
+    out: DocumentOptions["sections"][number];
+    /** List references consumed while compiling this section's headers and
+     *  footers — replayed into `usedListReferences` when the section reuses. */
+    refs?: readonly string[];
+  }[];
+}
+
+export function createCompileCache(): CompileCache {
+  return { children: new WeakMap(), sections: [] };
+}
+
 /**
  * Manages DOCX serialization (Tiptap JSON ↔ DocumentOptions).
  *
@@ -217,6 +243,9 @@ export class DocxManager {
   // each gets a definition in numberingConfigs unless the source numbering
   // already defines it.
   private usedListReferences = new Set<string>();
+  /** The open compile scope (see {@link CompileCache.children}): list refs
+   *  consumed by the subtree currently compiling land here. */
+  private refScope: string[] | undefined;
   // Styles table (styles.xml) carried through resolve() so consumers can
   // resolve a NUMERIC pStyle whose NAME is a heading (style "2" → name
   // "heading 1") — office-open lifts only pStyle literals that ARE
@@ -294,7 +323,7 @@ export class DocxManager {
     return this.nodeRender.get(node.type ?? "")?.(node) ?? {};
   }
 
-  compile(json: JSONContent): DocumentOptions {
+  compile(json: JSONContent, cache?: CompileCache): DocumentOptions {
     this.numberingConfigs = [];
     this.usedListReferences = new Set();
 
@@ -306,20 +335,80 @@ export class DocxManager {
     // No section-carrying paragraph → single section (backward compatible).
     const sections: DocumentOptions["sections"] = [];
     let currentChildren: SectionChild[] = [];
+    // Section assembly memo: the previous compile's entries stay readable
+    // while this compile builds its replacements (the same array shape).
+    const sectionCache = cache?.sections;
+    const nextSections: typeof sectionCache = [];
+    // Refs consumed by a section's headers/footers (compiled fresh only when
+    // the section itself is — a reused section replays them).
+    const addSection = (
+      children: SectionChild[],
+      props: unknown,
+      headers: unknown,
+      footers: unknown,
+    ): void => {
+      const sIdx = sections.length;
+      const prev = sectionCache?.[sIdx];
+      // Reuse when every input is referentially identical to the previous
+      // compile's — the compiled children ride their own per-child cache, so
+      // an unchanged section rebuilds no descendants at all.
+      if (
+        prev &&
+        prev.children.length === children.length &&
+        prev.children.every((c, i) => c === children[i]) &&
+        prev.inputs[0] === props &&
+        prev.inputs[1] === headers &&
+        prev.inputs[2] === footers
+      ) {
+        for (const ref of prev.refs ?? []) this.usedListReferences.add(ref);
+        sections.push(prev.out);
+        nextSections![sIdx] = prev;
+        return;
+      }
+      const refs: string[] = [];
+      this.refScope = refs;
+      const headerGroup =
+        headers === null ? undefined : this.compileHeaderFooter(headers as HeaderFooterSlots);
+      const footerGroup =
+        footers === null ? undefined : this.compileHeaderFooter(footers as HeaderFooterSlots);
+      this.refScope = undefined;
+      const out = this.buildSection(
+        children,
+        props as SectionPropertiesOptions | null,
+        headerGroup,
+        footerGroup,
+      );
+      if (nextSections) {
+        nextSections[sIdx] = { children, inputs: [props, headers, footers], out, refs };
+      }
+      sections.push(out);
+    };
+    // The child walk's scope: every list reference consumed by the compiled
+    // subtree lands here (and in the node's cache entry) so a cache hit can
+    // replay them into `usedListReferences`.
     if (json.content) {
       for (const node of json.content) {
-        const child = this.compileSectionChild(node);
+        const cached = cache?.children.get(node);
+        let child: SectionChild | SectionChild[] | null;
+        if (cached) {
+          child = cached.child;
+          for (const ref of cached.refs) this.usedListReferences.add(ref);
+        } else {
+          const refs: string[] = [];
+          this.refScope = refs;
+          child = this.compileSectionChild(node);
+          this.refScope = undefined;
+          cache?.children.set(node, { child, refs });
+        }
         if (child) pushAll(currentChildren, child);
         if (node.type === "paragraph") {
           const na = (node.attrs ?? {}) as Record<string, unknown>;
           if (na.sectionProperties != null) {
-            sections.push(
-              this.buildSection(
-                currentChildren,
-                na.sectionProperties as SectionPropertiesOptions | null,
-                this.compileHeaderFooter((na.sectionHeaders ?? null) as HeaderFooterSlots | null),
-                this.compileHeaderFooter((na.sectionFooters ?? null) as HeaderFooterSlots | null),
-              ),
+            addSection(
+              currentChildren,
+              na.sectionProperties,
+              na.sectionHeaders ?? null,
+              na.sectionFooters ?? null,
             );
             currentChildren = [];
           }
@@ -327,13 +416,11 @@ export class DocxManager {
       }
     }
     const docAttrs = json.attrs ?? {};
-    sections.push(
-      this.buildSection(
-        currentChildren,
-        (docAttrs.sectionProperties ?? null) as SectionPropertiesOptions | null,
-        this.compileHeaderFooter((docAttrs.sectionHeaders ?? null) as HeaderFooterSlots | null),
-        this.compileHeaderFooter((docAttrs.sectionFooters ?? null) as HeaderFooterSlots | null),
-      ),
+    addSection(
+      currentChildren,
+      docAttrs.sectionProperties ?? null,
+      docAttrs.sectionHeaders ?? null,
+      docAttrs.sectionFooters ?? null,
     );
 
     const styles = (docAttrs.styles ?? undefined) as DocumentOptions["styles"] | undefined;
@@ -341,6 +428,8 @@ export class DocxManager {
     const background = (docAttrs.background ?? undefined) as
       | DocumentOptions["background"]
       | undefined;
+    // Install this compile's section memo — see addSection.
+    if (cache) cache.sections = nextSections!;
     const documentExtras = (docAttrs.documentExtras ?? undefined) as
       | Partial<DocumentOptions>
       | undefined;
@@ -637,7 +726,10 @@ export class DocxManager {
     // A list paragraph references its numbering definition by attr — collect
     // the reference so compile registers a generated definition for it.
     const numRef = (node.attrs?.numbering as { reference?: string } | null | undefined)?.reference;
-    if (typeof numRef === "string" && numRef) this.usedListReferences.add(numRef);
+    if (typeof numRef === "string" && numRef) {
+      this.usedListReferences.add(numRef);
+      this.refScope?.push(numRef);
+    }
     const opts = this.renderNodeOpts(node);
     const childList = this.compileInlineContent(node.content);
     if (childList.length > 0) opts.children = childList;
@@ -1646,8 +1738,12 @@ export function resolveDocument(docOpts: DocumentOptions, extensions?: Extension
 /**
  * Convert Tiptap JSON (runtime model) to DocumentOptions (persistence model).
  */
-export function compileDocument(json: JSONContent, extensions?: Extensions): DocumentOptions {
-  return getDocxManager(extensions).compile(json);
+export function compileDocument(
+  json: JSONContent,
+  extensions?: Extensions,
+  cache?: CompileCache,
+): DocumentOptions {
+  return getDocxManager(extensions).compile(json, cache);
 }
 
 /**

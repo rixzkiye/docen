@@ -90,4 +90,16 @@ export interface ProjectContext {
   consecutiveHyphenLimit?: number;
   /** Whether auto-hyphenation is suppressed for the paragraph being projected */
   suppressAutoHyphens?: boolean;
+  /** Set when the projection reads or advances order-dependent state (list
+   *  counters, note ordinals, open comment ranges, the revision author
+   *  palette) — the incremental projection refuses to reuse such a child
+   *  (see the layout adapter's projection cache). */
+  stateful?: { hit: boolean };
+}
+
+/** Mark the current child projection stateful — call wherever a projection
+ *  consults or mutates one of the order-dependent {@link ProjectContext}
+ *  maps. Cheap: one boolean write behind an optional chain. */
+export function markStateful(ctx: ProjectContext): void {
+  if (ctx.stateful !== undefined) ctx.stateful.hit = true;
 }

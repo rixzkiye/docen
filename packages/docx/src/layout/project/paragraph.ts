@@ -16,6 +16,7 @@ import {
 } from "@docen/layout";
 
 import type { ProjectContext } from "./context";
+import { markStateful } from "./context";
 import { projectDrawings } from "./drawing";
 import {
   childRunsOf,
@@ -275,6 +276,7 @@ export function projectParagraph(p: BodyParagraph, ctx: ProjectContext): LayoutP
     }
     if (level.format === "none") return [];
     if (!numReference) return [];
+    markStateful(ctx);
     const counters = ctx.listCounters.get(numReference) ?? [];
     ctx.listCounters.set(numReference, counters);
     counters[numLevelIndex] = (counters[numLevelIndex] ?? 0) + 1;
