@@ -8,6 +8,8 @@ import {
   ShapingWorkerClient,
   ShapingWorkerHandler,
   initShapingWasm,
+  type ShapingWorkerTransport,
+  type WorkerRequest,
   type WorkerResponse,
 } from "../src/index.js";
 
@@ -69,6 +71,7 @@ describe("R6.8 ShapingWorker Offloading", () => {
   it("provides client interface via ShapingWorkerClient", async () => {
     const client = new ShapingWorkerClient();
     await client.init();
+    expect(client.offloaded).toBe(false);
 
     const fontId = await client.registerFont(openSansBytes);
     expect(fontId).toBeGreaterThan(0);
@@ -89,6 +92,73 @@ describe("R6.8 ShapingWorker Offloading", () => {
     }
 
     await client.dropFont(fontId);
+    client.dispose();
+  });
+
+  it("offloads through a worker transport with correlated responses and transferred fonts", async () => {
+    const received: WorkerRequest[] = [];
+    const listeners: ((event: { data?: unknown }) => void)[] = [];
+    const handler = new ShapingWorkerHandler();
+    let terminated = false;
+    const worker: ShapingWorkerTransport = {
+      postMessage(message) {
+        received.push(message as WorkerRequest);
+        queueMicrotask(() => {
+          void handler.handleMessage(message as WorkerRequest, (response) => {
+            for (const listener of listeners) listener({ data: response });
+          });
+        });
+      },
+      addEventListener(type, listener) {
+        if (type === "message") listeners.push(listener);
+      },
+      terminate() {
+        terminated = true;
+      },
+    };
+
+    const client = new ShapingWorkerClient(worker);
+    expect(client.offloaded).toBe(true);
+    await client.init();
+    const fontId = await client.registerFont(openSansBytes);
+    const result = await client.shape(fontId, "Off-thread shaping");
+    expect(result.glyphs.length).toBeGreaterThan(0);
+    const batch = await client.shapeBatch([
+      { fontId, text: "One" },
+      { fontId, text: "Two" },
+    ]);
+    expect(batch).toHaveLength(2);
+    expect(received.map((m) => m.type)).toEqual([
+      "init",
+      "registerFont",
+      "shapeBatch",
+      "shapeBatch",
+    ]);
+    // Fonts are transferred as copies so the caller's bytes stay usable.
+    expect(openSansBytes.byteLength).toBeGreaterThan(0);
+    await client.dropFont(fontId);
+    client.dispose();
+    expect(terminated).toBe(true);
+  });
+
+  it("falls back to in-thread shaping when the worker cannot initialize", async () => {
+    let terminated = false;
+    const broken: ShapingWorkerTransport = {
+      postMessage() {
+        throw new Error("worker blocked by CSP");
+      },
+      addEventListener() {},
+      terminate() {
+        terminated = true;
+      },
+    };
+    const client = new ShapingWorkerClient(broken);
+    await client.init();
+    expect(client.offloaded).toBe(false);
+    expect(terminated).toBe(true);
+    const fontId = await client.registerFont(openSansBytes);
+    const result = await client.shape(fontId, "Fallback");
+    expect(result.glyphs.length).toBeGreaterThan(0);
     client.dispose();
   });
 });
