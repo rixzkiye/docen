@@ -1,6 +1,3 @@
-import fs from "node:fs";
-import { fileURLToPath } from "node:url";
-
 export interface ShapingWasmExports {
   readonly memory: WebAssembly.Memory;
   alloc(size: number): number;
@@ -45,7 +42,7 @@ let wasmExports: ShapingWasmExports | null = null;
 
 /**
  * Initialize the docen-shaping WebAssembly module.
- * Can be provided an ArrayBuffer/Uint8Array, or defaults to reading the vendored wasm file.
+ * Can be provided an ArrayBuffer/Uint8Array, or defaults to reading/fetching the vendored wasm file.
  */
 export async function initShapingWasm(
   wasmInput?: ArrayBuffer | Uint8Array,
@@ -57,10 +54,20 @@ export async function initShapingWasm(
   let bytes: ArrayBuffer | Uint8Array;
   if (wasmInput) {
     bytes = wasmInput;
+  } else if (
+    typeof window !== "undefined" ||
+    typeof document !== "undefined" ||
+    !(globalThis as unknown as { process?: { versions?: { node?: string } } }).process?.versions
+      ?.node
+  ) {
+    const res = await fetch(new URL("../wasm/docen_shaping.wasm", import.meta.url));
+    bytes = await res.arrayBuffer();
   } else {
-    // Attempt reading from local vendored path
+    // Dynamic import to prevent browser bundlers (Vite/webpack) from failing on Node builtins
+    const { readFileSync } = await import("node:fs");
+    const { fileURLToPath } = await import("node:url");
     const wasmPath = fileURLToPath(new URL("../wasm/docen_shaping.wasm", import.meta.url));
-    bytes = fs.readFileSync(wasmPath);
+    bytes = readFileSync(wasmPath);
   }
 
   const module = await WebAssembly.compile(bytes as BufferSource);

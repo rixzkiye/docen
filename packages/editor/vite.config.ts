@@ -44,6 +44,7 @@ export default defineConfig({
       // its layout/ subpath — this alias resolves both without pre-bundling.
       "@docen/layout": fileURLToPath(new URL("../layout/src/index.ts", import.meta.url)),
       "@docen/pptx": fileURLToPath(new URL("../pptx/src/index.ts", import.meta.url)),
+      "@docen/shaping": fileURLToPath(new URL("../shaping/src/index.ts", import.meta.url)),
       "@docen/editor": fileURLToPath(new URL("./src/index.ts", import.meta.url)),
     },
   },
