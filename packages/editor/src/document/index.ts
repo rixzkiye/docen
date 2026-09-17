@@ -7519,7 +7519,7 @@ class DocenDocument extends AddinHost<Editor> {
     }));
     const embeddedFonts =
       this.#fonts.size > 0
-        ? buildEmbeddedPdfFonts(
+        ? await buildEmbeddedPdfFonts(
             pageLayers.flatMap((layer) => layer.textSpans),
             [...this.#fonts.values()].map((entry) => ({
               family: entry.family,

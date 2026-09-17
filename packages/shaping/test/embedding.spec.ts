@@ -11,8 +11,8 @@ import {
   initShapingWasm,
   isFontEmbeddingAllowed,
   isFontSubsettingAllowed,
-  subsetFont,
 } from "../src/index.js";
+import { subsetFont } from "../src/subsetter.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const openSansPath = path.join(__dirname, "fixtures/fonts/OpenSans-Regular.ttf");

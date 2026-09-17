@@ -8,6 +8,8 @@ export * from "./font-cache.js";
 export * from "./font-source.js";
 export * from "./fallback-chain.js";
 export * from "./font-manager.js";
-export * from "./subsetter.js";
 export * from "./to-unicode.js";
 export * from "./shaping-worker.js";
+// NOTE: `./subsetter.js` is intentionally NOT re-exported here — it is the
+// export-path-only entry (`@docen/shaping/subsetter`), so the runtime
+// shaping path never pulls the TrueType subsetter into its bundle.

@@ -5,7 +5,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 
 import type { FlowPage, LaidOutParagraph, LaidOutTable } from "@docen/layout";
-import { readCmap, subsetFontWithPlan } from "@docen/shaping";
+import { readCmap, subsetFontWithPlan } from "@docen/shaping/subsetter";
 import { describe, expect, it } from "vitest";
 
 import type { CanvasStageSection } from "./canvas/stage";
@@ -543,9 +543,9 @@ describe("buildEmbeddedPdfFonts", () => {
     fontFamily,
   });
 
-  it("subsets installed fonts and maps code units to remapped glyph ids", () => {
+  it("subsets installed fonts and maps code units to remapped glyph ids", async () => {
     const fontData = fs.readFileSync(fontPath);
-    const fonts = buildEmbeddedPdfFonts(
+    const fonts = await buildEmbeddedPdfFonts(
       [span("Café", "Open Sans")],
       [{ family: "Open Sans", fontData }],
     );
@@ -558,15 +558,15 @@ describe("buildEmbeddedPdfFonts", () => {
     expect(embedded.cidToGid?.get("é".charCodeAt(0))).toBeGreaterThan(0);
   });
 
-  it("skips restricted fonts (fsType 0x0002) and embeds no-subsetting fonts whole", () => {
+  it("skips restricted fonts (fsType 0x0002) and embeds no-subsetting fonts whole", async () => {
     const fontData = fs.readFileSync(fontPath);
     const spans = [span("Restricted", "Locked Font")];
-    const restricted = buildEmbeddedPdfFonts(spans, [
+    const restricted = await buildEmbeddedPdfFonts(spans, [
       { family: "Locked Font", fontData, fsType: 0x0002 },
     ]);
     expect(restricted).toEqual([]);
 
-    const whole = buildEmbeddedPdfFonts(
+    const whole = await buildEmbeddedPdfFonts(
       [span("Whole", "NoSubset Font")],
       [{ family: "NoSubset Font", fontData, fsType: 0x0100 }],
     );

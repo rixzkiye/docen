@@ -17,11 +17,10 @@ import {
   generateToUnicodeCMap,
   isFontEmbeddingAllowed,
   isFontSubsettingAllowed,
-  readCmap,
   readFontFsType,
   readFontUnitsPerEm,
-  subsetFontWithPlan,
 } from "@docen/shaping";
+import type { SubsetPlan } from "@docen/shaping/subsetter";
 
 import type { CanvasStageSection } from "./canvas/stage";
 
@@ -264,15 +263,19 @@ function fontForSpan(span: PdfTextSpan): { fontName: string; isUnicode: boolean 
  *  applied when the license also allows it (otherwise the full font is
  *  embedded). Each entry carries a `cidToGid` map so the writer can emit a
  *  `/CIDToGIDMap` and text spans can keep UTF-16 code units as CIDs. */
-export function buildEmbeddedPdfFonts(
+export async function buildEmbeddedPdfFonts(
   spans: readonly PdfTextSpan[],
   sources: Iterable<PdfEmbeddableFontSource>,
-): PdfEmbeddedFont[] {
+): Promise<PdfEmbeddedFont[]> {
   const byFamily = new Map<string, PdfEmbeddableFontSource>();
   for (const source of sources) {
     byFamily.set(source.family.trim().toLowerCase(), source);
   }
   if (byFamily.size === 0) return [];
+
+  // The subsetter is export-path-only: loaded on demand so the runtime
+  // shaping bundle never carries it (see @docen/shaping/subsetter).
+  const { readCmap, subsetFontWithPlan } = await import("@docen/shaping/subsetter");
 
   const used = new Map<string, { source: PdfEmbeddableFontSource; codeUnits: Set<number> }>();
   for (const span of spans) {
@@ -312,7 +315,7 @@ export function buildEmbeddedPdfFonts(
     if (canSubset) {
       // A malformed font must never break the export: fall back to the full
       // font when subsetting throws.
-      let plan: ReturnType<typeof subsetFontWithPlan> | undefined;
+      let plan: SubsetPlan | undefined;
       try {
         plan = subsetFontWithPlan(source.fontData, [...usedGids]);
       } catch {

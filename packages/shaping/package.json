@@ -38,6 +38,10 @@
     ".": {
       "types": "./dist/index.d.mts",
       "import": "./dist/index.mjs"
+    },
+    "./subsetter": {
+      "types": "./dist/subsetter.d.mts",
+      "import": "./dist/subsetter.mjs"
     }
   },
   "scripts": {
