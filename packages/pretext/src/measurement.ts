@@ -99,7 +99,22 @@ function applyFontKerning(fontKerning: boolean): void {
   ctx.fontKerning = fontKerning ? "normal" : "auto";
 }
 
-export function getSegmentMetrics(seg: string, cache: Map<string, SegmentMetrics>): SegmentMetrics {
+export function getSegmentMetrics(
+  seg: string,
+  cache: Map<string, SegmentMetrics>,
+  measure?: (segment: string) => number,
+): SegmentMetrics {
+  if (measure) {
+    // Provider widths (shaped advances) are exact: no canvas, and the
+    // canvas-only emoji/CJK corrections stay at zero (the callers pass them
+    // zero when a provider is active).
+    let metrics = cache.get(seg);
+    if (metrics === undefined) {
+      metrics = { width: measure(seg), containsCJK: isCJK(seg) };
+      cache.set(seg, metrics);
+    }
+    return metrics;
+  }
   let metrics = cache.get(seg);
   if (metrics === undefined) {
     const ctx = getMeasureContext();
@@ -288,6 +303,7 @@ export function getSegmentBreakableFitAdvances(
   emojiCorrection: number,
   cjkCorrection: number,
   mode: BreakableFitMode,
+  measure?: (segment: string) => number,
 ): number[] | null {
   if (metrics.breakableFitAdvances !== undefined && metrics.breakableFitMode === mode) {
     return metrics.breakableFitAdvances;
@@ -307,7 +323,7 @@ export function getSegmentBreakableFitAdvances(
   if (mode === "sum-graphemes") {
     const advances: number[] = [];
     for (const grapheme of graphemes) {
-      const graphemeMetrics = getSegmentMetrics(grapheme, cache);
+      const graphemeMetrics = getSegmentMetrics(grapheme, cache, measure);
       advances.push(
         getCorrectedSegmentWidth(grapheme, graphemeMetrics, emojiCorrection, cjkCorrection),
       );
@@ -322,7 +338,7 @@ export function getSegmentBreakableFitAdvances(
     let previousWidth = 0;
 
     for (const grapheme of graphemes) {
-      const graphemeMetrics = getSegmentMetrics(grapheme, cache);
+      const graphemeMetrics = getSegmentMetrics(grapheme, cache, measure);
       const currentWidth = getCorrectedSegmentWidth(
         grapheme,
         graphemeMetrics,
@@ -334,7 +350,7 @@ export function getSegmentBreakableFitAdvances(
         advances.push(currentWidth);
       } else {
         const pair = previousGrapheme + grapheme;
-        const pairMetrics = getSegmentMetrics(pair, cache);
+        const pairMetrics = getSegmentMetrics(pair, cache, measure);
         advances.push(
           getCorrectedSegmentWidth(pair, pairMetrics, emojiCorrection, cjkCorrection) -
             previousWidth,
@@ -355,7 +371,7 @@ export function getSegmentBreakableFitAdvances(
 
   for (const grapheme of graphemes) {
     prefix += grapheme;
-    const prefixMetrics = getSegmentMetrics(prefix, cache);
+    const prefixMetrics = getSegmentMetrics(prefix, cache, measure);
     const nextPrefixWidth = getCorrectedSegmentWidth(
       prefix,
       prefixMetrics,

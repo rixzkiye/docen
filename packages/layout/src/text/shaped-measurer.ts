@@ -246,6 +246,34 @@ export class ShapedMeasurer extends TextMeasurer {
     return super.widthOf(text, style, whiteSpace);
   }
 
+  /** Feed the line breaker shaped advances: without this the packer measures
+   *  every segment with canvas measureText even when shaping is enabled, so
+   *  kern/liga widths never reach the wrap decisions. */
+  override segmentMeasurer(style: LayoutTextStyle): ((segment: string) => number) | undefined {
+    if (!this.enabled) return undefined;
+    const family =
+      typeof style.family === "string"
+        ? style.family
+        : (style.family.latin ?? style.family.eastAsia);
+    if (!family || !this.getFont(family)) return undefined;
+    // Natural advances only: pretext applies the item's letterSpacing and
+    // widthScale itself, so shape the run with spacing zeroed (shapeRun
+    // refuses styled runs — the painter cannot represent spacing yet).
+    const shapeStyle: LayoutTextStyle = style.letterSpacingPx
+      ? { ...style, letterSpacingPx: undefined }
+      : style;
+    const scale = characterScaleOf(shapeStyle);
+    return (segment: string): number => {
+      if (!segment) return 0;
+      const run = this.shapeRun(segment, shapeStyle);
+      if (run) return run.totalAdvancePx;
+      // A segment the shaper cannot represent (mixed script, degenerate size)
+      // falls back to the canvas advance, de-scaled to the raw contract.
+      const raw = super.widthOf(segment, shapeStyle);
+      return scale === 1 ? raw : raw / scale;
+    };
+  }
+
   /**
    * The shaped run for a laid-out run of text, when the measurer can shape it.
    * `undefined` = the canvas measurer (or shaping off / no registered font) and

@@ -313,6 +313,14 @@ export class TextMeasurer {
   glyphRunOf(_text: string, _style: LayoutTextStyle): LaidOutGlyphRun | undefined {
     return undefined;
   }
+
+  /** Optional breaker measurement provider: when it returns a function, the
+   *  line breaker measures this style's segments with it instead of the
+   *  canvas. The value must be a raw advance — before letterSpacing/widthScale,
+   *  which pretext applies itself. The canvas measurer has none. */
+  segmentMeasurer(_style: LayoutTextStyle): ((segment: string) => number) | undefined {
+    return undefined;
+  }
 }
 
 /** The family one script segment of a style renders in (slot by script). */
