@@ -133,6 +133,20 @@ export interface RunStyle {
   glow?: { radiusPx?: number; color?: string };
   /** Reflection effect. */
   reflection?: { blur?: number; distancePx?: number; opacity?: number };
+  /** OpenType ligatures setting (w:ligatures). */
+  ligatures?: "none" | "standard" | "contextual" | "historical" | "discretionary" | "all";
+  /** OpenType number form (w:numForm). */
+  numForm?: "default" | "lining" | "oldStyle";
+  /** OpenType number spacing (w:numSpacing). */
+  numSpacing?: "default" | "proportional" | "tabular";
+  /** OpenType stylistic set index (1-20, w:stylisticSet). */
+  stylisticSet?: number;
+  /** Explicit font feature settings. */
+  fontFeatures?: readonly { tag: string; value?: number }[];
+  /** Explicit font variation settings. */
+  fontVariations?: readonly { tag: string; value: number }[];
+  /** Numeric font weight. */
+  fontWeight?: number;
 }
 
 /** ST_TextScale resolution (w:w): only 1-600 is meaningful, and 100 is the
@@ -226,5 +240,12 @@ export function runStyleOf(rPr: Rec): RunStyle {
     imprint: tri(rPr.imprint),
     glow: isRecord(rPr.glow) ? (rPr.glow as never) : undefined,
     reflection: isRecord(rPr.reflection) ? (rPr.reflection as never) : undefined,
+    ligatures: str(rPr.ligatures) as LayoutTextStyle["ligatures"],
+    numForm: str(rPr.numForm) as LayoutTextStyle["numForm"],
+    numSpacing: str(rPr.numSpacing) as LayoutTextStyle["numSpacing"],
+    stylisticSet: num(rPr.stylisticSet),
+    fontFeatures: Array.isArray(rPr.fontFeatures) ? rPr.fontFeatures : undefined,
+    fontVariations: Array.isArray(rPr.fontVariations) ? rPr.fontVariations : undefined,
+    fontWeight: num(rPr.fontWeight),
   };
 }

@@ -89,6 +89,20 @@ export interface LayoutTextStyle {
   glow?: { radiusPx?: number; color?: string };
   /** Reflection effect (Word 2010+ / DrawingML). */
   reflection?: { blur?: number; distancePx?: number; opacity?: number };
+  /** OpenType ligatures setting (w:ligatures). */
+  ligatures?: "none" | "standard" | "contextual" | "historical" | "discretionary" | "all";
+  /** OpenType number form (w:numForm). */
+  numForm?: "default" | "lining" | "oldStyle";
+  /** OpenType number spacing (w:numSpacing). */
+  numSpacing?: "default" | "proportional" | "tabular";
+  /** OpenType stylistic set index (1-20, w:stylisticSet). */
+  stylisticSet?: number;
+  /** Explicit font feature settings tag -> value. */
+  fontFeatures?: readonly { tag: string; value?: number }[];
+  /** Explicit font variation settings tag -> value (for variable fonts). */
+  fontVariations?: readonly { tag: string; value: number }[];
+  /** Numeric font weight (100-900) for variable fonts. */
+  fontWeight?: number;
 }
 
 /** a:srcRect crop as fractions of the image edge (0-1, each side inward);

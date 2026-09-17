@@ -65,13 +65,40 @@ export type PathCommand =
   | { readonly type: "Z" };
 
 /**
+ * OpenType variation axis metadata.
+ */
+export interface FontAxis {
+  readonly tag: string;
+  readonly min: number;
+  readonly max: number;
+  readonly default: number;
+}
+
+/**
+ * Single font variation axis coordinate setting (e.g. wght: 700).
+ */
+export interface FontVariationSetting {
+  readonly tag: string;
+  readonly value: number;
+}
+
+/**
+ * Single OpenType feature setting (e.g. kern: 1, smcp: 1, liga: 0).
+ */
+export interface FontFeatureSetting {
+  readonly tag: string;
+  readonly value?: number;
+}
+
+/**
  * Options configuring text shaping behavior.
  */
 export interface ShapingOptions {
   readonly direction?: "ltr" | "rtl" | "ttb" | "btt" | "auto";
   readonly script?: string; // 4-char ISO 15924 tag, e.g. "Latn", "Arab", "Hebr", "Thai", "Deva", "Khmr", "Hani"
   readonly language?: string; // BCP 47 or OpenType language tag
-  readonly features?: readonly { readonly tag: string; readonly value: number }[];
+  readonly features?: readonly FontFeatureSetting[];
+  readonly variations?: readonly FontVariationSetting[];
   readonly size?: number;
 }
 
@@ -88,6 +115,7 @@ export interface FontIdentity {
   readonly fsType?: number;
   readonly isEmbeddingAllowed?: boolean;
   readonly isSubsettingAllowed?: boolean;
+  readonly axes?: readonly FontAxis[];
 }
 
 export const FS_TYPE_RESTRICTED = 0x0002;
@@ -111,9 +139,14 @@ export interface ShapingBackend {
   readonly id: string;
   registerFont(fontData: Uint8Array, fontIndex?: number): number;
   dropFont(fontId: number): void;
-  getFontMetrics(fontId: number): FontMetrics;
+  getFontMetrics(fontId: number, variations?: readonly FontVariationSetting[]): FontMetrics;
   shape(fontId: number, text: string, options?: ShapingOptions): ShapingResult;
-  getGlyphOutline?(fontId: number, glyphId: number): readonly PathCommand[];
+  getGlyphOutline?(
+    fontId: number,
+    glyphId: number,
+    variations?: readonly FontVariationSetting[],
+  ): readonly PathCommand[];
+  getFontAxes?(fontId: number): readonly FontAxis[];
   getFontName?(fontId: number, nameId: number): string | undefined;
   getGlyphCount?(fontId: number): number;
   getFontFsType?(fontId: number): number;

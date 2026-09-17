@@ -16,11 +16,24 @@ export interface ShapingWasmExports {
     scriptTag: number,
     langPtr: number,
     langLen: number,
+    featuresPtr: number,
+    featuresCount: number,
+    variationsPtr: number,
+    variationsCount: number,
   ): number;
   get_metrics_buffer_ptr(): number;
   get_font_metrics(fontId: number): number;
+  get_font_metrics_var(fontId: number, variationsPtr: number, variationsCount: number): number;
   get_outline_buffer_ptr(): number;
   get_glyph_outline(fontId: number, glyphId: number): number;
+  get_glyph_outline_var(
+    fontId: number,
+    glyphId: number,
+    variationsPtr: number,
+    variationsCount: number,
+  ): number;
+  get_font_axes_ptr(): number;
+  get_font_axes(fontId: number): number;
   get_string_buffer_ptr(): number;
   get_font_name(fontId: number, nameId: number): number;
   get_glyph_count(fontId: number): number;
