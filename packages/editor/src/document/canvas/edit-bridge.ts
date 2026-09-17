@@ -51,7 +51,7 @@ import {
   type AutocorrectConfig,
 } from "./autocorrect";
 import { CaretMap, type TableZone } from "./caret-map";
-import { CellSelection, cellAt, inSameTable } from "./cell-selection";
+import { CellSelection, cellAt, inSameTable, spanOf } from "./cell-selection";
 import { installChartHover, type ChartTip } from "./chart-hover";
 import { createDocJsonCache, pmNodeToJSON, type DocJsonCache } from "./doc-json";
 import { followLink, installLinkHover, type LinkHit } from "./link-hover";
@@ -245,6 +245,8 @@ export interface EditBridgeOptions {
   /** The border painter's armed state (Table Design → Draw Border). While
    *  active the canvas presses start edge sweeps instead of text selection. */
   borderPaint?: () => { active: boolean; eraser: boolean };
+  /** The current section's text width (px) — used for AutoFit Window. */
+  contentWidthPx?: () => number | undefined;
   /** The format painter's armed state (Home → Format Painter) — owns the
    *  cursor (Word's brush I-beam) until the paint lands or Esc disarms. */
   formatPaint?: () => boolean;
@@ -1532,6 +1534,37 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
     preset: string;
     line: boolean;
   } | null = null;
+
+  // Table column/row drag resize guide line & measurement badge
+  const tableResizeLineEl = document.createElement("div");
+  tableResizeLineEl.style.cssText =
+    "position:absolute;display:none;pointer-events:none;z-index:35;" +
+    "background:var(--docen-color-primary, #2b579a);";
+  const tableResizeBadgeEl = document.createElement("div");
+  tableResizeBadgeEl.style.cssText =
+    "position:absolute;display:none;pointer-events:none;z-index:36;padding:2px 6px;" +
+    "font-size:11px;font-family:Segoe UI, sans-serif;border-radius:3px;" +
+    "background:rgba(30,30,30,0.85);color:#fff;box-shadow:0 2px 4px rgba(0,0,0,0.2);white-space:nowrap;";
+
+  let tableResize: {
+    page: number;
+    scale: number;
+    kind: "col" | "row";
+    index: number;
+    startX: number;
+    startY: number;
+    currentX: number;
+    currentY: number;
+    moved: boolean;
+    zone: TableZone;
+    tablePos: number;
+    tableNode: PMNode;
+    initialWidths: number[];
+    initialHeight: number;
+    targetCol: number;
+    targetRow: number;
+  } | null = null;
+
   const hideShapeGhost = (): void => {
     shapeGhostEl.style.display = "none";
     shapeLineEl.style.display = "none";
@@ -1712,6 +1745,10 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
       opts.host.style.cursor = FORMAT_PAINTER_CURSOR;
       return;
     }
+    if (tableResize) {
+      opts.host.style.cursor = tableResize.kind === "col" ? "col-resize" : "row-resize";
+      return;
+    }
     const hit = story ? null : hitPage(event.clientX, event.clientY);
     const drawHit = hit && opts.drawingAt ? opts.drawingAt(hit.page, hit.lx, hit.ly) : null;
     const balloonHit = hit && opts.balloonAt ? opts.balloonAt(hit.page, hit.lx, hit.ly) : null;
@@ -1724,6 +1761,12 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
       // object — the plain arrow until the drag gestures reach it.
       want = drawHit.chartPart ? "default" : drawHit.kind === "drawing" ? "move" : "default";
     } else {
+      const borderHit =
+        hit && main.map ? main.map.tableBorderHitAt(hit.page, hit.lx, hit.ly, 3) : null;
+      if (borderHit) {
+        opts.host.style.cursor = borderHit.kind === "col" ? "col-resize" : "row-resize";
+        return;
+      }
       const pos = posAtClient(event.clientX, event.clientY);
       const link = pos != null ? linkAt(pos) : null;
       if (link?.href) want = "pointer";
@@ -1786,6 +1829,55 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
       }
       return;
     }
+    if (tableResize) {
+      if (
+        !tableResize.moved &&
+        Math.hypot(event.clientX - tableResize.startX, event.clientY - tableResize.startY) >= 3
+      ) {
+        tableResize.moved = true;
+      }
+      if (tableResize.moved) {
+        tableResize.currentX = event.clientX;
+        tableResize.currentY = event.clientY;
+        opts.host.style.cursor = tableResize.kind === "col" ? "col-resize" : "row-resize";
+
+        const hostRect = opts.inputHost.getBoundingClientRect();
+        const frame = opts.pageHost?.(tableResize.page);
+        const pageRect = frame?.getBoundingClientRect() ?? hostRect;
+        const scale = tableResize.scale;
+
+        if (tableResize.kind === "col") {
+          tableResizeLineEl.style.left = `${event.clientX - hostRect.left}px`;
+          tableResizeLineEl.style.top = `${pageRect.top - hostRect.top + tableResize.zone.yPx * scale}px`;
+          tableResizeLineEl.style.width = "2px";
+          tableResizeLineEl.style.height = `${tableResize.zone.heightPx * scale}px`;
+          tableResizeLineEl.style.display = "block";
+
+          const deltaTwip = Math.round(((event.clientX - tableResize.startX) / scale) * 15);
+          const c = tableResize.targetCol;
+          const initialW = tableResize.initialWidths[c] ?? 1440;
+          const currentW = Math.max(360, initialW + deltaTwip);
+          tableResizeBadgeEl.textContent = `${(currentW / 1440).toFixed(2)}" / ${(currentW / 567).toFixed(1)} cm`;
+          tableResizeBadgeEl.style.left = `${event.clientX - hostRect.left + 12}px`;
+          tableResizeBadgeEl.style.top = `${event.clientY - hostRect.top - 24}px`;
+          tableResizeBadgeEl.style.display = "block";
+        } else {
+          tableResizeLineEl.style.left = `${pageRect.left - hostRect.left + tableResize.zone.xPx * scale}px`;
+          tableResizeLineEl.style.top = `${event.clientY - hostRect.top}px`;
+          tableResizeLineEl.style.width = `${tableResize.zone.widthPx * scale}px`;
+          tableResizeLineEl.style.height = "2px";
+          tableResizeLineEl.style.display = "block";
+
+          const deltaTwip = Math.round(((event.clientY - tableResize.startY) / scale) * 15);
+          const currentH = Math.max(144, tableResize.initialHeight + deltaTwip);
+          tableResizeBadgeEl.textContent = `${(currentH / 1440).toFixed(2)}" / ${(currentH / 567).toFixed(1)} cm`;
+          tableResizeBadgeEl.style.left = `${event.clientX - hostRect.left + 12}px`;
+          tableResizeBadgeEl.style.top = `${event.clientY - hostRect.top - 24}px`;
+          tableResizeBadgeEl.style.display = "block";
+        }
+      }
+      return;
+    }
     if (borderSweep) {
       const hit = story ? null : hitPage(event.clientX, event.clientY);
       const edges = hit ? main.map?.tableEdgeAt(hit.page, hit.lx, hit.ly) : null;
@@ -1837,6 +1929,78 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
     if (head != null) setDragSelection(dragAnchor, head);
   };
   const onMouseUp = (event: MouseEvent): void => {
+    if (tableResize) {
+      const trState = tableResize;
+      tableResize = null;
+      tableResizeLineEl.style.display = "none";
+      tableResizeBadgeEl.style.display = "none";
+      opts.host.style.cursor = "";
+
+      if (trState.moved) {
+        const { state, view } = active().editor;
+        const tr = state.tr;
+        if (trState.kind === "col") {
+          const deltaTwip = Math.round(((event.clientX - trState.startX) / trState.scale) * 15);
+          const nextWidths = [...trState.initialWidths];
+          const c = trState.targetCol;
+          if (event.shiftKey && c < nextWidths.length - 1) {
+            const maxGrow = nextWidths[c + 1]! - 360;
+            const maxShrink = nextWidths[c]! - 360;
+            const clamped = Math.max(-maxShrink, Math.min(maxGrow, deltaTwip));
+            nextWidths[c] += clamped;
+            nextWidths[c + 1] -= clamped;
+          } else {
+            nextWidths[c] = Math.max(360, nextWidths[c]! + deltaTwip);
+          }
+
+          tr.setNodeMarkup(trState.tablePos, undefined, {
+            ...trState.tableNode.attrs,
+            columnWidths: nextWidths,
+          });
+
+          let curRowPos = trState.tablePos + 1;
+          for (let r = 0; r < trState.tableNode.childCount; r++) {
+            const row = trState.tableNode.child(r);
+            let curCellPos = curRowPos + 1;
+            let col = 0;
+            for (let ci = 0; ci < row.childCount; ci++) {
+              const cell = row.child(ci);
+              const span = spanOf(cell);
+              let cellWidthTwip = 0;
+              for (let i = 0; i < span && col + i < nextWidths.length; i++) {
+                cellWidthTwip += nextWidths[col + i]!;
+              }
+              tr.setNodeMarkup(curCellPos, undefined, {
+                ...cell.attrs,
+                width: { value: cellWidthTwip, type: "dxa" },
+              });
+              col += span;
+              curCellPos += cell.nodeSize;
+            }
+            curRowPos += row.nodeSize;
+          }
+        } else {
+          const deltaTwip = Math.round(((event.clientY - trState.startY) / trState.scale) * 15);
+          const newHeight = Math.max(144, trState.initialHeight + deltaTwip);
+          let curRowPos = trState.tablePos + 1;
+          for (let r = 0; r < trState.tableNode.childCount; r++) {
+            const row = trState.tableNode.child(r);
+            if (r === trState.targetRow) {
+              tr.setNodeMarkup(curRowPos, undefined, {
+                ...row.attrs,
+                height: { value: newHeight, rule: "atLeast" },
+              });
+              break;
+            }
+            curRowPos += row.nodeSize;
+          }
+        }
+        view.dispatch(tr);
+      } else {
+        setSel(trState.tablePos + 1);
+      }
+      return;
+    }
     if (shapeGhost) {
       const g = shapeGhost;
       shapeGhost = null;
@@ -2242,6 +2406,82 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
         return;
       }
     }
+    // Table border resize / dblclick AutoFit
+    if (!story && !opts.borderPaint?.().active && hit) {
+      const borderHit = main.map?.tableBorderHitAt(hit.page, hit.lx, hit.ly, 3);
+      if (borderHit) {
+        if (dbl) {
+          setSel(borderHit.cellPos + 1);
+          if (borderHit.kind === "col") {
+            if (event.shiftKey) {
+              const flow =
+                (opts.contentWidthPx ? opts.contentWidthPx() : undefined) ?? borderHit.zone.widthPx;
+              active().editor.commands["autofit-window"](String(Math.round(flow * 15)));
+            } else {
+              active().editor.commands["autofit-contents"](
+                borderHit.index > 0 ? borderHit.index - 1 : 0,
+              );
+            }
+          }
+          ta.focus();
+          ta.value = "";
+          return;
+        }
+
+        const { doc } = active().editor.state;
+        const $cell = doc.resolve(borderHit.cellPos);
+        let tablePos = -1;
+        let tableNode: PMNode | null = null;
+        for (let d = $cell.depth; d > 0; d--) {
+          const n = $cell.node(d);
+          if (n.type.name === "table") {
+            tablePos = $cell.before(d);
+            tableNode = n;
+            break;
+          }
+        }
+        if (tableNode && tablePos >= 0) {
+          const widths =
+            (tableNode.attrs.columnWidths as number[] | null)?.slice() ??
+            borderHit.zone.colEdges
+              .slice(0, -1)
+              .map((x, i) => Math.round((borderHit.zone.colEdges[i + 1]! - x) * 15));
+          const c = borderHit.index;
+          const targetCol = c > 0 ? c - 1 : 0;
+          const r = borderHit.index;
+          const targetRow = r > 0 ? r - 1 : 0;
+          const rowEl = tableNode.child(Math.min(targetRow, tableNode.childCount - 1));
+          const initialHeight =
+            (rowEl?.attrs.height as { value: number } | null)?.value ??
+            Math.round(
+              (borderHit.zone.rowEdges[targetRow + 1]! - borderHit.zone.rowEdges[targetRow]!) * 15,
+            );
+
+          tableResize = {
+            page: hit.page,
+            scale: opts.scale?.() ?? 1,
+            kind: borderHit.kind,
+            index: borderHit.index,
+            startX: event.clientX,
+            startY: event.clientY,
+            currentX: event.clientX,
+            currentY: event.clientY,
+            moved: false,
+            zone: borderHit.zone,
+            tablePos,
+            tableNode,
+            initialWidths: widths,
+            initialHeight,
+            targetCol,
+            targetRow,
+          };
+          ta.focus();
+          ta.value = "";
+          return;
+        }
+      }
+    }
+
     // Body editing (the main story). A click landing on a drawing grabs it
     // (Word's picture selection) instead of dropping a caret behind the art;
     // any other click drops a standing drawing selection first.
@@ -3525,6 +3765,8 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
   opts.inputHost.append(shapeGhostEl);
   opts.inputHost.append(shapeLineEl);
   opts.inputHost.append(shapePresetEl);
+  opts.inputHost.append(tableResizeLineEl);
+  opts.inputHost.append(tableResizeBadgeEl);
 
   // The IME anchor's cached rects die on scroll (the page frames move under
   // the fixed input layer) and on resize (both rects move).

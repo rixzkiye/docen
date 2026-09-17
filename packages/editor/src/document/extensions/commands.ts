@@ -132,7 +132,7 @@ declare module "@tiptap/core" {
       "merge-cells": () => ReturnType;
       "split-cell": () => ReturnType;
       "split-table": () => ReturnType;
-      "autofit-contents": () => ReturnType;
+      "autofit-contents": (value?: string | number) => ReturnType;
       "autofit-window": (value?: string) => ReturnType;
       "fixed-column-width": () => ReturnType;
       "distribute-columns": () => ReturnType;
@@ -3383,7 +3383,7 @@ export const DocumentCommands = Extension.create({
       // content (a character-count heuristic — see measureTextTwip) without
       // growing past the current grid. Span-free tables only.
       "autofit-contents":
-        () =>
+        (targetCol?: string | number) =>
         ({ state, dispatch }) => {
           const anchor = tableAncestry(state);
           if (!anchor) return false;
@@ -3401,22 +3401,35 @@ export const DocumentCommands = Extension.create({
             }
           }
           if (dispatch) {
+            const onlyCol = targetCol != null && targetCol !== "" ? Number(targetCol) : null;
             const next = widths.map((w, c) => {
+              if (onlyCol != null && !Number.isNaN(onlyCol) && onlyCol !== c) return w;
               let widest = 0;
               for (let r = 0; r < tableNode.childCount; r += 1) {
                 widest = Math.max(widest, measureTextTwip(tableNode.child(r).child(c).textContent));
               }
               return Math.max(MIN_COL_TWIP, Math.min(w, widest));
             });
-            dispatch(
-              state.tr
-                .setNodeMarkup($from.before(anchor.tableAt), undefined, {
-                  ...tableNode.attrs,
-                  columnWidths: next,
-                  layout: null,
-                })
-                .scrollIntoView(),
-            );
+            const tr = state.tr.setNodeMarkup($from.before(anchor.tableAt), undefined, {
+              ...tableNode.attrs,
+              columnWidths: next,
+              layout: null,
+            });
+            let curRowPos = $from.before(anchor.tableAt) + 1;
+            for (let r = 0; r < tableNode.childCount; r += 1) {
+              const row = tableNode.child(r);
+              let curCellPos = curRowPos + 1;
+              for (let c = 0; c < row.childCount; c += 1) {
+                const cell = row.child(c);
+                tr.setNodeMarkup(curCellPos, undefined, {
+                  ...cell.attrs,
+                  width: { value: next[c], type: "dxa" },
+                });
+                curCellPos += cell.nodeSize;
+              }
+              curRowPos += row.nodeSize;
+            }
+            dispatch(tr.scrollIntoView());
           }
           return true;
         },
@@ -3443,15 +3456,26 @@ export const DocumentCommands = Extension.create({
                 ? Math.max(1, Math.round((widths[c]! / sum) * total))
                 : Math.round(total / cols),
             );
-            dispatch(
-              state.tr
-                .setNodeMarkup($from.before(anchor.tableAt), undefined, {
-                  ...tableNode.attrs,
-                  columnWidths: next,
-                  layout: null,
-                })
-                .scrollIntoView(),
-            );
+            const tr = state.tr.setNodeMarkup($from.before(anchor.tableAt), undefined, {
+              ...tableNode.attrs,
+              columnWidths: next,
+              layout: null,
+            });
+            let curRowPos = $from.before(anchor.tableAt) + 1;
+            for (let r = 0; r < tableNode.childCount; r += 1) {
+              const row = tableNode.child(r);
+              let curCellPos = curRowPos + 1;
+              for (let c = 0; c < row.childCount; c += 1) {
+                const cell = row.child(c);
+                tr.setNodeMarkup(curCellPos, undefined, {
+                  ...cell.attrs,
+                  width: { value: next[c], type: "dxa" },
+                });
+                curCellPos += cell.nodeSize;
+              }
+              curRowPos += row.nodeSize;
+            }
+            dispatch(tr.scrollIntoView());
           }
           return true;
         },

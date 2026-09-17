@@ -189,6 +189,14 @@ export interface TableZone {
   rowEdges: number[];
 }
 
+export interface TableBorderHit {
+  zone: TableZone;
+  kind: "col" | "row";
+  index: number;
+  linePx: number;
+  cellPos: number;
+}
+
 /** The cell content stack's first paragraph block — the position the PM zip
  *  pairs. A cell opening with a nested table (rare) has none. */
 function firstParaOf(
@@ -1029,6 +1037,60 @@ export class CaretMap {
       }
     }
     return hit;
+  }
+
+  /** The table border nearest a page-local point within `tol` px (default 3px) —
+   *  the column/row resize and dblclick autofit hit test. Returns border index and kind. */
+  tableBorderHitAt(page: number, x: number, y: number, tol = 3): TableBorderHit | null {
+    let best: (TableBorderHit & { dist: number }) | null = null;
+    for (const z of this.tableZones) {
+      if (z.page !== page) continue;
+      // Check column edges (vertical borders)
+      if (y >= z.yPx - tol && y <= z.yPx + z.heightPx + tol) {
+        for (let c = 0; c < z.colEdges.length; c += 1) {
+          const edgeX = z.xPx + z.colEdges[c]!;
+          const dist = Math.abs(x - edgeX);
+          if (dist <= tol && (!best || dist < best.dist)) {
+            const cellPos = this.cellPosInZone(z);
+            if (cellPos != null) {
+              best = { zone: z, kind: "col", index: c, linePx: edgeX, cellPos, dist };
+            }
+          }
+        }
+      }
+      // Check row edges (horizontal borders)
+      if (x >= z.xPx - tol && x <= z.xPx + z.widthPx + tol) {
+        for (let r = 0; r < z.rowEdges.length; r += 1) {
+          const edgeY = z.yPx + z.rowEdges[r]!;
+          const dist = Math.abs(y - edgeY);
+          if (dist <= tol && (!best || dist < best.dist)) {
+            const cellPos = this.cellPosInZone(z);
+            if (cellPos != null) {
+              best = { zone: z, kind: "row", index: r, linePx: edgeY, cellPos, dist };
+            }
+          }
+        }
+      }
+    }
+    return best;
+  }
+
+  /** Any mapped cell PM pos inside a table zone. */
+  private cellPosInZone(z: TableZone): number | null {
+    for (const [pos, rects] of this.cellBoxes) {
+      for (const r of rects) {
+        if (
+          r.page === z.page &&
+          r.xPx >= z.xPx - 1 &&
+          r.xPx + r.widthPx <= z.xPx + z.widthPx + 1 &&
+          r.yPx >= z.yPx - 1 &&
+          r.yPx + r.heightPx <= z.yPx + z.heightPx + 1
+        ) {
+          return pos;
+        }
+      }
+    }
+    return null;
   }
 
   /** The table edge nearest a page-local point, if one sits within `tol` px —

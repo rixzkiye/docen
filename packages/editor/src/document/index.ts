@@ -1616,6 +1616,7 @@ class DocenDocument extends AddinHost<Editor> {
       pageHost: (page) => this.#stage?.slotAt(page)?.parentElement ?? null,
       extensions: [...docxExtensions, ...(defaultAddin.extensions ?? [])],
       scale: () => this.#stage?.scale() ?? 1,
+      contentWidthPx: () => this.#flow?.contentWidthPx,
       frontFloats: (page) => this.#stage?.frontFloatBoxes(page) ?? [],
       // Word's paste-options bar hangs after every rich paste; the clipboard
       // pane collects each in-editor copy/cut.
