@@ -47,17 +47,64 @@ const ratioCache = new Map<string, number>();
 /** Word ratios published by shaping-registered fonts (their own OS/2
  *  metrics) — deterministic, no DOM probe. Keyed by lowercased family. */
 const registeredRatios = new Map<string, number>();
+/** Baseline shares published by shaping-registered fonts. Keyed by
+ *  lowercased family. */
+const registeredBaselineShares = new Map<string, number>();
 
-/** Publish Word's single-line ratio for a shaping-registered family —
- *  `registerShapingFont` / `ShapedMeasurer.registerFont` call this. */
-export function setRegisteredFontRatio(family: string, ratio: number): void {
-  registeredRatios.set(family.trim().toLowerCase(), ratio);
+/** The vertical facts `normalRatio` / the baseline anchor need, resolved
+ *  from a face's own tables (hhea/OS/2/head) by the shaping layer. */
+export interface ResolvedFaceMetrics {
+  /** Word's single-line-height ratio (the font-metrics-data formula). */
+  ratio: number;
+  /** winAscent / upem — the alphabetic baseline depth share. */
+  baselineShare: number;
 }
 
-/** Drop the published ratios (tests). */
+/** Optional resolver the shaping layer installs: given a family, return its
+ *  metrics when a real font file is known to the shaping font manager, else
+ *  undefined (fall through to the table/DOM probe). Runs before the cache,
+ *  so a face registered after a probe still wins. */
+let faceMetricsResolver: ((family: string) => ResolvedFaceMetrics | undefined) | null = null;
+
+export function setFaceMetricsResolver(
+  resolver: ((family: string) => ResolvedFaceMetrics | undefined) | null,
+): void {
+  faceMetricsResolver = resolver;
+}
+
+/** Publish a shaping-registered face's metrics — `registerShapingFont` /
+ *  `ShapedMeasurer.registerFont` call this. */
+export function setRegisteredFontMetrics(family: string, metrics: ResolvedFaceMetrics): void {
+  registeredRatios.set(family.trim().toLowerCase(), metrics.ratio);
+  registeredBaselineShares.set(family.trim().toLowerCase(), metrics.baselineShare);
+}
+
+/** Drop the published ratios and baseline shares (tests). */
 export function clearRegisteredFontRatios(): void {
   registeredRatios.clear();
+  registeredBaselineShares.clear();
 }
+
+/** The face metrics known for a family: explicitly published, else resolved
+ *  through the shaping layer's resolver (a registered font file). */
+export function resolvedFaceMetrics(family: string): ResolvedFaceMetrics | undefined {
+  const key = family.trim().toLowerCase();
+  const ratio = registeredRatios.get(key);
+  if (ratio != null) {
+    return { ratio, baselineShare: registeredBaselineShares.get(key) ?? 0 };
+  }
+  return faceMetricsResolver?.(family);
+}
+
+/** A face's baseline share (winAscent / upem) when the shaping layer knows
+ *  the file — no DOM/canvas probe. Keyed by the family as requested: the
+ *  published map only covers exact spellings, the resolver re-resolves. */
+export function resolvedBaselineShare(family: string): number | undefined {
+  const published = registeredBaselineShares.get(family.trim().toLowerCase());
+  if (published != null) return published;
+  return faceMetricsResolver?.(family)?.baselineShare;
+}
+
 let probe: HTMLSpanElement | null = null;
 
 function ensureProbe(): HTMLSpanElement | null {
@@ -77,12 +124,14 @@ function ensureProbe(): HTMLSpanElement | null {
 export const browserFontMetrics: FontMetrics = {
   normalRatio(request) {
     const key = `${request.family}|${request.bold ? "b" : ""}|${request.italic ? "i" : ""}`;
-    // A shaping-registered face wins: its own OS/2 metrics give Word's exact
-    // number without the browser probe (deterministic across engines).
-    const registered = registeredRatios.get(request.family.trim().toLowerCase());
-    if (registered != null) {
-      ratioCache.set(key, registered);
-      return registered;
+    // A shaping-registered face (or any font file the shaping manager knows)
+    // wins: its own OS/2 metrics give Word's exact number without the
+    // browser probe (deterministic across engines, and probe-free on a
+    // machine whose fonts were never installed).
+    const face = resolvedFaceMetrics(request.family);
+    if (face != null) {
+      ratioCache.set(key, face.ratio);
+      return face.ratio;
     }
     const cached = ratioCache.get(key);
     if (cached != null) return cached;

@@ -96,7 +96,18 @@ for (const glyph of result.glyphs) {
 }
 ```
 
-### 2. Variable Fonts
+### 2. Font Collections (.ttc/.otc)
+
+```ts
+// `index` selects one face of a collection (Noto Sans CJK, Windows msyh.ttc):
+const sc = createFontRefSync(collectionBytes, { index: 2 });
+console.log(sc.familyName); // "Noto Sans CJK SC"
+
+// The export-only subsetter loads on first use and refuses collections:
+const subset = await sc.subset([...]); // throws for a collection face
+```
+
+### 3. Variable Fonts
 
 ```ts
 // Inspect axes
@@ -109,7 +120,7 @@ const boldRun = fontRef.shape("Bold Run", {
 });
 ```
 
-### 3. Font Subsetting & CMap for PDF Export
+### 4. Font Subsetting & CMap for PDF Export
 
 ```ts
 import { readCmap, subsetFontWithPlan, generateToUnicodeCMap } from "@docen/shaping";
@@ -127,7 +138,7 @@ const cmapStream = generateToUnicodeCMap(new Map([[1, 0x0041]]));
 through unchanged (valid bytes; glyph IDs are not remapped), so embedders must
 use the returned `glyphMap` to address TrueType subsets.
 
-### 4. Background Web Worker Offload
+### 5. Background Web Worker Offload
 
 Write the worker entry (five lines) and hand the Worker to the client; without
 one — or when it fails to initialize — the client shapes in-thread:

@@ -1,5 +1,4 @@
 import { getShapingBackend } from "./backend.js";
-import { subsetFont } from "./subsetter.js";
 import {
   isFontEmbeddingAllowed,
   isFontSubsettingAllowed,
@@ -26,12 +25,21 @@ export class FontRef {
   readonly metrics: FontMetrics;
   readonly identity: FontIdentity;
   private readonly fontData?: Uint8Array;
+  /** True for a `.ttc`/`.otc` collection (the flat subsetter cannot read it). */
+  private readonly isCollection: boolean;
   private isDisposed = false;
 
   constructor(id: number, backend: ShapingBackend, fontData?: Uint8Array) {
     this.id = id;
     this.backend = backend;
     this.fontData = fontData;
+    this.isCollection =
+      fontData !== undefined &&
+      fontData.length >= 4 &&
+      fontData[0] === 0x74 && // 't'
+      fontData[1] === 0x74 && // 't'
+      fontData[2] === 0x63 && // 'c'
+      fontData[3] === 0x66; // 'f'
     this.metrics = backend.getFontMetrics(id);
 
     const familyName = backend.getFontName?.(id, 1);
@@ -109,17 +117,28 @@ export class FontRef {
 
   /**
    * Produce a subset font buffer containing only the requested glyph IDs
-   * (plus composite components and `.notdef`). Throws when the FontRef was
-   * built without the source bytes; use {@link createFontRef} /
-   * {@link createFontRefSync} so subsetting is always available.
+   * (plus composite components and `.notdef`). The subsetter is an
+   * export-only path: it lives in the `@docen/shaping/subsetter` chunk and is
+   * imported on first use, so the runtime shaping bundle never carries it.
+   * Throws when the FontRef was built without the source bytes; use
+   * {@link createFontRef} / {@link createFontRefSync} so subsetting is always
+   * available.
    */
-  subset(glyphIds: readonly number[]): Uint8Array {
+  async subset(glyphIds: readonly number[]): Promise<Uint8Array> {
     this.assertNotDisposed();
     if (!this.fontData) {
       throw new Error(
         `FontRef (id=${this.id}) has no source font bytes; construct it via createFontRef().`,
       );
     }
+    if (this.isCollection) {
+      // The sfnt subsetter reads one flat sfnt; a collection face must be
+      // extracted before subsetting (PDF/DOCX embedding path).
+      throw new Error(
+        `FontRef (id=${this.id}) is a font collection (.ttc/.otc); extract the face before subsetting.`,
+      );
+    }
+    const { subsetFont } = await import("./subsetter.js");
     return subsetFont(this.fontData, glyphIds);
   }
 
@@ -142,25 +161,30 @@ export class FontRef {
 
 /**
  * Asynchronously create and initialize a FontRef from font file bytes.
+ * `options.index` selects a face inside a `.ttc`/`.otc` collection (the face
+ * bytes are shared; the index is what rustybuzz/fontations read).
  */
 export async function createFontRef(
   fontData: Uint8Array,
-  options?: { backend?: string },
+  options?: { backend?: string; index?: number },
 ): Promise<FontRef> {
   const backendId = options?.backend ?? "rustybuzz";
   if (backendId === "rustybuzz" && !isShapingWasmInitialized()) {
     await initShapingWasm();
   }
   const backend = getShapingBackend(backendId);
-  const fontId = backend.registerFont(fontData);
+  const fontId = backend.registerFont(fontData, options?.index ?? 0);
   return new FontRef(fontId, backend, fontData);
 }
 
 /**
  * Synchronously create a FontRef assuming WASM is already initialized.
  */
-export function createFontRefSync(fontData: Uint8Array, options?: { backend?: string }): FontRef {
+export function createFontRefSync(
+  fontData: Uint8Array,
+  options?: { backend?: string; index?: number },
+): FontRef {
   const backend = getShapingBackend(options?.backend);
-  const fontId = backend.registerFont(fontData);
+  const fontId = backend.registerFont(fontData, options?.index ?? 0);
   return new FontRef(fontId, backend, fontData);
 }

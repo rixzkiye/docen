@@ -1,8 +1,14 @@
 import type { PrepareOptions } from "@docen/pretext";
-import { FontManager, createFontRefSync, type FontRef } from "@docen/shaping";
+import type { FontRef } from "@docen/shaping";
+import { FontManager, createFontRefSync, isShapingWasmInitialized } from "@docen/shaping";
 
-import type { FontMetrics } from "../font";
-import { isCjkCodePoint, isCjkText, setRegisteredFontRatio } from "../font";
+import type { FontMetrics, ResolvedFaceMetrics } from "../font";
+import {
+  isCjkCodePoint,
+  isCjkText,
+  setFaceMetricsResolver,
+  setRegisteredFontMetrics,
+} from "../font";
 import type { LayoutTextStyle } from "../layout-doc";
 import type { LaidOutGlyphRun } from "../layout-result";
 import {
@@ -141,26 +147,41 @@ export function getShapingFontManager(): FontManager {
   return defaultFontManager;
 }
 
-/** Word's single-line ratio from a face's own OS/2 metrics: winAscent +
- *  winDescent + 2 × round(0.15 × (A + D)) over upem — the font-metrics-data
- *  formula, computed from the face itself instead of the DOM probe. */
-function wordLineRatioOf(fontRef: FontRef): number {
+/** Word's single-line ratio and the baseline share from a face's own tables:
+ *  winAscent + winDescent + 2 × round(0.15 × (A + D)) over upem — the
+ *  font-metrics-data formula, computed from the face itself instead of the
+ *  DOM probe. */
+function faceMetricsOf(fontRef: FontRef): ResolvedFaceMetrics {
   const m = fontRef.metrics;
   const upem = m.unitsPerEm || 1000;
-  const winA = m.winAscent ?? m.ascender;
-  const winD = m.winDescent ?? -m.descender;
+  const winA = m.winAscent ?? Math.max(m.ascender, 0);
+  const winD = m.winDescent ?? Math.max(-m.descender, 0);
   const sum = winA + winD;
-  return (sum + 2 * Math.round(0.15 * sum)) / upem;
+  return {
+    ratio: (sum + 2 * Math.round(0.15 * sum)) / upem,
+    baselineShare: winA / upem,
+  };
 }
+
+// Any face the shaping font manager holds resolves from its own tables — the
+// resolver makes that true even for FontManager.registerActiveFont /
+// resolveFont callers that never went through registerShapingFont. `font.ts`
+// stays dependency-free; this module injects the bridge.
+setFaceMetricsResolver((family) => {
+  if (!isShapingWasmInitialized()) return undefined;
+  const fontRef = getShapingFontManager().getActiveFont(family);
+  return fontRef ? faceMetricsOf(fontRef) : undefined;
+});
 
 /**
  * Register font bytes for shaping in the shared manager. The WASM runtime
- * must be initialized first (`await initShapingWasm()`).
+ * must be initialized first (`await initShapingWasm()`). `fontIndex` selects
+ * a face inside a `.ttc`/`.otc` collection (0 = plain sfnt).
  */
-export function registerShapingFont(family: string, fontData: Uint8Array): FontRef {
-  const fontRef = createFontRefSync(fontData);
+export function registerShapingFont(family: string, fontData: Uint8Array, fontIndex = 0): FontRef {
+  const fontRef = createFontRefSync(fontData, { index: fontIndex });
   getShapingFontManager().registerActiveFont(family, fontRef);
-  setRegisteredFontRatio(family, wordLineRatioOf(fontRef));
+  setRegisteredFontMetrics(family, faceMetricsOf(fontRef));
   return fontRef;
 }
 
@@ -218,7 +239,7 @@ export class ShapedMeasurer extends TextMeasurer {
 
   registerFont(family: string, fontRef: FontRef): void {
     this.fontMap.set(family.toLowerCase(), fontRef);
-    setRegisteredFontRatio(family, wordLineRatioOf(fontRef));
+    setRegisteredFontMetrics(family, faceMetricsOf(fontRef));
   }
 
   getFont(family: string): FontRef | undefined {
