@@ -310,15 +310,25 @@ export function buildEmbeddedPdfFonts(
     let fontData = source.fontData;
     let subsetted = false;
     if (canSubset) {
-      const plan = subsetFontWithPlan(source.fontData, [...usedGids]);
-      fontData = plan.data;
-      subsetted = true;
-      for (const cu of codeUnits) {
-        const gid = cmap.get(cu);
-        const newGid = gid === undefined ? undefined : plan.glyphMap.get(gid);
-        if (newGid !== undefined) cidToGid.set(cu, newGid);
+      // A malformed font must never break the export: fall back to the full
+      // font when subsetting throws.
+      let plan: ReturnType<typeof subsetFontWithPlan> | undefined;
+      try {
+        plan = subsetFontWithPlan(source.fontData, [...usedGids]);
+      } catch {
+        plan = undefined;
       }
-    } else {
+      if (plan) {
+        fontData = plan.data;
+        subsetted = true;
+        for (const cu of codeUnits) {
+          const gid = cmap.get(cu);
+          const newGid = gid === undefined ? undefined : plan.glyphMap.get(gid);
+          if (newGid !== undefined) cidToGid.set(cu, newGid);
+        }
+      }
+    }
+    if (!subsetted) {
       for (const cu of codeUnits) {
         const gid = cmap.get(cu);
         if (gid !== undefined) cidToGid.set(cu, gid);

@@ -48,7 +48,8 @@ export function readFontFsType(fontBytes: Uint8Array): number {
 export function readFontUnitsPerEm(fontBytes: Uint8Array): number {
   const head = findTable(fontBytes, "head");
   if (!head || head.offset + 20 > fontBytes.byteLength) return 1000;
-  return new DataView(fontBytes.buffer, fontBytes.byteOffset + head.offset, 54).getUint16(18);
+  const length = Math.min(54, fontBytes.byteLength - head.offset);
+  return new DataView(fontBytes.buffer, fontBytes.byteOffset + head.offset, length).getUint16(18);
 }
 
 /** Whether the font bytes may be embedded / subsetted per their OS/2.fsType. */
