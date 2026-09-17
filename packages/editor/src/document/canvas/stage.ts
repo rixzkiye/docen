@@ -114,6 +114,29 @@ interface PageSlot {
    *  page's last paint: it lives outside the viewport, so the scroll
    *  observer repaints it before it can scroll into view. */
   stale?: boolean;
+  /** The tree transform the last paint ran under (zoom factor + continuous
+   *  window offset) — a change re-renders the whole canvas, the incremental
+   *  dirty-region path only holds under the same transform. */
+  painted?: { scale: number; y: number };
+  /** The page geometry the frame was last styled for (section flow by
+   *  identity + zoom/view/window) — an unchanged key skips the DOM restyle. */
+  geom?: {
+    flow: import("@docen/layout").ProjectedFlowBox | undefined;
+    background: ProjectedPageBackground | undefined;
+    factor: number;
+    viewMode: string;
+    winIdx: number;
+    winHeight: number;
+  };
+}
+
+/** One dirty region in the tree's world space (the space Leafer's own update
+ *  blocks and `forceRender(bounds)` use). */
+interface DirtyRect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
 }
 
 /** One section's laid furniture slots — [default, first, even]. */
@@ -149,6 +172,38 @@ export interface CanvasStageSection {
 
 /** [default, first, even] slot pick order. */
 const FURNITURE_SLOTS = [0, 1, 2] as const;
+
+/** A group's rendered extent in the tree's world space, or null when nothing
+ *  painted — the incremental repaint's dirty-region input. `getLayoutBounds`
+ *  reads the cached layout bounds (no walk), and 'world' matches what
+ *  Leafer's own update blocks carry, so `forceRender(bounds)` clips exactly
+ *  the region the change touched. */
+function worldRectOf(group: IGroup): DirtyRect | null {
+  const b = group.getLayoutBounds("render", "world") as
+    | { x: number; y: number; width: number; height: number }
+    | undefined;
+  return b && b.width > 0 && b.height > 0
+    ? { x: b.x, y: b.y, width: b.width, height: b.height }
+    : null;
+}
+
+/** Union of dirty regions, padded so a hair of spread/stroke outside the
+ *  recorded bounds still clears. Null for an empty set. */
+function unionDirty(rects: readonly DirtyRect[]): DirtyRect | null {
+  if (rects.length === 0) return null;
+  let x0 = Infinity;
+  let y0 = Infinity;
+  let x1 = -Infinity;
+  let y1 = -Infinity;
+  for (const r of rects) {
+    if (r.x < x0) x0 = r.x;
+    if (r.y < y0) y0 = r.y;
+    if (r.x + r.width > x1) x1 = r.x + r.width;
+    if (r.y + r.height > y1) y1 = r.y + r.height;
+  }
+  const pad = 2;
+  return { x: x0 - pad, y: y0 - pad, width: x1 - x0 + pad * 2, height: y1 - y0 + pad * 2 };
+}
 
 /** Lay every furniture slot once, at its section's content width — the
  *  single pass both consumers share. No grid context: Word keeps
@@ -968,14 +1023,32 @@ export class CanvasStage {
       slot.el.parentElement?.remove();
     }
     // A zoom applied between syncs (initial attr → first sync) or a section
-    // mix re-sizes created slots to their page's own section.
+    // mix re-sizes created slots to their page's own section. A slot whose
+    // section, zoom, view mode and continuous window are unchanged skips the
+    // restyle entirely — the incremental projection hands back the same flow
+    // object for untouched sections, so a keystroke writes no page DOM on
+    // the pages it did not touch.
+    const continuous = this.#viewMode === "web" || this.#viewMode === "read";
     for (const [index, slot] of this.slots.entries()) {
+      const win = this.windowOf(index);
+      const section = this.ctx.sections[this.ctx.sectionOfPage[index] ?? 0];
+      const geom = slot.geom;
+      if (
+        geom &&
+        geom.flow === section?.flow &&
+        geom.background === this.ctx.background &&
+        geom.factor === this.factor &&
+        geom.viewMode === this.#viewMode &&
+        geom.winIdx === (win?.idx ?? -1) &&
+        geom.winHeight === (win?.heightPx ?? 0)
+      ) {
+        continue;
+      }
       const flow = this.sectionAt(index).flow;
       // The page edge tracks the view: Print pages carry the shadow + gap;
       // continuous pages lose the edge entirely (Word's web view) and stack
       // with just a hairline between. Applied to EVERY slot so re-entering
       // either view from the other restyles reused frames.
-      const continuous = this.#viewMode === "web" || this.#viewMode === "read";
       const frame = slot.el.parentElement;
       if (frame) {
         frame.style.boxShadow = continuous
@@ -984,6 +1057,14 @@ export class CanvasStage {
         frame.style.marginBottom = continuous ? "1px" : `${PAGE_GAP}px`;
       }
       this.sizeSlot(slot, this.pageCss(flow.pageWidthPx), this.pageCss(flow.pageHeightPx), index);
+      slot.geom = {
+        flow: section?.flow,
+        background: this.ctx.background,
+        factor: this.factor,
+        viewMode: this.#viewMode,
+        winIdx: win?.idx ?? -1,
+        winHeight: win?.heightPx ?? 0,
+      };
     }
     for (const [index, slot] of this.slots.entries()) {
       // An absent `dirty` is the caller's structural signal (section
@@ -993,9 +1074,28 @@ export class CanvasStage {
       if (slot.app && dirty?.[index] !== false) {
         this.repaint(slot.app, index, dirty != null);
       } else if (slot.app) {
-        this.#relinkHitParas(slot.app, index);
+        // Identity-stable blocks (the incremental projection) mean the
+        // painter's item list often IS the previous generation — nothing to
+        // re-point then, and the paragraph walk can be skipped whole.
+        if (!this.#pageItemsUnchanged(slot, index)) this.#relinkHitParas(slot.app, index);
       }
     }
+  }
+
+  /** Whether the page's painted item list is the previous generation's own
+   *  objects (blocks by identity, placements equal) — a clean page whose
+   *  paragraphs were never re-objected needs no hit-box relink. */
+  #pageItemsUnchanged(slot: PageSlot, index: number): boolean {
+    const layers = slot.layers;
+    const prev = layers?.lastItems;
+    const next = this.pages[index]?.items;
+    if (!prev || !next || prev.length !== next.length) return false;
+    for (let i = 0; i < next.length; i++) {
+      const a = prev[i]!;
+      const b = next[i]!;
+      if (a.block !== b.block || a.yPx !== b.yPx || a.xPx !== b.xPx) return false;
+    }
+    return true;
   }
 
   /** A clean page keeps its painted canvas AND its hit boxes, but the
@@ -1325,12 +1425,44 @@ export class CanvasStage {
     if (layers) {
       ctx.hitBoxes = hitBoxes;
       ctx.shapeTextStacks = shapeTextStacks;
+      // The per-keystroke path repaints only what changed: the item diff
+      // produces one dirty region per touched item (old ∪ new bounds), the
+      // behind/overlay tails contribute theirs, and the canvas re-renders
+      // exactly that union instead of the whole page bitmap. The tree
+      // transform must be unchanged for those regions to stay valid — a
+      // zoom/window slide repaints flat.
+      const dirty: DirtyRect[] = [];
+      const transform = { scale: this.factor, y: tree.y };
+      const sameTransform =
+        this.slots[index]!.painted?.scale === transform.scale &&
+        this.slots[index]!.painted?.y === transform.y;
+      const oldBehind = worldRectOf(layers.behind);
       layers.behind.clear();
       paintScene(layers.behind, items, ctx);
       paintGridlines(layers.behind, ctx);
+      const newBehind = worldRectOf(layers.behind);
+      if (oldBehind) dirty.push(oldBehind);
+      if (newBehind) dirty.push(newBehind);
       ctx.layer = "body";
-      this.paintBodyItems(layers, items, ctx, hitBoxes, shapeTextStacks);
-      app.forceRender();
+      const rebuilt = this.paintBodyItems(
+        layers,
+        items,
+        ctx,
+        hitBoxes,
+        shapeTextStacks,
+        dirty,
+        sameTransform,
+      );
+      this.slots[index]!.painted = transform;
+      const tracked = sameTransform && !rebuilt ? unionDirty(dirty) : null;
+      // Snap the horizontal extents to the page edges: the vertical clip
+      // boundaries already land on item boxes (glyphs stay inside their own
+      // item), but a tight horizontal clip would shave neighbouring glyphs at
+      // the region's right edge — content outside the region never returns to
+      // repaint the cut.
+      const region = tracked ? { ...tracked, x: 0, width: flow.pageWidthPx } : null;
+      if (region) app.forceRender(region);
+      else app.forceRender();
       this.hitBoxes.set(index, hitBoxes);
       this.shapeTextStacks.set(index, shapeTextStacks);
       return;
@@ -1476,7 +1608,9 @@ export class CanvasStage {
     ctx: PaintContext,
     hitBoxes: DrawingHitBox[],
     shapeTextStacks: ShapeTextStack[],
-  ): void {
+    dirty?: DirtyRect[],
+    trackDirty = true,
+  ): boolean {
     const { flow } = ctx;
     const ops = diffFlowItems(layers.lastItems, items);
     if (!ops || layers.items.length !== items.length) {
@@ -1504,8 +1638,10 @@ export class CanvasStage {
       }
       layers.lastItems = items;
       this.#refreshHitParas(ctx.pageIndex, hitBoxes, shapeTextStacks);
-      this.#paintOverlay(layers, ctx);
-      return;
+      this.#paintOverlay(layers, ctx, dirty, trackDirty);
+      // A rebuilt body spans every item — the caller must repaint the whole
+      // page, not just the tracked regions.
+      return true;
     }
     // Incremental: the kept boxes ride over (counted per item), the repainted
     // ones are produced fresh by their paintItem walk.
@@ -1517,19 +1653,36 @@ export class CanvasStage {
       const g = layers.items[i]!;
       if (op.kind === "keep") {
         // Absolute reposition, not +=dy — self-heals accumulated rounding.
-        g.y = flow.contentTopPx + item.yPx;
+        const nextY = flow.contentTopPx + item.yPx;
+        if (g.y !== nextY) {
+          if (trackDirty && dirty) {
+            const old = worldRectOf(g);
+            if (old) dirty.push(old);
+          }
+          g.y = nextY;
+          if (trackDirty && dirty) {
+            const now = worldRectOf(g);
+            if (now) dirty.push(now);
+          }
+        }
         hitBoxes.push(...stale.splice(0, layers.itemHitCounts[i]!));
         shapeTextStacks.push(...staleStacks.splice(0, layers.itemStackCounts[i]!));
         continue;
       }
       const before = hitBoxes.length;
       const beforeStacks = shapeTextStacks.length;
+      const oldRect = trackDirty && dirty ? worldRectOf(g) : null;
       g.clear();
       ctx.origin = {
         x: flow.contentLeftPx + (item.xPx ?? 0),
         y: flow.contentTopPx + item.yPx,
       };
       paintItem(g, item, ctx);
+      if (oldRect) dirty!.push(oldRect);
+      if (trackDirty && dirty) {
+        const now = worldRectOf(g);
+        if (now) dirty.push(now);
+      }
       layers.itemHitCounts[i] = hitBoxes.length - before;
       layers.itemStackCounts[i] = shapeTextStacks.length - beforeStacks;
     }
@@ -1537,16 +1690,22 @@ export class CanvasStage {
     if (!this.#refreshHitParas(ctx.pageIndex, hitBoxes, shapeTextStacks)) {
       // The page's paragraph list is not isomorphic — pairing is impossible.
       // One full rebuild re-anchors every box against a single generation.
-      this.paintBodyItems(layers, items, ctx, hitBoxes, shapeTextStacks);
-      return;
+      return this.paintBodyItems(layers, items, ctx, hitBoxes, shapeTextStacks, dirty, trackDirty);
     }
-    this.#paintOverlay(layers, ctx);
+    this.#paintOverlay(layers, ctx, dirty, trackDirty);
+    return false;
   }
 
   /** The body overlay tail — line numbers, column separators, footnotes,
    *  balloons, then the deferred floats (the flush draws them last, above
    *  everything Word stacks them above). */
-  #paintOverlay(layers: PageLayers, ctx: PaintContext): void {
+  #paintOverlay(
+    layers: PageLayers,
+    ctx: PaintContext,
+    dirty?: DirtyRect[],
+    trackDirty = true,
+  ): void {
+    const oldRect = trackDirty && dirty ? worldRectOf(layers.overlay) : null;
     layers.overlay.clear();
     paintLineNumbers(layers.overlay, ctx);
     paintColumnSeparators(layers.overlay, ctx);
@@ -1559,6 +1718,11 @@ export class CanvasStage {
     this.balloonGroups.set(ctx.pageIndex, painted.groups);
     this.#applyBalloonHover(ctx.pageIndex);
     this.#flushDrawings(ctx);
+    if (oldRect) dirty!.push(oldRect);
+    if (trackDirty && dirty) {
+      const now = worldRectOf(layers.overlay);
+      if (now) dirty.push(now);
+    }
   }
 
   /** Refresh the page's paragraph list after a body paint, re-pointing the

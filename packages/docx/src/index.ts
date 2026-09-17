@@ -61,6 +61,8 @@ export {
   formatMarkNames,
   runPropsFromMarks,
   runPropsToMarks,
+  createCompileCache,
+  type CompileCache,
   type DocxGenerateOptions,
   type DocxVariant,
   type RunPropMark,

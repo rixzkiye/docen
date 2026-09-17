@@ -17,6 +17,7 @@ import {
 
 import { mergeStyleChain } from "../../style-cascade";
 import type { MarkupDisplay, ProjectContext } from "./context";
+import { markStateful } from "./context";
 import { cropOf, outlineOf, pictureAdjustOf } from "./drawing";
 import { isRecord, measureEmu, num, str, unescapeXml, type Rec } from "./guards";
 import { metafileMembers, pictureSrc } from "./media";
@@ -48,6 +49,7 @@ const FORMAT_CHANGE_TYPE_COLOR = "808080";
  *  (Word colors reviewers, not views), shared by revision marks, format bars
  *  and comment balloons. */
 export function authorColorOf(ctx: ProjectContext, author: string): string {
+  markStateful(ctx);
   let slot = ctx.revisionAuthorColors.get(author);
   if (slot == null) {
     slot = ctx.revisionAuthorColors.size;
@@ -394,6 +396,7 @@ export function projectRuns(
           })
         : text;
     // Read per atom — openComments mutates as the walk opens/closes ranges.
+    if (openComments && openComments.size > 0) markStateful(ctx);
     const commentIds =
       openComments && openComments.size > 0 ? [...openComments].sort((a, b) => a - b) : undefined;
     // Two-lines-in-one (双行合一 / 合并字符): the run packs into two
@@ -592,11 +595,14 @@ export function projectRuns(
         const commentId = num(child.commentRangeStart.id)!;
         // The range's balloon anchors at the next atom pushed (Word pins the
         // card to the range's first line).
+        if (openComments) markStateful(ctx);
         if (wantsComments && !openComments?.has(commentId)) pendingComments.push(commentId);
         openComments?.add(commentId);
       }
-      if (isRecord(child.commentRangeEnd) && num(child.commentRangeEnd.id) != null)
-        openComments?.delete(num(child.commentRangeEnd.id)!);
+      if (isRecord(child.commentRangeEnd) && num(child.commentRangeEnd.id) != null) {
+        if (openComments) markStateful(ctx);
+        openComments.delete(num(child.commentRangeEnd.id)!);
+      }
       const rPr: Rec = { ...preset, ...child };
       // A footnote/endnote reference is a superscript ordinal (Word's
       // FootnoteReference/EndnoteReference style look) — numbered by
@@ -605,6 +611,7 @@ export function projectRuns(
       // reference run's own rPr still applies.
       const fnRefId = noteRefId(child, "footnoteReference");
       if (fnRefId != null) {
+        markStateful(ctx);
         const ordinal = noteOrdinal(ctx.footnoteOrdinals, fnRefId, ctx.footnoteNumStart ?? 1);
         const text = formatNumber(ctx.footnoteNumFmt ?? "decimal", ordinal);
         out.push({
@@ -616,6 +623,7 @@ export function projectRuns(
       }
       const enRefId = noteRefId(child, "endnoteReference");
       if (enRefId != null) {
+        markStateful(ctx);
         const ordinal = noteOrdinal(ctx.endnoteOrdinals, enRefId, ctx.endnoteNumStart ?? 1);
         const text = formatNumber(ctx.endnoteNumFmt ?? "lowerRoman", ordinal);
         out.push({
