@@ -1,3 +1,4 @@
+import { unzipSync } from "@office-open/core";
 import { describe, expect, it } from "vitest";
 
 import { generateDOCXSync, parseDOCXSync, type JSONContent } from "../index";
@@ -88,5 +89,57 @@ describe("wpsShape insert round-trip", () => {
     expect(ws.geometry).toEqual({ preset: "ellipse" });
     expect(ws.fill).toMatchObject({ type: "solid" });
     expect(ws.outline).toMatchObject({ width: 12700 });
+  });
+});
+
+describe("wpsShape name round-trip", () => {
+  /**
+   * The editor keeps a shape's name flat on attrs.wpsShape (the watermark
+   * gallery stamps `WordPictureWatermark` and detection reads it back), while
+   * OOXML stores it at wps:cNvSpPr/@name via nonVisualProperties.name. The
+   * name must reach the header part and come back, or Remove Watermark loses
+   * its target after a save/open cycle.
+   */
+  it("exports the shape name and lifts it back on re-import", () => {
+    const shape = {
+      type: "wpsShape",
+      attrs: {
+        wpsShape: {
+          name: "WordPictureWatermark",
+          transformation: { width: 6858000, height: 1463040, rotation: -45 },
+          floating: {
+            horizontalPosition: { relative: "page", align: "center" },
+            verticalPosition: { relative: "page", align: "center" },
+            wrap: { type: "none" },
+            behindDocument: true,
+          },
+          fill: { type: "none" },
+          outline: { type: "none" },
+        },
+      },
+      content: [{ type: "paragraph", content: [{ type: "text", text: "机密" }] }],
+    };
+    const doc: JSONContent = {
+      type: "doc",
+      attrs: {
+        sectionHeaders: { default: [{ type: "paragraph", content: [shape] }] },
+      },
+      content: [{ type: "paragraph", content: [{ type: "text", text: "body" }] }],
+    };
+
+    const gen1 = generateDOCXSync(doc, { prepare: false }) as Uint8Array;
+    const zip1 = unzipSync(gen1);
+    const decoder = new TextDecoder();
+    const header1 = Object.keys(zip1).find((n) => n.startsWith("word/header"))!;
+    expect(decoder.decode(zip1[header1])).toContain('name="WordPictureWatermark"');
+
+    const reparsed = parseDOCXSync(gen1);
+    const slots = (reparsed.attrs?.sectionHeaders as { default?: JSONContent[] })?.default ?? [];
+    const parsedShape = slots[0]?.content?.find((c) => c.type === "wpsShape");
+    expect((parsedShape?.attrs?.wpsShape as { name?: string })?.name).toBe("WordPictureWatermark");
+
+    const zip2 = unzipSync(generateDOCXSync(reparsed, { prepare: false }) as Uint8Array);
+    const header2 = Object.keys(zip2).find((n) => n.startsWith("word/header"))!;
+    expect(decoder.decode(zip2[header2])).toContain('name="WordPictureWatermark"');
   });
 });

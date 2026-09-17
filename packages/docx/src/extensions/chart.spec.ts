@@ -1,3 +1,4 @@
+import { unzipSync } from "@office-open/core";
 import type { DocumentOptions, ParagraphChild } from "@office-open/docx";
 import { generateDocumentSync, parseDocumentSync } from "@office-open/docx";
 import { describe, expect, it } from "vitest";
@@ -86,5 +87,39 @@ describe("chart", () => {
     expect(types).toContain("chart");
     // The chart branch rides the chart node (not the passthrough atom).
     expect(types).not.toContain("inlinePassthrough");
+  });
+
+  it("restores wp:docPr name/descr (altText) and re-exports them", () => {
+    const altText = { name: "chart-1", description: "Quarterly chart" };
+    const chartOptions = {
+      type: "column" as const,
+      title: "Quarterly",
+      categories: ["Q1", "Q2"],
+      series: [{ name: "Sales", values: [120, 90] }],
+      transformation: { width: 4572000, height: 2743200 },
+      altText,
+    };
+    const doc: DocumentOptions = {
+      sections: [{ children: [{ paragraph: { children: [{ chart: chartOptions }] } }] }],
+    };
+    const gen1 = generateDocumentSync(doc) as Uint8Array;
+    const xml1 = new TextDecoder().decode(unzipSync(gen1)["word/document.xml"]);
+    expect(xml1).toContain('name="chart-1"');
+    expect(xml1).toContain('descr="Quarterly chart"');
+
+    const parsed = parseDocumentSync(gen1);
+    const json = resolveDocument(parsed, docxExtensions);
+    const chartNode = (
+      json.content?.[0] as { content?: { type: string; attrs?: object }[] }
+    )?.content?.find((n) => n.type === "chart");
+    expect((chartNode?.attrs as { chart?: { altText?: object } })?.chart?.altText).toMatchObject(
+      altText,
+    );
+
+    // The re-export writes the same drawing properties back.
+    const gen2 = generateDocumentSync(parsed) as Uint8Array;
+    const xml2 = new TextDecoder().decode(unzipSync(gen2)["word/document.xml"]);
+    expect(xml2).toContain('name="chart-1"');
+    expect(xml2).toContain('descr="Quarterly chart"');
   });
 });
