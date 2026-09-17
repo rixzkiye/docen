@@ -5,3 +5,8 @@ export * from "./harfbuzz-backend.js";
 export * from "./canvas-backend.js";
 export * from "./backend.js";
 export * from "./font-ref.js";
+export * from "./font-identity.js";
+export * from "./font-cache.js";
+export * from "./font-source.js";
+export * from "./fallback-chain.js";
+export * from "./font-manager.js";
