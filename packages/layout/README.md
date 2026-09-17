@@ -11,7 +11,7 @@ Consumed by [`@docen/docx`](../docx/README.md)'s projection (DocumentOptions →
 ## Design
 
 - **Input is a `LayoutDoc` projection, all-px, style-cascades already resolved.** Adapters (docx from Tiptap/ProseMirror, pptx from its shape tree, xlsx from its grid) convert their document units and resolve their style chains exactly once; the engine never sees a `styleId`, a twip, or a Tiptap node. Only layout semantics keep their OOXML shape (line rules, grid pitch, snap flags) — those are the rules this engine exists to implement.
-- **FontMetrics and ShapedMeasurer are the measuring seams.** The engine works with deterministic OpenType text shaping backed by `@docen/shaping` (`createMeasurer` defaults to `ShapedMeasurer` using `rustybuzz` + `skrifa` WASM) and per-face Word-calibrated line ratios (`WORD_FONT_METRICS`). Browser `canvas.measureText` is retained as a transparent fallback and rollback option (`setShapingEnabled(false)` or `DOCEN_SHAPING_DISABLED=1`).
+- **FontMetrics and ShapedMeasurer are the measuring seams.** The engine can measure with deterministic OpenType text shaping backed by `@docen/shaping` (`ShapedMeasurer` using `rustybuzz` + `skrifa` WASM) and per-face Word-calibrated line ratios (`WORD_FONT_METRICS`). The default remains `TextMeasurer` (`canvas.measureText`); opt in with `setShapingEnabled(true)` / `DOCEN_SHAPING_ENABLED=1` or by passing a `fontManager`/`enabled` to `createMeasurer`, and register fonts via `registerShapingFont(family, bytes)` or `ShapedMeasurer.registerFont`. Shaping is gated on the remaining R6.T1 parity/per-keystroke evidence (`DOCEN_SHAPING_DISABLED=1` forces the canvas path).
 - **One packer for text, hard breaks, and inline pictures** — the unified breaker the DOM route never had. UAX #14 line breaking (linebreak.js) with CJK kinsoku, trailing-space hanging, first-line indent, float-zone width reduction, and per-line OOXML line-height semantics (exact / atLeast / multiple × docGrid pitch, CJK ceil snap).
 - **Determinism is a contract.** Same input → same output every pass — the property the paginator's convergence depends on.
 
@@ -22,10 +22,11 @@ Known boundaries: rowspan cell content counts fully on its start row.
 ```ts
 import { browserFontMetrics, createMeasurer, layoutBlock } from "@docen/layout";
 
-// Creates ShapedMeasurer by default for bit-exact OpenType shaping
+// Canvas measurer (default); pass { enabled: true } / a fontManager, or set
+// the global flag, to measure with the deterministic OpenType shaper instead.
 const measurer = createMeasurer(browserFontMetrics);
 const laid = layoutBlock(paragraph, 612, { linePitchPx: 25 }, measurer);
-// laid.lines — y, height, positioned items, glyph runs, split points
+// laid.lines — y, height, positioned items, glyph runs (shaped path), split points
 ```
 
 ## License

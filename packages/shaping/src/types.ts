@@ -133,7 +133,8 @@ export function isFontSubsettingAllowed(fsType: number): boolean {
 }
 
 /**
- * Common abstraction for text shaping engines (rustybuzz WASM, HarfBuzz oracle, Canvas fallback).
+ * Common abstraction for text shaping engines (the production rustybuzz
+ * WASM backend and the test-only harfbuzzjs differential oracle).
  */
 export interface ShapingBackend {
   readonly id: string;
