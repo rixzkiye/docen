@@ -8,6 +8,7 @@ import {
   type ShapingBackend,
   type ShapingOptions,
   type ShapingResult,
+  type VerticalFontMetrics,
 } from "./types.js";
 import { initShapingWasm, isShapingWasmInitialized } from "./wasm-loader.js";
 
@@ -61,6 +62,10 @@ export class FontRef {
 
   get unitsPerEm(): number {
     return this.metrics.unitsPerEm;
+  }
+
+  get verticalMetrics(): VerticalFontMetrics | undefined {
+    return this.metrics.vertical;
   }
 
   /**

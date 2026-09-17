@@ -88,7 +88,8 @@ export class ShapedMeasurer extends TextMeasurer {
       style.sizePx !== undefined ? style : { ...style, sizePx: rawSize };
     const sizePx = vertAlignedSizePx(effectiveStyle);
     const family = familyOfSlot(style.family, false);
-    const cacheKey = `${text}|${family}|${sizePx}|${style.bold ? "b" : ""}|${style.italic ? "i" : ""}`;
+    const direction = style.vertical ? "ttb" : (style.direction ?? "auto");
+    const cacheKey = `${text}|${family}|${sizePx}|${style.bold ? "b" : ""}|${style.italic ? "i" : ""}|${direction}|${style.script ?? ""}|${style.language ?? ""}`;
 
     const cached = this.runCache.get(cacheKey);
     if (cached) return cached;
@@ -100,19 +101,25 @@ export class ShapedMeasurer extends TextMeasurer {
 
     try {
       const shapingRes = fontRef.shape(text, {
-        direction: "ltr",
+        direction,
+        script: style.script,
+        language: style.language,
       });
 
       const scale = sizePx / (fontRef.unitsPerEm || 1000);
+      const isVertical = direction === "ttb";
 
       let currentX = 0;
+      let currentY = 0;
       const glyphs = shapingRes.glyphs.map((g) => {
         const xAdvPx = g.xAdvance * scale;
+        const yAdvPx = Math.abs(g.yAdvance) * scale;
         const xOffPx = g.xOffset * scale;
         const yOffPx = g.yOffset * scale;
-        const xPx = currentX + xOffPx;
-        const yPx = yOffPx;
+        const xPx = isVertical ? xOffPx : currentX + xOffPx;
+        const yPx = isVertical ? currentY + yOffPx : yOffPx;
         currentX += xAdvPx;
+        currentY += yAdvPx;
 
         return {
           glyphId: g.glyphId,
@@ -131,6 +138,9 @@ export class ShapedMeasurer extends TextMeasurer {
         fontId: fontRef.id,
         fontName: family,
         fontSizePx: sizePx,
+        direction,
+        script: style.script,
+        language: style.language,
         glyphs,
         totalAdvancePx,
       };

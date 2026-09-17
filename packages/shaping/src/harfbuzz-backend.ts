@@ -70,7 +70,11 @@ export class HarfbuzzBackend implements ShapingBackend {
 
     if (options?.direction === "rtl") {
       buffer.setDirection(hb.Direction.RTL);
-    } else {
+    } else if (options?.direction === "ttb") {
+      buffer.setDirection(hb.Direction.TTB);
+    } else if (options?.direction === "btt") {
+      buffer.setDirection(hb.Direction.BTT);
+    } else if (options?.direction === "ltr") {
       buffer.setDirection(hb.Direction.LTR);
     }
 
@@ -86,19 +90,21 @@ export class HarfbuzzBackend implements ShapingBackend {
 
     const hbGlyphs = buffer.getGlyphInfosAndPositions();
     const glyphs: ShapedGlyph[] = [];
+    const isVertical = options?.direction === "ttb" || options?.direction === "btt";
     let totalAdvance = 0;
 
     for (const g of hbGlyphs) {
       const xAdv = g.xAdvance ?? 0;
+      const yAdv = g.yAdvance ?? 0;
       glyphs.push({
         glyphId: g.codepoint,
         cluster: g.cluster,
         xAdvance: xAdv,
-        yAdvance: g.yAdvance ?? 0,
+        yAdvance: yAdv,
         xOffset: g.xOffset ?? 0,
         yOffset: g.yOffset ?? 0,
       });
-      totalAdvance += xAdv;
+      totalAdvance += isVertical ? Math.abs(yAdv) : xAdv;
     }
 
     return { glyphs, totalAdvance };

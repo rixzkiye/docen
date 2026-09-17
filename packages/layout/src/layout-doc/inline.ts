@@ -64,6 +64,14 @@ export interface LayoutTextStyle {
   /** Kerning threshold in points (w:kern / 2): kerning applies when the run's
    *  font size is at least this — see kerningActive. Absent/0 = no kerning. */
   kernPt?: number;
+  /** Text direction: ltr, rtl, or auto (BiDi / script-dependent). */
+  direction?: "ltr" | "rtl" | "auto";
+  /** BCP 47 or OpenType language tag. */
+  language?: string;
+  /** ISO 15924 script tag (e.g. Latn, Arab, Hebr, Thai, Deva, Khmr, Hani). */
+  script?: string;
+  /** Vertical text flow (e.g. vertical CJK). */
+  vertical?: boolean;
   /** Character border (w:bdr) — a box around the run's glyphs. */
   border?: LayoutCharBorder;
   /** Emphasis mark (w:em): a small mark drawn above every glyph (dot / comma

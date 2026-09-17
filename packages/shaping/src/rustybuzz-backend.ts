@@ -40,14 +40,24 @@ export class RustybuzzBackend implements ShapingBackend {
     }
 
     const ptr = wasm.get_metrics_buffer_ptr();
-    const metricsView = new Float32Array(wasm.memory.buffer, ptr, 6);
+    const metricsView = new Float32Array(wasm.memory.buffer, ptr, 10);
+    const hasVertical = metricsView[6] === 1.0;
     return {
-      unitsPerEm: metricsView[0],
-      ascender: metricsView[1],
-      descender: metricsView[2],
-      lineGap: metricsView[3],
-      capHeight: metricsView[4],
-      xHeight: metricsView[5],
+      unitsPerEm: metricsView[0]!,
+      ascender: metricsView[1]!,
+      descender: metricsView[2]!,
+      lineGap: metricsView[3]!,
+      capHeight: metricsView[4]!,
+      xHeight: metricsView[5]!,
+      ...(hasVertical
+        ? {
+            vertical: {
+              ascender: metricsView[7]!,
+              descender: metricsView[8]!,
+              lineGap: metricsView[9]!,
+            },
+          }
+        : {}),
     };
   }
 
@@ -61,9 +71,17 @@ export class RustybuzzBackend implements ShapingBackend {
     const textPtr = wasm.alloc(encodedText.length);
     new Uint8Array(wasm.memory.buffer, textPtr, encodedText.length).set(encodedText);
 
-    let direction = 0;
-    if (options?.direction === "rtl") {
+    let direction = 4; // Auto / guess by default
+    if (options?.direction === "ltr") {
+      direction = 0;
+    } else if (options?.direction === "rtl") {
       direction = 1;
+    } else if (options?.direction === "ttb") {
+      direction = 2;
+    } else if (options?.direction === "btt") {
+      direction = 3;
+    } else if (options?.direction === "auto") {
+      direction = 4;
     }
 
     let scriptTag = 0;
@@ -105,20 +123,22 @@ export class RustybuzzBackend implements ShapingBackend {
     const floats = new Float32Array(wasm.memory.buffer, outPtr, glyphCount * 6);
 
     const glyphs: ShapedGlyph[] = [];
+    const isVertical = options?.direction === "ttb" || options?.direction === "btt";
     let totalAdvance = 0;
 
     for (let i = 0; i < glyphCount; i++) {
       const offset = i * 6;
-      const xAdvance = floats[offset + 2];
+      const xAdvance = floats[offset + 2]!;
+      const yAdvance = floats[offset + 3]!;
       glyphs.push({
-        glyphId: floats[offset],
-        cluster: floats[offset + 1],
+        glyphId: floats[offset]!,
+        cluster: floats[offset + 1]!,
         xAdvance,
-        yAdvance: floats[offset + 3],
-        xOffset: floats[offset + 4],
-        yOffset: floats[offset + 5],
+        yAdvance,
+        xOffset: floats[offset + 4]!,
+        yOffset: floats[offset + 5]!,
       });
-      totalAdvance += xAdvance;
+      totalAdvance += isVertical ? Math.abs(yAdvance) : xAdvance;
     }
 
     return { glyphs, totalAdvance };

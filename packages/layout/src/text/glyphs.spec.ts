@@ -144,4 +144,45 @@ describe("itemGlyphLayoutOf", () => {
     expect(layout.widths[1]).toBe(6);
     expect(layout.endX).toBe(12);
   });
+
+  it("accurately maps RTL clusters where visual positions proceed right-to-left", () => {
+    // 2-letter RTL word "של": 'ש' (bytes 0..1) visually on the right, 'ל' (bytes 2..3) on the left
+    const glyphRun = {
+      fontSizePx: 16,
+      direction: "rtl" as const,
+      glyphs: [
+        {
+          glyphId: 45, // 'ל'
+          cluster: 2, // UTF-8 byte offset 2
+          xAdvance: 500,
+          yAdvance: 0,
+          xOffset: 0,
+          yOffset: 0,
+          xPx: 0,
+          yPx: 0,
+        },
+        {
+          glyphId: 78, // 'ש'
+          cluster: 0, // UTF-8 byte offset 0
+          xAdvance: 700,
+          yAdvance: 0,
+          xOffset: 0,
+          yOffset: 0,
+          xPx: 5,
+          yPx: 0,
+        },
+      ],
+      totalAdvancePx: 12,
+    };
+
+    const layout = itemGlyphLayoutOf({ text: "של", glyphRun }, latin);
+    expect(layout.xs.length).toBe(2);
+    // 'ש' (index 0) is on the right: x = 5, width = 7
+    expect(layout.xs[0]).toBe(5);
+    expect(layout.widths[0]).toBe(7);
+    // 'ל' (index 1) is on the left: x = 0, width = 5
+    expect(layout.xs[1]).toBe(0);
+    expect(layout.widths[1]).toBe(5);
+    expect(layout.endX).toBe(12);
+  });
 });

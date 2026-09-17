@@ -36,7 +36,7 @@ struct EngineState {
     next_font_id: u32,
     fonts: HashMap<u32, Vec<u8>>,
     shape_buffer: Vec<f32>,
-    metrics_buffer: [f32; 6],
+    metrics_buffer: [f32; 10],
     outline_buffer: Vec<f32>,
     string_buffer: Vec<u8>,
 }
@@ -46,7 +46,7 @@ static STATE: LazyLock<Mutex<EngineState>> = LazyLock::new(|| {
         next_font_id: 1,
         fonts: HashMap::new(),
         shape_buffer: Vec::new(),
-        metrics_buffer: [0.0; 6],
+        metrics_buffer: [0.0; 10],
         outline_buffer: Vec::new(),
         string_buffer: Vec::new(),
     })
@@ -138,10 +138,12 @@ pub unsafe extern "C" fn shape_text(
     let mut buffer = UnicodeBuffer::new();
     buffer.push_str(text);
 
-    if direction == 1 {
-        buffer.set_direction(Direction::RightToLeft);
-    } else {
-        buffer.set_direction(Direction::LeftToRight);
+    match direction {
+        0 => buffer.set_direction(Direction::LeftToRight),
+        1 => buffer.set_direction(Direction::RightToLeft),
+        2 => buffer.set_direction(Direction::TopToBottom),
+        3 => buffer.set_direction(Direction::BottomToTop),
+        _ => {} // left unset so buffer.guess_segment_properties() detects direction
     }
 
     if script_tag != 0 {
@@ -200,16 +202,50 @@ pub extern "C" fn get_font_metrics(font_id: u32) -> i32 {
         Err(_) => return -2,
     };
 
-    let metrics = font_ref.metrics(Size::unscaled(), LocationRef::default());
-    state.metrics_buffer[0] = metrics.units_per_em as f32;
-    state.metrics_buffer[1] = metrics.ascent;
-    state.metrics_buffer[2] = metrics.descent;
-    state.metrics_buffer[3] = metrics.leading;
-    state.metrics_buffer[4] = metrics.cap_height.unwrap_or(0.0);
-    state.metrics_buffer[5] = metrics.x_height.unwrap_or(0.0);
+    let (upem, ascent, descent, leading, cap_height, x_height, vert) = {
+        let metrics = font_ref.metrics(Size::unscaled(), LocationRef::default());
+        let vert = font_ref.vhea().ok().map(|v| {
+            (
+                v.ascender().to_i16() as f32,
+                v.descender().to_i16() as f32,
+                v.line_gap().to_i16() as f32,
+            )
+        });
+        (
+            metrics.units_per_em as f32,
+            metrics.ascent,
+            metrics.descent,
+            metrics.leading,
+            metrics.cap_height.unwrap_or(0.0),
+            metrics.x_height.unwrap_or(0.0),
+            vert,
+        )
+    };
+
+    state.metrics_buffer[0] = upem;
+    state.metrics_buffer[1] = ascent;
+    state.metrics_buffer[2] = descent;
+    state.metrics_buffer[3] = leading;
+    state.metrics_buffer[4] = cap_height;
+    state.metrics_buffer[5] = x_height;
+
+    if let Some((v_asc, v_desc, v_gap)) = vert {
+        state.metrics_buffer[6] = 1.0;
+        state.metrics_buffer[7] = v_asc;
+        state.metrics_buffer[8] = v_desc;
+        state.metrics_buffer[9] = v_gap;
+    } else {
+        // Synthesize standard vertical metrics (W3C CSS Writing Modes 3 §5.1 / OpenType)
+        state.metrics_buffer[6] = 1.0;
+        state.metrics_buffer[7] = upem / 2.0;
+        state.metrics_buffer[8] = -upem / 2.0;
+        state.metrics_buffer[9] = 0.0;
+    }
 
     0
 }
+
+
 
 #[no_mangle]
 pub extern "C" fn get_outline_buffer_ptr() -> *const f32 {
