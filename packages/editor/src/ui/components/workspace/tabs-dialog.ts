@@ -444,5 +444,3 @@ export class DocenTabsDialog extends FASTElement {
     if (this.cancelBtn) this.cancelBtn.textContent = t("options.cancel", this);
   }
 }
-
-export default DocenTabsDialog;

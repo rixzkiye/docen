@@ -298,5 +298,3 @@ export class DocenPropertiesDialog extends FASTElement {
     if (this.cancelBtn) this.cancelBtn.textContent = t("properties.btn-cancel", this);
   }
 }
-
-export default DocenPropertiesDialog;
