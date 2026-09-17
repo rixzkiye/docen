@@ -1,5 +1,4 @@
 import { CanvasBackend } from "./canvas-backend.js";
-import { HarfbuzzBackend } from "./harfbuzz-backend.js";
 import { RustybuzzBackend } from "./rustybuzz-backend.js";
 import type { ShapingBackend } from "./types.js";
 
@@ -19,7 +18,7 @@ export function getDefaultShapingBackendId(): string {
 }
 
 export function hasShapingBackend(id: string): boolean {
-  return backends.has(id) || id === "rustybuzz" || id === "harfbuzz" || id === "canvas";
+  return backends.has(id) || id === "rustybuzz" || id === "canvas";
 }
 
 export function getShapingBackend(id?: string): ShapingBackend {
@@ -32,11 +31,6 @@ export function getShapingBackend(id?: string): ShapingBackend {
   if (targetId === "rustybuzz") {
     const b = new RustybuzzBackend();
     backends.set("rustybuzz", b);
-    return b;
-  }
-  if (targetId === "harfbuzz") {
-    const b = new HarfbuzzBackend();
-    backends.set("harfbuzz", b);
     return b;
   }
   if (targetId === "canvas") {

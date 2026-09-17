@@ -53,6 +53,25 @@ export interface LaidOutTextItem {
   /** Two-lines-in-one (双行合一): the item's text packs into these two
    *  half-size lines (plus optional brackets) inside a normal line box. */
   combine?: LayoutCombine;
+  /** Shaped OpenType glyph run for high-fidelity vector outline painting (R6). */
+  glyphRun?: LaidOutGlyphRun;
+}
+
+export interface LaidOutGlyphRun {
+  readonly fontId?: number;
+  readonly fontName?: string;
+  readonly fontSizePx: number;
+  readonly glyphs: readonly {
+    readonly glyphId: number;
+    readonly cluster: number;
+    readonly xAdvance: number;
+    readonly yAdvance: number;
+    readonly xOffset: number;
+    readonly yOffset: number;
+    readonly xPx: number;
+    readonly yPx: number;
+  }[];
+  readonly totalAdvancePx: number;
 }
 
 export interface LaidOutPictureItem {

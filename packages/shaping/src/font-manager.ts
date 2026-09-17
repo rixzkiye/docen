@@ -1,7 +1,7 @@
 import { FallbackChainRegistry, type MissingGlyphReport } from "./fallback-chain.js";
 import { FontCache } from "./font-cache.js";
 import { computeFontHash, type FontDescriptor } from "./font-identity.js";
-import { FontRef, createFontRef } from "./font-ref.js";
+import { FontRef, createFontRef, createFontRefSync } from "./font-ref.js";
 import { BundledFontSource, MemoryFontSource, type FontSource } from "./font-source.js";
 
 export interface FontManagerOptions {
@@ -28,6 +28,20 @@ export class FontManager {
 
   registerFontBytes(name: string, fontBytes: Uint8Array): void {
     this.memorySource.registerFont(name, fontBytes);
+  }
+
+  getActiveFont(nameOrFamily: string): FontRef | undefined {
+    return this.activeFontRefs.get(nameOrFamily.toLowerCase());
+  }
+
+  registerActiveFont(nameOrFamily: string, fontRef: FontRef): void {
+    this.activeFontRefs.set(nameOrFamily.toLowerCase(), fontRef);
+  }
+
+  registerActiveFontSync(nameOrFamily: string, fontBytes: Uint8Array): FontRef {
+    const fontRef = createFontRefSync(fontBytes);
+    this.registerActiveFont(nameOrFamily, fontRef);
+    return fontRef;
   }
 
   async resolveFont(descriptor: FontDescriptor): Promise<FontRef> {

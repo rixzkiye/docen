@@ -46,6 +46,7 @@
     "prepack": "pnpm build"
   },
   "dependencies": {
-    "@docen/pretext": "workspace:*"
+    "@docen/pretext": "workspace:*",
+    "@docen/shaping": "workspace:*"
   }
 }

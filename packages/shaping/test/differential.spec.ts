@@ -4,7 +4,8 @@ import { fileURLToPath } from "node:url";
 
 import { beforeAll, describe, expect, it } from "vitest";
 
-import { HarfbuzzBackend, RustybuzzBackend, initShapingWasm } from "../src/index.js";
+import { HarfbuzzBackend } from "../src/harfbuzz-backend.js";
+import { RustybuzzBackend, initShapingWasm } from "../src/index.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const openSansPath = path.join(__dirname, "fixtures/fonts/OpenSans-Regular.ttf");
