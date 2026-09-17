@@ -632,7 +632,35 @@ export function projectRuns(
       // atom's own text (the guide rides as paint metadata); consumed here so
       // the children walk below does not re-emit the base runs verbatim.
       if (isRecord(child.ruby)) pushRuby(child.ruby, rPr);
-      if (child.break != null) out.push({ kind: "break" });
+      if (child.break != null || child.carriageReturn != null) out.push({ kind: "break" });
+      if (child.noBreakHyphen === true) pushText("\u2011", rPr);
+      if (child.softHyphen === true) pushText("\u00AD", rPr);
+      if (child.permStart != null || child.permEnd != null) continue;
+      if (isRecord(child.dir) && Array.isArray(child.dir.children)) {
+        pushRuns(child.dir.children, preset);
+      }
+      if (isRecord(child.bdo) && Array.isArray(child.bdo.children)) {
+        pushRuns(child.bdo.children, preset);
+      }
+      if (isRecord(child.formField)) {
+        const ff = child.formField as Record<string, unknown>;
+        let ffText = "";
+        if (isRecord(ff.checkBox)) {
+          ffText = ff.checkBox.checked ? "☒" : "☐";
+        } else if (isRecord(ff.dropDownList)) {
+          const ddl = ff.dropDownList as {
+            entries?: string[];
+            result?: number;
+            default?: number;
+          };
+          const idx = ddl.result ?? ddl.default ?? 0;
+          ffText = Array.isArray(ddl.entries) && ddl.entries[idx] ? ddl.entries[idx]! : "";
+        } else if (isRecord(ff.textInput)) {
+          const ti = ff.textInput as { value?: string; default?: string };
+          ffText = ti.value ?? ti.default ?? "";
+        }
+        if (ffText) pushText(ffText, rPr);
+      }
       if (child.tab != null) out.push({ kind: "tab" });
       if (isRecord(child.math)) {
         const style = { ...textStyleOf(rPr), italic: true, color: "#808080" };

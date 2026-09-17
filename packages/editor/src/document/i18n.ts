@@ -1591,6 +1591,13 @@ export const ribbonEn: AdditionalLanguage = {
     "protect.stopProtection": "Stop Protection",
     "protect.enterPasswordToStop": "Enter password to stop protection",
     "protect.passwordOptional": "Enter new password (optional)",
+    "protect.exceptionsTitle": "Exceptions (optional)",
+    "protect.exceptionsDesc":
+      "Select parts of the document and choose users who are allowed to freely edit them.",
+    "protect.groups": "Groups:",
+    "protect.everyone": "Everyone",
+    "protect.findNextRegion": "Find Next Region I Can Edit",
+    "protect.showAllRegions": "Show All Regions I Can Edit",
 
     // Signature Line
     "sig.dialogTitle": "Signature Setup",
@@ -3256,6 +3263,12 @@ export const ribbonZhCN: AdditionalLanguage = {
     "protect.stopProtection": "停止保护",
     "protect.enterPasswordToStop": "输入密码以停止保护",
     "protect.passwordOptional": "输入新密码(可选)",
+    "protect.exceptionsTitle": "例外项(可选)",
+    "protect.exceptionsDesc": "选择文档的某些部分，并选取允许自由编辑这些部分的用户。",
+    "protect.groups": "组:",
+    "protect.everyone": "每个人",
+    "protect.findNextRegion": "查找我可以编辑的下一个区域",
+    "protect.showAllRegions": "显示我可以编辑的所有区域",
 
     // Signature Line
     "sig.dialogTitle": "签名行设置",

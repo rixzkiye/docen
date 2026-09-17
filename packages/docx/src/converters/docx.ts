@@ -229,6 +229,32 @@ export function createCompileCache(): CompileCache {
   return { children: new WeakMap(), sections: [] };
 }
 
+function splitTextHyphens(
+  text: string,
+): Array<string | { noBreakHyphen: true } | { softHyphen: true }> {
+  const pieces: Array<string | { noBreakHyphen: true } | { softHyphen: true }> = [];
+  let current = "";
+  for (const char of text) {
+    if (char === "\u2011") {
+      if (current) {
+        pieces.push(current);
+        current = "";
+      }
+      pieces.push({ noBreakHyphen: true });
+    } else if (char === "\u00AD") {
+      if (current) {
+        pieces.push(current);
+        current = "";
+      }
+      pieces.push({ softHyphen: true });
+    } else {
+      current += char;
+    }
+  }
+  if (current) pieces.push(current);
+  return pieces;
+}
+
 /**
  * Manages DOCX serialization (Tiptap JSON ↔ DocumentOptions).
  *
@@ -960,8 +986,69 @@ export class DocxManager {
           this.compileTextNode(node, children);
           break;
         case "hardBreak":
-          children.push({ break: 1 });
+          if (node.attrs?.variant === "carriageReturn") {
+            children.push({ children: [{ carriageReturn: true }] } as unknown as ParagraphChild);
+          } else {
+            children.push({ break: 1 });
+          }
           break;
+        case "permStart": {
+          const ps = (node.attrs ?? {}) as Record<string, unknown>;
+          children.push({
+            permStart: {
+              id: ps.id ?? 0,
+              ...(ps.editGroup ? { editGroup: ps.editGroup as any } : {}),
+              ...(ps.editor ? { editor: ps.editor as string } : {}),
+              ...(ps.colFirst != null ? { colFirst: Number(ps.colFirst) } : {}),
+              ...(ps.colLast != null ? { colLast: Number(ps.colLast) } : {}),
+            },
+          } as unknown as ParagraphChild);
+          break;
+        }
+        case "permEnd": {
+          const pe = (node.attrs ?? {}) as Record<string, unknown>;
+          children.push({
+            permEnd: pe.id ?? 0,
+          } as unknown as ParagraphChild);
+          break;
+        }
+        case "formField": {
+          const ff = (node.attrs?.formField ?? {}) as Record<string, unknown>;
+          let text = "";
+          if (node.content) {
+            for (const c of node.content) {
+              if (c.type === "text" && c.text) text += c.text;
+            }
+          }
+          const updatedFf: Record<string, unknown> = { ...ff };
+          if (updatedFf.checkBox && typeof updatedFf.checkBox === "object") {
+            const cb = updatedFf.checkBox as Record<string, unknown>;
+            updatedFf.checkBox = {
+              ...cb,
+              checked: text.includes("☒") || (text !== "☐" && Boolean(cb.checked)),
+            };
+          } else if (updatedFf.dropDownList && typeof updatedFf.dropDownList === "object") {
+            const ddl = updatedFf.dropDownList as {
+              entries?: string[];
+              result?: number;
+              default?: number;
+            };
+            const entries = Array.isArray(ddl.entries) ? ddl.entries : [];
+            const idx = entries.indexOf(text);
+            updatedFf.dropDownList = {
+              ...ddl,
+              result: idx >= 0 ? idx : (ddl.result ?? 0),
+            };
+          } else if (updatedFf.textInput && typeof updatedFf.textInput === "object") {
+            const ti = updatedFf.textInput as Record<string, unknown>;
+            updatedFf.textInput = {
+              ...ti,
+              value: text,
+            };
+          }
+          children.push({ formField: updatedFf } as unknown as ParagraphChild);
+          break;
+        }
         case "pageBreak":
           children.push({ pageBreak: true });
           break;
@@ -1103,10 +1190,15 @@ export class DocxManager {
     marks: JSONContent["marks"],
     children: ParagraphChild[],
   ): void {
-    const runOpts: Record<string, unknown> = { text };
+    const hasHyphenBreak = text.includes("\u2011") || text.includes("\u00AD");
+    const runOpts: Record<string, unknown> = hasHyphenBreak
+      ? { children: splitTextHyphens(text) }
+      : { text };
     let linkMark: NonNullable<JSONContent["marks"]>[number] | undefined;
     let trackMark: NonNullable<JSONContent["marks"]>[number] | undefined;
     let rubyMark: NonNullable<JSONContent["marks"]>[number] | undefined;
+    let dirMark: NonNullable<JSONContent["marks"]>[number] | undefined;
+    let bdoMark: NonNullable<JSONContent["marks"]>[number] | undefined;
 
     for (const mark of marks ?? []) {
       if (mark.type === "link") {
@@ -1121,6 +1213,17 @@ export class DocxManager {
         rubyMark = mark;
         continue;
       }
+      if (mark.type === "dir") {
+        dirMark = mark;
+        continue;
+      }
+      if (mark.type === "bdo") {
+        bdoMark = mark;
+        continue;
+      }
+      if (mark.type === "softHyphen") {
+        continue;
+      }
       // rPr overlay marks — each extension's renderDocx contributes run props.
       const render = this.markRender.get(mark.type);
       if (render) Object.assign(runOpts, render((mark.attrs ?? {}) as Record<string, unknown>));
@@ -1133,10 +1236,14 @@ export class DocxManager {
 
     if (linkMark) {
       const href = linkMark.attrs?.href as string;
-      const { text: _, ...runWithoutText } = runOpts;
+      const { text: _, children: __, ...runWithoutText } = runOpts;
       const linkChildren: (RunOptions | string)[] = [];
-      if (text) linkChildren.push({ ...runWithoutText, text } as RunOptions);
-      children.push({
+      if (hasHyphenBreak) {
+        linkChildren.push({ ...runWithoutText, children: splitTextHyphens(text) } as RunOptions);
+      } else if (text) {
+        linkChildren.push({ ...runWithoutText, text } as RunOptions);
+      }
+      let finalLink: ParagraphChild = {
         hyperlink: {
           url: href.startsWith("#") ? undefined : href,
           anchor: href.startsWith("#") ? href.slice(1) : undefined,
@@ -1144,7 +1251,16 @@ export class DocxManager {
           tooltip: (linkMark.attrs?.title as string | null | undefined) ?? undefined,
           children: linkChildren,
         },
-      });
+      };
+      if (dirMark) {
+        const val = (dirMark.attrs?.val === "rtl" ? "rtl" : "ltr") as "ltr" | "rtl";
+        finalLink = { dir: { val, children: [finalLink] } } as ParagraphChild;
+      }
+      if (bdoMark) {
+        const val = (bdoMark.attrs?.val === "rtl" ? "rtl" : "ltr") as "ltr" | "rtl";
+        finalLink = { bdo: { val, children: [finalLink] } } as ParagraphChild;
+      }
+      children.push(finalLink);
       return;
     }
     if (trackMark) {
@@ -1154,12 +1270,30 @@ export class DocxManager {
       // stringifyDeletedRun emits <w:delText> for deletion children.
       const kind = trackMark.type;
       if (kind === "insertion" || kind === "deletion") {
-        children.push(this.compileTrackedChangeRun(kind, trackMark.attrs, text, runOpts));
+        let finalTrack = this.compileTrackedChangeRun(kind, trackMark.attrs, text, runOpts);
+        if (dirMark) {
+          const val = (dirMark.attrs?.val === "rtl" ? "rtl" : "ltr") as "ltr" | "rtl";
+          finalTrack = { dir: { val, children: [finalTrack] } } as ParagraphChild;
+        }
+        if (bdoMark) {
+          const val = (bdoMark.attrs?.val === "rtl" ? "rtl" : "ltr") as "ltr" | "rtl";
+          finalTrack = { bdo: { val, children: [finalTrack] } } as ParagraphChild;
+        }
+        children.push(finalTrack);
         return;
       }
     }
 
-    children.push(runOpts as RunOptions);
+    let finalRun: ParagraphChild = runOpts as RunOptions;
+    if (dirMark) {
+      const val = (dirMark.attrs?.val === "rtl" ? "rtl" : "ltr") as "ltr" | "rtl";
+      finalRun = { dir: { val, children: [finalRun] } } as ParagraphChild;
+    }
+    if (bdoMark) {
+      const val = (bdoMark.attrs?.val === "rtl" ? "rtl" : "ltr") as "ltr" | "rtl";
+      finalRun = { bdo: { val, children: [finalRun] } } as ParagraphChild;
+    }
+    children.push(finalRun);
   }
 
   /**
@@ -1175,9 +1309,13 @@ export class DocxManager {
     text: string,
     runOpts: Record<string, unknown>,
   ): ParagraphChild {
-    const { text: _, ...runWithoutText } = runOpts;
+    const { text: _, children: __, ...runWithoutText } = runOpts;
     const trackChildren: (RunOptions | string)[] = [];
-    if (text) trackChildren.push({ ...runWithoutText, text } as RunOptions);
+    if (text.includes("\u2011") || text.includes("\u00AD")) {
+      trackChildren.push({ ...runWithoutText, children: splitTextHyphens(text) } as RunOptions);
+    } else if (text) {
+      trackChildren.push({ ...runWithoutText, text } as RunOptions);
+    }
     const id = typeof attrs?.id === "number" ? attrs.id : 0;
     const author = typeof attrs?.author === "string" ? attrs.author : "";
     const date = typeof attrs?.date === "string" ? attrs.date : "";
@@ -1333,6 +1471,30 @@ export class DocxManager {
         if (node) return node;
       }
     }
+    if ("dir" in child && (child as Record<string, unknown>).dir) {
+      const d = (child as Record<string, unknown>).dir as {
+        val?: string;
+        children?: (ParagraphChild | string)[];
+      };
+      const inner = this.resolveParagraphChildren(d.children);
+      for (const node of inner) {
+        if (!node.marks) node.marks = [];
+        node.marks.push({ type: "dir", attrs: { val: d.val ?? "ltr" } });
+      }
+      return inner;
+    }
+    if ("bdo" in child && (child as Record<string, unknown>).bdo) {
+      const b = (child as Record<string, unknown>).bdo as {
+        val?: string;
+        children?: (ParagraphChild | string)[];
+      };
+      const inner = this.resolveParagraphChildren(b.children);
+      for (const node of inner) {
+        if (!node.marks) node.marks = [];
+        node.marks.push({ type: "bdo", attrs: { val: b.val ?? "ltr" } });
+      }
+      return inner;
+    }
     // run catch-all: a plain run (text/children/break). Left in the manager — it
     // is the fallback every non-owned shape reaches, not an owned shape itself.
     if ("text" in child || "children" in child || "break" in child) {
@@ -1350,6 +1512,13 @@ export class DocxManager {
     // Pure break (no text/children) → hardBreak node
     if (opts.break && opts.text === undefined && !opts.children) {
       return { type: "hardBreak" };
+    }
+    if (
+      (opts as Record<string, unknown>).carriageReturn &&
+      opts.text === undefined &&
+      !opts.children
+    ) {
+      return { type: "hardBreak", attrs: { variant: "carriageReturn" } };
     }
     const text = opts.text;
     if (text === undefined && !opts.children) return null;
@@ -1374,6 +1543,47 @@ export class DocxManager {
         if (typeof c === "string") {
           parts.push(c);
         } else if (c && typeof c === "object") {
+          if ("noBreakHyphen" in c && (c as Record<string, unknown>).noBreakHyphen) {
+            parts.push("\u2011");
+            continue;
+          }
+          if ("softHyphen" in c && (c as Record<string, unknown>).softHyphen) {
+            parts.push("\u00AD");
+            continue;
+          }
+          if ("carriageReturn" in c && (c as Record<string, unknown>).carriageReturn) {
+            flushText();
+            nodes.push({ type: "hardBreak", attrs: { variant: "carriageReturn" } });
+            continue;
+          }
+          if ("dir" in c && (c as Record<string, unknown>).dir) {
+            flushText();
+            const d = (c as Record<string, unknown>).dir as {
+              val?: string;
+              children?: (ParagraphChild | string)[];
+            };
+            const inner = this.resolveParagraphChildren(d.children);
+            for (const node of inner) {
+              if (!node.marks) node.marks = [];
+              node.marks.push({ type: "dir", attrs: { val: d.val ?? "ltr" } });
+            }
+            pushAll(nodes, inner);
+            continue;
+          }
+          if ("bdo" in c && (c as Record<string, unknown>).bdo) {
+            flushText();
+            const b = (c as Record<string, unknown>).bdo as {
+              val?: string;
+              children?: (ParagraphChild | string)[];
+            };
+            const inner = this.resolveParagraphChildren(b.children);
+            for (const node of inner) {
+              if (!node.marks) node.marks = [];
+              node.marks.push({ type: "bdo", attrs: { val: b.val ?? "ltr" } });
+            }
+            pushAll(nodes, inner);
+            continue;
+          }
           // Reflective: reuse the inlineRules dispatch (same as top-level
           // ParagraphChild) so tab/pageBreak/columnBreak — and any custom
           // inline atom — are recognized here too. This replaces a parallel
@@ -1401,7 +1611,7 @@ export class DocxManager {
             nodes.push({ type: "hardBreak" });
           }
           // {lastRenderedPageBreak} is a Word render hint — drop (office-open
-          // does not emit it on output). noBreakHyphen/date fields/separator/pgNum
+          // does not emit it on output). date fields/separator/pgNum
           // are unsupported inline elements, dropped for now.
         }
       }

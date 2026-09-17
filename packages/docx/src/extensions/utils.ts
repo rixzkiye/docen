@@ -15,7 +15,11 @@ import type {
  *  parsed from HTML nor rendered to it, defaulting to null (ProseMirror stores
  *  every declared attr). Shared by every extension carrying OOXML attrs
  *  (paragraph/table/table-cell/…). */
-export const attrNative = () => ({ default: null, parseHTML: () => null, rendered: false });
+export const attrNative = (defaultValue: unknown = null) => ({
+  default: defaultValue,
+  parseHTML: () => null,
+  rendered: false,
+});
 
 // ── Shared paragraph attr factory ──
 //
