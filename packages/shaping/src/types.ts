@@ -150,5 +150,4 @@ export interface ShapingBackend {
   getFontName?(fontId: number, nameId: number): string | undefined;
   getGlyphCount?(fontId: number): number;
   getFontFsType?(fontId: number): number;
-  subset?(fontId: number, glyphIds: readonly number[]): Uint8Array;
 }

@@ -1,4 +1,5 @@
 import { getShapingBackend } from "./backend.js";
+import { subsetFont } from "./subsetter.js";
 import {
   isFontEmbeddingAllowed,
   isFontSubsettingAllowed,
@@ -24,11 +25,13 @@ export class FontRef {
   readonly backend: ShapingBackend;
   readonly metrics: FontMetrics;
   readonly identity: FontIdentity;
+  private readonly fontData?: Uint8Array;
   private isDisposed = false;
 
-  constructor(id: number, backend: ShapingBackend) {
+  constructor(id: number, backend: ShapingBackend, fontData?: Uint8Array) {
     this.id = id;
     this.backend = backend;
+    this.fontData = fontData;
     this.metrics = backend.getFontMetrics(id);
 
     const familyName = backend.getFontName?.(id, 1);
@@ -105,11 +108,19 @@ export class FontRef {
   }
 
   /**
-   * Produce a subset font buffer containing only the requested glyph IDs.
+   * Produce a subset font buffer containing only the requested glyph IDs
+   * (plus composite components and `.notdef`). Throws when the FontRef was
+   * built without the source bytes; use {@link createFontRef} /
+   * {@link createFontRefSync} so subsetting is always available.
    */
   subset(glyphIds: readonly number[]): Uint8Array {
     this.assertNotDisposed();
-    return this.backend.subset?.(this.id, glyphIds) ?? new Uint8Array(0);
+    if (!this.fontData) {
+      throw new Error(
+        `FontRef (id=${this.id}) has no source font bytes; construct it via createFontRef().`,
+      );
+    }
+    return subsetFont(this.fontData, glyphIds);
   }
 
   /**
@@ -142,7 +153,7 @@ export async function createFontRef(
   }
   const backend = getShapingBackend(backendId);
   const fontId = backend.registerFont(fontData);
-  return new FontRef(fontId, backend);
+  return new FontRef(fontId, backend, fontData);
 }
 
 /**
@@ -151,5 +162,5 @@ export async function createFontRef(
 export function createFontRefSync(fontData: Uint8Array, options?: { backend?: string }): FontRef {
   const backend = getShapingBackend(options?.backend);
   const fontId = backend.registerFont(fontData);
-  return new FontRef(fontId, backend);
+  return new FontRef(fontId, backend, fontData);
 }
