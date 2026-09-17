@@ -54,9 +54,9 @@ function layoutHash(laid: unknown): string {
 
 describe("shaped pipeline gates", () => {
   beforeAll(async () => {
-    // Line structure still goes through pretext's prepared segments (the
-    // breaker measures with canvas until R6.3's measurer is fed into it — a
-    // recorded gap); the synthetic fake keeps that deterministic in Node.
+    // The breaker now consumes shaped advances for registered faces (T2);
+    // the synthetic fake only backs the canvas fallbacks (glyph painting and
+    // unregistered faces) and keeps Node deterministic.
     installFakeCanvas();
     await initShapingWasm();
   });
