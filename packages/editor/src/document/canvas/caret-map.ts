@@ -95,25 +95,51 @@ interface ParaEntry {
 const measureCanvas: HTMLCanvasElement | null =
   typeof document !== "undefined" ? document.createElement("canvas") : null;
 
-/** Rendered text of a laid paragraph (inline runs concatenated), whitespace
- *  collapsed — the zip's resync signal when the two sides drift apart. */
+/** Collapse all whitespace — the zip's comparison space. */
 const norm = (s: string): string => s.replace(/\s+/g, "");
+
+/** Rendered text of a laid paragraph (inline runs concatenated), whitespace
+ *  collapsed — the zip's resync signal when the two sides drift apart.
+ *  Memoized by paragraph identity: the incremental projection hands unchanged
+ *  paragraphs back as the same objects, so a keystroke normalizes one
+ *  paragraph instead of the whole document. */
+const laidTextCache = new WeakMap<LaidOutParagraph, string>();
 const laidText = (para: LaidOutParagraph): string => {
+  const hit = laidTextCache.get(para);
+  if (hit !== undefined) return hit;
   let text = "";
   for (const line of para.lines) {
     for (const item of line.items) if (item.kind === "text") text += item.text;
   }
-  return norm(text);
+  const out = norm(text);
+  laidTextCache.set(para, out);
+  return out;
 };
 /** The paragraph's run text — the source the gap walk matches items against
  *  (its whitespace is what pretext trimmed into the gaps). Every non-text
- *  inline marks its source position with one U+FFFC placeholder. */
+ *  inline marks its source position with one U+FFFC placeholder. Memoized
+ *  like {@link laidText}. */
+const runTextCache = new WeakMap<LaidOutParagraph, string>();
 const runTextOf = (para: LaidOutParagraph): string => {
+  const hit = runTextCache.get(para);
+  if (hit !== undefined) return hit;
   let text = "";
   for (const inline of para.inline) {
     text += inline.kind === "text" ? inline.text : "￼";
   }
+  runTextCache.set(para, text);
   return text;
+};
+/** Whitespace-collapsed PM textblock content — the PM side of the zip's
+ *  drift check. PM nodes are referentially stable across transactions
+ *  (structural sharing), so only edited textblocks re-normalize. */
+const normCache = new WeakMap<PmNode, string>();
+const normNode = (node: PmNode): string => {
+  const hit = normCache.get(node);
+  if (hit !== undefined) return hit;
+  const out = norm(node.textContent);
+  normCache.set(node, out);
+  return out;
 };
 const sameSpan = (a: { from: number; to: number }, b: { from: number; to: number }): boolean =>
   a.from === b.from && a.to === b.to;
@@ -347,7 +373,7 @@ export class CaretMap {
         continue;
       }
       const here = laidTexts[i]!;
-      const there = norm(tbs[j]!.node.textContent);
+      const there = normNode(tbs[j]!.node);
       if (here !== there) {
         // Text disagrees at this position. First suspect a PM-side gap: this
         // laid paragraph's text appears further ahead in the textblock list —
@@ -496,7 +522,7 @@ export class CaretMap {
         // single-block stack still pairs by position — a placeholder text or
         // a relayout race must not orphan the shape's only paragraph (its
         // double-click entry would then fall through to the body forever).
-        if (norm(laidText(item.para)) !== norm(tb.node.textContent)) {
+        if (laidText(item.para) !== normNode(tb.node)) {
           if (laid.length !== 1 || tbs.length !== 1) continue;
         }
         j++;

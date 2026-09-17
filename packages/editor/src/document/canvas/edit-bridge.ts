@@ -53,6 +53,7 @@ import {
 import { CaretMap, type TableZone } from "./caret-map";
 import { CellSelection, cellAt, inSameTable } from "./cell-selection";
 import { installChartHover, type ChartTip } from "./chart-hover";
+import { createDocJsonCache, pmNodeToJSON, type DocJsonCache } from "./doc-json";
 import { followLink, installLinkHover, type LinkHit } from "./link-hover";
 import { blockRuleOf, enterRuleOf, inlineRuleOf, isHyphenRun } from "./markdown-input";
 import type { BalloonHit } from "./stage";
@@ -422,6 +423,10 @@ interface Story {
    *  caret map anchors at its anchor page's section origin. */
   pageOrigin: ((page: number) => { contentLeftPx: number; contentTopPx: number }) | null;
   raf: number;
+  /** Identity memo for the render-path JSON serialization (see
+   *  {@link pmNodeToJSON}) — one per story, so main and furniture renders
+   *  never share node identities. */
+  jsonCache: DocJsonCache;
   schedule(): void;
   /** Furniture-story only: what is being edited and its initial content. */
   kind?: StoryKind;
@@ -459,6 +464,7 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
       anchorPage,
       pageOrigin: null,
       raf: 0,
+      jsonCache: createDocJsonCache(),
       // One relayout per frame regardless of keystroke bursts — content
       // changes only; selection-only transactions (drag-select, caret moves)
       // skip the render, their placement rides the synchronous selectionUpdate.
@@ -466,7 +472,7 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
         if (s.raf) return;
         s.raf = requestAnimationFrame(() => {
           s.raf = 0;
-          s.onDoc(s.editor.getJSON());
+          s.onDoc(pmNodeToJSON(s.editor.state.doc, s.jsonCache));
         });
       },
     };
