@@ -5,7 +5,7 @@
 // engine still needs per face is Word's "single line height" ratio — the
 // OOXML ADD line-spacing model's multiplier.
 
-import { WORD_FONT_METRICS, wordLineRatio } from "./font-metrics-data";
+import { getWordFontMetric, wordLineRatio } from "./font-metrics-data";
 
 /** A request for one face's metric. `family` is a resolved CSS-style family
  *  name — OOXML script-slot resolution (eastAsia vs ascii) has already picked
@@ -65,7 +65,7 @@ export const browserFontMetrics: FontMetrics = {
     const key = `${request.family}|${request.bold ? "b" : ""}|${request.italic ? "i" : ""}`;
     const cached = ratioCache.get(key);
     if (cached != null) return cached;
-    const word = WORD_FONT_METRICS[request.family.trim().toLowerCase()];
+    const word = getWordFontMetric(request.family);
     if (word) {
       const ratio = wordLineRatio(word);
       ratioCache.set(key, ratio);

@@ -48,6 +48,20 @@ const CJK_LEGACY: WordFontMetric = {
   cjkLeading: true,
 };
 
+const YAHEI: WordFontMetric = {
+  upem: 2048,
+  winAscent: 2080,
+  winDescent: 536,
+  cjkLeading: true,
+};
+
+const DENGXIAN: WordFontMetric = {
+  upem: 2048,
+  winAscent: 1659,
+  winDescent: 475,
+  wordRatio: 1.4,
+};
+
 export const WORD_FONT_METRICS: Readonly<Record<string, WordFontMetric>> = {
   simsun: CJK_LEGACY,
   宋体: CJK_LEGACY,
@@ -63,15 +77,15 @@ export const WORD_FONT_METRICS: Readonly<Record<string, WordFontMetric>> = {
   仿宋: CJK_LEGACY,
   fangsong_gb2312: CJK_LEGACY,
   仿宋_gb2312: CJK_LEGACY,
-  "microsoft yahei": { upem: 2048, winAscent: 2080, winDescent: 536, cjkLeading: true },
-  微软雅黑: { upem: 2048, winAscent: 2080, winDescent: 536, cjkLeading: true },
+  "microsoft yahei": YAHEI,
+  微软雅黑: YAHEI,
   "microsoft yahei ui": { upem: 2048, winAscent: 2167, winDescent: 521, cjkLeading: true },
   // DengXian: the formula on this true OS/2 triple gives 1.3545, but Word
   // renders 1.4× single spacing (10.5/11/12pt samples agree) — the face's
   // line box includes leading the formula doesn't model, so the measured
   // ratio overrides it.
-  dengxian: { upem: 2048, winAscent: 1659, winDescent: 475, wordRatio: 1.4 },
-  等线: { upem: 2048, winAscent: 1659, winDescent: 475, wordRatio: 1.4 },
+  dengxian: DENGXIAN,
+  等线: DENGXIAN,
   "times new roman": { upem: 2048, winAscent: 1825, winDescent: 443 },
   arial: { upem: 2048, winAscent: 1854, winDescent: 434 },
   calibri: { upem: 2048, winAscent: 1950, winDescent: 550 },
@@ -84,3 +98,17 @@ export const WORD_FONT_METRICS: Readonly<Record<string, WordFontMetric>> = {
   wingdings: { upem: 2048, winAscent: 1841, winDescent: 432 },
   symbol: { upem: 2048, winAscent: 2059, winDescent: 450 },
 };
+
+/**
+ * Retrieve Word-calibrated metrics for a font family name if tabulated.
+ */
+export function getWordFontMetric(family: string): WordFontMetric | undefined {
+  return WORD_FONT_METRICS[family.trim().toLowerCase()];
+}
+
+/**
+ * Baseline share (winAscent / upem) for a Word-calibrated font.
+ */
+export function wordBaselineShare(metric: WordFontMetric): number {
+  return metric.winAscent / metric.upem;
+}

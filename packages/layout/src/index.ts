@@ -1,6 +1,7 @@
 export * from "./units";
 export * from "./numbering-format";
 export * from "./font";
+export * from "./font-metrics-data";
 export * from "./layout-doc";
 export * from "./layout-result";
 export * from "./text/measure";

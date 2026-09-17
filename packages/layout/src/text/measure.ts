@@ -8,7 +8,7 @@
 import { measureNaturalWidth, prepareWithSegments, type PrepareOptions } from "@docen/pretext";
 
 import { isCjkCodeUnit, isCjkText, type FontMetrics, type FontSlots } from "../font";
-import { WORD_FONT_METRICS } from "../font-metrics-data";
+import { getWordFontMetric, wordBaselineShare } from "../font-metrics-data";
 import type { LayoutTextStyle } from "../layout-doc";
 
 /** One same-script stretch of a run. */
@@ -179,8 +179,8 @@ export function baselineShareOf(family: string, bold: boolean, italic: boolean):
   const key = `${family}|${bold ? "b" : ""}${italic ? "i" : ""}`;
   const cached = baselineShareCache.get(key);
   if (cached != null) return cached;
-  const word = WORD_FONT_METRICS[family.trim().toLowerCase()];
-  let share = word ? word.winAscent / word.upem : 0;
+  const word = getWordFontMetric(family);
+  let share = word ? wordBaselineShare(word) : 0;
   if (share === 0 && typeof document !== "undefined") {
     baselineCanvas ??= document.createElement("canvas");
     const ctx = baselineCanvas.getContext("2d");
