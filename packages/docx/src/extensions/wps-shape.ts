@@ -55,6 +55,28 @@ const attrWpsShape = () => ({
   },
 });
 
+/**
+ * Fold the editor's flat shape `name` into the OOXML slot
+ * (ShapeCoreOptions.nonVisualProperties.name → wps:cNvSpPr/@name). The editor
+ * model carries the name at the top level (the watermark gallery stamps
+ * `WordPictureWatermark` there and `isWatermarkNode` reads it back); the
+ * engine only writes it from nonVisualProperties. Compile therefore folds on
+ * the way out and {@link resolveWpsShape} lifts it back on the way in, so the
+ * name survives the round-trip instead of landing in no part at all.
+ */
+export function foldWpsShapeName(geometry: Record<string, unknown>): Record<string, unknown> {
+  const { name, ...rest } = geometry;
+  if (typeof name !== "string" || name === "") return geometry;
+  const nvp = rest.nonVisualProperties;
+  return {
+    ...rest,
+    nonVisualProperties: {
+      ...(typeof nvp === "object" && nvp !== null ? (nvp as Record<string, unknown>) : {}),
+      name,
+    },
+  };
+}
+
 /** ParagraphChild `{ wpsShape: {...} }` → wpsShape node. Mirrors the old
  *  DocxManager wpsShape branch: the shape's text body (children) becomes PM
  *  content (one node per paragraph); geometry/styling ride on attrs.wpsShape.
@@ -101,7 +123,23 @@ export function resolveWpsShape(ws: WpsBranch["wpsShape"], ctx: ResolveContext):
     }
   }
   if (content.length === 0) content.push({ type: "paragraph" });
-  const { children: _omit, ...geometry } = ws ?? {};
+  const { children: _omit, ...rawGeometry } = ws ?? {};
+  // Lift the shape name from its OOXML slot (wps:cNvSpPr/@name is parsed onto
+  // nonVisualProperties.name) to the editor-facing top level, where the shape
+  // model and the watermark detection read it. Compile folds it back
+  // (foldWpsShapeName), so the name survives the round-trip.
+  const nvp = rawGeometry.nonVisualProperties;
+  let geometry: Record<string, unknown> = rawGeometry as Record<string, unknown>;
+  if (typeof nvp === "object" && nvp !== null) {
+    const { name, ...restNvp } = nvp as Record<string, unknown>;
+    if (typeof name === "string" && name !== "") {
+      geometry = {
+        ...rawGeometry,
+        name,
+        nonVisualProperties: Object.keys(restNvp).length > 0 ? restNvp : undefined,
+      };
+    }
+  }
   const node: JSONContent = { type: "wpsShape", content };
   const cleanGeometry = cleanAttrs(geometry);
   if (Object.keys(cleanGeometry).length > 0) node.attrs = { wpsShape: cleanGeometry };
