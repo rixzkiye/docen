@@ -23,6 +23,9 @@ importers:
       '@docen/layout':
         specifier: workspace:*
         version: link:../layout
+      '@docen/shaping':
+        specifier: workspace:*
+        version: link:../shaping
       '@office-open/core':
         specifier: 0.14.5
         version: 0.14.5
@@ -60,6 +63,9 @@ importers:
       '@docen/markdown':
         specifier: workspace:*
         version: link:../markdown
+      '@docen/shaping':
+        specifier: workspace:*
+        version: link:../shaping
       '@office-open/core':
         specifier: 0.14.5
         version: 0.14.5
@@ -106,6 +112,9 @@ importers:
       '@docen/pretext':
         specifier: workspace:*
         version: link:../pretext
+      '@docen/shaping':
+        specifier: workspace:*
+        version: link:../shaping
       '@fluentui/svg-icons':
         specifier: 1.1.340
         version: 1.1.340
@@ -148,6 +157,9 @@ importers:
       '@docen/pretext':
         specifier: workspace:*
         version: link:../pretext
+      '@docen/shaping':
+        specifier: workspace:*
+        version: link:../shaping
 
   packages/leafer-x-metafile: {}
 
@@ -173,6 +185,12 @@ importers:
         version: 0.14.5
 
   packages/pretext: {}
+
+  packages/shaping:
+    devDependencies:
+      harfbuzzjs:
+        specifier: ^1.6.1
+        version: 1.6.1
 
   packages/vue:
     dependencies:
@@ -2185,6 +2203,9 @@ packages:
   happy-dom@20.8.4:
     resolution: {integrity: sha512-GKhjq4OQCYB4VLFBzv8mmccUadwlAusOZOI7hC1D9xDIT5HhzkJK17c4el2f6R6C715P9xB4uiMxeKUa2nHMwQ==}
     engines: {node: '>=20.0.0'}
+
+  harfbuzzjs@1.6.1:
+    resolution: {integrity: sha512-+JeJmO+HzXjDwpfCOdGSyM2bNP8WzJNFKl/8TKivbInMYDtfRIuPIDLtnBNmQzcJw6GptbhHY6o5gaH6deCMEw==}
 
   hookable@6.1.1:
     resolution: {integrity: sha512-U9LYDy1CwhMCnprUfeAZWZGByVbhd54hwepegYTK7Pi5NvqEj63ifz5z+xukznehT7i6NIZRu89Ay1AZmRsLEQ==}
@@ -4563,6 +4584,8 @@ snapshots:
       - bufferutil
       - utf-8-validate
     optional: true
+
+  harfbuzzjs@1.6.1: {}
 
   hookable@6.1.1: {}
 

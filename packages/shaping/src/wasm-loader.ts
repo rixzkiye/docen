@@ -3,6 +3,7 @@ export interface ShapingWasmExports {
   alloc(size: number): number;
   dealloc(ptr: number, size: number): void;
   register_font(ptr: number, len: number): number;
+  register_font_index(ptr: number, len: number, index: number): number;
   drop_font(fontId: number): number;
   get_shape_buffer_ptr(): number;
   shape_text(
