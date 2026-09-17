@@ -347,6 +347,7 @@ export function projectRuns(
       letterSpacingPx:
         own.characterSpacingTw != null ? twipToPx(own.characterSpacingTw) : defRun.letterSpacingPx,
       verticalAlign: own.verticalAlign ?? defRun.verticalAlign,
+      direction: own.rtl === true ? "rtl" : own.rtl === false ? "ltr" : defRun.direction,
       caps,
       ...(scalePct != null ? { scalePct } : {}),
       ...(baselineShiftPx != null ? { baselineShiftPx } : {}),

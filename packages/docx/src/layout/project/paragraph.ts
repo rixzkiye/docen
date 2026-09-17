@@ -367,7 +367,7 @@ export function projectParagraph(p: BodyParagraph, ctx: ProjectContext): LayoutP
     borders: borders.top || borders.right || borders.bottom || borders.left ? borders : undefined,
     shadingFill,
     markSizePx: markSize != null ? ptToPx(markSize) : undefined,
-    defaultTextStyle,
+    defaultTextStyle: bidi ? { ...defaultTextStyle, direction: "rtl" } : defaultTextStyle,
     snapToGrid: typeof pPr.snapToGrid === "boolean" ? pPr.snapToGrid : null,
     align: alignOf(pick([pPr, chainPPr, docPPr], "alignment")),
     keepLines: pPr.keepLines === true || chainPPr.keepLines === true,

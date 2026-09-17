@@ -919,6 +919,11 @@ export function packLines(inline: LayoutInline[], opts: PackLinesOptions): Packe
                     .naturalPx
                 : 0;
               const pieceSize = group.itemSizePx[frag.itemIndex] ?? vertAlignedSizePx(src.style);
+              const shapeStyle =
+                pieceSize === vertAlignedSizePx(src.style)
+                  ? src.style
+                  : { ...src.style, sizePx: pieceSize, verticalAlign: undefined };
+              const glyphRun = measurer.glyphRunOf(frag.text, shapeStyle);
               lineItems.push({
                 kind: "text",
                 inlineIndex,
@@ -932,6 +937,7 @@ export function packLines(inline: LayoutInline[], opts: PackLinesOptions): Packe
                 // offset space.
                 synthetic: src.synthetic,
                 ...(whole && src.ruby ? { ruby: src.ruby, rubyLiftPx } : {}),
+                ...(glyphRun ? { glyphRun } : {}),
               });
               // Hidden text the host does not display renders no ink and no
               // line-box metric — its atom only keeps the caret lattice

@@ -101,4 +101,46 @@ describe("R6.4 Glyph Painter (Vector Outline Painting)", () => {
     expect(child.scaleX).toBeCloseTo(0.02); // 20 / 1000
     expect(child.scaleY).toBeCloseTo(0.02);
   });
+
+  it("scales outlines by the run's unitsPerEm (2048-em fonts paint half as large)", () => {
+    const tree = new Group();
+    const cache = new GlyphOutlineCache();
+    cache.setGlyphPath(1, 42, "M 0 0 L 10 0 L 10 10 Z");
+    const glyphRun: LaidOutGlyphRun = {
+      fontId: 1,
+      fontSizePx: 20,
+      unitsPerEm: 2048,
+      totalAdvancePx: 25,
+      glyphs: [
+        {
+          glyphId: 42,
+          cluster: 0,
+          xAdvance: 1000,
+          yAdvance: 0,
+          xOffset: 0,
+          yOffset: 0,
+          xPx: 10,
+          yPx: 0,
+        },
+      ],
+    };
+
+    paintGlyphRun(tree as any, glyphRun, { x: 0, y: 0, outlineCache: cache });
+    const child = tree.children[0] as any;
+    expect(child.scaleX).toBeCloseTo(20 / 2048, 6);
+    expect(child.scaleY).toBeCloseTo(20 / 2048, 6);
+    // advanceScale stretches positions and the x scale together
+    tree.children.length = 0;
+    paintGlyphRun(tree as any, glyphRun, { x: 0, y: 0, outlineCache: cache, advanceScale: 2 });
+    const stretched = tree.children[0] as any;
+    expect(stretched.x).toBe(20);
+    expect(stretched.scaleX).toBeCloseTo((20 / 2048) * 2, 6);
+    expect(stretched.scaleY).toBeCloseTo(20 / 2048, 6);
+  });
+
+  it("keys cached outlines by variation coordinates", () => {
+    const cache = new GlyphOutlineCache();
+    cache.setGlyphPath(1, 10, "plain");
+    expect(cache.getGlyphPath(1, 10, [{ tag: "wght", value: 700 }])).toBeUndefined();
+  });
 });

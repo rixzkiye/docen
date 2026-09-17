@@ -10,6 +10,7 @@ import { measureNaturalWidth, prepareWithSegments, type PrepareOptions } from "@
 import { isCjkCodeUnit, isCjkText, type FontMetrics, type FontSlots } from "../font";
 import { getWordFontMetric, wordBaselineShare } from "../font-metrics-data";
 import type { LayoutTextStyle } from "../layout-doc";
+import type { LaidOutGlyphRun } from "../layout-result";
 
 /** One same-script stretch of a run. */
 export interface ScriptSegment {
@@ -305,6 +306,12 @@ export class TextMeasurer {
         }),
       );
     return width;
+  }
+
+  /** The shaped glyph run for a painted run, when this measurer can shape it.
+   *  The canvas-backed measurer has no run — the painter then draws fillText. */
+  glyphRunOf(_text: string, _style: LayoutTextStyle): LaidOutGlyphRun | undefined {
+    return undefined;
   }
 }
 

@@ -44,8 +44,13 @@ export class GlyphOutlineCache {
     this.maxSize = maxSize;
   }
 
-  getGlyphPath(fontId: number, glyphId: number): string | undefined {
-    const key = `${fontId}:${glyphId}`;
+  getGlyphPath(
+    fontId: number,
+    glyphId: number,
+    variations?: readonly { readonly tag: string; readonly value: number }[],
+  ): string | undefined {
+    const varKey = variations?.length ? variations.map((v) => `${v.tag}=${v.value}`).join(",") : "";
+    const key = varKey ? `${fontId}:${glyphId}@${varKey}` : `${fontId}:${glyphId}`;
     const cached = this.cache.get(key);
     if (cached !== undefined) {
       return cached;
@@ -60,7 +65,7 @@ export class GlyphOutlineCache {
       if (!backend.getGlyphOutline) {
         return undefined;
       }
-      const commands = backend.getGlyphOutline(fontId, glyphId);
+      const commands = backend.getGlyphOutline(fontId, glyphId, variations);
       const pathStr = commandsToSvgPath(commands);
 
       if (this.cache.size >= this.maxSize) {
@@ -100,7 +105,12 @@ export interface PaintGlyphRunOptions {
   scaleX?: number;
   opacity?: number;
   outlineCache?: GlyphOutlineCache;
+  /** Overrides the run's own unitsPerEm (fonts default to 1000 only when no
+   *  source records it — Calibri/Arial are 2048). */
   unitsPerEm?: number;
+  /** Extra x-advance stretch (justification / CJK advance compression): both
+   *  the glyph positions and the x scale multiply by it. */
+  advanceScale?: number;
 }
 
 /**
@@ -117,19 +127,20 @@ export function paintGlyphRun(
 
   const fontId = glyphRun.fontId ?? 1;
   const cache = options.outlineCache ?? defaultGlyphOutlineCache;
-  const unitsPerEm = options.unitsPerEm ?? 1000;
+  const unitsPerEm = options.unitsPerEm ?? glyphRun.unitsPerEm ?? 1000;
   const scale = glyphRun.fontSizePx / unitsPerEm;
-  const scaleX = (options.scaleX ?? 1) * scale;
+  const advanceScale = options.advanceScale ?? 1;
+  const scaleX = (options.scaleX ?? 1) * advanceScale * scale;
   const scaleY = scale;
 
   let paintedAny = false;
 
   for (const glyph of glyphRun.glyphs) {
-    const pathStr = cache.getGlyphPath(fontId, glyph.glyphId);
+    const pathStr = cache.getGlyphPath(fontId, glyph.glyphId, glyphRun.variations);
     if (!pathStr) continue;
 
     const glyphEl = new Path({
-      x: options.x + glyph.xPx,
+      x: options.x + glyph.xPx * advanceScale,
       y: options.y + glyph.yPx,
       scaleX,
       scaleY,

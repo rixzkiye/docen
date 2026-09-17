@@ -117,6 +117,9 @@ export interface RunStyle {
   positionPt?: number;
   /** w:kern threshold in points (native half-points resolved). */
   kernPt?: number;
+  /** w:rtl — the run's own RTL flag (three-state: explicit false cancels a
+   *  paragraph-bidi default). */
+  rtl?: boolean;
   /** w:bdr box around the run's glyphs. */
   border?: LayoutCharBorder;
   /** w:em emphasis mark token (ST_EmphasisMark minus "none"). */
@@ -232,6 +235,7 @@ export function runStyleOf(rPr: Rec): RunStyle {
     scalePct: num(rPr.scale),
     positionPt: halfPtOf(rPr.position),
     kernPt: halfPtOf(rPr.kern),
+    rtl: tri(rPr.rtl),
     border: charBorderOf(rPr.border),
     emphasisMark: emphasisOf(rPr.emphasisMark),
     outline: tri(rPr.outline) ?? (isRecord(rPr.outline) ? (rPr.outline as never) : undefined),
