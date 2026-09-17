@@ -2,8 +2,10 @@ import { getShapingBackend } from "./backend.js";
 import {
   isFontEmbeddingAllowed,
   isFontSubsettingAllowed,
+  type FontAxis,
   type FontIdentity,
   type FontMetrics,
+  type FontVariationSetting,
   type PathCommand,
   type ShapingBackend,
   type ShapingOptions,
@@ -38,6 +40,7 @@ export class FontRef {
     const fsType = backend.getFontFsType?.(id);
     const isEmbeddingAllowed = fsType !== undefined ? isFontEmbeddingAllowed(fsType) : true;
     const isSubsettingAllowed = fsType !== undefined ? isFontSubsettingAllowed(fsType) : true;
+    const axes = backend.getFontAxes?.(id);
 
     this.identity = {
       familyName,
@@ -49,6 +52,7 @@ export class FontRef {
       fsType,
       isEmbeddingAllowed,
       isSubsettingAllowed,
+      axes,
     };
   }
 
@@ -68,6 +72,19 @@ export class FontRef {
     return this.metrics.vertical;
   }
 
+  getAxes(): readonly FontAxis[] {
+    this.assertNotDisposed();
+    return this.identity.axes ?? this.backend.getFontAxes?.(this.id) ?? [];
+  }
+
+  getMetrics(variations?: readonly FontVariationSetting[]): FontMetrics {
+    this.assertNotDisposed();
+    if (!variations || variations.length === 0) {
+      return this.metrics;
+    }
+    return this.backend.getFontMetrics(this.id, variations);
+  }
+
   /**
    * Shape a run of text with OpenType features and return glyphs and advances.
    */
@@ -79,9 +96,12 @@ export class FontRef {
   /**
    * Get vector outline path commands (M, L, Q, C, Z) for a given glyph.
    */
-  getGlyphOutline(glyphId: number): readonly PathCommand[] {
+  getGlyphOutline(
+    glyphId: number,
+    variations?: readonly FontVariationSetting[],
+  ): readonly PathCommand[] {
     this.assertNotDisposed();
-    return this.backend.getGlyphOutline?.(this.id, glyphId) ?? [];
+    return this.backend.getGlyphOutline?.(this.id, glyphId, variations) ?? [];
   }
 
   /**

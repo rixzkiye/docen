@@ -85,8 +85,19 @@ export class HarfbuzzBackend implements ShapingBackend {
       buffer.setLanguage(options.language);
     }
 
+    if (options?.variations && options.variations.length > 0) {
+      entry.font.setVariations(options.variations.map((v) => new hb.Variation(v.tag, v.value)));
+    } else {
+      entry.font.setVariations([]);
+    }
+
+    let features: any[] | undefined;
+    if (options?.features && options.features.length > 0) {
+      features = options.features.map((f) => new hb.Feature(f.tag, f.value ?? 1));
+    }
+
     buffer.guessSegmentProperties();
-    hb.shape(entry.font, buffer);
+    hb.shape(entry.font, buffer, features);
 
     const hbGlyphs = buffer.getGlyphInfosAndPositions();
     const glyphs: ShapedGlyph[] = [];

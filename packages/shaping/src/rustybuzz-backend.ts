@@ -1,5 +1,7 @@
 import type {
+  FontAxis,
   FontMetrics,
+  FontVariationSetting,
   PathCommand,
   ShapedGlyph,
   ShapingBackend,
@@ -32,9 +34,29 @@ export class RustybuzzBackend implements ShapingBackend {
     wasm.drop_font(fontId);
   }
 
-  getFontMetrics(fontId: number): FontMetrics {
+  getFontMetrics(fontId: number, variations?: readonly FontVariationSetting[]): FontMetrics {
     const wasm = getShapingWasm();
-    const code = wasm.get_font_metrics(fontId);
+    let code: number;
+    let varPtr = 0;
+    let varBytes = 0;
+    if (variations && variations.length > 0) {
+      varBytes = variations.length * 8;
+      varPtr = wasm.alloc(varBytes);
+      const view = new DataView(wasm.memory.buffer, varPtr, varBytes);
+      for (let i = 0; i < variations.length; i++) {
+        const v = variations[i]!;
+        const off = i * 8;
+        for (let c = 0; c < 4; c++) {
+          view.setUint8(off + c, v.tag.charCodeAt(c) || 32);
+        }
+        view.setFloat32(off + 4, v.value, true);
+      }
+      code = wasm.get_font_metrics_var(fontId, varPtr, variations.length);
+      wasm.dealloc(varPtr, varBytes);
+    } else {
+      code = wasm.get_font_metrics(fontId);
+    }
+
     if (code !== 0) {
       throw new Error(`Failed to get font metrics for font ${fontId}, error: ${code}`);
     }
@@ -100,6 +122,42 @@ export class RustybuzzBackend implements ShapingBackend {
       new Uint8Array(wasm.memory.buffer, langPtr, langLen).set(encodedLang);
     }
 
+    let featPtr = 0;
+    let featCount = 0;
+    let featBytes = 0;
+    if (options?.features && options.features.length > 0) {
+      featCount = options.features.length;
+      featBytes = featCount * 8;
+      featPtr = wasm.alloc(featBytes);
+      const view = new DataView(wasm.memory.buffer, featPtr, featBytes);
+      for (let i = 0; i < featCount; i++) {
+        const f = options.features[i]!;
+        const off = i * 8;
+        for (let c = 0; c < 4; c++) {
+          view.setUint8(off + c, f.tag.charCodeAt(c) || 32);
+        }
+        view.setUint32(off + 4, f.value ?? 1, true);
+      }
+    }
+
+    let varPtr = 0;
+    let varCount = 0;
+    let varBytes = 0;
+    if (options?.variations && options.variations.length > 0) {
+      varCount = options.variations.length;
+      varBytes = varCount * 8;
+      varPtr = wasm.alloc(varBytes);
+      const view = new DataView(wasm.memory.buffer, varPtr, varBytes);
+      for (let i = 0; i < varCount; i++) {
+        const v = options.variations[i]!;
+        const off = i * 8;
+        for (let c = 0; c < 4; c++) {
+          view.setUint8(off + c, v.tag.charCodeAt(c) || 32);
+        }
+        view.setFloat32(off + 4, v.value, true);
+      }
+    }
+
     const glyphCount = wasm.shape_text(
       fontId,
       textPtr,
@@ -108,12 +166,16 @@ export class RustybuzzBackend implements ShapingBackend {
       scriptTag,
       langPtr,
       langLen,
+      featPtr,
+      featCount,
+      varPtr,
+      varCount,
     );
 
     wasm.dealloc(textPtr, encodedText.length);
-    if (langPtr > 0) {
-      wasm.dealloc(langPtr, langLen);
-    }
+    if (langPtr > 0) wasm.dealloc(langPtr, langLen);
+    if (featPtr > 0) wasm.dealloc(featPtr, featBytes);
+    if (varPtr > 0) wasm.dealloc(varPtr, varBytes);
 
     if (glyphCount < 0) {
       throw new Error(`Shaping failed with error code ${glyphCount}`);
@@ -144,9 +206,31 @@ export class RustybuzzBackend implements ShapingBackend {
     return { glyphs, totalAdvance };
   }
 
-  getGlyphOutline(fontId: number, glyphId: number): readonly PathCommand[] {
+  getGlyphOutline(
+    fontId: number,
+    glyphId: number,
+    variations?: readonly FontVariationSetting[],
+  ): readonly PathCommand[] {
     const wasm = getShapingWasm();
-    const count = wasm.get_glyph_outline(fontId, glyphId);
+    let count: number;
+    if (variations && variations.length > 0) {
+      const varBytes = variations.length * 8;
+      const varPtr = wasm.alloc(varBytes);
+      const view = new DataView(wasm.memory.buffer, varPtr, varBytes);
+      for (let i = 0; i < variations.length; i++) {
+        const v = variations[i]!;
+        const off = i * 8;
+        for (let c = 0; c < 4; c++) {
+          view.setUint8(off + c, v.tag.charCodeAt(c) || 32);
+        }
+        view.setFloat32(off + 4, v.value, true);
+      }
+      count = wasm.get_glyph_outline_var(fontId, glyphId, varPtr, variations.length);
+      wasm.dealloc(varPtr, varBytes);
+    } else {
+      count = wasm.get_glyph_outline(fontId, glyphId);
+    }
+
     if (count <= 0) {
       return [];
     }
@@ -207,6 +291,30 @@ export class RustybuzzBackend implements ShapingBackend {
     const wasm = getShapingWasm();
     const ret = wasm.get_font_fs_type(fontId);
     return ret >= 0 ? ret : 0;
+  }
+
+  getFontAxes(fontId: number): readonly FontAxis[] {
+    const wasm = getShapingWasm();
+    const count = wasm.get_font_axes(fontId);
+    if (count <= 0) return [];
+
+    const ptr = wasm.get_font_axes_ptr();
+    const view = new DataView(wasm.memory.buffer, ptr, count * 16);
+    const axes: FontAxis[] = [];
+    for (let i = 0; i < count; i++) {
+      const off = i * 16;
+      const tag = String.fromCharCode(
+        view.getUint8(off),
+        view.getUint8(off + 1),
+        view.getUint8(off + 2),
+        view.getUint8(off + 3),
+      );
+      const min = view.getFloat32(off + 4, true);
+      const max = view.getFloat32(off + 8, true);
+      const defaultValue = view.getFloat32(off + 12, true);
+      axes.push({ tag, min, max, default: defaultValue });
+    }
+    return axes;
   }
 
   subset(_fontId: number, _glyphIds: readonly number[]): Uint8Array {

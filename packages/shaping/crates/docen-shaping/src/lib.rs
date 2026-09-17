@@ -4,7 +4,7 @@ use std::sync::{LazyLock, Mutex};
 use read_fonts::model::pen::OutlinePen;
 use read_fonts::TableProvider;
 use rustybuzz::ttf_parser::Tag;
-use rustybuzz::{Direction, Face, Language, Script, UnicodeBuffer};
+use rustybuzz::{Direction, Face, Feature, Language, Script, UnicodeBuffer};
 use skrifa::instance::{LocationRef, Size};
 use skrifa::outline::DrawSettings;
 use skrifa::string::StringId;
@@ -39,6 +39,7 @@ struct EngineState {
     metrics_buffer: [f32; 10],
     outline_buffer: Vec<f32>,
     string_buffer: Vec<u8>,
+    axes_buffer: Vec<u8>,
 }
 
 static STATE: LazyLock<Mutex<EngineState>> = LazyLock::new(|| {
@@ -49,6 +50,7 @@ static STATE: LazyLock<Mutex<EngineState>> = LazyLock::new(|| {
         metrics_buffer: [0.0; 10],
         outline_buffer: Vec::new(),
         string_buffer: Vec::new(),
+        axes_buffer: Vec::new(),
     })
 });
 
@@ -108,10 +110,14 @@ pub unsafe extern "C" fn shape_text(
     font_id: u32,
     text_ptr: *const u8,
     text_len: usize,
-    direction: u32,       // 0 = LTR, 1 = RTL
+    direction: u32,       // 0 = LTR, 1 = RTL, 2 = TTB, 3 = BTT, 4 = Auto
     script_tag: u32,      // 0 or 4-byte BE tag
     lang_ptr: *const u8,  // optional UTF-8 language tag
     lang_len: usize,
+    features_ptr: *const u8,
+    features_count: usize,
+    variations_ptr: *const u8,
+    variations_count: usize,
 ) -> i32 {
     if text_ptr.is_null() || text_len == 0 {
         let mut state = STATE.lock().unwrap();
@@ -130,10 +136,33 @@ pub unsafe extern "C" fn shape_text(
         Some(b) => b,
         None => return -1,
     };
-    let face = match Face::from_slice(font_bytes, 0) {
+    let mut face = match Face::from_slice(font_bytes, 0) {
         Some(f) => f,
         None => return -2,
     };
+
+    if !variations_ptr.is_null() && variations_count > 0 {
+        for i in 0..variations_count {
+            let offset = i * 8;
+            let tag_slice = std::slice::from_raw_parts(variations_ptr.add(offset), 4);
+            let tag = Tag::from_bytes(&[tag_slice[0], tag_slice[1], tag_slice[2], tag_slice[3]]);
+            let val_slice = std::slice::from_raw_parts(variations_ptr.add(offset + 4), 4);
+            let val = f32::from_le_bytes([val_slice[0], val_slice[1], val_slice[2], val_slice[3]]);
+            face.set_variation(tag, val);
+        }
+    }
+
+    let mut features = Vec::with_capacity(features_count);
+    if !features_ptr.is_null() && features_count > 0 {
+        for i in 0..features_count {
+            let offset = i * 8;
+            let tag_slice = std::slice::from_raw_parts(features_ptr.add(offset), 4);
+            let tag = Tag::from_bytes(&[tag_slice[0], tag_slice[1], tag_slice[2], tag_slice[3]]);
+            let val_slice = std::slice::from_raw_parts(features_ptr.add(offset + 4), 4);
+            let val = u32::from_le_bytes([val_slice[0], val_slice[1], val_slice[2], val_slice[3]]);
+            features.push(Feature::new(tag, val, ..));
+        }
+    }
 
     let mut buffer = UnicodeBuffer::new();
     buffer.push_str(text);
@@ -165,7 +194,7 @@ pub unsafe extern "C" fn shape_text(
 
     buffer.guess_segment_properties();
 
-    let glyph_buffer = rustybuzz::shape(&face, &[], buffer);
+    let glyph_buffer = rustybuzz::shape(&face, &features, buffer);
     let infos = glyph_buffer.glyph_infos();
     let positions = glyph_buffer.glyph_positions();
 
@@ -191,7 +220,11 @@ pub extern "C" fn get_metrics_buffer_ptr() -> *const f32 {
 }
 
 #[no_mangle]
-pub extern "C" fn get_font_metrics(font_id: u32) -> i32 {
+pub unsafe extern "C" fn get_font_metrics_var(
+    font_id: u32,
+    variations_ptr: *const u8,
+    variations_count: usize,
+) -> i32 {
     let mut state = STATE.lock().unwrap();
     let font_bytes = match state.fonts.get(&font_id) {
         Some(b) => b,
@@ -202,8 +235,33 @@ pub extern "C" fn get_font_metrics(font_id: u32) -> i32 {
         Err(_) => return -2,
     };
 
+    let mut var_tuples = Vec::with_capacity(variations_count);
+    if !variations_ptr.is_null() && variations_count > 0 {
+        for i in 0..variations_count {
+            let offset = i * 8;
+            let tag_slice = std::slice::from_raw_parts(variations_ptr.add(offset), 4);
+            let tag = read_fonts::types::Tag::new(&[
+                tag_slice[0],
+                tag_slice[1],
+                tag_slice[2],
+                tag_slice[3],
+            ]);
+            let val_slice = std::slice::from_raw_parts(variations_ptr.add(offset + 4), 4);
+            let val = f32::from_le_bytes([
+                val_slice[0],
+                val_slice[1],
+                val_slice[2],
+                val_slice[3],
+            ]);
+            var_tuples.push((tag, val));
+        }
+    }
+
+    let loc = font_ref.axes().location(var_tuples.iter().copied());
+    let loc_ref = LocationRef::from(&loc);
+
     let (upem, ascent, descent, leading, cap_height, x_height, vert) = {
-        let metrics = font_ref.metrics(Size::unscaled(), LocationRef::default());
+        let metrics = font_ref.metrics(Size::unscaled(), loc_ref);
         let vert = font_ref.vhea().ok().map(|v| {
             (
                 v.ascender().to_i16() as f32,
@@ -245,7 +303,10 @@ pub extern "C" fn get_font_metrics(font_id: u32) -> i32 {
     0
 }
 
-
+#[no_mangle]
+pub extern "C" fn get_font_metrics(font_id: u32) -> i32 {
+    unsafe { get_font_metrics_var(font_id, std::ptr::null(), 0) }
+}
 
 #[no_mangle]
 pub extern "C" fn get_outline_buffer_ptr() -> *const f32 {
@@ -254,7 +315,12 @@ pub extern "C" fn get_outline_buffer_ptr() -> *const f32 {
 }
 
 #[no_mangle]
-pub extern "C" fn get_glyph_outline(font_id: u32, glyph_id: u32) -> i32 {
+pub unsafe extern "C" fn get_glyph_outline_var(
+    font_id: u32,
+    glyph_id: u32,
+    variations_ptr: *const u8,
+    variations_count: usize,
+) -> i32 {
     let mut state = STATE.lock().unwrap();
     let font_bytes = match state.fonts.get(&font_id) {
         Some(b) => b,
@@ -264,6 +330,28 @@ pub extern "C" fn get_glyph_outline(font_id: u32, glyph_id: u32) -> i32 {
         Ok(f) => f,
         Err(_) => return -2,
     };
+
+    let mut var_tuples = Vec::with_capacity(variations_count);
+    if !variations_ptr.is_null() && variations_count > 0 {
+        for i in 0..variations_count {
+            let offset = i * 8;
+            let tag_slice = std::slice::from_raw_parts(variations_ptr.add(offset), 4);
+            let tag = read_fonts::types::Tag::new(&[
+                tag_slice[0],
+                tag_slice[1],
+                tag_slice[2],
+                tag_slice[3],
+            ]);
+            let val_slice = std::slice::from_raw_parts(variations_ptr.add(offset + 4), 4);
+            let val = f32::from_le_bytes([
+                val_slice[0],
+                val_slice[1],
+                val_slice[2],
+                val_slice[3],
+            ]);
+            var_tuples.push((tag, val));
+        }
+    }
 
     let outlines = font_ref.outline_glyphs();
     let glyph = match outlines.get(GlyphId::new(glyph_id)) {
@@ -277,7 +365,8 @@ pub extern "C" fn get_glyph_outline(font_id: u32, glyph_id: u32) -> i32 {
     let mut pen = PathPen {
         commands: Vec::new(),
     };
-    let settings = DrawSettings::unhinted(Size::unscaled(), LocationRef::default());
+    let loc = font_ref.axes().location(var_tuples.iter().copied());
+    let settings = DrawSettings::unhinted(Size::unscaled(), LocationRef::from(&loc));
     if glyph.draw(settings, &mut pen).is_err() {
         return -3;
     }
@@ -285,6 +374,46 @@ pub extern "C" fn get_glyph_outline(font_id: u32, glyph_id: u32) -> i32 {
     let len = pen.commands.len();
     state.outline_buffer = pen.commands;
     len as i32
+}
+
+#[no_mangle]
+pub extern "C" fn get_glyph_outline(font_id: u32, glyph_id: u32) -> i32 {
+    unsafe { get_glyph_outline_var(font_id, glyph_id, std::ptr::null(), 0) }
+}
+
+#[no_mangle]
+pub extern "C" fn get_font_axes_ptr() -> *const u8 {
+    let state = STATE.lock().unwrap();
+    state.axes_buffer.as_ptr()
+}
+
+#[no_mangle]
+pub extern "C" fn get_font_axes(font_id: u32) -> i32 {
+    let mut state = STATE.lock().unwrap();
+    let font_bytes = match state.fonts.get(&font_id) {
+        Some(b) => b.as_slice(),
+        None => return -1,
+    };
+    let font_ref = match FontRef::new(font_bytes) {
+        Ok(f) => f,
+        Err(_) => return -2,
+    };
+
+    let axes = font_ref.axes();
+    let count = axes.len();
+    let mut temp = Vec::with_capacity(count * 16);
+
+    for axis in axes.iter() {
+        temp.extend_from_slice(&axis.tag().to_be_bytes());
+        temp.extend_from_slice(&axis.min_value().to_le_bytes());
+        temp.extend_from_slice(&axis.max_value().to_le_bytes());
+        temp.extend_from_slice(&axis.default_value().to_le_bytes());
+    }
+
+    drop(font_ref);
+    state.axes_buffer = temp;
+
+    count as i32
 }
 
 #[no_mangle]
@@ -350,5 +479,161 @@ pub extern "C" fn get_font_fs_type(font_id: u32) -> i32 {
         os2.fs_type() as i32
     } else {
         0
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_axes_and_variations_c_api() {
+        let font_bytes = include_bytes!("../../../test/fixtures/fonts/InterVariable.ttf");
+        let font_id = unsafe { register_font(font_bytes.as_ptr(), font_bytes.len()) };
+        assert!(font_id > 0);
+
+        // Test get_font_axes
+        let axes_count = get_font_axes(font_id as u32);
+        assert_eq!(axes_count, 2); // opsz, wght
+        let axes_ptr = get_font_axes_ptr();
+        assert!(!axes_ptr.is_null());
+        let axes_slice = unsafe { std::slice::from_raw_parts(axes_ptr, (axes_count as usize) * 16) };
+        let tag0 = &axes_slice[0..4];
+        let tag1 = &axes_slice[16..20];
+        assert_eq!(tag0, b"opsz");
+        assert_eq!(tag1, b"wght");
+
+        // Test variations in shaping
+        // "123" text
+        let text = "123";
+        let res_default = unsafe {
+            shape_text(
+                font_id as u32,
+                text.as_ptr(),
+                text.len(),
+                0, // LTR
+                0,
+                std::ptr::null(),
+                0,
+                std::ptr::null(),
+                0,
+                std::ptr::null(),
+                0,
+            )
+        };
+        assert_eq!(res_default, 3);
+        let shape_buf_ptr = get_shape_buffer_ptr();
+        let default_adv0 = unsafe { *shape_buf_ptr.add(2) };
+
+        // Shape with wght = 900
+        let mut var_buf = Vec::new();
+        var_buf.extend_from_slice(b"wght");
+        var_buf.extend_from_slice(&900.0f32.to_le_bytes());
+
+        let res_bold = unsafe {
+            shape_text(
+                font_id as u32,
+                text.as_ptr(),
+                text.len(),
+                0,
+                0,
+                std::ptr::null(),
+                0,
+                std::ptr::null(),
+                0,
+                var_buf.as_ptr(),
+                1,
+            )
+        };
+        assert_eq!(res_bold, 3);
+        let bold_adv0 = unsafe { *shape_buf_ptr.add(2) };
+
+        // In InterVariable, bold characters have slightly wider advance or same tabular advance
+        println!("default advance: {}, bold advance: {}", default_adv0, bold_adv0);
+
+        // Test features: tnum on "123"
+        let mut feat_tnum = Vec::new();
+        feat_tnum.extend_from_slice(b"tnum");
+        feat_tnum.extend_from_slice(&1u32.to_le_bytes());
+
+        let res_tnum = unsafe {
+            shape_text(
+                font_id as u32,
+                text.as_ptr(),
+                text.len(),
+                0,
+                0,
+                std::ptr::null(),
+                0,
+                feat_tnum.as_ptr(),
+                1,
+                std::ptr::null(),
+                0,
+            )
+        };
+        assert_eq!(res_tnum, 3);
+        let tnum_gid0 = unsafe { *shape_buf_ptr };
+        assert_eq!(tnum_gid0, 1360.0);
+
+        // Test ligature disabling: calt=0 on "->"
+        let text_arrow = "->";
+        let mut feat_no_calt = Vec::new();
+        feat_no_calt.extend_from_slice(b"calt");
+        feat_no_calt.extend_from_slice(&0u32.to_le_bytes());
+
+        let res_no_calt = unsafe {
+            shape_text(
+                font_id as u32,
+                text_arrow.as_ptr(),
+                text_arrow.len(),
+                0,
+                0,
+                std::ptr::null(),
+                0,
+                feat_no_calt.as_ptr(),
+                1,
+                std::ptr::null(),
+                0,
+            )
+        };
+        // calt=0 keeps 2 separate glyphs: '-' and '>'
+        assert_eq!(res_no_calt, 2);
+
+        let res_calt = unsafe {
+            shape_text(
+                font_id as u32,
+                text_arrow.as_ptr(),
+                text_arrow.len(),
+                0,
+                0,
+                std::ptr::null(),
+                0,
+                std::ptr::null(),
+                0,
+                std::ptr::null(),
+                0,
+            )
+        };
+        // default in Inter forms a ligature: 1 glyph [1805]
+        assert_eq!(res_calt, 1);
+        let arrow_gid0 = unsafe { *shape_buf_ptr };
+        assert_eq!(arrow_gid0, 1805.0);
+
+        // Test get_font_metrics_var
+        let ret_metrics = unsafe { get_font_metrics_var(font_id as u32, var_buf.as_ptr(), 1) };
+        assert_eq!(ret_metrics, 0);
+
+        // Test get_glyph_outline_var
+        let outline_len_900 = unsafe {
+            get_glyph_outline_var(font_id as u32, tnum_gid0 as u32, var_buf.as_ptr(), 1)
+        };
+        assert!(outline_len_900 > 0);
+
+        let outline_len_default = unsafe {
+            get_glyph_outline_var(font_id as u32, tnum_gid0 as u32, std::ptr::null(), 0)
+        };
+        assert!(outline_len_default > 0);
+
+        drop_font(font_id as u32);
     }
 }

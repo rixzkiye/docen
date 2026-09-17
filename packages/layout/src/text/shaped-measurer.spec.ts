@@ -145,4 +145,60 @@ describe("R6.3 ShapedMeasurer (TextMeasurer with Opt-in Shaping)", () => {
       expect(run!.glyphs[i]!.yPx).toBeGreaterThan(run!.glyphs[i - 1]!.yPx);
     }
   });
+
+  it("applies OpenType number spacing and ligature features from style", () => {
+    const interPath = path.resolve(
+      __dirname,
+      "../../../shaping/test/fixtures/fonts/InterVariable.ttf",
+    );
+    const interBytes = fs.readFileSync(interPath);
+    const interFont = createFontRefSync(interBytes);
+
+    const measurer = new ShapedMeasurer(fakeFontMetrics, { optIn: true });
+    measurer.registerFont("Inter", interFont);
+
+    // Test tabular number spacing
+    const propRun = measurer.shapeRun("123", {
+      family: "Inter",
+      sizePx: 16,
+      numSpacing: "proportional",
+    })!;
+    const tabRun = measurer.shapeRun("123", {
+      family: "Inter",
+      sizePx: 16,
+      numSpacing: "tabular",
+    })!;
+
+    expect(propRun.glyphs[0].glyphId).not.toBe(tabRun.glyphs[0].glyphId);
+    expect(tabRun.glyphs[0].glyphId).toBe(1360);
+
+    // Test ligature disabling (w:ligatures none)
+    const ligRun = measurer.shapeRun("->", {
+      family: "Inter",
+      sizePx: 16,
+    })!;
+    const noLigRun = measurer.shapeRun("->", {
+      family: "Inter",
+      sizePx: 16,
+      ligatures: "none",
+    })!;
+
+    expect(ligRun.glyphs.length).toBe(1);
+    expect(ligRun.glyphs[0].glyphId).toBe(1805);
+    expect(noLigRun.glyphs.length).toBe(2);
+
+    // Test variable font weight axis
+    const lightRun = measurer.shapeRun("123", {
+      family: "Inter",
+      sizePx: 16,
+      fontWeight: 100,
+    })!;
+    const boldRun = measurer.shapeRun("123", {
+      family: "Inter",
+      sizePx: 16,
+      fontWeight: 900,
+    })!;
+
+    expect(boldRun.totalAdvancePx).toBeGreaterThan(lightRun.totalAdvancePx);
+  });
 });
