@@ -5,8 +5,9 @@
  * schedule. The host keeps thin delegates (and #armStage, the stage wiring).
  */
 
-import { compileDocument, type JSONContent } from "@docen/docx";
+import { compileDocument, createCompileCache, type JSONContent } from "@docen/docx";
 import {
+  createProjectionCache,
   projectDocumentOptions,
   type ProjectedFlowBox,
   type ProjectedPageBackground,
@@ -142,6 +143,14 @@ export interface RenderHostView {
 export class RenderDomain {
   constructor(private readonly host: RenderHostView) {}
 
+  /** Incremental-projection memos — see the docx projection/compile caches.
+   *  Entries key ProseMirror identities (the bridge's `pmNodeToJSON` hands
+   *  unchanged subtrees back by reference), so a transaction re-projects only
+   *  the blocks it touched and falls back to a full walk whenever a change
+   *  cannot be proven incrementally safe. */
+  readonly #compileCache = createCompileCache();
+  readonly #projectionCache = createProjectionCache();
+
   /** The canvas pipeline's projection half, shared by every layout path:
    *  compile → project (one section per document section) → lay each
    *  section's furniture ONCE (the insets and the painter's bands share the
@@ -161,8 +170,10 @@ export class RenderDomain {
     // only (Word hides the markup area outside Print Layout / Web Layout has
     // no margin at all).
     const balloonsOn = this.host.balloons() !== "none" && this.host.viewMode() === "print";
+    const merged = this.host.mergedView(doc);
+    const compiled = compileDocument(merged, undefined, this.#compileCache);
     const { sections, background } = projectDocumentOptions(
-      compileDocument(this.host.mergedView(doc)),
+      compiled,
       // Word's Display for Review: "simple" is also the all-marks projection
       // minus the review chrome Word draws outside the flow, so only an
       // actual filter (or the change-type palette, or balloons) needs the
@@ -187,6 +198,7 @@ export class RenderDomain {
       showHiddenText,
       this.host.hyphenation(),
       themeFonts,
+      this.#projectionCache,
     );
     const stageSections: (ProjectedSection & CanvasStageSection)[] = sections.map((section) => ({
       ...section,

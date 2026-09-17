@@ -134,14 +134,97 @@ function hashKeyName(name: string): number {
   return h;
 }
 
+/** Streaming structural FNV-1a pair — the memo key's hasher. Two
+ *  independent hashes make a collision (a stale layout) practically
+ *  impossible; both sides of a comparison come from the same projection
+ *  code, so property order is deterministic. Key names repeat across every
+ *  paragraph and style object, so their hash is computed once and cached —
+ *  hashing ~30 names per object was most of the per-keystroke key cost on
+ *  large documents. */
+class KeyMixer {
+  h1: number;
+  h2: number;
+
+  constructor(h1 = 0x811c9dc5, h2 = 0x9e3779b9) {
+    this.h1 = h1;
+    this.h2 = h2;
+  }
+
+  mix(v: number): void {
+    this.h1 = Math.imul(this.h1 ^ v, 0x01000193);
+    this.h2 = Math.imul(this.h2 ^ v, 0x85ebca6b);
+  }
+
+  mixStr(s: string): void {
+    for (let i = 0; i < s.length; i++) this.mix(s.charCodeAt(i));
+  }
+
+  walk(v: unknown): void {
+    if (v === null || v === undefined) {
+      this.mix(v === null ? 0x11 : 0x12);
+      return;
+    }
+    switch (typeof v) {
+      case "string":
+        this.mix(0x13);
+        this.mixStr(v);
+        return;
+      case "number":
+        this.mix(0x14);
+        // Sub-thousandth differences never change layout — quantize so tiny
+        // float noise (e.g. a re-derived percentage) cannot churn the memo.
+        this.mix(Math.round(v * 1000));
+        return;
+      case "boolean":
+        this.mix(v ? 0x15 : 0x16);
+        return;
+      case "object": {
+        if (Array.isArray(v)) {
+          this.mix(0x17);
+          for (const item of v) this.walk(item);
+          return;
+        }
+        this.mix(0x18);
+        for (const key of Object.keys(v as Record<string, unknown>)) {
+          // Renderer-only media source (a megabyte data URL): it never shapes
+          // the layout — the picture atom's box is widthPx/heightPx alone (see
+          // LayoutInline) — and a hit is re-checked for it separately, so the
+          // memo does not walk every base64 char on every render.
+          if (key === "src") continue;
+          this.mix(hashKeyName(key));
+          this.walk((v as Record<string, unknown>)[key]);
+        }
+        return;
+      }
+      default:
+        this.mixStr(String(v));
+    }
+  }
+
+  key(): string {
+    return `${(this.h1 >>> 0).toString(36)}:${(this.h2 >>> 0).toString(36)}`;
+  }
+}
+
 /** Position-free keys depend only on the paragraph, the width, and a handful
  *  of flow scalars — all stable across a rerun of the same paragraph object
  *  (the flow re-lays overflow blocks from its page replay). One entry per
  *  object; the scalars are compared, not just the width, so a cell paragraph
- *  and a body paragraph cannot share a key. */
+ *  and a body paragraph cannot share a key. The raw hash pair is kept too:
+ *  a position-dependent paragraph mixes its flow context into the pair
+ *  without re-walking the paragraph body on every render. */
 const keyCache = new WeakMap<
   LayoutParagraph,
-  { width: number; inTable: boolean; adjust: boolean; onGrid: boolean; pitch: number; key: string }
+  {
+    width: number;
+    inTable: boolean;
+    adjust: boolean;
+    onGrid: boolean;
+    pitch: number;
+    h1: number;
+    h2: number;
+    key: string;
+  }
 >();
 
 function memoKey(
@@ -153,99 +236,61 @@ function memoKey(
   const adjust = ctx?.adjustLinesInTable === true;
   const onGrid = ctx?.onGrid === true;
   const pitch = Math.round((ctx?.linePitchPx ?? 0) * 1000);
-  // Position-dependent paragraphs skip the cache (their key varies per call).
+  // Position-dependent paragraphs (an anchored drawing, or a page carrying
+  // absolute float zones) add their flow context below.
   const positional = (para.drawings?.length ?? 0) > 0 || (ctx?.floatZones?.length ?? 0) > 0;
+  let cached = keyCache.get(para);
+  if (
+    !cached ||
+    cached.width !== width ||
+    cached.inTable !== inTable ||
+    cached.adjust !== adjust ||
+    cached.onGrid !== onGrid ||
+    cached.pitch !== pitch
+  ) {
+    const mixer = new KeyMixer();
+    mixer.walk(para);
+    mixer.mix(0x19);
+    mixer.mix(Math.round(width * 1000));
+    mixer.mix(inTable ? 1 : 0);
+    mixer.mix(adjust ? 1 : 0);
+    mixer.mix(onGrid ? 1 : 0);
+    mixer.mix(pitch);
+    cached = {
+      width,
+      inTable,
+      adjust,
+      onGrid,
+      pitch,
+      h1: mixer.h1,
+      h2: mixer.h2,
+      key: "",
+    };
+    keyCache.set(para, cached);
+  }
   if (!positional) {
-    const cached = keyCache.get(para);
-    if (
-      cached &&
-      cached.width === width &&
-      cached.inTable === inTable &&
-      cached.adjust === adjust &&
-      cached.onGrid === onGrid &&
-      cached.pitch === pitch
-    ) {
-      return cached.key;
-    }
+    if (cached.key === "") cached.key = formatKey(cached.h1, cached.h2);
+    return cached.key;
   }
-  let h1 = 0x811c9dc5;
-  let h2 = 0x9e3779b9;
-  const mix = (v: number): void => {
-    h1 = Math.imul(h1 ^ v, 0x01000193);
-    h2 = Math.imul(h2 ^ v, 0x85ebca6b);
-  };
-  const mixStr = (s: string): void => {
-    for (let i = 0; i < s.length; i++) mix(s.charCodeAt(i));
-  };
-  const walk = (v: unknown): void => {
-    if (v === null || v === undefined) {
-      mix(v === null ? 0x11 : 0x12);
-      return;
-    }
-    switch (typeof v) {
-      case "string":
-        mix(0x13);
-        mixStr(v);
-        return;
-      case "number":
-        mix(0x14);
-        // Sub-thousandth differences never change layout — quantize so tiny
-        // float noise (e.g. a re-derived percentage) cannot churn the memo.
-        mix(Math.round(v * 1000));
-        return;
-      case "boolean":
-        mix(v ? 0x15 : 0x16);
-        return;
-      case "object": {
-        if (Array.isArray(v)) {
-          mix(0x17);
-          for (const item of v) walk(item);
-          return;
-        }
-        mix(0x18);
-        for (const key of Object.keys(v as Record<string, unknown>)) {
-          // Renderer-only media source (a megabyte data URL): it never shapes
-          // the layout — the picture atom's box is widthPx/heightPx alone (see
-          // LayoutInline) — and a hit is re-checked for it separately, so the
-          // memo does not walk every base64 char on every render.
-          if (key === "src") continue;
-          mix(hashKeyName(key));
-          walk((v as Record<string, unknown>)[key]);
-        }
-        return;
-      }
-      default:
-        mixStr(String(v));
-    }
-  };
-  walk(para);
-  mix(0x19);
-  mix(Math.round(width * 1000));
-  mix(inTable ? 1 : 0);
-  mix(adjust ? 1 : 0);
-  mix(onGrid ? 1 : 0);
-  mix(pitch);
-  // A drawing or a flow with absolute float zones makes the result
-  // position-dependent (the zones scan from the block's flow Y, and a
-  // paragraph-anchored drawing resolves against the page box): the key must
-  // cover that context or an unchanged paragraph would reuse a layout from
-  // another position. Everything else keeps the position-free key, so a
-  // line-count change early in the document cannot churn the whole memo.
-  if (para.drawings?.length || ctx?.floatZones?.length) {
-    mix(0x1a);
-    mix(Math.round((ctx?.startY ?? 0) * 1000));
-    if (ctx?.wrapPage) {
-      mix(0x1b);
-      walk(ctx.wrapPage);
-    }
-    if (ctx?.floatZones?.length) {
-      mix(0x1c);
-      walk(ctx.floatZones);
-    }
+  // The flow context: the zones scan from the block's flow Y, and a
+  // paragraph-anchored drawing resolves against the page box — an unchanged
+  // paragraph must not reuse a layout from another position.
+  const mixer = new KeyMixer(cached.h1, cached.h2);
+  mixer.mix(0x1a);
+  mixer.mix(Math.round((ctx?.startY ?? 0) * 1000));
+  if (ctx?.wrapPage) {
+    mixer.mix(0x1b);
+    mixer.walk(ctx.wrapPage);
   }
-  const key = `${(h1 >>> 0).toString(36)}:${(h2 >>> 0).toString(36)}`;
-  if (!positional) keyCache.set(para, { width, inTable, adjust, onGrid, pitch, key });
-  return key;
+  if (ctx?.floatZones?.length) {
+    mixer.mix(0x1c);
+    mixer.walk(ctx.floatZones);
+  }
+  return mixer.key();
+}
+
+function formatKey(h1: number, h2: number): string {
+  return `${(h1 >>> 0).toString(36)}:${(h2 >>> 0).toString(36)}`;
 }
 
 function layoutParagraphUncached(
