@@ -92,22 +92,41 @@ export function resolveFontVariations(
   return variations;
 }
 
-let globalShapingOptIn = false;
+let globalShapingDefault = true;
 
 /**
- * Opt-in flag controlling deterministic OpenType shaping across docen.
+ * Flag controlling deterministic OpenType shaping across docen.
+ * Default is true (R6.8 default flip). Set to false to roll back to Canvas measureText.
  */
 export function setShapingEnabled(enabled: boolean): void {
-  globalShapingOptIn = enabled;
+  globalShapingDefault = enabled;
 }
 
 export function isShapingEnabled(): boolean {
-  return globalShapingOptIn;
+  if (typeof process !== "undefined" && process.env?.DOCEN_SHAPING_DISABLED === "1") {
+    return false;
+  }
+  return globalShapingDefault;
 }
 
 export interface ShapedMeasurerOptions {
   readonly fontManager?: FontManager;
   readonly optIn?: boolean;
+  readonly enabled?: boolean;
+}
+
+/**
+ * Factory creating either a ShapedMeasurer (when shaping is enabled, default in R6.8)
+ * or standard TextMeasurer (when shaping is explicitly rolled back).
+ */
+export function createMeasurer(
+  metrics: FontMetrics,
+  options?: ShapedMeasurerOptions,
+): TextMeasurer {
+  if (isShapingEnabled()) {
+    return new ShapedMeasurer(metrics, options);
+  }
+  return new TextMeasurer(metrics);
 }
 
 /**
@@ -116,18 +135,21 @@ export interface ShapedMeasurerOptions {
  */
 export class ShapedMeasurer extends TextMeasurer {
   readonly fontManager: FontManager;
-  private readonly optIn: boolean;
+  private readonly forcedEnabled?: boolean;
   private readonly runCache = new Map<string, LaidOutGlyphRun>();
   private readonly fontMap = new Map<string, FontRef>();
 
   constructor(metrics: FontMetrics, options?: ShapedMeasurerOptions) {
     super(metrics);
     this.fontManager = options?.fontManager ?? new FontManager({ enableOpfs: false });
-    this.optIn = options?.optIn ?? false;
+    this.forcedEnabled = options?.enabled ?? options?.optIn;
   }
 
   get enabled(): boolean {
-    return this.optIn || globalShapingOptIn;
+    if (this.forcedEnabled !== undefined) {
+      return this.forcedEnabled;
+    }
+    return isShapingEnabled();
   }
 
   registerFont(family: string, fontRef: FontRef): void {

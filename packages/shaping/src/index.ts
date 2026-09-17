@@ -11,3 +11,4 @@ export * from "./fallback-chain.js";
 export * from "./font-manager.js";
 export * from "./subsetter.js";
 export * from "./to-unicode.js";
+export * from "./shaping-worker.js";

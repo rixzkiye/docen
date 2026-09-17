@@ -50,10 +50,10 @@ import {
 import {
   browserFontMetrics,
   computePageNumberOffsets,
+  createMeasurer,
   EMU_PER_PX,
   layoutFlowSections,
   layoutSectionsIncremental,
-  TextMeasurer,
   twipToPx,
   type FlowPage,
   type FlowPageInsets,
@@ -609,7 +609,7 @@ class DocenDocument extends AddinHost<Editor> {
     doc: JSONContent;
   }> = [];
   #currentLandmarkIdx = 0;
-  #measurer = new TextMeasurer(browserFontMetrics);
+  #measurer = createMeasurer(browserFontMetrics);
   #pages: readonly FlowPage[] = [];
   /** Page index → section index (the caret's section and per-page geometry
    *  read through it). */

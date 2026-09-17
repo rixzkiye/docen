@@ -7,7 +7,12 @@ import { beforeAll, describe, expect, it } from "vitest";
 
 import { fakeFontMetrics, installFakeCanvas } from "../../test/fake-canvas";
 import type { LayoutTextStyle } from "../layout-doc";
-import { ShapedMeasurer, isShapingEnabled, setShapingEnabled } from "./shaped-measurer";
+import {
+  createMeasurer,
+  isShapingEnabled,
+  setShapingEnabled,
+  ShapedMeasurer,
+} from "./shaped-measurer";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const openSansPath = path.resolve(
@@ -15,7 +20,7 @@ const openSansPath = path.resolve(
   "../../../shaping/test/fixtures/fonts/OpenSans-Regular.ttf",
 );
 
-describe("R6.3 ShapedMeasurer (TextMeasurer with Opt-in Shaping)", () => {
+describe("R6.3 & R6.8 ShapedMeasurer (Default Flip & Rollback)", () => {
   let openSansBytes: Uint8Array;
   let fontRef: FontRef;
 
@@ -24,22 +29,48 @@ describe("R6.3 ShapedMeasurer (TextMeasurer with Opt-in Shaping)", () => {
     await initShapingWasm();
     openSansBytes = fs.readFileSync(openSansPath);
     fontRef = createFontRefSync(openSansBytes);
+    setShapingEnabled(true);
+  });
+
+  it("enables deterministic shaping by default (R6.8 default flip)", () => {
+    setShapingEnabled(true);
+    expect(isShapingEnabled()).toBe(true);
+
+    const measurer = createMeasurer(fakeFontMetrics);
+    expect(measurer).toBeInstanceOf(ShapedMeasurer);
+    expect((measurer as ShapedMeasurer).enabled).toBe(true);
+  });
+
+  it("supports rollback to standard TextMeasurer via setShapingEnabled(false)", () => {
+    try {
+      setShapingEnabled(false);
+      expect(isShapingEnabled()).toBe(false);
+
+      const measurer = createMeasurer(fakeFontMetrics);
+      expect(measurer).not.toBeInstanceOf(ShapedMeasurer);
+    } finally {
+      setShapingEnabled(true);
+    }
   });
 
   it("behaves as standard TextMeasurer when shaping is disabled", () => {
-    setShapingEnabled(false);
-    expect(isShapingEnabled()).toBe(false);
+    try {
+      setShapingEnabled(false);
+      expect(isShapingEnabled()).toBe(false);
 
-    const measurer = new ShapedMeasurer(fakeFontMetrics, { optIn: false });
-    measurer.registerFont("Open Sans", fontRef);
-    const style: LayoutTextStyle = {
-      family: "Open Sans",
-      sizePx: 16,
-    };
+      const measurer = new ShapedMeasurer(fakeFontMetrics, { enabled: false });
+      measurer.registerFont("Open Sans", fontRef);
+      const style: LayoutTextStyle = {
+        family: "Open Sans",
+        sizePx: 16,
+      };
 
-    const width = measurer.widthOf("Hello World", style);
-    expect(width).toBeGreaterThan(0);
-    expect(measurer.shapeRun("Hello World", style)).toBeUndefined();
+      const width = measurer.widthOf("Hello World", style);
+      expect(width).toBeGreaterThan(0);
+      expect(measurer.shapeRun("Hello World", style)).toBeUndefined();
+    } finally {
+      setShapingEnabled(true);
+    }
   });
 
   it("produces shaped glyph run and deterministic advances when opt-in enabled", () => {
