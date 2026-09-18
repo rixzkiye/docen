@@ -1806,6 +1806,36 @@ export const ribbonEn: AdditionalLanguage = {
     "ribbon.group.speech": "Speech",
     "ribbon.cmd.read-aloud": "Read Aloud",
     "ribbon.cmd.focus-mode": "Focus",
+
+    // Shared dialog actions (kept in one place so every dialog resolves them)
+    "action.ok": "OK",
+    "action.cancel": "Cancel",
+    "common.ok": "OK",
+    "common.cancel": "Cancel",
+    "dialog.ok": "OK",
+    "dialog.cancel": "Cancel",
+    "dialog.close": "Close",
+    "properties.btn-ok": "OK",
+    "properties.btn-cancel": "Cancel",
+
+    // Dialog titles/labels whose call sites predate their table entries
+    "ribbon.cmd.select-table-column": "Select Column",
+    "ribbon.group.sort": "Sort...",
+    "pane.spelling": "Spelling...",
+    "styles.pane.title": "Styles...",
+    "distributeDialog.title": "Distribute",
+    "distributeDialog.direction": "Direction",
+    "distributeDialog.horizontal": "Horizontal",
+    "distributeDialog.vertical": "Vertical",
+    "modifyStyleDialog.properties": "Properties",
+    "modifyStyleDialog.formatting": "Formatting",
+    "modifyStyleDialog.quickFormat": "Add to the Quick Styles gallery",
+    "modifyStyleDialog.autoRedefine": "Automatically update",
+    "wrap.sectionWithTextWrapping": "With Text Wrapping",
+    "wrap.sectionPosition": "Position",
+    "wrap.moveWithText": "Move with text",
+    "wrap.fixPosition": "Fix position on page",
+    "wrap.seeMore": "See more...",
   },
 };
 
@@ -3588,6 +3618,36 @@ export const ribbonZhCN: AdditionalLanguage = {
     "ribbon.group.speech": "语音",
     "ribbon.cmd.read-aloud": "大声朗读",
     "ribbon.cmd.focus-mode": "专注模式",
+
+    // Shared dialog actions (kept in one place so every dialog resolves them)
+    "action.ok": "确定",
+    "action.cancel": "取消",
+    "common.ok": "确定",
+    "common.cancel": "取消",
+    "dialog.ok": "确定",
+    "dialog.cancel": "取消",
+    "dialog.close": "关闭",
+    "properties.btn-ok": "确定",
+    "properties.btn-cancel": "取消",
+
+    // Dialog titles/labels whose call sites predate their table entries
+    "ribbon.cmd.select-table-column": "选择列",
+    "ribbon.group.sort": "排序...",
+    "pane.spelling": "拼写...",
+    "styles.pane.title": "样式...",
+    "distributeDialog.title": "分布",
+    "distributeDialog.direction": "方向",
+    "distributeDialog.horizontal": "水平",
+    "distributeDialog.vertical": "垂直",
+    "modifyStyleDialog.properties": "属性",
+    "modifyStyleDialog.formatting": "格式",
+    "modifyStyleDialog.quickFormat": "添加到快速样式库",
+    "modifyStyleDialog.autoRedefine": "自动更新",
+    "wrap.sectionWithTextWrapping": "文字环绕",
+    "wrap.sectionPosition": "位置",
+    "wrap.moveWithText": "随文字移动",
+    "wrap.fixPosition": "在页面上固定位置",
+    "wrap.seeMore": "查看更多...",
   },
 };
 
