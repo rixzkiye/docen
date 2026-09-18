@@ -1645,7 +1645,14 @@ class DocenDocument extends AddinHost<Editor> {
       return;
     }
     const { selection } = editor.state;
+    // Read-only / protected regions have no formatting to apply — Word does
+    // not float the toolbar over them.
+    const editable =
+      editor.isEditable &&
+      (this.#protectionMode !== "forms" || isInsideEditableField(editor)) &&
+      (this.#protectionMode !== "readOnly" || isInsideEditablePermission(editor));
     if (
+      !editable ||
       selection.empty ||
       !(selection instanceof TextSelection) ||
       this.#drawingStateOf() != null
@@ -1679,6 +1686,7 @@ class DocenDocument extends AddinHost<Editor> {
       fontSize: size != null ? String(size) : undefined,
       fontColor: (editor.getAttributes("textStyle")?.color as string) ?? undefined,
       highlightColor: (editor.getAttributes("highlight")?.color as string) ?? undefined,
+      editable,
     });
   }
 
