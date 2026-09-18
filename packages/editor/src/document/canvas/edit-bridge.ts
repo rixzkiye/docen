@@ -387,6 +387,19 @@ export interface EditBridge {
     from: number,
     to: number,
   ): { frame: HTMLElement; left: number; top: number; height: number } | null;
+  /** The client bounding rect of the text selection in screen px — frame
+   *  offsets, margins and zoom applied. Null when unmappable or in a story. */
+  selectionClientRect(
+    from: number,
+    to: number,
+  ): {
+    left: number;
+    top: number;
+    right: number;
+    bottom: number;
+    width: number;
+    height: number;
+  } | null;
   /** The caret's rect against its page frame — frame-relative screen px
    *  (zoom applied). The paste-options bar hangs it beside the pasted
    *  content. Main story only; null when unmappable or in a story. */
@@ -4733,6 +4746,28 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
         left: (last.xPx + last.widthPx) * scale,
         top: last.yPx * scale,
         height: last.heightPx * scale,
+      };
+    },
+    selectionClientRect(from, to) {
+      if (story || !main.map?.valid) return null;
+      const rects = main.map.selectionRects(from, to);
+      if (!rects.length) return null;
+      const first = rects[0]!;
+      const frame = opts.pageHost?.(framePage(main, first.page));
+      if (!frame) return null;
+      const frameRect = frame.getBoundingClientRect();
+      const scale = opts.scale?.() ?? 1;
+      const minX = Math.min(...rects.map((r) => r.xPx)) * scale;
+      const maxX = Math.max(...rects.map((r) => r.xPx + r.widthPx)) * scale;
+      const minY = Math.min(...rects.map((r) => r.yPx)) * scale;
+      const maxY = Math.max(...rects.map((r) => r.yPx + r.heightPx)) * scale;
+      return {
+        left: frameRect.left + minX,
+        top: frameRect.top + minY,
+        right: frameRect.left + maxX,
+        bottom: frameRect.top + maxY,
+        width: maxX - minX,
+        height: maxY - minY,
       };
     },
     pasteAnchorRect(pos) {

@@ -10,4 +10,5 @@ export { default as DocenRibbonCombobox } from "./ribbon-combobox";
 export { default as DocenRibbonInput } from "./ribbon-input";
 export { default as DocenColorPicker } from "./color-picker";
 export { default as DocenRibbonGallery } from "./gallery";
+export { default as DocenKeyTips } from "./key-tips";
 export { registerIcon, ribbonIcon } from "./icons";

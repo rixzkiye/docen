@@ -61,6 +61,7 @@ import type { DrawingPropertiesState } from "../ui/components/workspace/drawing-
 import type { FontDialogPatch } from "../ui/components/workspace/font-dialog";
 import type { GoToKind, GoToPayload } from "../ui/components/workspace/go-to-dialog";
 import type { LinkValues } from "../ui/components/workspace/link-dialog";
+import type { DocenMiniToolbar } from "../ui/components/workspace/mini-toolbar";
 import type {
   NoteKindSettings,
   NoteSettingsValues,
@@ -616,6 +617,13 @@ class DocenDocument extends AddinHost<Editor> {
   #painterSticky = false;
   #painterClickAt = 0;
   #painterStrokeTimer?: ReturnType<typeof setTimeout>;
+  #lastMiniToolbarSelection: { from: number; to: number } | null = null;
+  #previewSnapshot: {
+    docContent: unknown;
+    selection: { from: number; to: number };
+    themeKind?: string;
+    themeCssVars?: Map<string, string>;
+  } | null = null;
   /** Cached unwrapped JSON (host.getJSON result). Invalidated on every user/doc
    *  change; recomputed lazily. Saves the editor.getJSON walk on every
    *  save/autosave/getJSON call. */
@@ -841,6 +849,12 @@ class DocenDocument extends AddinHost<Editor> {
       return;
     }
     if (!(event.ctrlKey || event.metaKey)) return;
+    // Ctrl+F1 toggles ribbon minimized mode (Word behavior).
+    if (event.key === "F1") {
+      event.preventDefault();
+      this.#toggleRibbonMinimized();
+      return;
+    }
     // Ctrl+Shift+8 toggles formatting marks (Word). Shift+8 turns the key
     // into "*" on US layouts, so both spellings count.
     if (event.shiftKey && (event.key === "8" || event.key === "*")) {
@@ -929,6 +943,29 @@ class DocenDocument extends AddinHost<Editor> {
         target.tabIndex = -1;
         target.focus();
       }
+    }
+  }
+
+  #toggleRibbonMinimized(): void {
+    const ribbon = this.shadowRoot?.querySelector("docen-ribbon") as
+      | (HTMLElement & {
+          currentMode?: string;
+          toggleMinimized?: () => void;
+        })
+      | null;
+    if (!ribbon) return;
+    if (typeof ribbon.toggleMinimized === "function") {
+      ribbon.toggleMinimized();
+    } else {
+      const current = ribbon.getAttribute("data-ribbon-mode") ?? "always";
+      const next = current === "tabs-only" ? "always" : "tabs-only";
+      if (next === "always") {
+        ribbon.removeAttribute("data-ribbon-mode");
+      } else {
+        ribbon.setAttribute("data-ribbon-mode", next);
+      }
+      ribbon.removeAttribute("data-expanded");
+      ribbon.dispatchEvent(new CustomEvent("ribbon-mode-change", { detail: { mode: next } }));
     }
   }
 
@@ -1448,6 +1485,7 @@ class DocenDocument extends AddinHost<Editor> {
     this.#syncFormatButtons();
     this.#syncDrawingMenus();
     this.#syncQuickPartsMenu();
+    this.#syncMiniToolbar();
     if (this.#uiSelectionDirty) {
       this.#uiSelectionDirty = false;
       // The status-bar language mirrors the caret's proofing language (Word).
@@ -1480,6 +1518,55 @@ class DocenDocument extends AddinHost<Editor> {
     if (sizeCb && sizeCb.getAttribute("value") !== sizeDisplay) {
       sizeCb.setAttribute("value", sizeDisplay);
     }
+  }
+
+  #syncMiniToolbar(): void {
+    const miniToolbar = this.shadowRoot?.querySelector(
+      "docen-mini-toolbar",
+    ) as DocenMiniToolbar | null;
+    if (!miniToolbar) return;
+    const editor = this.#bridge?.activeEditor() ?? this.editor;
+    if (!editor) {
+      miniToolbar.hide();
+      this.#lastMiniToolbarSelection = null;
+      return;
+    }
+    const { selection } = editor.state;
+    if (
+      selection.empty ||
+      !(selection instanceof TextSelection) ||
+      this.#drawingStateOf() != null
+    ) {
+      miniToolbar.hide();
+      this.#lastMiniToolbarSelection = null;
+      return;
+    }
+    const isNewSel =
+      !this.#lastMiniToolbarSelection ||
+      this.#lastMiniToolbarSelection.from !== selection.from ||
+      this.#lastMiniToolbarSelection.to !== selection.to;
+    this.#lastMiniToolbarSelection = { from: selection.from, to: selection.to };
+
+    if (isNewSel || miniToolbar.isOpen) {
+      const rect = this.#bridge?.selectionClientRect(selection.from, selection.to);
+      if (rect && (rect.width > 0 || rect.height > 0)) {
+        miniToolbar.showNear(rect);
+      }
+    }
+    const { font, size } = effectiveRunProps(
+      this.#docStyles(editor),
+      this.#currentStyleId(editor),
+      editor.getAttributes("textStyle"),
+    );
+    miniToolbar.updateFormatting({
+      bold: editor.isActive("bold"),
+      italic: editor.isActive("italic"),
+      underline: editor.isActive("underline"),
+      fontName: font ?? undefined,
+      fontSize: size != null ? String(size) : undefined,
+      fontColor: (editor.getAttributes("textStyle")?.color as string) ?? undefined,
+      highlightColor: (editor.getAttributes("highlight")?.color as string) ?? undefined,
+    });
   }
 
   #docStyles(editor: Editor): StylesOptions | null {
@@ -1829,6 +1916,8 @@ class DocenDocument extends AddinHost<Editor> {
     // Ribbon gallery right-click (Word's gallery context entry) — only the
     // Styles gallery routes it today: Modify the right-clicked style.
     this.shadowRoot!.addEventListener("item-context", this.#onItemContext as EventListener);
+    this.shadowRoot!.addEventListener("item-preview", this.#onItemPreview as EventListener);
+    this.shadowRoot!.addEventListener("item-preview-end", this.#onItemPreviewEnd as EventListener);
     this.shadowRoot!.addEventListener("change", this.#onChange as EventListener);
     // Right-click → Word's context menu. Captured on the shadow root so the
     // items are built before <docen-context-menu>'s own capture handler opens
@@ -2629,6 +2718,11 @@ class DocenDocument extends AddinHost<Editor> {
     this.#unobserveLang = undefined;
     this.shadowRoot?.removeEventListener("command", this.#onCommand as EventListener);
     this.shadowRoot?.removeEventListener("item-context", this.#onItemContext as EventListener);
+    this.shadowRoot?.removeEventListener("item-preview", this.#onItemPreview as EventListener);
+    this.shadowRoot?.removeEventListener(
+      "item-preview-end",
+      this.#onItemPreviewEnd as EventListener,
+    );
     this.shadowRoot?.removeEventListener("change", this.#onChange as EventListener);
     this.#fileInput?.removeEventListener("change", this.#io.onFileChange);
     this.#imageInput?.removeEventListener("change", this.#io.onImageChange);
@@ -3346,6 +3440,35 @@ class DocenDocument extends AddinHost<Editor> {
       // carries the whole drawing, deleteSelection cuts it.
       items.push({ text: t("context.cut", this), event: "cut" });
       items.push({ text: t("context.copy", this), event: "copy" });
+      items.push({ text: t("context.paste", this), event: "paste" });
+      items.push({ text: "-" });
+      items.push({
+        text: t("ribbon.cmd.wrap", this) || "Wrap Text",
+        items: [
+          {
+            text: t("ribbon.opt.wrap-inline", this) || "In Line with Text",
+            event: "wrap",
+            value: "inline",
+          },
+          { text: t("ribbon.opt.wrap-square", this) || "Square", event: "wrap", value: "square" },
+          { text: t("ribbon.opt.wrap-tight", this) || "Tight", event: "wrap", value: "tight" },
+          {
+            text: t("ribbon.opt.wrap-behind", this) || "Behind Text",
+            event: "wrap",
+            value: "behind",
+          },
+          {
+            text: t("ribbon.opt.wrap-front", this) || "In Front of Text",
+            event: "wrap",
+            value: "front",
+          },
+          {
+            text: t("ribbon.opt.wrap-top-bottom", this) || "Top and Bottom",
+            event: "wrap",
+            value: "top-bottom",
+          },
+        ],
+      });
       items.push({ text: "-" });
       items.push({ text: t("context.bring-forward", this), event: "bring-forward" });
       items.push({ text: t("context.send-backward", this), event: "send-backward" });
@@ -3419,6 +3542,7 @@ class DocenDocument extends AddinHost<Editor> {
       items.push({ text: t("spelling.ignore-once", this), event: "spell-ignore-once" });
       items.push({ text: t("spelling.ignore-all", this), event: "spell-ignore-all" });
       items.push({ text: t("spelling.add", this), event: "spell-add" });
+      items.push({ text: t("pane.spelling", this) || "Spelling...", event: "spell-check" });
       items.push({ text: "-" });
     } else if (grammarHit) {
       if (grammarHit.replacements.length) {
@@ -3476,19 +3600,43 @@ class DocenDocument extends AddinHost<Editor> {
       value: "keep-text-only",
     });
     items.push({ text: "-" });
+    items.push({ text: t("context.font", this) || "Font...", event: "font-dialog" });
+    items.push({ text: t("context.paragraph", this) || "Paragraph...", event: "paragraph-dialog" });
+    items.push({
+      text: t("context.styles", this) || "Styles",
+      items: [
+        { text: t("styles.pane.title", this) || "Styles Pane...", event: "styles-pane" },
+        { text: "-" },
+        { text: "Normal", event: "style", value: "Normal" },
+        { text: "Heading 1", event: "style", value: "Heading 1" },
+        { text: "Heading 2", event: "style", value: "Heading 2" },
+        { text: "Heading 3", event: "style", value: "Heading 3" },
+      ],
+    });
+    items.push({
+      text: t("context.bullets-numbering", this) || "Bullets & Numbering",
+      items: [
+        { text: t("ribbon.cmd.bullet-list", this) || "Bullet List", event: "bullet-list" },
+        { text: t("ribbon.cmd.ordered-list", this) || "Numbered List", event: "ordered-list" },
+        {
+          text: t("ribbon.cmd.multilevel-list", this) || "Multilevel List",
+          event: "multilevel-list",
+        },
+      ],
+    });
+    items.push({ text: "-" });
     if (onLink) {
       items.push({ text: t("context.open-link", this), event: "open-link" });
       items.push({ text: t("context.copy-link", this), event: "copy-link" });
       items.push({ text: t("context.edit-link", this), event: "link" });
       items.push({ text: t("context.unlink", this), event: "unset-link" });
       items.push({ text: "-" });
-      items.push({ text: t("context.comment", this), event: "new-comment" });
-      items.push({ text: "-" });
-    } else if (inSelection) {
-      items.push({ text: t("context.link", this), event: "link" });
-      items.push({ text: t("context.comment", this), event: "new-comment" });
-      items.push({ text: "-" });
+    } else {
+      items.push({ text: t("context.link", this) || "Link…", event: "link" });
     }
+    items.push({ text: t("context.translate", this) || "Translate", event: "translate" });
+    items.push({ text: t("context.comment", this), event: "new-comment" });
+    items.push({ text: "-" });
     // Word: a right-click on a note reference offers edit/delete for the
     // referenced note's body (the caret was collapsed onto the atom above).
     const note = this.#dialogs.noteTarget();
@@ -4101,9 +4249,141 @@ class DocenDocument extends AddinHost<Editor> {
     pane.setComparison(event.detail?.enabled === true && editor ? formattingInfoOf(editor) : null);
   };
 
+  readonly #onItemPreview = (event: CustomEvent<{ event?: string; value?: string }>): void => {
+    const { event: name, value } = event.detail ?? {};
+    if (!name || !value) return;
+
+    const editor = this.editor;
+    if (!editor) return;
+
+    if (name === "theme" || name === "theme-color" || name === "theme-font") {
+      if (!this.#previewSnapshot) {
+        const vars = new Map<string, string>();
+        const varNames = [
+          "--docen-theme-accent1",
+          "--docen-theme-accent2",
+          "--docen-theme-accent3",
+          "--docen-theme-accent4",
+          "--docen-theme-accent5",
+          "--docen-theme-accent6",
+          "--docen-theme-font-major",
+          "--docen-theme-font-minor",
+        ];
+        for (const v of varNames) {
+          vars.set(v, this.style.getPropertyValue(v));
+        }
+        this.#previewSnapshot = {
+          docContent: null,
+          selection: { from: editor.state.selection.from, to: editor.state.selection.to },
+          themeKind: name,
+          themeCssVars: vars,
+        };
+      }
+      this.#applyDocumentTheme(name, value, false);
+      return;
+    }
+
+    if (name === "style" || name === "table-style" || name === "style-set") {
+      if (!this.#previewSnapshot) {
+        this.#previewSnapshot = {
+          docContent: editor.state.doc.toJSON(),
+          selection: { from: editor.state.selection.from, to: editor.state.selection.to },
+        };
+      } else {
+        this.#revertPreviewDoc();
+      }
+
+      const target = this.#bridge?.activeEditor() ?? editor;
+      const commands = target.commands as unknown as Record<string, (value?: string) => unknown>;
+      const cmd = commands[name];
+      if (typeof cmd === "function") {
+        const origDispatch = target.view.dispatch.bind(target.view);
+        target.view.dispatch = (tr) => {
+          tr.setMeta("addToHistory", false);
+          origDispatch(tr);
+        };
+        try {
+          cmd(value);
+        } finally {
+          target.view.dispatch = origDispatch;
+        }
+      }
+    }
+  };
+
+  #revertPreviewDoc(): void {
+    if (!this.#previewSnapshot?.docContent || !this.editor) return;
+    const editor = this.editor;
+    try {
+      const restoredNode = editor.schema.nodeFromJSON(
+        this.#previewSnapshot.docContent as JSONContent,
+      );
+      const tr = editor.state.tr.replaceWith(
+        0,
+        editor.state.doc.content.size,
+        restoredNode.content,
+      );
+      const targetPos = Math.min(this.#previewSnapshot.selection.from, tr.doc.content.size);
+      tr.setSelection(TextSelection.near(tr.doc.resolve(targetPos)));
+      tr.setMeta("addToHistory", false);
+      editor.view.dispatch(tr);
+    } catch {
+      // safe fallback
+    }
+  }
+
+  readonly #onItemPreviewEnd = (): void => {
+    if (!this.#previewSnapshot) return;
+
+    if (this.#previewSnapshot.themeCssVars) {
+      const targets = [this, this.shadowRoot?.querySelector("docen-workspace")].filter(
+        Boolean,
+      ) as HTMLElement[];
+      for (const target of targets) {
+        for (const [key, val] of this.#previewSnapshot.themeCssVars) {
+          if (val) target.style.setProperty(key, val);
+          else target.style.removeProperty(key);
+        }
+      }
+      this.#bridge?.replaceOverlays();
+    }
+
+    if (this.#previewSnapshot.docContent) {
+      this.#revertPreviewDoc();
+    }
+
+    this.#previewSnapshot = null;
+  };
+
   readonly #onCommand = (event: CustomEvent<{ event?: string; value?: string }>): void => {
     const { event: name, value } = event.detail ?? {};
     if (typeof name !== "string") return;
+    if (this.#previewSnapshot) {
+      this.#onItemPreviewEnd();
+    }
+    if (name === "toggle-ribbon-minimized") {
+      this.#toggleRibbonMinimized();
+      return;
+    }
+    if (name === "translate") {
+      const editor = this.#bridge?.activeEditor() ?? this.editor;
+      const selected =
+        editor && !editor.state.selection.empty
+          ? editor.state.doc.textBetween(
+              editor.state.selection.from,
+              editor.state.selection.to,
+              " ",
+            )
+          : "";
+      this.dispatchEvent(
+        new CustomEvent("docen:translate", {
+          bubbles: true,
+          composed: true,
+          detail: { text: selected },
+        }),
+      );
+      return;
+    }
     if (name === "theme" || name === "theme-color" || name === "theme-font") {
       this.#applyDocumentTheme(name, value);
       return;

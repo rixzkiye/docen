@@ -261,6 +261,8 @@ export const documentTemplate = html`
        treats Space/Enter as menu keys and preventDefaults them — killing the
        textarea's beforeinput (spaces and Enter silently dropped). -->
   <div class="input-layer" part="input-layer"></div>
+  <docen-mini-toolbar part="mini-toolbar"></docen-mini-toolbar>
+  <docen-key-tips part="key-tips"></docen-key-tips>
   <docen-options-dialog part="options"></docen-options-dialog>
   <docen-autocorrect-dialog part="autocorrect"></docen-autocorrect-dialog>
   <docen-quick-part-dialog part="quick-part"></docen-quick-part-dialog>

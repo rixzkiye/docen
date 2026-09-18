@@ -327,6 +327,26 @@ class DocenRibbonGallery extends FASTElement {
       label.textContent = item.text ?? "";
       btn.append(icon, label);
     }
+    btn.addEventListener("pointerenter", () => {
+      if (item.disabled || !item.value) return;
+      this.dispatchEvent(
+        new CustomEvent("item-preview", {
+          bubbles: true,
+          composed: true,
+          detail: { event: this.eventName, value: item.value, source: this },
+        }),
+      );
+    });
+    btn.addEventListener("pointerleave", () => {
+      if (item.disabled || !item.value) return;
+      this.dispatchEvent(
+        new CustomEvent("item-preview-end", {
+          bubbles: true,
+          composed: true,
+          detail: { event: this.eventName, value: item.value, source: this },
+        }),
+      );
+    });
     btn.addEventListener("click", () => {
       if (item.disabled) return;
       (this.pop as unknown as { hidePopover?(): void }).hidePopover?.();

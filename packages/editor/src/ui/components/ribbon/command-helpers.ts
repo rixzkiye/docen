@@ -214,9 +214,41 @@ export function appendMenuItems<T extends MenuItemLike>(
       menuItem.append(subList);
     }
     if (!hasSubmenu) {
-      menuItem.addEventListener("change", (e) => {
+      let lastSelectedTime = 0;
+      const select = (e: Event): void => {
         if (e.target === menuItem) {
+          const now = Date.now();
+          if (now - lastSelectedTime < 50) return;
+          lastSelectedTime = now;
           onSelect(item);
+        }
+      };
+      menuItem.addEventListener("change", select);
+      menuItem.addEventListener("click", select);
+      menuItem.addEventListener("pointerenter", () => {
+        const itemVal = (item as { value?: string }).value;
+        const itemEvt = (item as { event?: string }).event;
+        if (!item.disabled && itemVal) {
+          menuItem.dispatchEvent(
+            new CustomEvent("item-preview", {
+              bubbles: true,
+              composed: true,
+              detail: { event: itemEvt, value: itemVal },
+            }),
+          );
+        }
+      });
+      menuItem.addEventListener("pointerleave", () => {
+        const itemVal = (item as { value?: string }).value;
+        const itemEvt = (item as { event?: string }).event;
+        if (!item.disabled && itemVal) {
+          menuItem.dispatchEvent(
+            new CustomEvent("item-preview-end", {
+              bubbles: true,
+              composed: true,
+              detail: { event: itemEvt, value: itemVal },
+            }),
+          );
         }
       });
     }

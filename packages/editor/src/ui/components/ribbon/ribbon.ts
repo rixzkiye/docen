@@ -225,6 +225,11 @@ class DocenRibbon extends FASTElement {
     return this.ribbonMode ?? "always";
   }
 
+  toggleMinimized(): void {
+    const next = this.currentMode === "tabs-only" ? "always" : "tabs-only";
+    this.#setMode(next);
+  }
+
   /** Sync the display-options checkmark when `data-ribbon-mode` changes
    *  externally — e.g. the host resets it after the browser leaves fullscreen
    *  on Esc. (Idempotent: `#setMode` also calls `#updateCheck`, so a change
@@ -376,4 +381,9 @@ class DocenRibbon extends FASTElement {
   }
 }
 
+if (!customElements.get("docen-ribbon")) {
+  customElements.define("docen-ribbon", DocenRibbon);
+}
+
+export { DocenRibbon };
 export default DocenRibbon;
