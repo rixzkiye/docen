@@ -42,7 +42,7 @@ import {
   type SaveFormat,
 } from "../file-formats";
 import { findTemplate, templateLocale } from "../templates";
-import { collectFieldPages } from "./field-pages";
+import { collectBookmarkPages, collectFieldPages } from "./field-pages";
 
 /** The file-I/O domain's view of the host — only what its bodies touch. */
 export interface IOHostView {
@@ -573,13 +573,22 @@ export class IODomain {
     const sections = this.host.lastRun()?.sections ?? [];
     const sectionOfPage = this.host.sectionOfPage();
     const pageOffsets = computePageNumberOffsets(sections, sectionOfPage);
-    const fieldPages = collectFieldPages(editor.state.doc, {
+    const view = {
       sectionOfPage,
       pageOffsets,
-      physicalPageOf: (pos) => this.host.bridge()?.pageOf(pos),
-    });
+      physicalPageOf: (pos: number) => this.host.bridge()?.pageOf(pos),
+    };
+    const fieldPages = collectFieldPages(editor.state.doc, view);
+    const bookmarkPages = collectBookmarkPages(editor.state.doc, view);
     return {
-      ...(fieldPages.size > 0 ? { pageOf: ({ index }) => fieldPages.get(index) } : {}),
+      // PAGEREF resolves against the bookmark's page; everything else against
+      // the field's own.
+      ...(fieldPages.size > 0 || bookmarkPages.size > 0
+        ? {
+            pageOf: ({ index, bookmark }: { index: number; bookmark?: string }) =>
+              bookmark != null ? bookmarkPages.get(bookmark) : fieldPages.get(index),
+          }
+        : {}),
       pageCount: pages.length,
     };
   }

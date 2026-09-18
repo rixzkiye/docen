@@ -41,9 +41,37 @@ export function collectFieldPages(doc: PMNode, view: FieldPageView): Map<number,
     const fieldIndex = index++;
     const physical = view.physicalPageOf(pos);
     if (physical == null || physical < 0) return true;
-    const section = view.sectionOfPage[physical] ?? 0;
-    pages.set(fieldIndex, physical + 1 + (view.pageOffsets[section] ?? 0));
+    pages.set(fieldIndex, displayPageOf(view, physical));
     return true;
   });
   return pages;
+}
+
+/** Bookmark name → displayed page of the bookmark start — PAGEREF resolves
+ *  against the target's page, not the field's own. */
+export function collectBookmarkPages(doc: PMNode, view: FieldPageView): Map<string, number> {
+  const pages = new Map<string, number>();
+  doc.descendants((node, pos) => {
+    if (node.type.name !== "inlinePassthrough" && node.type.name !== "passthrough") return true;
+    const data = node.attrs?.data;
+    if (typeof data !== "string") return true;
+    let start: { name?: unknown } | undefined;
+    try {
+      start = (JSON.parse(data) as { bookmarkStart?: { name?: unknown } }).bookmarkStart;
+    } catch {
+      return true;
+    }
+    if (!start || typeof start.name !== "string" || start.name === "") return true;
+    const physical = view.physicalPageOf(pos);
+    if (physical == null || physical < 0) return true;
+    if (!pages.has(start.name)) pages.set(start.name, displayPageOf(view, physical));
+    return true;
+  });
+  return pages;
+}
+
+/** A 0-based physical page as the section's displayed number. */
+function displayPageOf(view: FieldPageView, physical: number): number {
+  const section = view.sectionOfPage[physical] ?? 0;
+  return physical + 1 + (view.pageOffsets[section] ?? 0);
 }

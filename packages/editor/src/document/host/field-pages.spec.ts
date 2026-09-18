@@ -11,7 +11,7 @@ import { Editor, Node as TextNode, type Editor as EditorType } from "@docen/docx
 import { unzipSync } from "@office-open/core";
 import { describe, expect, it } from "vitest";
 
-import { collectFieldPages } from "./field-pages";
+import { collectBookmarkPages, collectFieldPages } from "./field-pages";
 
 /**
  * Item 17's editor side: the save path hands the builder a field-index → page
@@ -94,6 +94,56 @@ describe("collectFieldPages", () => {
       physicalPageOf: (pos) => (pos > 100 ? null : 0),
     });
     expect([...pages.entries()]).toEqual([[0, 1]]);
+  });
+
+  it("maps bookmark names to their start page for PAGEREF", () => {
+    const editor = build({
+      type: "doc",
+      content: [
+        { type: "paragraph", content: [field(" PAGEREF _Ref1 \\h ", "9")] },
+        {
+          type: "paragraph",
+          content: [
+            {
+              type: "inlinePassthrough",
+              attrs: { data: JSON.stringify({ bookmarkStart: { id: 1, name: "_Ref1" } }) },
+            },
+            { type: "text", text: "target" },
+            {
+              type: "inlinePassthrough",
+              attrs: { data: JSON.stringify({ bookmarkEnd: { id: 1 } }) },
+            },
+          ],
+        },
+      ],
+    });
+    let bookmarkPos = 0;
+    editor.state.doc.descendants((node, at) => {
+      if (node.type.name === "inlinePassthrough" && node.attrs?.data?.includes("bookmarkStart")) {
+        bookmarkPos = at;
+      }
+      return true;
+    });
+    const view = {
+      sectionOfPage: [0, 0, 1],
+      pageOffsets: [0, 0],
+      physicalPageOf: (pos: number) => (pos < bookmarkPos ? 0 : 2),
+    };
+    const bookmarks = collectBookmarkPages(editor.state.doc, view);
+    expect([...bookmarks.entries()]).toEqual([["_Ref1", 3]]);
+    const pages = collectFieldPages(editor.state.doc, view);
+    const bytes = generateDOCXSync(editor.getJSON(), {
+      prepare: false,
+      fields: {
+        pageCount: 3,
+        pageOf: ({ index, bookmark }) =>
+          bookmark != null ? bookmarks.get(bookmark) : pages.get(index),
+      },
+    }) as Uint8Array;
+    // The PAGEREF shows the target's page (3), not the field's page (1).
+    const xml = documentXml(bytes);
+    expect(xml).toContain(">3<");
+    expect(xml).not.toContain(">9<");
   });
 });
 
