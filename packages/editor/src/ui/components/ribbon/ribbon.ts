@@ -8,7 +8,7 @@ import {
   ref,
 } from "@microsoft/fast-element";
 
-import { observeLang, t } from "../../i18n";
+import { observeLang, resolveDir, t } from "../../i18n";
 import { wireMenuKeyboardFocusRing } from "./command-helpers";
 
 // Per-instance CSS anchor name so the display-options menu right-aligns to its
@@ -25,6 +25,76 @@ const styles = css`
     font-family: "Segoe UI", "Segoe UI Web (West European)", system-ui, sans-serif;
     font-size: var(--docen-font-size-ribbon, 12px);
     color: var(--docen-color-text, #444);
+  }
+  :host([dir="rtl"]),
+  :host([data-dir="rtl"]),
+  :host-context([dir="rtl"]) {
+    direction: rtl;
+  }
+  :host([dir="rtl"]) .rb-tabs,
+  :host([data-dir="rtl"]) .rb-tabs,
+  :host-context([dir="rtl"]) .rb-tabs {
+    flex-direction: row-reverse;
+    direction: rtl;
+  }
+  :host([dir="rtl"]) ::slotted([slot="tabs"]),
+  :host([data-dir="rtl"]) ::slotted([slot="tabs"]),
+  :host-context([dir="rtl"]) ::slotted([slot="tabs"]) {
+    direction: rtl;
+  }
+  :host([dir="rtl"]) .rb-panels,
+  :host([data-dir="rtl"]) .rb-panels,
+  :host-context([dir="rtl"]) .rb-panels {
+    direction: rtl;
+  }
+  :host([dir="rtl"]) ::slotted(docen-ribbon-panel),
+  :host([data-dir="rtl"]) ::slotted(docen-ribbon-panel),
+  :host-context([dir="rtl"]) ::slotted(docen-ribbon-panel) {
+    flex-direction: row-reverse;
+    direction: rtl;
+  }
+  :host([dir="rtl"]) .rb-display-options,
+  :host([data-dir="rtl"]) .rb-display-options,
+  :host-context([dir="rtl"]) .rb-display-options {
+    right: auto;
+    left: 0;
+  }
+
+  /* Word's Mouse / Touch mode toggle */
+  :host([touch-mode]),
+  :host([touchmode]),
+  :host([data-touch-mode]) {
+    --docen-font-size-ribbon: 13px;
+  }
+  :host([touch-mode]) .rb-tabs,
+  :host([touchmode]) .rb-tabs,
+  :host([data-touch-mode]) .rb-tabs {
+    min-height: 40px;
+  }
+  :host([touch-mode]) .rb-panels,
+  :host([touchmode]) .rb-panels,
+  :host([data-touch-mode]) .rb-panels {
+    padding: 8px 12px 6px;
+  }
+  :host([touch-mode]) ::slotted(docen-ribbon-panel),
+  :host([touchmode]) ::slotted(docen-ribbon-panel),
+  :host([data-touch-mode]) ::slotted(docen-ribbon-panel) {
+    gap: 8px;
+  }
+  :host([touch-mode]) fluent-button,
+  :host([touchmode]) fluent-button,
+  :host([data-touch-mode]) fluent-button,
+  :host([touch-mode]) fluent-menu-button,
+  :host([touchmode]) fluent-menu-button,
+  :host([data-touch-mode]) fluent-menu-button {
+    min-height: 38px;
+    padding-inline: 12px;
+  }
+  :host([touch-mode]) ::slotted(docen-ribbon-group),
+  :host([touchmode]) ::slotted(docen-ribbon-group),
+  :host([data-touch-mode]) ::slotted(docen-ribbon-group) {
+    padding: 0 12px;
+    min-height: 124px;
   }
   .rb-tabs {
     display: flex;
@@ -205,6 +275,8 @@ const template = html<DocenRibbon>`
 @customElement({ name: "docen-ribbon", template, styles })
 class DocenRibbon extends FASTElement {
   @attr({ attribute: "data-ribbon-mode" }) ribbonMode?: string;
+  @attr({ attribute: "touch-mode", mode: "boolean" }) touchMode?: boolean;
+  @attr dir: "ltr" | "rtl" = "ltr";
 
   @observable doTrigger?: HTMLElement;
   @observable doList?: HTMLElement;
@@ -230,6 +302,14 @@ class DocenRibbon extends FASTElement {
     this.#setMode(next);
   }
 
+  touchModeChanged(): void {
+    this.toggleAttribute("touch-mode", Boolean(this.touchMode));
+  }
+
+  dirChanged(): void {
+    this.#syncDir();
+  }
+
   /** Sync the display-options checkmark when `data-ribbon-mode` changes
    *  externally — e.g. the host resets it after the browser leaves fullscreen
    *  on Esc. (Idempotent: `#setMode` also calls `#updateCheck`, so a change
@@ -238,20 +318,33 @@ class DocenRibbon extends FASTElement {
     this.#updateCheck();
   }
 
+  #syncDir(): void {
+    const isRtl = (this.dir ?? resolveDir(this)) === "rtl";
+    this.toggleAttribute("data-dir", isRtl);
+    if (isRtl) {
+      this.setAttribute("dir", "rtl");
+    } else if (this.getAttribute("dir") === "rtl" && !this.getAttribute("data-dir")) {
+      // keep explicit attr if set
+    } else {
+      this.removeAttribute("dir");
+    }
+    this.#applyAnchor();
+  }
+
   connectedCallback(): void {
     super.connectedCallback();
     if (!this.#observer) {
       this.#observer = new MutationObserver(() => this.#setup());
       this.#observer.observe(this, { childList: true });
     }
+    this.#syncDir();
     this.#applyAnchor();
     this.#renderDisplayOptions();
-    // Re-render the display-options items when the page locale changes. The
-    // host re-stamps the ribbon's tabs/panels on a language switch, but this
-    // <docen-ribbon> element itself stays connected, so without this the items
-    // would keep their initial-language text while the rest of the ribbon
-    // updates — matching the navigation-pane/outline/format-pane pattern.
-    this.#unobserveLang = observeLang(() => this.#renderDisplayOptions());
+    // Re-render the display-options items and sync dir when the page locale changes.
+    this.#unobserveLang = observeLang(() => {
+      this.#syncDir();
+      this.#renderDisplayOptions();
+    });
     document.addEventListener("click", this.#onDocClick, true);
     queueMicrotask(() => this.#setup());
   }
@@ -275,15 +368,20 @@ class DocenRibbon extends FASTElement {
   };
 
   #applyAnchor(): void {
-    // Right-align the menu to the trigger (Office behavior: the button sits at
-    // the ribbon's far right, so the menu opens from the right edge under it —
-    // left-aligned it would overflow off-screen). Inline styles win over
-    // Fluent's ::slotted([popover]) positioning rules.
+    // Right-align the menu to the trigger in LTR; in RTL left-align (starts at left)
+    const isRtl = (this.dir ?? resolveDir(this)) === "rtl";
     if (this.doTrigger) this.doTrigger.style.anchorName = this.anchorId;
     if (this.doList) {
       this.doList.style.positionAnchor = this.anchorId;
-      this.doList.style.insetInlineEnd = "anchor(self-end)";
-      this.doList.style.insetInlineStart = "unset";
+      if (isRtl) {
+        this.doList.style.insetInlineStart = "anchor(self-start)";
+        this.doList.style.insetInlineEnd = "unset";
+        this.doList.setAttribute("dir", "rtl");
+      } else {
+        this.doList.style.insetInlineEnd = "anchor(self-end)";
+        this.doList.style.insetInlineStart = "unset";
+        this.doList.removeAttribute("dir");
+      }
     }
   }
 

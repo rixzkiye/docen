@@ -180,6 +180,11 @@ export interface EditBridgeOptions {
    *  written in screen px inside zoom-sized frames; hit-testing converts the
    *  other way. Defaults to 1 (unzoomed). */
   scale?: () => number;
+  /** Set or adjust zoom factor smoothly (e.g. from pinch-to-zoom). */
+  onZoomChange?: (scale: number) => void;
+  setScale?: (scale: number) => void;
+  /** Notification when pointer type switches (mouse, touch, pen). */
+  onPointerTypeChange?: (pointerType: "mouse" | "touch" | "pen") => void;
   /** The page's in-front float boxes (page-local px) — squiggles clip against
    *  them: a front-of-text picture covers the text and its spelling wave
    *  (Word keeps only the selection and caret above front floats). */
@@ -460,6 +465,17 @@ export interface EditBridge {
    *  itself runs in the host, debounced per transaction). */
   setSpellingIssues(issues: Array<{ from: number; to: number }>): void;
   setGrammarIssues(issues: Array<{ from: number; to: number }>): void;
+  /** The most recent pointer type interacting with the canvas stage. */
+  readonly lastPointerType: "mouse" | "touch" | "pen";
+  /** Caret anchor rect with screen and frame-relative coordinates. */
+  caretAnchorRect(pos: number): {
+    frame: HTMLElement;
+    left: number;
+    top: number;
+    height: number;
+    clientX: number;
+    clientY: number;
+  } | null;
   destroy(): void;
 }
 
@@ -3180,6 +3196,74 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
   };
   opts.host.addEventListener("mousedown", takeFocus);
 
+  // ── Pointer / Touch / Pen Input & Pinch-to-Zoom Support ──
+  let lastPointerType: "mouse" | "touch" | "pen" = "mouse";
+  const activePointers = new Map<
+    number,
+    { clientX: number; clientY: number; pointerType: string }
+  >();
+  let pinchInitialDistance: number | null = null;
+  let pinchInitialScale: number | null = null;
+
+  const onPointerDown = (event: PointerEvent): void => {
+    lastPointerType = (event.pointerType as "mouse" | "touch" | "pen") || "mouse";
+    opts.onPointerTypeChange?.(lastPointerType);
+
+    activePointers.set(event.pointerId, {
+      clientX: event.clientX,
+      clientY: event.clientY,
+      pointerType: event.pointerType,
+    });
+
+    if (activePointers.size === 2) {
+      const [p1, p2] = Array.from(activePointers.values());
+      pinchInitialDistance = Math.hypot(p1.clientX - p2.clientX, p1.clientY - p2.clientY);
+      pinchInitialScale = opts.scale ? opts.scale() : 1;
+    }
+  };
+
+  const onPointerMove = (event: PointerEvent): void => {
+    if (activePointers.has(event.pointerId)) {
+      activePointers.set(event.pointerId, {
+        clientX: event.clientX,
+        clientY: event.clientY,
+        pointerType: event.pointerType,
+      });
+    }
+
+    if (activePointers.size === 2 && pinchInitialDistance && pinchInitialScale) {
+      const [p1, p2] = Array.from(activePointers.values());
+      const currentDistance = Math.hypot(p1.clientX - p2.clientX, p1.clientY - p2.clientY);
+      if (pinchInitialDistance > 0 && currentDistance > 0) {
+        const ratio = currentDistance / pinchInitialDistance;
+        const targetScale = Math.max(0.1, Math.min(5.0, pinchInitialScale * ratio));
+        opts.onZoomChange?.(targetScale);
+        opts.setScale?.(targetScale);
+      }
+    }
+  };
+
+  const onPointerUp = (event: PointerEvent): void => {
+    activePointers.delete(event.pointerId);
+    if (activePointers.size < 2) {
+      pinchInitialDistance = null;
+      pinchInitialScale = null;
+    }
+  };
+
+  const onPointerCancel = (event: PointerEvent): void => {
+    activePointers.delete(event.pointerId);
+    if (activePointers.size < 2) {
+      pinchInitialDistance = null;
+      pinchInitialScale = null;
+    }
+  };
+
+  opts.host.addEventListener("pointerdown", onPointerDown);
+  opts.host.addEventListener("pointermove", onPointerMove);
+  opts.host.addEventListener("pointerup", onPointerUp);
+  opts.host.addEventListener("pointercancel", onPointerCancel);
+
   let composing = false;
 
   const insertText = (text: string): void => {
@@ -4847,6 +4931,29 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
       grammarIssues = issues;
       scheduleOverlayRefresh();
     },
+    get lastPointerType(): "mouse" | "touch" | "pen" {
+      return lastPointerType;
+    },
+    caretAnchorRect(pos: number) {
+      if (story || !main.map?.valid) return null;
+      const rect = main.map.caretRect(pos);
+      if (!rect) return null;
+      const frame = opts.pageHost?.(framePage(main, rect.page));
+      if (!frame) return null;
+      const scale = opts.scale?.() ?? 1;
+      const frameRect = frame.getBoundingClientRect();
+      const left = rect.xPx * scale;
+      const top = rect.yPx * scale;
+      const height = rect.heightPx * scale;
+      return {
+        frame,
+        left,
+        top,
+        height,
+        clientX: frameRect.left + left,
+        clientY: frameRect.top + top,
+      };
+    },
     destroy(): void {
       if (main.raf) cancelAnimationFrame(main.raf);
       if (overlayRaf) cancelAnimationFrame(overlayRaf);
@@ -4859,6 +4966,10 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
       main.editor.destroy();
       stopDragAutoScroll();
       opts.host.removeEventListener("mousedown", takeFocus);
+      opts.host.removeEventListener("pointerdown", onPointerDown);
+      opts.host.removeEventListener("pointermove", onPointerMove);
+      opts.host.removeEventListener("pointerup", onPointerUp);
+      opts.host.removeEventListener("pointercancel", onPointerCancel);
       opts.host.removeEventListener("dragover", onDragOver);
       opts.host.removeEventListener("dragleave", onDragLeave);
       opts.host.removeEventListener("drop", onDrop);

@@ -51,7 +51,9 @@ import {
   notifyLocaleChange,
   observeLang,
   registerComponents,
+  resolveDir,
   resolveTheme,
+  setUiDirection,
   t,
   type RibbonMenuItem,
 } from "../ui";
@@ -261,6 +263,71 @@ class DocenDocument extends AddinHost<Editor> {
   /** The document view (Word's View tab): "print" | "web" | "draft" | "read".
    *  Anything else falls back to "print". */
   @attr view?: string;
+  @attr override dir!: string;
+  @attr({ mode: "boolean", attribute: "touch-mode" }) touchMode = false;
+
+  get isRtl(): boolean {
+    const d = this.dir || this.getAttribute("dir");
+    return d === "rtl" || resolveDir(this) === "rtl";
+  }
+
+  dirChanged(): void {
+    const d = this.dir || this.getAttribute("dir");
+    if (d === "rtl" || d === "ltr") {
+      this.#syncDirTo(d);
+    } else {
+      this.#syncDir();
+    }
+  }
+
+  touchModeChanged(): void {
+    this.#syncTouchMode();
+  }
+
+  #syncTouchMode = (): void => {
+    const ribbon = this.shadowRoot?.querySelector("docen-ribbon");
+    if (ribbon) {
+      if (this.touchMode) {
+        ribbon.setAttribute("touch-mode", "");
+        (ribbon as HTMLElement & { touchMode?: boolean }).touchMode = true;
+      } else {
+        ribbon.removeAttribute("touch-mode");
+        (ribbon as HTMLElement & { touchMode?: boolean }).touchMode = false;
+      }
+    }
+  };
+
+  #syncDirTo = (nextDir: string): void => {
+    const ribbon = this.shadowRoot?.querySelector("docen-ribbon");
+    if (ribbon && ribbon.getAttribute("dir") !== nextDir) {
+      ribbon.setAttribute("dir", nextDir);
+    }
+    const statusBar = this.shadowRoot?.querySelector("docen-status-bar");
+    if (statusBar && statusBar.getAttribute("dir") !== nextDir) {
+      statusBar.setAttribute("dir", nextDir);
+    }
+    const navPane = this.shadowRoot?.querySelector("docen-nav-pane, docen-navigation-pane");
+    if (navPane && navPane.getAttribute("dir") !== nextDir) {
+      navPane.setAttribute("dir", nextDir);
+    }
+    const workspace = this.shadowRoot?.querySelector("docen-workspace");
+    if (workspace && workspace.getAttribute("dir") !== nextDir) {
+      workspace.setAttribute("dir", nextDir);
+    }
+  };
+
+  #syncDir = (): void => {
+    const nextDir = resolveDir(this);
+    if (this.getAttribute("dir") !== nextDir) {
+      this.setAttribute("dir", nextDir);
+    }
+    this.#syncDirTo(nextDir);
+  };
+
+  setUiDirection(direction: "ltr" | "rtl" | "auto"): void {
+    setUiDirection(direction);
+    this.#syncDir();
+  }
 
   #bridge?: EditBridge;
   /** The Markdown input mode (Options → Markdown) — session-level, like the
@@ -1806,6 +1873,13 @@ class DocenDocument extends AddinHost<Editor> {
       pageHost: (page) => this.#stage?.slotAt(page)?.parentElement ?? null,
       extensions: [...docxExtensions, ...(defaultAddin.extensions ?? [])],
       scale: () => this.#stage?.scale() ?? 1,
+      onZoomChange: (scale) => this.#setZoom(Math.round(scale * 100)),
+      setScale: (scale) => this.#setZoom(Math.round(scale * 100)),
+      onPointerTypeChange: (type) => {
+        if (type === "touch" && !this.touchMode) {
+          this.touchMode = true;
+        }
+      },
       contentWidthPx: () => this.#flow?.contentWidthPx,
       frontFloats: (page) => this.#stage?.frontFloatBoxes(page) ?? [],
       // Word's paste-options bar hangs after every rich paste; the clipboard
@@ -2448,8 +2522,13 @@ class DocenDocument extends AddinHost<Editor> {
       this.#status.onViewSelect as EventListener,
     );
 
+    this.#syncDir();
+    this.#syncTouchMode();
     // Re-render header + ribbon when the page locale (<html lang>) changes.
-    this.#unobserveLang = observeLang(() => this.#renderChrome());
+    this.#unobserveLang = observeLang(() => {
+      this.#syncDir();
+      this.#renderChrome();
+    });
 
     // Persisted settings (identity + writing toggles) — any store change
     // (this element's Options commit / setSettings, another <docen-document>,
@@ -3973,6 +4052,7 @@ class DocenDocument extends AddinHost<Editor> {
           showGridlines: () => this.#stage?.showGridlines ?? false,
           setShowGridlines: (on) => this.#stage?.setShowGridlines(on),
           setView: (view) => this.setAttribute("view", view),
+          setUiDirection: (dir) => this.setUiDirection(dir),
           toggleSplitWindow: () => this.#toggleSplitWindow(),
           toggleFocusMode: () => this.#toggleFocusMode(),
         },
@@ -5923,4 +6003,12 @@ export type {
 export type { BuildingBlocksSeed } from "../ui/components/workspace/building-blocks-dialog";
 export type { QuickPartSeed, QuickPartValues } from "../ui/components/workspace/quick-part-dialog";
 
+/**
+ * `<docen-editor>` — Turnkey rich document editor element.
+ * Drop-in custom element wrapping DocenDocument with touch, pen, and RTL support.
+ */
+@customElement({ name: "docen-editor", template: documentTemplate, styles: documentStyles })
+export class DocenEditor extends DocenDocument {}
+
+export { DocenDocument };
 export default DocenDocument;

@@ -8,6 +8,8 @@ import {
   ref,
 } from "@microsoft/fast-element";
 
+import { observeLang, resolveDir } from "../../i18n/localize";
+
 const styles = css`
   :host {
     display: contents;
@@ -25,6 +27,28 @@ const styles = css`
     align-items: center;
     gap: 8px;
     padding-block-start: var(--spacingVerticalXL, 20px);
+  }
+
+  :host([dir="rtl"]) fluent-dialog-body,
+  :host([data-dir="rtl"]) fluent-dialog-body,
+  :host-context([dir="rtl"]) fluent-dialog-body {
+    direction: rtl;
+    text-align: right;
+  }
+
+  :host([dir="rtl"]) fluent-dialog-body::part(title),
+  :host([data-dir="rtl"]) fluent-dialog-body::part(title),
+  :host-context([dir="rtl"]) fluent-dialog-body::part(title) {
+    direction: rtl;
+    text-align: right;
+  }
+
+  :host([dir="rtl"]) fluent-dialog-body::part(actions),
+  :host([data-dir="rtl"]) fluent-dialog-body::part(actions),
+  :host-context([dir="rtl"]) fluent-dialog-body::part(actions) {
+    direction: rtl;
+    flex-direction: row-reverse;
+    justify-content: flex-start;
   }
 `;
 
@@ -86,6 +110,7 @@ interface FluentToggleEvent extends Event {
 class DocenDialog extends FASTElement {
   @attr heading?: string;
   @attr({ mode: "boolean" }) open?: boolean;
+  @attr dir: "ltr" | "rtl" = "ltr";
 
   @observable dialog?: FluentDialog;
   @observable titleEl?: HTMLElement;
@@ -93,6 +118,34 @@ class DocenDialog extends FASTElement {
   #nativeDialog?: HTMLDialogElement;
   #backdropRaf = 0;
   #titleBarRaf = 0;
+  #unobserveLang?: () => void;
+
+  get isRtl(): boolean {
+    return this.dir === "rtl" || resolveDir(this) === "rtl";
+  }
+
+  dirChanged(): void {
+    this.#syncDir();
+  }
+
+  #syncDir = (): void => {
+    const nextDir = resolveDir(this);
+    if (this.getAttribute("dir") !== nextDir) {
+      this.setAttribute("dir", nextDir);
+    }
+    if (this.dialog && this.dialog.getAttribute("dir") !== nextDir) {
+      this.dialog.setAttribute("dir", nextDir);
+    }
+    const body = this.dialog?.querySelector("fluent-dialog-body");
+    if (body && body.getAttribute("dir") !== nextDir) {
+      body.setAttribute("dir", nextDir);
+    }
+    const native = this.#nativeDialog;
+    if (native && native.getAttribute("dir") !== nextDir) {
+      native.setAttribute("dir", nextDir);
+    }
+  };
+
   /** The dialog's drag offset (CSS `translate`, kept clear of fluent's own
    *  transforms); it survives open/close so a re-opened dialog returns to
    *  where the user left it, Word-style. */
@@ -137,6 +190,8 @@ class DocenDialog extends FASTElement {
 
   connectedCallback(): void {
     super.connectedCallback();
+    this.#syncDir();
+    this.#unobserveLang = observeLang(() => this.#syncDir());
     // ESC / backdrop close the fluent-dialog directly; sync our `open` attr so
     // state stays consistent. fluent emits `toggle` with newState.
     this.dialog?.addEventListener("toggle", this.#toggleHandler);
@@ -154,6 +209,7 @@ class DocenDialog extends FASTElement {
   disconnectedCallback(): void {
     cancelAnimationFrame(this.#backdropRaf);
     cancelAnimationFrame(this.#titleBarRaf);
+    this.#unobserveLang?.();
     this.dialog?.removeEventListener("toggle", this.#toggleHandler);
     this.closeBtn?.removeEventListener("click", this.#closeHandler);
     this.#nativeDialog?.removeEventListener("click", this.#backdropHandler, true);
@@ -181,6 +237,7 @@ class DocenDialog extends FASTElement {
         return;
       }
       this.#nativeDialog = native;
+      native.setAttribute("dir", resolveDir(this));
       native.addEventListener("click", this.#backdropHandler, true);
       // ESC (cancel→close) dismisses the modal behind our back — keep the
       // `open` attribute in sync (fluent's toggle event no-ops the same way).

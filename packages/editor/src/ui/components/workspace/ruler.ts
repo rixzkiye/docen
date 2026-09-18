@@ -9,6 +9,8 @@ import {
   ref,
 } from "@microsoft/fast-element";
 
+import { observeLang, resolveDir } from "../../i18n/localize";
+
 export interface RulerTabStop {
   position: number; // in twips
   type: "left" | "center" | "right" | "decimal" | "bar";
@@ -34,6 +36,15 @@ const styles = css`
     font-size: 10px;
     color: #404040;
     overflow: visible;
+  }
+
+  :host([dir="rtl"]) .unit-toggle-btn,
+  :host([data-dir="rtl"]) .unit-toggle-btn,
+  :host-context([dir="rtl"]) .unit-toggle-btn {
+    left: auto;
+    right: 0;
+    border-right: none;
+    border-left: 1px solid #c8c8c8;
   }
 
   .ruler-container {
@@ -335,10 +346,34 @@ const template = html<DocenRuler>`
 @customElement({ name: "docen-ruler", template, styles })
 export class DocenRuler extends FASTElement {
   @attr unit: "in" | "cm" = "in";
+  @attr dir: "ltr" | "rtl" = "ltr";
   @observable pageWidthPx = 816; // 8.5" * 96
   @observable marginLeftPx = 96; // 1" * 96
   @observable marginRightPx = 96; // 1" * 96
   @observable scale = 1;
+
+  get isRtl(): boolean {
+    return (this.dir ?? resolveDir(this)) === "rtl";
+  }
+
+  dirChanged(): void {
+    this.#syncDir();
+  }
+
+  #syncDir(): void {
+    const isRtl = this.isRtl;
+    this.toggleAttribute("data-dir", isRtl);
+    if (isRtl) {
+      this.setAttribute("dir", "rtl");
+    } else if (this.getAttribute("dir") === "rtl" && !this.getAttribute("data-dir")) {
+      // keep explicit attr
+    } else {
+      this.removeAttribute("dir");
+    }
+    this.renderTicks();
+  }
+
+  #unobserveLang?: () => void;
 
   // Indent values in twips
   @observable leftIndentTwips = 0;
@@ -400,10 +435,14 @@ export class DocenRuler extends FASTElement {
       const isMetric = !/^en/i.test(navigator.language || "");
       this.unit = isMetric ? "cm" : "in";
     }
+    this.#syncDir();
+    this.#unobserveLang = observeLang(() => this.#syncDir());
     this.renderTicks();
   }
 
   override disconnectedCallback(): void {
+    this.#unobserveLang?.();
+    this.#unobserveLang = undefined;
     if (this.#editor) {
       this.#editor.off("transaction", this.#onTransaction);
     }
@@ -435,6 +474,9 @@ export class DocenRuler extends FASTElement {
   // ── Coordinates & Markers Math ──
 
   get zeroXPx(): number {
+    if (this.isRtl) {
+      return (this.pageWidthPx - this.marginRightPx) * this.scale;
+    }
     return this.marginLeftPx * this.scale;
   }
 
@@ -444,16 +486,19 @@ export class DocenRuler extends FASTElement {
 
   get hangingMarkerX(): number {
     const px = (this.leftIndentTwips / 15) * this.scale;
-    return this.zeroXPx + px;
+    return this.isRtl ? this.zeroXPx - px : this.zeroXPx + px;
   }
 
   get firstLineMarkerX(): number {
     const px = ((this.leftIndentTwips + this.firstLineTwips) / 15) * this.scale;
-    return this.zeroXPx + px;
+    return this.isRtl ? this.zeroXPx - px : this.zeroXPx + px;
   }
 
   get rightMarkerX(): number {
     const px = (this.rightIndentTwips / 15) * this.scale;
+    if (this.isRtl) {
+      return this.marginLeftPx * this.scale + px;
+    }
     return this.zeroXPx + this.contentWidthPx - px;
   }
 
@@ -488,25 +533,65 @@ export class DocenRuler extends FASTElement {
     let lines = "";
     let texts = "";
 
-    const startOffset = Math.ceil(-zeroX / minorPx) * minorPx;
-    const endOffset = totalW - zeroX;
+    if (this.isRtl) {
+      // Mirrored to right margin: 0 is at zeroX, numbers increase moving leftwards
+      for (let x = zeroX; x >= 0; x -= minorPx) {
+        const offset = zeroX - x;
+        const unitsVal = offset / unitPx;
+        const isMajor = Math.abs(unitsVal - Math.round(unitsVal)) < 1e-4;
+        const isHalf = Math.abs(unitsVal * 2 - Math.round(unitsVal * 2)) < 1e-4;
 
-    for (let offset = startOffset; offset <= endOffset; offset += minorPx) {
-      const x = zeroX + offset;
-      const unitsVal = offset / unitPx;
-      const isMajor = Math.abs(unitsVal - Math.round(unitsVal)) < 1e-4;
-      const isHalf = Math.abs(unitsVal * 2 - Math.round(unitsVal * 2)) < 1e-4;
+        const tickHeight = isMajor ? 10 : isHalf ? 6 : 3;
+        const y1 = 24 - tickHeight;
+        const y2 = 24;
 
-      const tickHeight = isMajor ? 10 : isHalf ? 6 : 3;
-      const y1 = 24 - tickHeight;
-      const y2 = 24;
+        lines += `<line x1="${x.toFixed(1)}" y1="${y1}" x2="${x.toFixed(1)}" y2="${y2}" stroke="#a0a0a0" stroke-width="1"/>`;
 
-      lines += `<line x1="${x.toFixed(1)}" y1="${y1}" x2="${x.toFixed(1)}" y2="${y2}" stroke="#a0a0a0" stroke-width="1"/>`;
+        if (isMajor) {
+          const num = Math.round(unitsVal);
+          const label = String(Math.abs(num));
+          texts += `<text x="${x.toFixed(1)}" y="10" font-size="8" text-anchor="middle" fill="#606060">${label}</text>`;
+        }
+      }
+      for (let x = zeroX + minorPx; x <= totalW; x += minorPx) {
+        const offset = x - zeroX;
+        const unitsVal = offset / unitPx;
+        const isMajor = Math.abs(unitsVal - Math.round(unitsVal)) < 1e-4;
+        const isHalf = Math.abs(unitsVal * 2 - Math.round(unitsVal * 2)) < 1e-4;
 
-      if (isMajor) {
-        const num = Math.round(unitsVal);
-        const label = String(Math.abs(num));
-        texts += `<text x="${x.toFixed(1)}" y="10" font-size="8" text-anchor="middle" fill="#606060">${label}</text>`;
+        const tickHeight = isMajor ? 10 : isHalf ? 6 : 3;
+        const y1 = 24 - tickHeight;
+        const y2 = 24;
+
+        lines += `<line x1="${x.toFixed(1)}" y1="${y1}" x2="${x.toFixed(1)}" y2="${y2}" stroke="#a0a0a0" stroke-width="1"/>`;
+
+        if (isMajor) {
+          const num = Math.round(unitsVal);
+          const label = String(Math.abs(num));
+          texts += `<text x="${x.toFixed(1)}" y="10" font-size="8" text-anchor="middle" fill="#606060">${label}</text>`;
+        }
+      }
+    } else {
+      const startOffset = Math.ceil(-zeroX / minorPx) * minorPx;
+      const endOffset = totalW - zeroX;
+
+      for (let offset = startOffset; offset <= endOffset; offset += minorPx) {
+        const x = zeroX + offset;
+        const unitsVal = offset / unitPx;
+        const isMajor = Math.abs(unitsVal - Math.round(unitsVal)) < 1e-4;
+        const isHalf = Math.abs(unitsVal * 2 - Math.round(unitsVal * 2)) < 1e-4;
+
+        const tickHeight = isMajor ? 10 : isHalf ? 6 : 3;
+        const y1 = 24 - tickHeight;
+        const y2 = 24;
+
+        lines += `<line x1="${x.toFixed(1)}" y1="${y1}" x2="${x.toFixed(1)}" y2="${y2}" stroke="#a0a0a0" stroke-width="1"/>`;
+
+        if (isMajor) {
+          const num = Math.round(unitsVal);
+          const label = String(Math.abs(num));
+          texts += `<text x="${x.toFixed(1)}" y="10" font-size="8" text-anchor="middle" fill="#606060">${label}</text>`;
+        }
       }
     }
 
@@ -518,7 +603,9 @@ export class DocenRuler extends FASTElement {
   renderTabStops(): ReturnType<typeof html> {
     return html`
       ${this.tabStops.map((stop, idx) => {
-        const x = this.zeroXPx + this.twipsToContentPx(stop.position);
+        const x = this.isRtl
+          ? this.zeroXPx - this.twipsToContentPx(stop.position)
+          : this.zeroXPx + this.twipsToContentPx(stop.position);
         const isDraggingThis = this.dragActiveMarker === "tabStop" && this.dragTabIdx === idx;
         return html`
           <div
@@ -556,7 +643,8 @@ export class DocenRuler extends FASTElement {
 
     const onPointerMove = (e: PointerEvent): void => {
       const deltaPx = e.clientX - this.#dragStartX;
-      const deltaTwips = this.contentPxToTwips(deltaPx);
+      const rawDeltaTwips = this.contentPxToTwips(deltaPx);
+      const deltaTwips = this.isRtl ? -rawDeltaTwips : rawDeltaTwips;
 
       if (this.dragActiveMarker === "firstLine") {
         this.firstLineTwips = this.#initialFirstLineTwips + deltaTwips;
@@ -617,7 +705,8 @@ export class DocenRuler extends FASTElement {
       }
 
       const deltaPx = e.clientX - this.#dragStartX;
-      const deltaTwips = this.contentPxToTwips(deltaPx);
+      const rawDeltaTwips = this.contentPxToTwips(deltaPx);
+      const deltaTwips = this.isRtl ? -rawDeltaTwips : rawDeltaTwips;
       const newTwips = Math.max(0, this.#initialTabTwips + deltaTwips);
 
       if (this.tabStops[idx]) {
@@ -666,11 +755,12 @@ export class DocenRuler extends FASTElement {
     const clickX = event.clientX - rect.left;
 
     // Check if clicked inside content zone
-    const contentStart = this.zeroXPx;
-    const contentEnd = this.zeroXPx + this.contentWidthPx;
+    const contentLeft = this.marginLeftPx * this.scale;
+    const contentRight = (this.pageWidthPx - this.marginRightPx) * this.scale;
 
-    if (clickX >= contentStart && clickX <= contentEnd) {
-      const twips = this.contentPxToTwips(clickX - contentStart);
+    if (clickX >= contentLeft && clickX <= contentRight) {
+      const offsetPx = this.isRtl ? contentRight - clickX : clickX - contentLeft;
+      const twips = this.contentPxToTwips(offsetPx);
       const newStop: RulerTabStop = { position: twips, type: "left" };
       this.tabStops = [...this.tabStops, newStop].sort((a, b) => a.position - b.position);
       this.$emit("ruler:tabstop-add", { tabStop: newStop });

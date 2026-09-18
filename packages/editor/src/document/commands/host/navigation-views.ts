@@ -1,5 +1,6 @@
 import type { Editor } from "@docen/docx/core";
 
+import { setUiDirection } from "../../../ui/i18n/localize";
 import { demoteHeadingAtCaret, promoteHeadingAtCaret, selectSimilarFormatting } from "../outline";
 import type { HostCommandDomain } from "./registry";
 
@@ -34,6 +35,7 @@ export interface NavigationViewsHostView {
   setShowGridlines(on: boolean): void;
   /** Select a document view (Word's View tab buttons). */
   setView(view: string): void;
+  setUiDirection?(dir: "ltr" | "rtl" | "auto"): void;
   openGoToDialog?(kind?: string): void;
   openPropertiesDialog?(): void;
   toggleSplitWindow?(): void;
@@ -65,6 +67,7 @@ export class NavigationViewsHostCommands implements HostCommandDomain {
     "check-accessibility",
     "split-window",
     "focus-mode",
+    "set-ui-direction",
   ];
 
   readonly editor: readonly string[] = [
@@ -152,6 +155,15 @@ export class NavigationViewsHostCommands implements HostCommandDomain {
       if (value === "zoom-dialog") this.host.showZoomDialog();
       else if (value) this.host.zoomPreset(value);
       else this.host.setZoom(100);
+      return true;
+    }
+    if (event === "set-ui-direction") {
+      const dir = value === "rtl" || value === "ltr" || value === "auto" ? value : "auto";
+      if (this.host.setUiDirection) {
+        this.host.setUiDirection(dir);
+      } else {
+        setUiDirection(dir);
+      }
       return true;
     }
     const editor = this.host.editor();

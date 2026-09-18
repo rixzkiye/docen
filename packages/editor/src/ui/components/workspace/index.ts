@@ -79,4 +79,5 @@ export { DocenNavPane, default as DocenNavPaneDefault } from "./nav-pane";
 export { DocenPrintPreview, default as DocenPrintPreviewDefault } from "./print-preview";
 export { DocenTranslatePane, default as DocenTranslatePaneDefault } from "./translate-pane";
 export { DocenAltTextPane, default as DocenAltTextPaneDefault } from "./alt-text-pane";
+export { DocenTouchHandles, default as DocenTouchHandlesDefault } from "./touch-handles";
 
