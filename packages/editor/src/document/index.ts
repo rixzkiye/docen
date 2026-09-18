@@ -13,6 +13,7 @@
 import {
   convertMillimetersToTwip,
   decodePassthroughData,
+  detectUnsupportedContent,
   docxExtensions,
   effectiveRunProps,
   generateDOCX,
@@ -37,9 +38,11 @@ import {
 import {
   browserFontMetrics,
   createMeasurer,
+  loadDefaultFonts,
   registerShapingFont,
   type FlowPage,
   type FlowPageInsets,
+  type RegisterDefaultFontsOptions,
 } from "@docen/layout";
 import { initShapingWasm } from "@docen/shaping";
 import { attr, customElement } from "@microsoft/fast-element";
@@ -92,6 +95,7 @@ import {
 } from "./canvas/edit-bridge";
 import { CanvasStage, type CanvasStageSection, type LaidFurnitureSection } from "./canvas/stage";
 import { documentStyles, documentTemplate } from "./chrome";
+import { ClipboardCommands } from "./commands/clipboard";
 // Side-effect: register the document-specific UI components moved out of the
 // shared ui/ barrel — <docen-format-pane> (properties fallback),
 // <docen-outline> (navigation Headings tab), <docen-styles-pane> (Styles).
@@ -99,7 +103,6 @@ import "./components/format-pane";
 import "./components/outline";
 import "./components/styles-pane";
 import "../ui/components/workspace/alt-text-pane";
-import { ClipboardCommands } from "./commands/clipboard";
 import { CommentsCommands } from "./commands/comments";
 import { combineDocs, compareDocs } from "./commands/compare";
 import { DesignCommands } from "./commands/design";
@@ -119,6 +122,7 @@ import { RevisionsCommands } from "./commands/revisions";
 import { SectionCommands } from "./commands/sections";
 import { SpellingCommands } from "./commands/spelling";
 import { THEMES } from "./commands/themes";
+import { contentWarningText } from "./content-warning";
 import {
   applyDocumentDefaults,
   clearDocumentDefaults,
@@ -714,6 +718,9 @@ class DocenDocument extends AddinHost<Editor> {
    *  (when opted in) and for PDF/DOCX font embedding. The original family
    *  spelling rides along for font-name output. */
   readonly #fonts = new Map<string, { family: string; fontData: Uint8Array }>();
+  /** True while the user dismissed the unsupported-content warning for the
+   *  current document (reset on every load). */
+  #contentWarningDismissed = false;
   #pages: readonly FlowPage[] = [];
   /** Page index → section index (the caret's section and per-page geometry
    *  read through it). */
@@ -1932,6 +1939,9 @@ class DocenDocument extends AddinHost<Editor> {
 
     this.#stageHost = this.shadowRoot!.querySelector<HTMLElement>(".docen-canvas") ?? undefined;
     this.#mountRuler();
+    this.shadowRoot
+      ?.querySelector<HTMLElement>(".content-warning-close")
+      ?.addEventListener("click", () => this.#dismissContentWarning());
     this.#stageHost?.addEventListener("wheel", this.#onWheel as EventListener, {
       capture: true,
       passive: false,
@@ -1941,6 +1951,20 @@ class DocenDocument extends AddinHost<Editor> {
     // Fonts must be loaded before the pipeline measures, else the layout
     // drifts from the browser's actual font metrics.
     await document.fonts?.ready;
+    // The production shaping set: register the bundled metric-compatible
+    // faces before the first layout so the default Word families shape
+    // deterministically instead of silently falling back to canvas. A failure
+    // (e.g. a bundler that did not emit the package's asset URLs) is loud but
+    // non-fatal — the canvas measurer keeps working.
+    try {
+      await this.registerDefaultFonts();
+    } catch (err) {
+      console.warn(
+        "[docen-document] bundled shaping fonts unavailable — using canvas metrics. " +
+          "Call registerDefaultFonts({ baseUrl }) with the emitted assets/fonts directory to opt in.",
+        err,
+      );
+    }
 
     const contentAttr = this.getAttribute("content");
     // Declarative section-properties / styles (JSON) seed doc-level attrs so a
@@ -2976,6 +3000,35 @@ class DocenDocument extends AddinHost<Editor> {
     // Page geometry may have changed (page setup, sections) — keep the
     // interactive ruler's width/margins in step.
     this.#syncRuler();
+    this.#updateContentWarning(doc);
+  }
+
+  /** Show/refresh the unsupported-content warning bar from the document JSON
+   *  (item 14): content the editor can preserve but not edit — altChunk,
+   *  subDoc, SmartArt, OLE, raw/custom XML, content parts — must be visible to
+   *  the user, never silently carried. Hidden while the user has dismissed it
+   *  for this document. */
+  #updateContentWarning(doc: JSONContent): void {
+    const bar = this.shadowRoot?.querySelector<HTMLElement>(".content-warning");
+    if (!bar) return;
+    const translate = (key: string): string => t(key, this);
+    const close = bar.querySelector<HTMLElement>(".content-warning-close");
+    close?.setAttribute("aria-label", translate("contentWarning.dismiss"));
+    close?.setAttribute("title", translate("contentWarning.dismiss"));
+    const report = detectUnsupportedContent(doc);
+    if (report.total === 0 || this.#contentWarningDismissed) {
+      bar.hidden = true;
+      return;
+    }
+    const text = bar.querySelector<HTMLElement>(".content-warning-text");
+    if (text) text.textContent = contentWarningText(report, translate);
+    bar.hidden = false;
+  }
+
+  #dismissContentWarning(): void {
+    this.#contentWarningDismissed = true;
+    const bar = this.shadowRoot?.querySelector<HTMLElement>(".content-warning");
+    if (bar) bar.hidden = true;
   }
 
   /** Mount the interactive horizontal ruler above the pages (idempotent).
@@ -6111,6 +6164,38 @@ class DocenDocument extends AddinHost<Editor> {
     this.#measurer.clearCache();
   }
 
+  /**
+   * Register docen's bundled production faces for the Word default families
+   * (Calibri/Calibri Light → Carlito, Cambria → Caladea, Arial → Liberation
+   * Sans, Times New Roman → Liberation Serif; all four weight/slant slots).
+   * The element calls this automatically on connect, so shaping never silently
+   * falls back to canvas for the default families; call it yourself (with
+   * `baseUrl` when your bundler does not emit the package's asset URLs, or
+   * after overriding the bundled files) to control it. Registered regular
+   * faces additionally join the export-embedding set.
+   *
+   * Failures are non-fatal: the editor warns and keeps the canvas fallback.
+   */
+  async registerDefaultFonts(options?: RegisterDefaultFontsOptions): Promise<string[]> {
+    const faces = await loadDefaultFonts(options);
+    await initShapingWasm();
+    const labels: string[] = [];
+    for (const face of faces) {
+      registerShapingFont(face.family, face.bytes, 0, {
+        bold: face.bold,
+        italic: face.italic,
+      });
+      // One face per family feeds the export-embedding map (its regular face,
+      // matching registerFont's family-keyed contract).
+      if (!face.bold && !face.italic) {
+        this.#fonts.set(face.family.toLowerCase(), { family: face.family, fontData: face.bytes });
+      }
+      labels.push(`${face.family}${face.bold ? " bold" : ""}${face.italic ? " italic" : ""}`);
+    }
+    this.#measurer.clearCache();
+    return labels;
+  }
+
   /** Serialize the current document to a Markdown string. */
   saveMarkdown(): string {
     return this.#io.saveMarkdown();
@@ -6141,6 +6226,9 @@ class DocenDocument extends AddinHost<Editor> {
   }
 
   #loadDoc(doc: JSONContent): void {
+    // A new document gets a fresh warning state — a dismissal does not leak
+    // from the previous document into this one.
+    this.#contentWarningDismissed = false;
     this.#io.loadDoc(doc);
   }
 

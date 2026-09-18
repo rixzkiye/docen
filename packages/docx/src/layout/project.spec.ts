@@ -1620,10 +1620,11 @@ describe("projectFlowBox", () => {
     expect(flow.linePitchPx).toBeUndefined();
   });
 
-  it("defaults to A4 portrait with zh-CN Normal margins when absent", () => {
+  it("defaults to A4 portrait with docen's 1-inch margins when absent", () => {
     const flow = projectFlowBox(undefined);
     expect(flow.pageWidthPx).toBeCloseTo(11906 / 15, 5);
-    expect(flow.contentWidthPx).toBeCloseTo((11906 - 3600) / 15, 5);
+    // docen defaults: 1440-twip (1") sides, not office-open's zh-CN 1800.
+    expect(flow.contentWidthPx).toBeCloseTo((11906 - 2880) / 15, 5);
   });
 });
 

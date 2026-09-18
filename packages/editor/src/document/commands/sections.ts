@@ -1,5 +1,5 @@
 import type { BorderOptions, PageBordersOptions, SectionPropertiesOptions } from "@docen/docx";
-import { convertMillimetersToTwip, sectionPageSizeDefaults } from "@docen/docx";
+import { DOCEN_DEFAULT_PAGE_SIZE, convertMillimetersToTwip } from "@docen/docx";
 import type { Editor } from "@docen/docx/core";
 
 import type { ColumnsValues } from "../../ui/components/workspace/columns-dialog";
@@ -141,7 +141,7 @@ export class SectionCommands {
     const size =
       cur && typeof cur.width === "number" && typeof cur.height === "number"
         ? cur
-        : { width: sectionPageSizeDefaults.WIDTH, height: sectionPageSizeDefaults.HEIGHT };
+        : { width: DOCEN_DEFAULT_PAGE_SIZE.WIDTH, height: DOCEN_DEFAULT_PAGE_SIZE.HEIGHT };
     this.updateSectionGeometry({
       pageSize: { ...size, orientation: value as "portrait" | "landscape" },
     });

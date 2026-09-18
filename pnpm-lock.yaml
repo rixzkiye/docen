@@ -68,9 +68,6 @@ importers:
       '@docen/layout':
         specifier: workspace:*
         version: link:../layout
-      '@docen/markdown':
-        specifier: workspace:*
-        version: link:../markdown
       '@docen/shaping':
         specifier: workspace:*
         version: link:../shaping
@@ -98,10 +95,13 @@ importers:
       leafer-x-metafile:
         specifier: workspace:*
         version: link:../leafer-x-metafile
-    devDependencies:
       linkedom:
         specifier: 0.18.13
         version: 0.18.13
+    devDependencies:
+      '@docen/markdown':
+        specifier: workspace:*
+        version: link:../markdown
 
   packages/editor:
     dependencies:

@@ -152,6 +152,49 @@ export const documentStyles = css`
     font-size: 13px;
     color: var(--docen-color-text-2, #424242);
   }
+  /* Unsupported-content warning: a Word-style yellow message bar, sticky at
+       the top of the scrolling document area so it stays visible while the
+       user reads. Shown only when the loaded document carries content the
+       editor can preserve but not edit (altChunk, subDoc, SmartArt, OLE,
+       raw/custom XML, content parts). */
+  .content-warning {
+    position: sticky;
+    top: 0;
+    z-index: 30;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    box-sizing: border-box;
+    padding: 6px 12px;
+    font-size: 12.5px;
+    line-height: 1.45;
+    background: #fff4ce;
+    color: #3b3b3b;
+    border-bottom: 1px solid #f2dc9b;
+  }
+  .content-warning[hidden] {
+    display: none;
+  }
+  .content-warning-icon {
+    flex: none;
+  }
+  .content-warning-text {
+    flex: 1;
+    min-width: 0;
+  }
+  .content-warning-close {
+    flex: none;
+    border: 0;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    cursor: pointer;
+    padding: 2px 6px;
+    border-radius: 4px;
+  }
+  .content-warning-close:hover {
+    background: rgba(0, 0, 0, 0.08);
+  }
   /* Find Results — Office-style match list: each hit rendered with surrounding
        context and a data-from/to for click-to-jump. Padding keeps items off the
        pane edge (the previous "N matches" text butted right against it). */
@@ -207,6 +250,11 @@ export const documentTemplate = html`
       <div class="load-veil" part="load-veil" hidden>
         <fluent-progress-bar></fluent-progress-bar>
         <span class="load-label"></span>
+      </div>
+      <div class="content-warning" part="content-warning" role="status" hidden>
+        <span class="content-warning-icon" aria-hidden="true">⚠️</span>
+        <span class="content-warning-text"></span>
+        <button class="content-warning-close" type="button">✕</button>
       </div>
       <docen-context-menu part="context-menu">
         <div class="docen-canvas" part="page"></div>

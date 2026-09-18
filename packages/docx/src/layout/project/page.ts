@@ -16,6 +16,7 @@ import {
 } from "@docen/layout";
 import type { DocumentOptions, SectionChild, SectionOptions } from "@office-open/docx";
 
+import { DOCEN_DEFAULT_PAGE_MARGIN } from "../../converters/section-defaults";
 import { resolvePageSize } from "../../extensions/utils";
 import { indexCharacterStyles } from "../../style-cascade";
 import type { ProjectContext } from "./context";
@@ -154,10 +155,10 @@ export function projectFlowBox(properties: unknown): ProjectedFlowBox {
   const { width, height } = resolvePageSize(sp.pageSize);
   const m: Rec = isRecord(sp.pageMargin) ? sp.pageMargin : {};
   const side = (v: unknown, d: number): number => twipToPx(measureTwip(v) ?? d);
-  const top = side(m.top, 1440);
-  const bottom = side(m.bottom, 1440);
-  const left = side(m.left, 1800);
-  const right = side(m.right, 1800);
+  const top = side(m.top, DOCEN_DEFAULT_PAGE_MARGIN.TOP);
+  const bottom = side(m.bottom, DOCEN_DEFAULT_PAGE_MARGIN.BOTTOM);
+  const left = side(m.left, DOCEN_DEFAULT_PAGE_MARGIN.LEFT);
+  const right = side(m.right, DOCEN_DEFAULT_PAGE_MARGIN.RIGHT);
   // The binding gutter always rides the left edge here — Word flips it for
   // mirror margins / RTL gutters, neither of which the projection models.
   const gutter = side(m.gutter, 0);

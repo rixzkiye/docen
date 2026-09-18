@@ -7,6 +7,7 @@
  */
 
 import {
+  EncryptedDocumentError,
   generateDOCX,
   generateHTML,
   generateMarkdown,
@@ -102,6 +103,9 @@ export class IODomain {
    *  through the editor i18n table (en/zh), anything else surfaces its own
    *  message. */
   openRefusalMessage(err: unknown): string {
+    if (err instanceof EncryptedDocumentError) {
+      return t("open.encrypted", this.host.element());
+    }
     if (err instanceof OpenFormatError) {
       if (err.code === "flat-opc") return t("open.flat-opc-unsupported", this.host.element());
       return t("open.unsupported", this.host.element()).replace("{name}", err.file ?? "(unknown)");

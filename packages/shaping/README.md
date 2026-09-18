@@ -12,7 +12,7 @@ Consumed by [`@docen/layout`](../layout/README.md)'s `ShapedMeasurer` for bit-ex
 
 ## Features
 
-- **Cross-Platform Determinism:** Replaces browser-divergent `CanvasRenderingContext2D.measureText` with OpenType shaping. The shaped measurer is the default for registered fonts (`setShapingEnabled(false)` in `@docen/layout` or `DOCEN_SHAPING_DISABLED=1` rolls back to the canvas measurer); families without a registered face keep the canvas fallback.
+- **Cross-Platform Determinism:** Replaces browser-divergent `CanvasRenderingContext2D.measureText` with OpenType shaping. The shaped measurer is the default for registered fonts; `@docen/layout` bundles metric-compatible production faces (Carlito/Caladea/Liberation) and registers them through `registerDefaultFonts()`, so the Word default families never silently fall back to canvas — an unregistered family logs a one-time warning. `setShapingEnabled(false)` or `DOCEN_SHAPING_DISABLED=1` rolls back to the canvas measurer.
 - **Complex Scripts & Direction:**
   - Multi-direction: LTR, RTL, TTB (vertical CJK with `vhea` / OpenType synthesis), BTT, and automatic Unicode script detection.
   - Full GSUB/GPOS shaping for Arabic cursive joining & mark positioning, Hebrew RTL Niqqud, Thai vowel reordering & mark stacking, Devanagari conjuncts & matras, Khmer coeng subscripts, and Latin ligature substitution (`fi`, `fl`, `ffi`, `ffl`).
@@ -167,6 +167,65 @@ const result = await client.shape(fontId, "Text shaped off-thread", {
 
 ---
 
+## Bundler / Next.js setup
+
+`initShapingWasm()` loads the shipped `wasm/docen_shaping.wasm` from
+`new URL("../wasm/docen_shaping.wasm", import.meta.url)` — in Node it reads the
+file from the package, in the browser it `fetch`es the emitted asset URL. The
+asset ships inside the npm tarball (`@docen/shaping/wasm/docen_shaping.wasm` is
+an exported subpath), so no postinstall step is required.
+
+Bundlers that understand `new URL(..., import.meta.url)` (webpack 5, Vite,
+Turbopack) emit/copy the `.wasm` automatically. Next.js is the common case that
+needs explicit guidance:
+
+- **webpack (default in Next.js):** `new URL` asset references are supported
+  out of the box. If a custom webpack config turns `.wasm` into a module, keep
+  it an asset instead:
+
+  ```js
+  // next.config.mjs
+  export default {
+    webpack(config) {
+      config.module.rules.push({ test: /docen_shaping\.wasm$/, type: "asset/resource" });
+      return config;
+    },
+  };
+  ```
+
+- **Turbopack (`next dev --turbopack`):** Turbopack's built-in `.wasm` rule
+  treats the file as a WebAssembly ES module, which is not what the loader
+  fetches. Register it as a URL asset:
+
+  ```js
+  // next.config.mjs
+  export default {
+    turbopack: {
+      rules: {
+        "*.wasm": { type: "asset" },
+      },
+    },
+  };
+  ```
+
+- **Any other environment / explicit control:** pass the bytes yourself — the
+  loader accepts them and skips its default resolution entirely:
+
+  ```ts
+  import { readFileSync } from "node:fs";
+  import { createRequire } from "node:module";
+  import { initShapingWasm } from "@docen/shaping";
+
+  // Node / server runtime
+  const wasmPath = createRequire(import.meta.url).resolve("@docen/shaping/wasm/docen_shaping.wasm");
+  await initShapingWasm(readFileSync(wasmPath));
+
+  // Browser: fetch your own copy of the asset
+  // await initShapingWasm(await (await fetch("/assets/docen_shaping.wasm")).arrayBuffer());
+  ```
+
+---
+
 ## Performance Budgets
 
 Measured on the audited fix branch (`r6/fix-audit`) with Node 24, rustc 1.97.1;
@@ -184,9 +243,10 @@ concurrently.
 | **PDF text extraction**        | 100% (Latin + accents + CJK)   | `pdftotext` byte-exact on subset-embedded PDF                       | PASSED                   |
 
 Known gaps, tracked for R6.T2: the pretext line breaker still measures through
-canvas (`prepareRichInline`), so shaped advances only drive atom probes today;
-cross-browser LayoutDoc hashing and bundled production fonts are not yet in
-place.
+canvas (`prepareRichInline`), so shaped advances only drive atom probes today.
+The production font set is bundled by `@docen/layout` (`registerDefaultFonts()`)
+with its metrics pinned in the cross-environment golden
+(`packages/layout/test/font-metrics-golden.json`).
 
 ---
 

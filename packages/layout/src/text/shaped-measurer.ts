@@ -175,13 +175,69 @@ setFaceMetricsResolver((family) => {
 /**
  * Register font bytes for shaping in the shared manager. The WASM runtime
  * must be initialized first (`await initShapingWasm()`). `fontIndex` selects
- * a face inside a `.ttc`/`.otc` collection (0 = plain sfnt).
+ * a face inside a `.ttc`/`.otc` collection (0 = plain sfnt). `style` selects
+ * the face's weight/slant slot: a bold/italic run first looks for its own
+ * registered face and falls back to the family's regular face when none was
+ * registered.
  */
-export function registerShapingFont(family: string, fontData: Uint8Array, fontIndex = 0): FontRef {
+export function registerShapingFont(
+  family: string,
+  fontData: Uint8Array,
+  fontIndex = 0,
+  style?: ShapingFontStyle,
+): FontRef {
   const fontRef = createFontRefSync(fontData, { index: fontIndex });
-  getShapingFontManager().registerActiveFont(family, fontRef);
+  getShapingFontManager().registerActiveFont(shapingFaceKey(family, style), fontRef);
   setRegisteredFontMetrics(family, faceMetricsOf(fontRef));
+  clearMissingFontWarning(family);
   return fontRef;
+}
+
+/** Weight/slant slot of a registered shaping face. */
+export interface ShapingFontStyle {
+  readonly bold?: boolean;
+  readonly italic?: boolean;
+}
+
+/** The manager/fontMap key for a family+style face: the regular face keeps
+ *  the bare family key (back-compatible with `registerActiveFont(name)`
+ *  callers), styled faces get a `|b`/`|i`/`|bi` suffix. */
+export function shapingFaceKey(family: string, style?: ShapingFontStyle): string {
+  const base = family.trim().toLowerCase();
+  const suffix = `${style?.bold ? "b" : ""}${style?.italic ? "i" : ""}`;
+  return suffix ? `${base}|${suffix}` : base;
+}
+
+/** Families already warned about a missing face — one warning per family, so
+ *  a paragraph of canvas-fallback runs does not flood the console. */
+const warnedMissingFonts = new Set<string>();
+
+/** Drop a family's warned flag (called on registration — a late
+ *  `registerFont` after a warning must be able to warn again if it is
+ *  replaced by an unregistered family). */
+export function clearMissingFontWarning(family: string): void {
+  warnedMissingFonts.delete(family.trim().toLowerCase());
+}
+
+/** Test/app helper: forget every missing-face warning. */
+export function clearMissingFontWarnings(): void {
+  warnedMissingFonts.clear();
+}
+
+/** Loud fallback: shaping is on, but the run's family has no registered face,
+ *  so the measurer/painter degrade to canvas — the user-visible equivalent of
+ *  "this document may not measure like Word". The `DOCEN_SHAPING_DISABLED=1`
+ *  rollback is an explicit opt-out and stays silent. */
+function warnMissingShapingFont(family: string): void {
+  const key = family.trim().toLowerCase();
+  if (!key || warnedMissingFonts.has(key)) return;
+  warnedMissingFonts.add(key);
+  console.warn(
+    `[@docen/layout] shaping is enabled but no face is registered for "${family}" — ` +
+      "falling back to canvas measurement. Register the production faces with " +
+      "registerDefaultFonts() (or registerShapingFont) for deterministic metrics; " +
+      "DOCEN_SHAPING_DISABLED=1 rolls back to canvas for the whole process.",
+  );
 }
 
 export interface ShapedMeasurerOptions {
@@ -236,13 +292,24 @@ export class ShapedMeasurer extends TextMeasurer {
     return isShapingEnabled();
   }
 
-  registerFont(family: string, fontRef: FontRef): void {
-    this.fontMap.set(family.toLowerCase(), fontRef);
+  registerFont(family: string, fontRef: FontRef, style?: ShapingFontStyle): void {
+    this.fontMap.set(shapingFaceKey(family, style), fontRef);
     setRegisteredFontMetrics(family, faceMetricsOf(fontRef));
+    clearMissingFontWarning(family);
   }
 
-  getFont(family: string): FontRef | undefined {
-    return this.fontMap.get(family.toLowerCase()) ?? this.fontManager.getActiveFont(family);
+  /** The face for a family+style: the exact bold/italic slot first, then the
+   *  family's regular face (CSS-style synthetic fallback), then the shared
+   *  manager. */
+  getFont(family: string, style?: ShapingFontStyle): FontRef | undefined {
+    const key = shapingFaceKey(family, style);
+    const found = this.fontMap.get(key) ?? this.fontManager.getActiveFont(key);
+    if (found) return found;
+    if (style?.bold || style?.italic) {
+      const base = family.trim().toLowerCase();
+      return this.fontMap.get(base) ?? this.fontManager.getActiveFont(base);
+    }
+    return undefined;
   }
 
   override widthOf(
@@ -275,7 +342,10 @@ export class ShapedMeasurer extends TextMeasurer {
       typeof style.family === "string"
         ? style.family
         : (style.family.latin ?? style.family.eastAsia);
-    if (!family || !this.getFont(family)) return undefined;
+    if (!family || !this.getFont(family, { bold: style.bold, italic: style.italic })) {
+      if (family) warnMissingShapingFont(family);
+      return undefined;
+    }
     // Natural advances only: pretext applies the item's letterSpacing and
     // widthScale itself, so shape the run with spacing zeroed (shapeRun
     // refuses styled runs — the painter cannot represent spacing yet).
@@ -338,8 +408,9 @@ export class ShapedMeasurer extends TextMeasurer {
     const family = familyOfSlot(style.family, isCjkText(text));
     const direction = style.vertical ? "ttb" : (style.direction ?? "auto");
 
-    const fontRef = this.getFont(family);
+    const fontRef = this.getFont(family, { bold: style.bold, italic: style.italic });
     if (!fontRef) {
+      warnMissingShapingFont(family);
       return undefined;
     }
 
