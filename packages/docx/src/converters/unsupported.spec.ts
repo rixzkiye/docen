@@ -2,9 +2,9 @@ import { generateDocumentSync } from "@office-open/docx";
 import type { JSONContent } from "@tiptap/core";
 import { describe, expect, it } from "vitest";
 
-import { encodePassthroughData } from "../extensions/passthrough";
 import {
   detectUnsupportedContent,
+  encodePassthroughData,
   parseDOCXSync,
   resolveDocument,
   type UnsupportedContentKind,
