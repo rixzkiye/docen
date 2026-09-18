@@ -1,0 +1,49 @@
+{
+  "description": "custom footnote/endnote separator, continuation-separator and continuation-notice",
+  "xml": [
+    {
+      "part": "word/footnotes.xml",
+      "contains": [
+        "<w:footnote w:type=\"separator\" w:id=\"-1\"><w:p>",
+        "FN-SEPARATOR",
+        "<w:footnote w:type=\"continuationSeparator\" w:id=\"0\"><w:p>",
+        "FN-CONTINUATION",
+        "<w:footnote w:type=\"continuationNotice\" w:id=\"1\"><w:p>",
+        "FN-CONTINUATION-NOTICE"
+      ]
+    },
+    {
+      "part": "word/endnotes.xml",
+      "contains": [
+        "<w:endnote w:type=\"separator\" w:id=\"-1\"><w:p>",
+        "EN-SEPARATOR",
+        "<w:endnote w:type=\"continuationSeparator\" w:id=\"0\"><w:p>",
+        "EN-CONTINUATION"
+      ]
+    }
+  ],
+  "python": [
+    {
+      "path": "notes.footnotes.separatorIds",
+      "equals": [-1, 0]
+    },
+    {
+      "path": "notes.footnotes.continuationNoticeIds",
+      "equals": [1]
+    },
+    {
+      "path": "notes.endnotes.separatorIds",
+      "equals": [-1, 0]
+    },
+    {
+      "path": "notes.footnotes.ids",
+      "equals": [1]
+    }
+  ],
+  "pdf": [
+    {
+      "page": 1,
+      "contains": ["BODY", "fn body", "en body"]
+    }
+  ]
+}

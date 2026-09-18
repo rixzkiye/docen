@@ -1,0 +1,263 @@
+{
+  "settings": {
+    "footnoteProperties": {
+      "numFmt": "lowerLetter",
+      "numStart": 3,
+      "numRestart": "eachPage"
+    },
+    "endnoteProperties": {
+      "numFmt": "upperLetter",
+      "numStart": 2
+    }
+  },
+  "sections": [
+    {
+      "properties": {
+        "pageSize": {
+          "width": 11906,
+          "height": 16838
+        },
+        "pageMargin": {
+          "top": 1440,
+          "bottom": 1440,
+          "left": 1800,
+          "right": 1800
+        },
+        "footnoteProperties": {
+          "formatType": "decimal",
+          "numStart": 1
+        }
+      },
+      "children": [
+        {
+          "paragraph": {
+            "children": [
+              {
+                "text": "R5 "
+              },
+              {
+                "footnoteReference": 5
+              },
+              {
+                "text": " R1 "
+              },
+              {
+                "footnoteReference": 1
+              },
+              {
+                "text": " R9 "
+              },
+              {
+                "footnoteReference": 9
+              },
+              {
+                "text": " R5b "
+              },
+              {
+                "footnoteReference": 5
+              }
+            ]
+          }
+        },
+        {
+          "paragraph": {
+            "children": [
+              {
+                "text": "EN "
+              },
+              {
+                "endnoteReference": 3
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ],
+  "footnotes": [
+    {
+      "id": 1,
+      "children": [
+        {
+          "paragraph": {
+            "style": "FootnoteText",
+            "children": [
+              {
+                "footnoteRef": true
+              },
+              {
+                "text": " note one"
+              }
+            ]
+          }
+        },
+        {
+          "paragraph": {
+            "children": [
+              {
+                "text": "para two"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "children": [
+        {
+          "paragraph": {
+            "style": "FootnoteText",
+            "children": [
+              {
+                "footnoteRef": true
+              },
+              {
+                "text": " note five"
+              }
+            ]
+          }
+        },
+        {
+          "table": {
+            "rows": [
+              {
+                "cells": [
+                  {
+                    "children": [
+                      {
+                        "paragraph": {
+                          "children": [
+                            {
+                              "text": "T1"
+                            }
+                          ]
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "children": [
+                      {
+                        "paragraph": {
+                          "children": [
+                            {
+                              "text": "T2"
+                            }
+                          ]
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "cells": [
+                  {
+                    "children": [
+                      {
+                        "paragraph": {
+                          "children": [
+                            {
+                              "text": "T3"
+                            }
+                          ]
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "children": [
+                      {
+                        "paragraph": {
+                          "children": [
+                            {
+                              "text": "T4"
+                            }
+                          ]
+                        }
+                      }
+                    ]
+                  }
+                ]
+              }
+            ],
+            "width": {
+              "size": 4000,
+              "type": "pct"
+            }
+          }
+        },
+        {
+          "paragraph": {
+            "children": [
+              {
+                "text": "after table "
+              },
+              {
+                "picture": {
+                  "type": "png",
+                  "data": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
+                  "transformation": {
+                    "width": "12px",
+                    "height": "12px"
+                  },
+                  "nonVisualProperties": {
+                    "name": "note-img"
+                  }
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": 9,
+      "children": [
+        {
+          "paragraph": {
+            "style": "FootnoteText",
+            "children": [
+              {
+                "footnoteRef": true
+              },
+              {
+                "text": " note nine"
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ],
+  "endnotes": [
+    {
+      "id": 3,
+      "children": [
+        {
+          "paragraph": {
+            "style": "EndnoteText",
+            "children": [
+              {
+                "endnoteRef": true
+              },
+              {
+                "text": " end three"
+              }
+            ]
+          }
+        },
+        {
+          "paragraph": {
+            "children": [
+              {
+                "text": "end para two"
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

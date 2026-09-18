@@ -1,0 +1,45 @@
+{
+  "description": "header and footer logo images, inherited by a linked section",
+  "xml": [
+    {
+      "part": "word/document.xml",
+      "contains": ["<w:headerReference", "<w:footerReference"]
+    },
+    {
+      "part": "word/header1.xml",
+      "contains": ["<a:blip", "<w:drawing>"]
+    },
+    {
+      "part": "word/footer1.xml",
+      "contains": ["<a:blip", "<w:drawing>"]
+    }
+  ],
+  "python": [
+    {
+      "path": "headers.header1.images",
+      "length": 1
+    },
+    {
+      "path": "footers.footer1.images",
+      "length": 1
+    },
+    {
+      "path": "media.count",
+      "truthy": true
+    },
+    {
+      "path": "danglingRels",
+      "equals": []
+    }
+  ],
+  "pdf": [
+    {
+      "page": 1,
+      "contains": ["ACME", "FOOT", "END"]
+    },
+    {
+      "page": 2,
+      "contains": ["ACME", "FOOT", "END"]
+    }
+  ]
+}

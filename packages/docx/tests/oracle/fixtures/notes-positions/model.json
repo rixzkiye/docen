@@ -1,0 +1,163 @@
+{
+  "sections": [
+    {
+      "properties": {
+        "pageSize": {
+          "width": 11906,
+          "height": 16838
+        },
+        "pageMargin": {
+          "top": 1440,
+          "bottom": 1440,
+          "left": 1800,
+          "right": 1800
+        },
+        "footnoteProperties": {
+          "pos": "beneathText"
+        },
+        "endnoteProperties": {
+          "pos": "sectEnd",
+          "formatType": "lowerRoman"
+        }
+      },
+      "children": [
+        {
+          "paragraph": {
+            "children": [
+              {
+                "text": "S1 "
+              },
+              {
+                "footnoteReference": 1
+              },
+              {
+                "text": " "
+              },
+              {
+                "endnoteReference": 1
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "properties": {
+        "pageSize": {
+          "width": 11906,
+          "height": 16838
+        },
+        "pageMargin": {
+          "top": 1440,
+          "bottom": 1440,
+          "left": 1800,
+          "right": 1800
+        },
+        "footnoteProperties": {
+          "pos": "pageBottom"
+        },
+        "endnoteProperties": {
+          "pos": "docEnd",
+          "formatType": "decimal"
+        },
+        "noEndnote": false
+      },
+      "children": [
+        {
+          "paragraph": {
+            "children": [
+              {
+                "text": "S2 "
+              },
+              {
+                "footnoteReference": 2
+              },
+              {
+                "text": " "
+              },
+              {
+                "endnoteReference": 2
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ],
+  "footnotes": [
+    {
+      "id": 1,
+      "children": [
+        {
+          "paragraph": {
+            "style": "FootnoteText",
+            "children": [
+              {
+                "footnoteRef": true
+              },
+              {
+                "text": " note one"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "children": [
+        {
+          "paragraph": {
+            "style": "FootnoteText",
+            "children": [
+              {
+                "footnoteRef": true
+              },
+              {
+                "text": " note two"
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ],
+  "endnotes": [
+    {
+      "id": 1,
+      "children": [
+        {
+          "paragraph": {
+            "style": "EndnoteText",
+            "children": [
+              {
+                "endnoteRef": true
+              },
+              {
+                "text": " end one"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "children": [
+        {
+          "paragraph": {
+            "style": "EndnoteText",
+            "children": [
+              {
+                "endnoteRef": true
+              },
+              {
+                "text": " end two"
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

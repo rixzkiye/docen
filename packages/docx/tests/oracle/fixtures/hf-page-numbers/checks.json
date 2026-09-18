@@ -1,0 +1,40 @@
+{
+  "description": "roman→arabic page numbering transition with an arabic restart (pgNumType per section)",
+  "xml": [
+    {
+      "part": "word/document.xml",
+      "contains": [
+        "<w:pgNumType w:start=\"1\" w:fmt=\"lowerRoman\"/>",
+        "<w:pgNumType w:start=\"5\" w:fmt=\"decimal\"/>"
+      ]
+    }
+  ],
+  "python": [
+    {
+      "path": "document.sections[0].pgNumType.format",
+      "equals": "lowerRoman"
+    },
+    {
+      "path": "document.sections[0].pgNumType.start",
+      "equals": 1
+    },
+    {
+      "path": "document.sections[1].pgNumType.format",
+      "equals": "decimal"
+    },
+    {
+      "path": "document.sections[1].pgNumType.start",
+      "equals": 5
+    }
+  ],
+  "pdf": [
+    {
+      "page": 1,
+      "regex": ["PAGE\\s+i\\s+END"]
+    },
+    {
+      "page": 2,
+      "regex": ["PAGE\\s+5\\s+END"]
+    }
+  ]
+}

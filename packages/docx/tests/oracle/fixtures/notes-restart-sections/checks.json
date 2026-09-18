@@ -1,0 +1,56 @@
+{
+  "description": "per-section footnote numbering: format/start/restart written on every sectPr",
+  "xml": [
+    {
+      "part": "word/document.xml",
+      "contains": [
+        "<w:footnotePr><w:numFmt w:val=\"upperRoman\"/><w:numStart w:val=\"1\"/><w:numRestart w:val=\"eachSect\"/></w:footnotePr>",
+        "<w:footnotePr><w:numFmt w:val=\"lowerLetter\"/><w:numStart w:val=\"3\"/><w:numRestart w:val=\"eachSect\"/></w:footnotePr>",
+        "<w:footnotePr><w:numFmt w:val=\"decimal\"/><w:numStart w:val=\"1\"/><w:numRestart w:val=\"continuous\"/></w:footnotePr>"
+      ]
+    }
+  ],
+  "python": [
+    {
+      "path": "document.sections",
+      "length": 3
+    },
+    {
+      "path": "document.sections[0].footnotePr.numRestart",
+      "equals": "eachSect"
+    },
+    {
+      "path": "document.sections[1].footnotePr.formatType",
+      "equals": "lowerLetter"
+    },
+    {
+      "path": "document.sections[1].footnotePr.numStart",
+      "equals": 3
+    },
+    {
+      "path": "document.sections[2].footnotePr.numRestart",
+      "equals": "continuous"
+    },
+    {
+      "path": "notes.footnotes.ids",
+      "equals": [1, 2, 3, 4, 5, 6]
+    }
+  ],
+  "pdf": [
+    {
+      "page": 1,
+      "contains": ["S1A", "S1B", "note 1", "note 2"],
+      "regex": ["S1A\\s*1\\s", "S1B\\s*2\\s"]
+    },
+    {
+      "page": 2,
+      "contains": ["S2A", "S2B", "note 3", "note 4"],
+      "regex": ["S2A\\s*3\\s"]
+    },
+    {
+      "page": 3,
+      "contains": ["S3A", "S3B", "note 5", "note 6"],
+      "regex": ["S3A\\s*5\\s"]
+    }
+  ]
+}
