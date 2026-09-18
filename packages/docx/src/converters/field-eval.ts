@@ -26,10 +26,12 @@
  */
 
 import { formatNumber } from "@docen/layout";
-import type { StylesOptions } from "@office-open/docx";
+import type { SectionPropertiesOptions, StylesOptions } from "@office-open/docx";
 
 import type { JSONContent } from "../core";
+import { parseLengthToTwips } from "../extensions/drawing-shape-layout";
 import { detectHeadingLevel, paragraphStyleNames } from "../extensions/paragraph";
+import { DOCEN_DEFAULT_PAGE_MARGIN, DOCEN_DEFAULT_PAGE_SIZE } from "./section-defaults";
 
 // ── Field instruction parsing (shared with the editor's update commands) ──
 
@@ -231,6 +233,14 @@ interface BookmarkRange {
 interface TocTarget {
   node: JSONContent;
   options: Record<string, unknown>;
+  /** Paragraph ordinal the TOC sits at — resolves its section geometry. */
+  paragraphIndex: number;
+}
+
+/** A `sectionProperties` marker: the paragraph that closes a section. */
+interface SectionMarker {
+  paragraphIndex: number;
+  properties: SectionPropertiesOptions | null;
 }
 
 interface WalkState {
@@ -243,11 +253,63 @@ interface WalkState {
   openBookmarks: Map<number, { name: string; text: string }>;
   bookmarkRanges: Map<string, BookmarkRange>;
   tocTargets: TocTarget[];
+  /** Section-closing paragraphs in walk order (ascending ordinals). */
+  sectionMarkers: SectionMarker[];
+  /** The final section's geometry (`doc.attrs.sectionProperties`). */
+  docSectionProperties: SectionPropertiesOptions | null;
   fieldIndex: number;
   /** Monotonic ordinal of the paragraph being walked (0-based). */
   paragraphIndex: number;
   /** Ordinal of the paragraph currently being walked, or -1 outside one. */
   activeParagraph: number;
+}
+
+/** True for a paragraph that carries OOXML section-close properties. */
+function sectionPropertiesOf(node: JSONContent): SectionPropertiesOptions | null {
+  const attrs = node.attrs as { sectionProperties?: unknown } | undefined;
+  const properties = attrs?.sectionProperties;
+  return properties && typeof properties === "object"
+    ? (properties as SectionPropertiesOptions)
+    : null;
+}
+
+/** The text-column width (twips) a TOC's right tab stop has to fit in. A
+ *  `w:pos` beyond the column makes LibreOffice render the leader but drop the
+ *  page-number run (visible when the TOC sits in a table cell); a missing page
+ *  size/margin falls back to the docen A4/1" defaults. */
+function contentWidthTwips(properties: SectionPropertiesOptions | null | undefined): number {
+  const pageSize = properties?.pageSize;
+  const margin = properties?.pageMargin;
+  // OOXML section lengths are twips as plain numbers; universal-measure
+  // strings (rare) parse with the unit they carry.
+  const twips = (value: number | string | undefined, fallback: number): number =>
+    typeof value === "number" ? value : (parseLengthToTwips(value, "twip") ?? fallback);
+  const width = twips(
+    pageSize && typeof pageSize === "object" ? pageSize.width : undefined,
+    DOCEN_DEFAULT_PAGE_SIZE.WIDTH,
+  );
+  const left = twips(
+    margin && typeof margin === "object" ? margin.left : undefined,
+    DOCEN_DEFAULT_PAGE_MARGIN.LEFT,
+  );
+  const right = twips(
+    margin && typeof margin === "object" ? margin.right : undefined,
+    DOCEN_DEFAULT_PAGE_MARGIN.RIGHT,
+  );
+  return Math.max(1, Math.round(width - left - right));
+}
+
+/** The section geometry a TOC at `paragraphIndex` lives in: the first section
+ *  marker at or after it closes that section; with no later marker the final
+ *  section's doc-level properties (or the defaults) apply. */
+function sectionPropertiesAt(
+  state: WalkState,
+  paragraphIndex: number,
+): SectionPropertiesOptions | null {
+  for (const marker of state.sectionMarkers) {
+    if (marker.paragraphIndex >= paragraphIndex) return marker.properties;
+  }
+  return state.docSectionProperties;
 }
 
 const paragraphTextOf = (node: JSONContent): string => {
@@ -414,7 +476,15 @@ function walk(
     return;
   }
   const paragraphIndex = type === "paragraph" ? state.paragraphIndex++ : -1;
-  if (paragraphIndex >= 0) state.activeParagraph = paragraphIndex;
+  if (paragraphIndex >= 0) {
+    state.activeParagraph = paragraphIndex;
+    if (node.attrs?.sectionProperties != null) {
+      state.sectionMarkers.push({
+        paragraphIndex,
+        properties: sectionPropertiesOf(node),
+      });
+    }
+  }
   if (!inTocEntry && type === "paragraph") {
     const attrs = (node.attrs ?? {}) as {
       heading?: string;
@@ -462,7 +532,13 @@ function walk(
   }
   if (type === "tocField") {
     const opts = (node.attrs?.options as Record<string, unknown> | undefined) ?? {};
-    state.tocTargets.push({ node, options: opts });
+    state.tocTargets.push({
+      node,
+      options: opts,
+      // Inside a paragraph, that paragraph's ordinal; at block level, the
+      // position after every paragraph walked so far.
+      paragraphIndex: state.activeParagraph >= 0 ? state.activeParagraph : state.paragraphIndex,
+    });
     // Entry paragraphs are cached results, not headings — but their fields
     // (PAGEREF page numbers) are still live and get patched.
     for (const child of node.content ?? []) {
@@ -624,6 +700,7 @@ function headingEntries(
   styles: StylesOptions | undefined,
   bookmarkRanges: Map<string, BookmarkRange>,
   tocPageOf: FieldCacheOptions["tocPageOf"],
+  tabPositionTw: number,
 ): JSONContent[] {
   const { min, max } = headingRangeOf(options.headingStyleRange);
   const customStyles = parseCustomStyles(
@@ -656,22 +733,28 @@ function headingEntries(
           ? undefined
           : tocPageOf?.({ index: heading.index, kind: "heading" }),
         options.alignPageNumbers === false,
+        tabPositionTw,
       ),
     );
   }
   return entries;
 }
 
+/** One cached TOC entry — `tabPositionTw` is the TOC's text-column width, so
+ *  the right-aligned page number lands on the margin instead of past it. */
 function tocEntry(
   style: string,
   text: string,
   level: number,
   page?: number,
   unaligned = false,
+  tabPositionTw = DOCEN_DEFAULT_PAGE_SIZE.WIDTH -
+    DOCEN_DEFAULT_PAGE_MARGIN.LEFT -
+    DOCEN_DEFAULT_PAGE_MARGIN.RIGHT,
 ): JSONContent {
   const attrs: Record<string, unknown> = {
     style,
-    tabStops: [{ type: "right", position: 9350, leader: "dot" }],
+    tabStops: [{ type: "right", position: tabPositionTw, leader: "dot" }],
   };
   if (level > 1) attrs.indent = { left: (level - 1) * 220 };
   const content: JSONContent[] = [{ type: "text", text }];
@@ -717,6 +800,10 @@ function fillTocs(
     const scope = tocBookmarkScope(target.options);
     const range = scope ? state.bookmarkRanges.get(scope) : undefined;
     if (scope && !range) continue;
+    // The right tab stop must fit the TOC's own section text column: a
+    // hardcoded Word Letter-default (9350 twips) overruns an A4/1" column
+    // (9026) and LibreOffice renders the leader without the page number.
+    const tabPositionTw = contentWidthTwips(sectionPropertiesAt(state, target.paragraphIndex));
     const entries = captionLabel
       ? state.captions
           .filter(
@@ -734,6 +821,7 @@ function fillTocs(
                 ? undefined
                 : options?.tocPageOf?.({ index: c.index, kind: "caption" }),
               target.options.alignPageNumbers === false,
+              tabPositionTw,
             ),
           )
       : headingEntries(
@@ -742,6 +830,7 @@ function fillTocs(
           styles,
           state.bookmarkRanges,
           options?.tocPageOf,
+          tabPositionTw,
         );
     if (entries.length === 0) continue;
     tocPatches.set(target.node, entries);
@@ -789,6 +878,10 @@ export function fillGeneratedFields(json: JSONContent, options?: FieldCacheOptio
     openBookmarks: new Map(),
     bookmarkRanges: new Map(),
     tocTargets: [],
+    sectionMarkers: [],
+    docSectionProperties:
+      ((json.attrs ?? {}) as { sectionProperties?: SectionPropertiesOptions }).sectionProperties ??
+      null,
     fieldIndex: 0,
     paragraphIndex: 0,
     activeParagraph: -1,
