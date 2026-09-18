@@ -109,6 +109,23 @@ export function parseShortcut(combo: string): {
     }
   }
 
+  // A bare modifier ("Alt") is a key press of that modifier itself, with no
+  // modifier bit set — CDP rejects a keydown with an empty `key`.
+  if (rawKey === "") {
+    if (modifiers === CDP_MODIFIERS.ALT) {
+      return { key: "Alt", code: "AltLeft", modifiers: 0, keyCode: 18 };
+    }
+    if (modifiers === CDP_MODIFIERS.CTRL) {
+      return { key: "Control", code: "ControlLeft", modifiers: 0, keyCode: 17 };
+    }
+    if (modifiers === CDP_MODIFIERS.SHIFT) {
+      return { key: "Shift", code: "ShiftLeft", modifiers: 0, keyCode: 16 };
+    }
+    if (modifiers === CDP_MODIFIERS.META) {
+      return { key: "Meta", code: "MetaLeft", modifiers: 0, keyCode: 91 };
+    }
+  }
+
   let key = rawKey.toUpperCase();
   let code = `Key${key}`;
   let keyCode = key.charCodeAt(0);
@@ -135,6 +152,9 @@ export function parseShortcut(combo: string): {
     del: { key: "Delete", code: "Delete", keyCode: 46 },
     backspace: { key: "Backspace", code: "Backspace", keyCode: 8 },
     insert: { key: "Insert", code: "Insert", keyCode: 45 },
+    alt: { key: "Alt", code: "AltLeft", keyCode: 18 },
+    shift: { key: "Shift", code: "ShiftLeft", keyCode: 16 },
+    control: { key: "Control", code: "ControlLeft", keyCode: 17 },
   };
   const fn = rawKey.match(/^f(\d{1,2})$/);
   if (named[rawKey]) {

@@ -68,6 +68,12 @@ describe("UX Interaction Harness (Headless Chromium + CDP)", () => {
       });
       expect(parseShortcut("Tab")).toMatchObject({ key: "Tab", keyCode: 9 });
     });
+
+    it("parses a bare modifier press as its own key", () => {
+      expect(parseShortcut("Alt")).toMatchObject({ key: "Alt", code: "AltLeft", modifiers: 0 });
+      expect(parseShortcut("Shift")).toMatchObject({ key: "Shift", modifiers: 0 });
+      expect(parseShortcut("Ctrl")).toMatchObject({ key: "Control", modifiers: 0 });
+    });
   });
 
   describe("Screenshot Diffing & Visual State Verification", () => {
