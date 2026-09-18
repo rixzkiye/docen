@@ -434,6 +434,41 @@ describe("notes schema order (w:pPr before w:r)", () => {
   });
 });
 
+describe("multi-section DocumentOptions resolve", () => {
+  it("keeps a propertyless section's break instead of merging it", () => {
+    const json = resolveDocument({
+      sections: [
+        { children: [{ paragraph: { children: ["one"] } }] },
+        { children: [{ paragraph: { children: ["two"] } }] },
+      ],
+    });
+    const first = json.content?.[0];
+    expect(first?.type).toBe("paragraph");
+    expect(first?.attrs?.sectionProperties).toEqual({});
+    const xml = new TextDecoder().decode(
+      unzipSync(generateDOCXSync(json, { prepare: false }) as Uint8Array)["word/document.xml"],
+    );
+    // One sectPr closing section one, one final sectPr.
+    expect([...xml.matchAll(/<w:sectPr/g)]).toHaveLength(2);
+  });
+
+  it("carries a section's pageNumberType through to w:pgNumType", () => {
+    const json = resolveDocument({
+      sections: [
+        { children: [{ paragraph: { children: ["one"] } }] },
+        {
+          properties: { pageNumberType: { start: 5 } },
+          children: [{ paragraph: { children: ["two"] } }],
+        },
+      ],
+    });
+    const xml = new TextDecoder().decode(
+      unzipSync(generateDOCXSync(json, { prepare: false }) as Uint8Array)["word/document.xml"],
+    );
+    expect(xml).toContain('<w:pgNumType w:start="5"/>');
+  });
+});
+
 describe("embedded-font relationship escaping", () => {
   /**
    * A relationship Target is a URI: a font family name with spaces, `&`, `"`,

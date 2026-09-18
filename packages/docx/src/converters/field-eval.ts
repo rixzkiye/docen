@@ -29,7 +29,7 @@ import { formatNumber } from "@docen/layout";
 import type { StylesOptions } from "@office-open/docx";
 
 import type { JSONContent } from "../core";
-import { detectHeadingLevel } from "../extensions/paragraph";
+import { detectHeadingLevel, paragraphStyleNames } from "../extensions/paragraph";
 
 // ── Field instruction parsing (shared with the editor's update commands) ──
 
@@ -192,11 +192,20 @@ export interface FieldCacheOptions {
   /** 1-based section number / pages in that section, for SECTION(PAGES). */
   sectionOf?: (field: { index: number; instruction: string }) => number | undefined;
   sectionPages?: number;
+  /** 1-based displayed page for the generated TOC entry at `index`
+   *  (document-order collection index per `kind`). Only consulted for a TOC
+   *  whose cached entries are missing — a non-empty TOC is never recomputed.
+   *  Absent (or undefined for one entry) = the entry keeps Word's empty
+   *  page-number slot; Word/LibreOffice fill it on update. */
+  tocPageOf?: (entry: { index: number; kind: "heading" | "caption" }) => number | undefined;
 }
 
 interface HeadingEntry {
-  /** Detected heading level, or null when only a `\t` custom style matches. */
-  level: number | null;
+  /** Collection index (document order across every heading candidate) — the
+   *  key `tocPageOf` addresses this entry by. */
+  index: number;
+  /** Walk-assigned paragraph ordinal — `\b` scope membership compares this. */
+  paragraphIndex: number;
   style: string | undefined;
   heading: string | undefined;
   outlineLevel: number | undefined;
@@ -204,8 +213,19 @@ interface HeadingEntry {
 }
 
 interface CaptionEntry {
+  /** Collection index across captions, parallel to {@link HeadingEntry.index}. */
+  index: number;
+  paragraphIndex: number;
   label: string;
   text: string;
+}
+
+/** The paragraph-ordinal span a `\b` bookmark covers (inclusive). Paragraph
+ *  granularity is Word's: a heading paragraph the bookmark merely touches is
+ *  inside the scope. */
+interface BookmarkRange {
+  start: number;
+  end: number | null;
 }
 
 interface TocTarget {
@@ -221,8 +241,13 @@ interface WalkState {
   captions: CaptionEntry[];
   bookmarks: Map<string, string>;
   openBookmarks: Map<number, { name: string; text: string }>;
+  bookmarkRanges: Map<string, BookmarkRange>;
   tocTargets: TocTarget[];
   fieldIndex: number;
+  /** Monotonic ordinal of the paragraph being walked (0-based). */
+  paragraphIndex: number;
+  /** Ordinal of the paragraph currently being walked, or -1 outside one. */
+  activeParagraph: number;
 }
 
 const paragraphTextOf = (node: JSONContent): string => {
@@ -260,29 +285,68 @@ function headingRangeOf(range: unknown): { min: number; max: number } {
   return min >= 1 && max >= min && max <= 9 ? { min, max } : { min: 1, max: 3 };
 }
 
-/** `\t` switch custom styles mapping ("MyHeader,1" or `{ MyHeader: 1 }`). */
-export function parseCustomStyles(raw: unknown): Map<string, number> {
-  const map = new Map<string, number>();
-  if (!raw) return map;
-  if (typeof raw === "object" && raw !== null && !Array.isArray(raw)) {
-    for (const [k, v] of Object.entries(raw)) {
-      const num = Number(v);
-      if (num >= 1 && num <= 9) map.set(k.toLowerCase(), num);
+/** The `\t` switch's style → level pairs in every shape the model carries them:
+ *  office-open's parsed `stylesWithLevels` (`StyleLevel[]`, `{styleName,level}`),
+ *  the editor dialog's string ("MyHeader,1,Other,2"), or a name→level map.
+ *  Ordered as written, duplicates dropped (first wins). */
+export function styleLevelsOf(raw: unknown): Array<{ styleName: string; level: number }> {
+  const out: Array<{ styleName: string; level: number }> = [];
+  const seen = new Set<string>();
+  const push = (styleName: unknown, level: unknown): void => {
+    if (typeof styleName !== "string" || !styleName) return;
+    const num = Number(level);
+    if (!Number.isInteger(num) || num < 1 || num > 9) return;
+    const key = styleName.toLowerCase();
+    if (seen.has(key)) return;
+    seen.add(key);
+    out.push({ styleName, level: num });
+  };
+  if (Array.isArray(raw)) {
+    for (const entry of raw) {
+      if (!entry || typeof entry !== "object") continue;
+      const { styleName, name, level } = entry as {
+        styleName?: unknown;
+        name?: unknown;
+        level?: unknown;
+      };
+      push(styleName ?? name, level);
     }
-    return map;
+    return out;
+  }
+  if (typeof raw === "object" && raw !== null) {
+    for (const [name, level] of Object.entries(raw)) push(name, level);
+    return out;
   }
   if (typeof raw === "string") {
     const parts = raw
       .split(/[,;]/)
       .map((s) => s.trim())
       .filter(Boolean);
-    for (let i = 0; i < parts.length; i += 2) {
-      const name = parts[i];
-      const lvl = Number(parts[i + 1]);
-      if (name && lvl >= 1 && lvl <= 9) map.set(name.toLowerCase(), lvl);
-    }
+    for (let i = 0; i + 1 < parts.length; i += 2) push(parts[i], parts[i + 1]);
   }
+  return out;
+}
+
+/** `\t` switch custom styles mapping ("MyHeader,1", `{ MyHeader: 1 }`, or the
+ *  parsed `stylesWithLevels` array). */
+export function parseCustomStyles(raw: unknown): Map<string, number> {
+  const map = new Map<string, number>();
+  for (const { styleName, level } of styleLevelsOf(raw)) map.set(styleName.toLowerCase(), level);
   return map;
+}
+
+/** The `\t` level for a paragraph style: matched against the style's id and
+ *  every resolved name in its `basedOn` chain (a `\t` switch lists names). */
+function customStyleLevel(
+  customStyles: Map<string, number>,
+  styles: StylesOptions | undefined,
+  styleId: string | undefined,
+): number | undefined {
+  for (const name of paragraphStyleNames(styles, styleId)) {
+    const level = customStyles.get(name);
+    if (level != null) return level;
+  }
+  return undefined;
 }
 
 /** The caption settings' label → separator characters (w:caption@w:sep). */
@@ -301,19 +365,26 @@ function captionSeparatorsOf(root: JSONContent): Map<string, string> {
   return out;
 }
 
+/** The SEQ label a field atom's `data` counts in, or null (shared with the
+ *  editor's caption scans, whose PM nodes carry the same serialized branch). */
+export function seqLabelOfData(data: string): string | null {
+  try {
+    const ref = fieldRef(JSON.parse(data) as Record<string, unknown>);
+    const m = /^SEQ\s+(\S+)/.exec(ref?.instruction?.trim() ?? "");
+    return m ? m[1]! : null;
+  } catch {
+    return null;
+  }
+}
+
 /** The SEQ label a paragraph's caption fields count in (first SEQ field). */
 function seqLabelOf(node: JSONContent): string | null {
   for (const child of node.content ?? []) {
     if (child.type !== "inlinePassthrough") continue;
     const data = child.attrs?.data;
     if (typeof data !== "string") continue;
-    try {
-      const ref = fieldRef(JSON.parse(data) as Record<string, unknown>);
-      const m = /^SEQ\s+(\S+)/.exec(ref?.instruction?.trim() ?? "");
-      if (m) return m[1]!;
-    } catch {
-      /* opaque payload */
-    }
+    const label = seqLabelOfData(data);
+    if (label) return label;
   }
   return null;
 }
@@ -342,12 +413,18 @@ function walk(
     }
     return;
   }
+  const paragraphIndex = type === "paragraph" ? state.paragraphIndex++ : -1;
+  if (paragraphIndex >= 0) state.activeParagraph = paragraphIndex;
   if (!inTocEntry && type === "paragraph") {
     const attrs = (node.attrs ?? {}) as {
       heading?: string;
       style?: string;
       outlineLevel?: number;
     };
+    // Heading candidates: paragraphs a heading style/outline level marks, plus
+    // every explicitly styled paragraph — a TOC's `\t` switch can map an
+    // arbitrary style name, and the switch is only known per target (collected
+    // here, filtered in `headingEntries`).
     const level = detectHeadingLevel(
       {
         heading: attrs.heading ?? undefined,
@@ -356,14 +433,17 @@ function walk(
       },
       styles,
     );
-    if (level != null) {
-      state.chapterCounts[level] = (state.chapterCounts[level] ?? 0) + 1;
-      for (let l = level + 1; l <= 9; l++) state.chapterCounts[l] = 0;
-      for (const [label, resetLevel] of state.resetLevels) {
-        if (resetLevel >= level) state.counts.delete(label);
+    if (level != null || (typeof attrs.style === "string" && attrs.style !== "")) {
+      if (level != null) {
+        state.chapterCounts[level] = (state.chapterCounts[level] ?? 0) + 1;
+        for (let l = level + 1; l <= 9; l++) state.chapterCounts[l] = 0;
+        for (const [label, resetLevel] of state.resetLevels) {
+          if (resetLevel >= level) state.counts.delete(label);
+        }
       }
       state.headings.push({
-        level,
+        index: state.headings.length,
+        paragraphIndex,
         style: attrs.style,
         heading: attrs.heading,
         outlineLevel: attrs.outlineLevel,
@@ -371,7 +451,14 @@ function walk(
       });
     }
     const seqLabel = attrs.style === "Caption" ? seqLabelOf(node) : null;
-    if (seqLabel) state.captions.push({ label: seqLabel, text: paragraphTextOf(node) });
+    if (seqLabel) {
+      state.captions.push({
+        index: state.captions.length,
+        paragraphIndex,
+        label: seqLabel,
+        text: paragraphTextOf(node),
+      });
+    }
   }
   if (type === "tocField") {
     const opts = (node.attrs?.options as Record<string, unknown> | undefined) ?? {};
@@ -386,6 +473,7 @@ function walk(
   for (const child of node.content ?? []) {
     walk(child, state, patches, styles, options, captionSeparators, inTocEntry);
   }
+  if (paragraphIndex >= 0) state.activeParagraph = -1;
 }
 
 /** One passthrough atom: field, bookmark marker, or neither. */
@@ -408,16 +496,31 @@ function handlePassthrough(
   if (start && typeof start === "object") {
     const id = typeof start.id === "number" ? start.id : -1;
     const name = typeof start.name === "string" ? start.name : "";
-    if (name) state.openBookmarks.set(id, { name, text: "" });
+    if (name) {
+      state.openBookmarks.set(id, { name, text: "" });
+      // First range wins: bookmark names are unique in Word. The current
+      // paragraph ordinal (not the candidate count) makes a bookmark that
+      // starts inside a heading's paragraph include that heading.
+      if (!state.bookmarkRanges.has(name)) {
+        state.bookmarkRanges.set(name, {
+          start: state.activeParagraph >= 0 ? state.activeParagraph : state.paragraphIndex,
+          end: null,
+        });
+      }
+    }
     return;
   }
-  const end = branch.bookmarkEnd as { id?: unknown } | undefined;
+  const end = branch.bookmarkEnd as { id?: unknown; name?: unknown } | undefined;
   if (end && typeof end === "object") {
     const id = typeof end.id === "number" ? end.id : -1;
     const open = state.openBookmarks.get(id);
     if (open) {
       state.bookmarks.set(open.name, open.text);
       state.openBookmarks.delete(id);
+      const range = state.bookmarkRanges.get(open.name);
+      if (range) {
+        range.end ??= state.activeParagraph >= 0 ? state.activeParagraph : state.paragraphIndex;
+      }
     }
     // A block bookmark whose end arrives without its start (a split range):
     // nothing to close.
@@ -495,21 +598,46 @@ function evaluateGeneratedField(
   }
 }
 
+/** The `\b` scope of a TOC's options: the Word-faithful `entriesFromBookmark`
+ *  key plus the legacy editor `bookmark` one. */
+function tocBookmarkScope(options: Record<string, unknown>): string | undefined {
+  for (const key of ["entriesFromBookmark", "bookmark"] as const) {
+    const value = options[key];
+    if (typeof value === "string" && value !== "") return value;
+  }
+  return undefined;
+}
+
+/** True when the entry's paragraph falls inside the bookmark's span. A range
+ *  that never closed runs to the end of the document (Word's behavior). */
+function inBookmarkRange(range: BookmarkRange | undefined, paragraphIndex: number): boolean {
+  if (!range) return false;
+  return paragraphIndex >= range.start && (range.end == null || paragraphIndex <= range.end);
+}
+
 /** Entry paragraphs for a heading TOC — Word's TOC1-3 shape: the heading text
- *  on a right-leader tab (the page number is unknown at generation; Word/LO
- *  fill it on update). */
+ *  on a right-leader tab, the caller's page number when a `tocPageOf` context
+ *  knows it (Word/LO fill a missing one on update). */
 function headingEntries(
   headings: HeadingEntry[],
   options: Record<string, unknown>,
   styles: StylesOptions | undefined,
+  bookmarkRanges: Map<string, BookmarkRange>,
+  tocPageOf: FieldCacheOptions["tocPageOf"],
 ): JSONContent[] {
   const { min, max } = headingRangeOf(options.headingStyleRange);
-  const customStyles = parseCustomStyles(options.styles ?? options.customStyles);
+  const customStyles = parseCustomStyles(
+    options.styles ?? options.customStyles ?? options.stylesWithLevels,
+  );
   const useOutline = options.useAppliedParagraphOutlineLevel !== false;
+  const scope = tocBookmarkScope(options);
+  const range = scope ? bookmarkRanges.get(scope) : undefined;
+  if (scope && !range) return [];
   const entries: JSONContent[] = [];
   for (const heading of headings) {
+    if (scope && !inBookmarkRange(range, heading.paragraphIndex)) continue;
     const level =
-      customStyles.get((heading.style ?? "").toLowerCase()) ??
+      customStyleLevel(customStyles, styles, heading.style) ??
       detectHeadingLevel(
         {
           heading: heading.heading,
@@ -517,25 +645,42 @@ function headingEntries(
           outlineLevel: useOutline ? heading.outlineLevel : undefined,
         },
         styles,
-      ) ??
-      heading.level;
+      );
     if (level == null || level < min || level > max || heading.text === "") continue;
-    entries.push(tocEntry("TOC" + level, heading.text, level));
+    entries.push(
+      tocEntry(
+        "TOC" + level,
+        heading.text,
+        level,
+        options.showPageNumbers === false
+          ? undefined
+          : tocPageOf?.({ index: heading.index, kind: "heading" }),
+        options.alignPageNumbers === false,
+      ),
+    );
   }
   return entries;
 }
 
-function tocEntry(style: string, text: string, level: number): JSONContent {
+function tocEntry(
+  style: string,
+  text: string,
+  level: number,
+  page?: number,
+  unaligned = false,
+): JSONContent {
   const attrs: Record<string, unknown> = {
     style,
     tabStops: [{ type: "right", position: 9350, leader: "dot" }],
   };
   if (level > 1) attrs.indent = { left: (level - 1) * 220 };
-  return {
-    type: "paragraph",
-    attrs,
-    content: [{ type: "text", text }, { type: "tab" }],
-  };
+  const content: JSONContent[] = [{ type: "text", text }];
+  if (page != null && unaligned) content.push({ type: "text", text: ` ${page}` });
+  else {
+    content.push({ type: "tab" });
+    if (page != null) content.push({ type: "text", text: String(page) });
+  }
+  return { type: "paragraph", attrs, content };
 }
 
 /** True when a tocField's cached entries are missing (the placeholder shape a
@@ -557,16 +702,47 @@ function fillTocs(
   state: WalkState,
   styles: StylesOptions | undefined,
   tocPatches: Map<object, JSONContent[]>,
+  options: FieldCacheOptions | undefined,
 ): void {
   for (const target of state.tocTargets) {
     if (!tocCacheEmpty(target.node)) continue;
+    // A `\c` table of figures carries the parsed `captionLabelIncludingNumbers`
+    // key; the editor's own command historically stamped `captionLabel`.
     const captionLabel =
-      typeof target.options.captionLabel === "string" ? target.options.captionLabel : null;
+      typeof target.options.captionLabelIncludingNumbers === "string"
+        ? target.options.captionLabelIncludingNumbers
+        : typeof target.options.captionLabel === "string"
+          ? target.options.captionLabel
+          : null;
+    const scope = tocBookmarkScope(target.options);
+    const range = scope ? state.bookmarkRanges.get(scope) : undefined;
+    if (scope && !range) continue;
     const entries = captionLabel
       ? state.captions
-          .filter((c) => c.label === captionLabel && c.text !== "")
-          .map((c) => tocEntry("TOC1", c.text, 1))
-      : headingEntries(state.headings, target.options, styles);
+          .filter(
+            (c) =>
+              c.label === captionLabel &&
+              c.text !== "" &&
+              (!scope || inBookmarkRange(range, c.paragraphIndex)),
+          )
+          .map((c) =>
+            tocEntry(
+              "TOC1",
+              c.text,
+              1,
+              target.options.showPageNumbers === false
+                ? undefined
+                : options?.tocPageOf?.({ index: c.index, kind: "caption" }),
+              target.options.alignPageNumbers === false,
+            ),
+          )
+      : headingEntries(
+          state.headings,
+          target.options,
+          styles,
+          state.bookmarkRanges,
+          options?.tocPageOf,
+        );
     if (entries.length === 0) continue;
     tocPatches.set(target.node, entries);
   }
@@ -611,8 +787,11 @@ export function fillGeneratedFields(json: JSONContent, options?: FieldCacheOptio
     captions: [],
     bookmarks: new Map(),
     openBookmarks: new Map(),
+    bookmarkRanges: new Map(),
     tocTargets: [],
     fieldIndex: 0,
+    paragraphIndex: 0,
+    activeParagraph: -1,
   };
   const fieldPatches = new Map<object, string>();
   const tocPatches = new Map<object, JSONContent[]>();
@@ -624,7 +803,7 @@ export function fillGeneratedFields(json: JSONContent, options?: FieldCacheOptio
   const forwardPatches = new Map<object, string>();
   evaluateDeferredRefs(json, state, forwardPatches);
   for (const [node, data] of forwardPatches) fieldPatches.set(node, data);
-  fillTocs(state, styles, tocPatches);
+  fillTocs(state, styles, tocPatches, options);
   if (fieldPatches.size === 0 && tocPatches.size === 0) return json;
   return applyPatches(json, fieldPatches, tocPatches);
 }

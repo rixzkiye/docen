@@ -1,0 +1,84 @@
+{
+  "type": "doc",
+  "content": [
+    {
+      "type": "paragraph",
+      "attrs": {
+        "heading": "Heading1"
+      },
+      "content": [
+        {
+          "type": "text",
+          "text": "Before"
+        }
+      ]
+    },
+    {
+      "type": "paragraph",
+      "attrs": {
+        "heading": "Heading1"
+      },
+      "content": [
+        {
+          "type": "inlinePassthrough",
+          "attrs": {
+            "data": "{\"bookmarkStart\":{\"id\":1,\"name\":\"Scope\"}}"
+          }
+        },
+        {
+          "type": "text",
+          "text": "Inside A"
+        }
+      ]
+    },
+    {
+      "type": "paragraph",
+      "attrs": {
+        "heading": "Heading2"
+      },
+      "content": [
+        {
+          "type": "text",
+          "text": "Inside B"
+        }
+      ]
+    },
+    {
+      "type": "paragraph",
+      "content": [
+        {
+          "type": "inlinePassthrough",
+          "attrs": {
+            "data": "{\"bookmarkEnd\":{\"id\":1}}"
+          }
+        }
+      ]
+    },
+    {
+      "type": "paragraph",
+      "attrs": {
+        "heading": "Heading1"
+      },
+      "content": [
+        {
+          "type": "text",
+          "text": "After"
+        }
+      ]
+    },
+    {
+      "type": "tocField",
+      "attrs": {
+        "options": {
+          "headingStyleRange": "1-3",
+          "entriesFromBookmark": "Scope"
+        }
+      },
+      "content": [
+        {
+          "type": "paragraph"
+        }
+      ]
+    }
+  ]
+}

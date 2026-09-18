@@ -1,0 +1,68 @@
+{
+  "type": "doc",
+  "content": [
+    {
+      "type": "paragraph",
+      "attrs": {
+        "heading": "Heading1"
+      },
+      "content": [
+        {
+          "type": "text",
+          "text": "New Heading"
+        }
+      ]
+    },
+    {
+      "type": "tocField",
+      "attrs": {
+        "options": {
+          "headingStyleRange": "1-3"
+        }
+      },
+      "content": [
+        {
+          "type": "paragraph",
+          "attrs": {
+            "style": "TOC1"
+          },
+          "content": [
+            {
+              "type": "text",
+              "text": "Existing entry"
+            },
+            {
+              "type": "tab"
+            },
+            {
+              "type": "text",
+              "text": "7"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "tocField",
+      "attrs": {
+        "options": {
+          "captionLabelIncludingNumbers": "Figure"
+        }
+      },
+      "content": [
+        {
+          "type": "paragraph",
+          "attrs": {
+            "style": "TOC1"
+          },
+          "content": [
+            {
+              "type": "text",
+              "text": "Figure 9: preserved"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -633,7 +633,11 @@ export class DocxManager {
       const sectionContent = this.resolveSectionChildren(section.children ?? []);
       if (i < lastIndex) {
         const sectAttrs: Record<string, unknown> = {
-          sectionProperties: section.properties ?? null,
+          // A propertyless non-final section still IS a section break (an
+          // empty sectPr inherits the defaults); compile closes the section
+          // only for a non-null marker, so stamp `{}` rather than null or the
+          // break — and the whole section — silently merges into the next.
+          sectionProperties: section.properties ?? {},
           sectionHeaders: this.resolveHeaderFooter(section.headers),
           sectionFooters: this.resolveHeaderFooter(section.footers),
         };
@@ -712,7 +716,16 @@ export class DocxManager {
           if (!compiled) continue;
           pushAll(entries, compiled);
         }
-        return { toc: { ...options, entries } };
+        // The block+ schema's placeholder paragraph is not a rendered entry.
+        // Hand office-open the no-entries shape instead: it emits the dirty
+        // field head/end pair (which Word/LibreOffice update on open), while an
+        // empty paragraph stringifies as a self-closing <w:p/> that
+        // injectFieldHead cannot carry the field runs into — dropping the
+        // field instruction entirely.
+        const hasRenderedEntry = (node.content ?? []).some(
+          (child) => child.type !== "paragraph" || (child.content?.length ?? 0) > 0,
+        );
+        return { toc: hasRenderedEntry ? { ...options, entries } : { ...options } };
       }
       case "sdtBlock": {
         // Content-control container (reverse of the sdt block rule): children

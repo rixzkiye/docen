@@ -77,6 +77,8 @@ export {
   parseFieldInstruction,
   fieldRef,
   parseCustomStyles,
+  styleLevelsOf,
+  seqLabelOfData,
   formatSeqNumber,
   seqChapterLevel,
   SEQ_NUMBER_FORMATS,
