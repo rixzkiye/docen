@@ -2775,16 +2775,12 @@ export const DocumentCommands = Extension.create({
           demoteHeadingAtCaret(editor, tr),
       "move-block-up":
         () =>
-        ({ editor, tr }) => {
-          if (editor.commands["move-row-up"]?.()) return true;
-          return moveBlockUp(editor, tr);
-        },
+        ({ editor, tr }) =>
+          moveBlockUp(editor, tr),
       "move-block-down":
         () =>
-        ({ editor, tr }) => {
-          if (editor.commands["move-row-down"]?.()) return true;
-          return moveBlockDown(editor, tr);
-        },
+        ({ editor, tr }) =>
+          moveBlockDown(editor, tr),
       "font-dialog":
         () =>
         ({ editor }) => {

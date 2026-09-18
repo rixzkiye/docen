@@ -93,10 +93,10 @@ export const KEYBOARD_SHORTCUTS: Readonly<Record<string, string>> = {
   "Alt-Shift-Left": "promote-heading",
   "Alt-Shift-ArrowRight": "demote-heading",
   "Alt-Shift-Right": "demote-heading",
-  "Alt-Shift-ArrowUp": "move-block-up",
-  "Alt-Shift-Up": "move-block-up",
-  "Alt-Shift-ArrowDown": "move-block-down",
-  "Alt-Shift-Down": "move-block-down",
+  "Alt-Shift-ArrowUp": "move-row-up",
+  "Alt-Shift-Up": "move-row-up",
+  "Alt-Shift-ArrowDown": "move-row-down",
+  "Alt-Shift-Down": "move-row-down",
 
   // Function keys (W4.3)
   F3: "autotext-f3",
