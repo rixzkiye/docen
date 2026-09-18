@@ -12,6 +12,8 @@ import {
 import { Box, Ellipse, Group, Path as LeaferPath, Rect, type IGroup } from "leafer-ui";
 
 import { paintBlock } from "../painter";
+import { paint3DModelMember, paintInkMember } from "./3d-ink";
+export { paint3DModelMember, paintInkMember };
 import { paintChartMember } from "./chart";
 import type { DrawingHitBox, PaintColumn, PaintContext } from "./context";
 import { paintFrameTable } from "./frame-table";
@@ -372,6 +374,10 @@ export function paintMembers(
       );
     } else if (m.kind === "table") {
       paintFrameTable(tree, { ...m, x: mx, y: my }, mctx);
+    } else if (m.kind === "model3d") {
+      paint3DModelMember(tree, { ...m, x: mx, y: my });
+    } else if (m.kind === "ink") {
+      paintInkMember(tree, { ...m, x: mx, y: my });
     } else if (m.kind === "shape") {
       paintShapeBox(tree, { ...m, x: mx, y: my }, false);
     } else {

@@ -254,6 +254,9 @@ export const documentTemplate = html`
     >
       <docen-a11y-checker-pane></docen-a11y-checker-pane>
     </docen-task-pane>
+    <docen-task-pane slot="task-pane-end" position="end" part="alt-text-pane" title="Alt Text">
+      <docen-alt-text-pane></docen-alt-text-pane>
+    </docen-task-pane>
     <docen-status-bar slot="status" part="status"></docen-status-bar>
   </docen-workspace>
   <!-- The edit bridge's textarea lives here, at the shadow root: inside the

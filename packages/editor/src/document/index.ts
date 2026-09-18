@@ -91,6 +91,7 @@ import { CanvasStage, type CanvasStageSection, type LaidFurnitureSection } from 
 import "./components/format-pane";
 import "./components/outline";
 import "./components/styles-pane";
+import "../ui/components/workspace/alt-text-pane";
 import { documentStyles, documentTemplate } from "./chrome";
 import { ClipboardCommands } from "./commands/clipboard";
 import { CommentsCommands } from "./commands/comments";
@@ -230,7 +231,8 @@ export type TaskPaneId =
   | "styles"
   | "reveal"
   | "restrict"
-  | "a11y";
+  | "a11y"
+  | "altText";
 
 /**
  * Visibility mode values, matching `Office.VisibilityMode` (`taskpane` | `hidden`).
@@ -360,6 +362,7 @@ class DocenDocument extends AddinHost<Editor> {
     caretLanguage: () => this.#caretLanguage(),
     taskpaneOpen: (id) => this.getTaskpaneState(id),
     updateReveal: () => this.#updateRevealFormatting(),
+    updateAltText: () => this.#syncAltTextPane(),
     setView: (view) => this.setAttribute("view", view),
     emitZoom: (zoom) =>
       this.dispatchEvent(
@@ -2310,6 +2313,19 @@ class DocenDocument extends AddinHost<Editor> {
         (this.shadowRoot?.querySelector("docen-a11y-checker-pane") as any)?.check(this.getJSON());
       },
     );
+    const altTextPane = this.shadowRoot!.querySelector("docen-alt-text-pane");
+    altTextPane?.addEventListener("alt-text:change", ((e: CustomEvent) => {
+      const detail = e.detail;
+      if (detail && this.editor) {
+        (this.editor.commands as any)["drawing-alt-text"]?.(detail);
+      }
+    }) as EventListener);
+    altTextPane?.addEventListener("alt-text:apply", ((e: CustomEvent) => {
+      const detail = e.detail;
+      if (detail && this.editor) {
+        (this.editor.commands as any)["drawing-alt-text"]?.(detail);
+      }
+    }) as EventListener);
     this.shadowRoot!.querySelector("docen-sdt-dialog")?.addEventListener(
       "sdt-dialog:ok",
       this.#onSdtDialogOk as EventListener,
@@ -4310,6 +4326,50 @@ class DocenDocument extends AddinHost<Editor> {
     pane.setFormatting?.(formattingInfoOf(editor));
   }
 
+  #syncAltTextPane(): void {
+    const pane = this.shadowRoot?.querySelector("docen-alt-text-pane") as {
+      setTarget?(target: { kind?: string; title?: string; descr?: string } | null): void;
+    } | null;
+    if (!pane || !this.getTaskpaneState("altText")) return;
+    const editor = this.#bridge?.activeEditor() ?? this.editor;
+    if (!editor) {
+      pane.setTarget?.(null);
+      return;
+    }
+    const sel = editor.state.selection;
+    if (sel instanceof NodeSelection) {
+      const node = sel.node;
+      const attrs = node.attrs as Record<string, unknown>;
+      const kind = node.type.name;
+      if (kind === "model3d" || kind === "ink") {
+        pane.setTarget?.({
+          kind,
+          title: (attrs.title as string) ?? "",
+          descr: (attrs.descr as string) ?? "",
+        });
+        return;
+      }
+      if (kind === "image") {
+        pane.setTarget?.({
+          kind,
+          title: (attrs.name as string) ?? "",
+          descr: (attrs.title as string) ?? "",
+        });
+        return;
+      }
+      if (kind === "wpsShape" || kind === "wpgGroup" || kind === "chart") {
+        const payload = (attrs[kind] ?? {}) as Record<string, unknown>;
+        pane.setTarget?.({
+          kind,
+          title: (payload.title as string) ?? "",
+          descr: (payload.descr as string) ?? "",
+        });
+        return;
+      }
+    }
+    pane.setTarget?.(null);
+  }
+
   readonly #onRevealCompareToggle = (event: CustomEvent<{ enabled?: boolean }>): void => {
     const pane = this.shadowRoot?.querySelector("docen-reveal-formatting-pane") as {
       setComparison?(reference: FormattingInfo | null): void;
@@ -5590,7 +5650,9 @@ class DocenDocument extends AddinHost<Editor> {
                         ? "restrict-pane"
                         : id === "a11y"
                           ? "a11y-pane"
-                          : "props-pane";
+                          : id === "altText"
+                            ? "alt-text-pane"
+                            : "props-pane";
     return this.shadowRoot?.querySelector(`docen-task-pane[part="${part}"]`) as
       | (HTMLElement & { open: boolean })
       | null;
@@ -5617,6 +5679,8 @@ class DocenDocument extends AddinHost<Editor> {
     if (open) {
       if (id === "a11y") {
         (this.shadowRoot?.querySelector("docen-a11y-checker-pane") as any)?.check(this.getJSON());
+      } else if (id === "altText") {
+        this.#syncAltTextPane();
       } else if (id === "reveal") {
         this.#updateRevealFormatting();
       } else if (id === "proofing") {
