@@ -69,3 +69,4 @@ export { DocenDropCapDialog } from "./dropcap-dialog";
 export { DocenMergeRecipientsDialog } from "./merge-recipients-dialog";
 export { DocenVersionHistoryDialog } from "./version-history-dialog";
 export { DocenA11yCheckerPane } from "./a11y-checker-pane";
+export { DocenMiniToolbar, default as DocenMiniToolbarDefault } from "./mini-toolbar";

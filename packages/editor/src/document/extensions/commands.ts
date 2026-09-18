@@ -233,6 +233,8 @@ declare module "@tiptap/core" {
       "new-style": (def?: NewStyleDefinition) => ReturnType;
       "style-set": (value?: string) => ReturnType;
       "add-text": (value?: string) => ReturnType;
+      translate: (value?: string) => ReturnType;
+      "toggle-ribbon-minimized": () => ReturnType;
       // Editing
       "change-case": (mode?: string) => ReturnType;
       sort: () => ReturnType;
@@ -468,6 +470,11 @@ export const WIRED_DISPATCH: ReadonlySet<string> = new Set([
   "reject-change",
   "previous-change",
   "next-change",
+  "toggle-ribbon-minimized",
+  "translate",
+  "paragraph-dialog-apply",
+  "paragraph-dialog-default",
+  "table-properties-apply",
 ]);
 
 /**
@@ -2465,6 +2472,12 @@ export const DocumentCommands = Extension.create({
   name: "documentCommands",
   addCommands() {
     return {
+      "toggle-ribbon-minimized": () => () => {
+        return true;
+      },
+      translate: () => () => {
+        return true;
+      },
       // ── Font marks — wrap the built-in Tiptap toggles ──
       bold:
         () =>
