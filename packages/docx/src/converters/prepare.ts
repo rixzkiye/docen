@@ -103,6 +103,63 @@ export function prepareImages(policy?: PrepareImagesPolicy): PrepareStep {
   };
 }
 
+// ── Direct fetch (explicit UI actions) ──
+
+/**
+ * Fetch one image for an explicit, user-initiated action (Insert → Online
+ * Pictures). Unlike {@link prepareImages} — a batch policy for untrusted
+ * documents that requires a host allowlist — this runs on an explicit user
+ * action, so `http(s)` is allowed without a host list while the same scheme,
+ * credentials, size, redirect and timeout guards apply. `data:image/...`
+ * URLs are decoded locally and never hit the network.
+ */
+export interface FetchImageOptions {
+  /** Optional host allowlist; when non-empty only those hosts are contacted. */
+  allow?: readonly string[];
+  /** Response cap in bytes (default {@link DEFAULT_IMAGE_MAX_BYTES}). */
+  maxBytes?: number;
+  /** Redirect cap for the default transport (default {@link DEFAULT_IMAGE_MAX_REDIRECTS}). */
+  maxRedirects?: number;
+  /** Per-request timeout in ms for the default transport (default {@link DEFAULT_IMAGE_TIMEOUT_MS}). */
+  timeoutMs?: number;
+  /** Custom transport (proxy/auth/caching); scheme/credentials and the size cap still apply. */
+  fetch?: ImageFetchHandler;
+}
+
+/**
+ * Fetch one image for an explicit UI action, enforcing the shared guards.
+ *
+ * @param raw - `data:image/...` URL or public `http(s)` URL (no credentials)
+ * @param options - Optional allowlist/caps/transport overrides
+ */
+export async function fetchImageHandler(
+  raw: string,
+  options: FetchImageOptions = {},
+): Promise<Uint8Array> {
+  const maxBytes = options.maxBytes ?? DEFAULT_IMAGE_MAX_BYTES;
+  const embedded = decodeDataUrl(raw);
+  if (embedded) {
+    if (embedded.byteLength > maxBytes) {
+      throw new Error(`Image exceeds the ${maxBytes}-byte cap`);
+    }
+    return embedded;
+  }
+  const allow = normalizeAllowList(options.allow);
+  assertAllowedUrl(raw, allow);
+  const bytes = options.fetch
+    ? await options.fetch(raw)
+    : await fetchWithinPolicy(raw, {
+        allow,
+        maxBytes,
+        maxRedirects: options.maxRedirects ?? DEFAULT_IMAGE_MAX_REDIRECTS,
+        timeoutMs: options.timeoutMs ?? DEFAULT_IMAGE_TIMEOUT_MS,
+      });
+  if (bytes.byteLength > maxBytes) {
+    throw new Error(`Image exceeds the ${maxBytes}-byte cap: ${raw}`);
+  }
+  return bytes;
+}
+
 /**
  * Create a prepare step that fills in missing image dimensions by reading image
  * metadata. Intended to run after {@link prepareImages} so HTTP sources are
@@ -184,7 +241,10 @@ function assertAllowedUrl(raw: string, allow: readonly string[]): void {
   if (url.username || url.password) {
     throw new Error("Image URL credentials are not allowed");
   }
-  if (!hostAllowed(url.hostname, allow)) {
+  // An empty allowlist means "any public host" (used by the direct,
+  // user-initiated `fetchImageHandler`); batch `prepareImages` always passes a
+  // non-empty list.
+  if (allow.length > 0 && !hostAllowed(url.hostname, allow)) {
     throw new Error(`Image host is not allowlisted: ${url.hostname}`);
   }
 }

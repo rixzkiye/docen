@@ -86,10 +86,12 @@ export {
   prepareDocument,
   prepareImages,
   prepareImageSizes,
+  fetchImageHandler,
   DEFAULT_IMAGE_MAX_BYTES,
   DEFAULT_IMAGE_MAX_REDIRECTS,
   DEFAULT_IMAGE_TIMEOUT_MS,
   type PrepareImagesPolicy,
+  type FetchImageOptions,
   type PrepareStep,
   type ImageFetchHandler,
 } from "./converters/prepare";
