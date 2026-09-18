@@ -4462,7 +4462,7 @@ export const DocumentCommands = Extension.create({
             // Per grid column, the widest content. A spanning cell's width is
             // split evenly across the columns it covers — Word's fit pass
             // still shrinks every grid column under a merge.
-            const measured = new Array<number>(gridCols).fill(0);
+            const measured = Array.from({ length: gridCols }, () => 0);
             for (let r = 0; r < tableNode.childCount; r += 1) {
               let col = 0;
               tableNode.child(r).forEach((cell) => {

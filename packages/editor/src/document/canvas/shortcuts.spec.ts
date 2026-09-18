@@ -134,9 +134,11 @@ describe("W4 Shortcut Suite", () => {
       const { editor, press } = createTestHarness();
       editor.commands.setTextSelection(20);
 
-      // Ctrl+Home jumps to 0
+      // Ctrl+Home jumps to the document's first valid caret position (PM 0 is
+      // the doc boundary before the first block and cannot hold a text caret;
+      // Word lands before the first character — see the R7 audit fix).
       press("Home", { ctrl: true });
-      expect(editor.state.selection.from).toBe(0);
+      expect(editor.state.selection.from).toBe(1);
 
       // Ctrl+End jumps to doc end
       press("End", { ctrl: true });
@@ -145,7 +147,7 @@ describe("W4 Shortcut Suite", () => {
       // Ctrl+Shift+Home selects to start
       press("Home", { ctrl: true, shift: true });
       expect(editor.state.selection.empty).toBe(false);
-      expect(editor.state.selection.from).toBe(0);
+      expect(editor.state.selection.from).toBe(1);
       expect(editor.state.selection.to).toBe(editor.state.doc.content.size);
     });
 
