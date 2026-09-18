@@ -173,6 +173,8 @@ export const ribbonEn: AdditionalLanguage = {
     // --- Commands: Table context tabs ---
     "ribbon.cmd.insert-row-above": "Insert Above",
     "ribbon.cmd.insert-row-below": "Insert Below",
+    "ribbon.cmd.move-row-up": "Move Row Up",
+    "ribbon.cmd.move-row-down": "Move Row Down",
     "ribbon.cmd.insert-column-left": "Insert Left",
     "ribbon.cmd.insert-column-right": "Insert Right",
     "ribbon.cmd.delete-row": "Delete Rows",
@@ -1850,6 +1852,8 @@ export const ribbonZhCN: AdditionalLanguage = {
     // --- Commands: Table context tabs ---
     "ribbon.cmd.insert-row-above": "在上方插入",
     "ribbon.cmd.insert-row-below": "在下方插入",
+    "ribbon.cmd.move-row-up": "上移行",
+    "ribbon.cmd.move-row-down": "下移行",
     "ribbon.cmd.insert-column-left": "在左侧插入",
     "ribbon.cmd.insert-column-right": "在右侧插入",
     "ribbon.cmd.delete-row": "删除行",

@@ -58,6 +58,9 @@ export const KEYBOARD_SHORTCUTS: Readonly<Record<string, string>> = {
   // the caret expands to its content (no modifier; the bridge matches the
   // plain-key entry itself, DocenKeymap covers a DOM route).
   F3: "autotext-f3",
+  // Word's Alt+Shift+Up/Down: move table row or outline block up/down
+  "Alt-Shift-ArrowUp": "move-row-up",
+  "Alt-Shift-ArrowDown": "move-row-down",
   // A value rides after ":" — `line-spacing:2` calls the command with "2".
 };
 

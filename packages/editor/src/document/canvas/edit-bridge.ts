@@ -1415,6 +1415,7 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
     grip.kind = null;
     grip.zone = null;
     grip.index = -1;
+    tableQuickInsertTarget = null;
     const s = active();
     if (s.map?.valid && !story) {
       const hit = hitPage(event.clientX, event.clientY);
@@ -1453,9 +1454,28 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
           // but only the corner window itself clicks it; here a click edits.
           grip.zone = zone;
         }
+
+        // Word's hover quick-insert (+) handle on row/col boundaries
+        if (lx >= -GRIP_WINDOW - 8 && lx <= 12) {
+          for (let r = 1; r < zone.rowEdges.length; r++) {
+            if (Math.abs(ly - zone.rowEdges[r]!) <= 8) {
+              tableQuickInsertTarget = { kind: "row", index: r, zone };
+              break;
+            }
+          }
+        }
+        if (!tableQuickInsertTarget && ly >= -GRIP_WINDOW - 8 && ly <= 12) {
+          for (let c = 1; c < zone.colEdges.length; c++) {
+            if (Math.abs(lx - zone.colEdges[c]!) <= 8) {
+              tableQuickInsertTarget = { kind: "col", index: c, zone };
+              break;
+            }
+          }
+        }
       }
     }
     placeGrip();
+    placeQuickInsert();
   };
 
   /** A grip click: park the caret in the strip's first cell (the commands
@@ -1595,6 +1615,108 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
     targetCol: number;
     targetRow: number;
   } | null = null;
+
+  // Table row/col drag move drop indicator
+  const tableDropIndicatorEl = document.createElement("div");
+  tableDropIndicatorEl.style.cssText =
+    "position:absolute;display:none;pointer-events:none;z-index:37;" +
+    "background:var(--docen-color-primary, #2b579a);box-shadow:0 0 3px rgba(43,87,154,0.6);";
+
+  let tableDragMove: {
+    page: number;
+    kind: "row" | "col";
+    zone: TableZone;
+    sourceIndex: number;
+    targetIndex: number;
+    startX: number;
+    startY: number;
+    moved: boolean;
+  } | null = null;
+
+  // Table hover quick-insert (+) handle & boundary guide line
+  const tableQuickInsertEl = document.createElement("div");
+  tableQuickInsertEl.style.cssText =
+    "position:absolute;display:none;z-index:38;cursor:pointer;width:16px;height:16px;border-radius:50%;" +
+    "background:#ffffff;border:1px solid #2b579a;box-shadow:0 1px 4px rgba(0,0,0,0.25);" +
+    "align-items:center;justify-content:center;color:#2b579a;";
+  tableQuickInsertEl.innerHTML =
+    '<svg width="10" height="10" viewBox="0 0 10 10" style="display:block;margin:auto;"><path d="M5 1v8M1 5h8" stroke="#2b579a" stroke-width="1.5" stroke-linecap="round"/></svg>';
+
+  const tableQuickInsertLineEl = document.createElement("div");
+  tableQuickInsertLineEl.style.cssText =
+    "position:absolute;display:none;pointer-events:none;z-index:36;background:#2b579a;opacity:0.6;";
+
+  let tableQuickInsertTarget: {
+    kind: "row" | "col";
+    index: number;
+    zone: TableZone;
+  } | null = null;
+
+  const placeQuickInsert = (): void => {
+    if (!tableQuickInsertTarget) {
+      tableQuickInsertEl.style.display = "none";
+      tableQuickInsertLineEl.style.display = "none";
+      return;
+    }
+    const { kind, index, zone } = tableQuickInsertTarget;
+    const pageHost = opts.pageHost?.(framePage(active(), zone.page));
+    if (!pageHost) {
+      tableQuickInsertEl.style.display = "none";
+      tableQuickInsertLineEl.style.display = "none";
+      return;
+    }
+    const hostRect = opts.inputHost.getBoundingClientRect();
+    const pageRect = pageHost.getBoundingClientRect();
+    const scale = opts.scale?.() ?? 1;
+
+    if (kind === "row") {
+      const edgeY = zone.rowEdges[index]!;
+      const y = pageRect.top - hostRect.top + (zone.yPx + edgeY) * scale;
+      const x = pageRect.left - hostRect.left + (zone.xPx - 18) * scale;
+      tableQuickInsertEl.style.left = `${x}px`;
+      tableQuickInsertEl.style.top = `${y - 8}px`;
+      tableQuickInsertEl.style.display = "flex";
+
+      tableQuickInsertLineEl.style.left = `${pageRect.left - hostRect.left + zone.xPx * scale}px`;
+      tableQuickInsertLineEl.style.top = `${y}px`;
+      tableQuickInsertLineEl.style.width = `${zone.widthPx * scale}px`;
+      tableQuickInsertLineEl.style.height = "1px";
+      tableQuickInsertLineEl.style.display = "block";
+    } else {
+      const edgeX = zone.colEdges[index]!;
+      const x = pageRect.left - hostRect.left + (zone.xPx + edgeX) * scale;
+      const y = pageRect.top - hostRect.top + (zone.yPx - 18) * scale;
+      tableQuickInsertEl.style.left = `${x - 8}px`;
+      tableQuickInsertEl.style.top = `${y}px`;
+      tableQuickInsertEl.style.display = "flex";
+
+      tableQuickInsertLineEl.style.left = `${x}px`;
+      tableQuickInsertLineEl.style.top = `${pageRect.top - hostRect.top + zone.yPx * scale}px`;
+      tableQuickInsertLineEl.style.width = "1px";
+      tableQuickInsertLineEl.style.height = `${zone.heightPx * scale}px`;
+      tableQuickInsertLineEl.style.display = "block";
+    }
+  };
+
+  tableQuickInsertEl.addEventListener("mouseenter", () => {
+    tableQuickInsertEl.style.background = "#eff6ff";
+  });
+  tableQuickInsertEl.addEventListener("mouseleave", () => {
+    tableQuickInsertEl.style.background = "#ffffff";
+  });
+  tableQuickInsertEl.addEventListener("mousedown", (e) => {
+    e.stopPropagation();
+    e.preventDefault();
+    if (!tableQuickInsertTarget) return;
+    const { kind, index } = tableQuickInsertTarget;
+    tableQuickInsertTarget = null;
+    placeQuickInsert();
+    if (kind === "row") {
+      (active().editor.commands as any)["insert-row-at"]?.({ index });
+    } else {
+      (active().editor.commands as any)["insert-column-at"]?.({ index });
+    }
+  });
 
   const hideShapeGhost = (): void => {
     shapeGhostEl.style.display = "none";
@@ -1931,6 +2053,62 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
       }
       return;
     }
+    if (tableDragMove) {
+      if (
+        !tableDragMove.moved &&
+        Math.hypot(event.clientX - tableDragMove.startX, event.clientY - tableDragMove.startY) >= 3
+      ) {
+        tableDragMove.moved = true;
+      }
+      if (tableDragMove.moved) {
+        opts.host.style.cursor = "move";
+        const hostRect = opts.inputHost.getBoundingClientRect();
+        const frame = opts.pageHost?.(tableDragMove.page);
+        const pageRect = frame?.getBoundingClientRect() ?? hostRect;
+        const scale = opts.scale?.() ?? 1;
+        const zone = tableDragMove.zone;
+
+        if (tableDragMove.kind === "row") {
+          const ly = (event.clientY - pageRect.top) / scale - zone.yPx;
+          let bestIdx = 0;
+          let bestDist = Infinity;
+          for (let i = 0; i < zone.rowEdges.length; i++) {
+            const d = Math.abs(ly - zone.rowEdges[i]!);
+            if (d < bestDist) {
+              bestDist = d;
+              bestIdx = i;
+            }
+          }
+          tableDragMove.targetIndex = bestIdx;
+          const lineY = pageRect.top - hostRect.top + (zone.yPx + zone.rowEdges[bestIdx]!) * scale;
+          tableDropIndicatorEl.style.left = `${pageRect.left - hostRect.left + zone.xPx * scale}px`;
+          tableDropIndicatorEl.style.top = `${lineY - 1.5}px`;
+          tableDropIndicatorEl.style.width = `${zone.widthPx * scale}px`;
+          tableDropIndicatorEl.style.height = "3px";
+          tableDropIndicatorEl.style.display = "block";
+        } else {
+          const lx = (event.clientX - pageRect.left) / scale - zone.xPx;
+          let bestIdx = 0;
+          let bestDist = Infinity;
+          for (let j = 0; j < zone.colEdges.length; j++) {
+            const d = Math.abs(lx - zone.colEdges[j]!);
+            if (d < bestDist) {
+              bestDist = d;
+              bestIdx = j;
+            }
+          }
+          tableDragMove.targetIndex = bestIdx;
+          const lineX =
+            pageRect.left - hostRect.left + (zone.xPx + zone.colEdges[bestIdx]!) * scale;
+          tableDropIndicatorEl.style.left = `${lineX - 1.5}px`;
+          tableDropIndicatorEl.style.top = `${pageRect.top - hostRect.top + zone.yPx * scale}px`;
+          tableDropIndicatorEl.style.width = "3px";
+          tableDropIndicatorEl.style.height = `${zone.heightPx * scale}px`;
+          tableDropIndicatorEl.style.display = "block";
+        }
+      }
+      return;
+    }
     if (borderSweep) {
       const hit = story ? null : hitPage(event.clientX, event.clientY);
       const edges = hit ? main.map?.tableEdgeAt(hit.page, hit.lx, hit.ly) : null;
@@ -2051,6 +2229,26 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
         view.dispatch(tr);
       } else {
         setSel(trState.tablePos + 1);
+      }
+      return;
+    }
+    if (tableDragMove) {
+      const tdm = tableDragMove;
+      tableDragMove = null;
+      tableDropIndicatorEl.style.display = "none";
+      opts.host.style.cursor = "";
+      if (tdm.moved) {
+        if (tdm.kind === "row") {
+          (active().editor.commands as any)["move-row"]?.({
+            fromIndex: tdm.sourceIndex,
+            toIndex: tdm.targetIndex,
+          });
+        } else {
+          (active().editor.commands as any)["move-column"]?.({
+            fromIndex: tdm.sourceIndex,
+            toIndex: tdm.targetIndex,
+          });
+        }
       }
       return;
     }
@@ -2495,9 +2693,24 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
     if (!story) {
       hoverTableGrip(event);
       if (grip.kind) {
+        const gripKind = grip.kind;
+        const gripZone = grip.zone;
+        const gripIndex = grip.index;
         applyGrip();
         ta.focus();
         ta.value = "";
+        if ((gripKind === "row" || gripKind === "col") && gripZone) {
+          tableDragMove = {
+            page: gripZone.page,
+            kind: gripKind,
+            zone: gripZone,
+            sourceIndex: gripIndex,
+            targetIndex: gripIndex,
+            startX: event.clientX,
+            startY: event.clientY,
+            moved: false,
+          };
+        }
         return;
       }
     }
@@ -3321,6 +3534,20 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
         return;
       }
     }
+    if (event.altKey && event.shiftKey) {
+      if (event.key === "ArrowUp") {
+        event.preventDefault();
+        if (!editable) return;
+        (active().editor.commands as any)["move-row-up"]?.();
+        return;
+      }
+      if (event.key === "ArrowDown") {
+        event.preventDefault();
+        if (!editable) return;
+        (active().editor.commands as any)["move-row-down"]?.();
+        return;
+      }
+    }
     if (event.ctrlKey || event.metaKey) {
       const key = event.key;
       const lower = key.toLowerCase();
@@ -3414,10 +3641,18 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
         break;
       case "ArrowUp":
         event.preventDefault();
+        if (event.altKey && event.shiftKey) {
+          (active().editor.commands as any)["move-row-up"]?.();
+          break;
+        }
         apply(vStep(head(), -1), extend);
         break;
       case "ArrowDown":
         event.preventDefault();
+        if (event.altKey && event.shiftKey) {
+          (active().editor.commands as any)["move-row-down"]?.();
+          break;
+        }
         apply(vStep(head(), 1), extend);
         break;
       case "Home": {
@@ -3868,6 +4103,9 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
   opts.inputHost.append(shapePresetEl);
   opts.inputHost.append(tableResizeLineEl);
   opts.inputHost.append(tableResizeBadgeEl);
+  opts.inputHost.append(tableDropIndicatorEl);
+  opts.inputHost.append(tableQuickInsertEl);
+  opts.inputHost.append(tableQuickInsertLineEl);
 
   // The IME anchor's cached rects die on scroll (the page frames move under
   // the fixed input layer) and on resize (both rects move).

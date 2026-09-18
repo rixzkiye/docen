@@ -69,6 +69,24 @@ export interface TableEraserClickOptions {
   sides?: { pos: number; side: "top" | "bottom" | "left" | "right" }[];
 }
 
+export interface MoveRowOptions {
+  fromIndex: number;
+  toIndex: number;
+}
+
+export interface MoveColumnOptions {
+  fromIndex: number;
+  toIndex: number;
+}
+
+export interface InsertRowAtOptions {
+  index: number;
+}
+
+export interface InsertColumnAtOptions {
+  index: number;
+}
+
 // Type augmentation: register every command on `editor.commands` so callers
 // get autocomplete + `editor.can()` works. Each name is also the ribbon
 // `event` attribute, so #onCommand does editor.chain().focus()[event](value).
@@ -135,6 +153,12 @@ declare module "@tiptap/core" {
       "insert-row-below": () => ReturnType;
       "insert-column-left": () => ReturnType;
       "insert-column-right": () => ReturnType;
+      "move-row-up": () => ReturnType;
+      "move-row-down": () => ReturnType;
+      "move-row": (options: MoveRowOptions) => ReturnType;
+      "move-column": (options: MoveColumnOptions) => ReturnType;
+      "insert-row-at": (options: InsertRowAtOptions) => ReturnType;
+      "insert-column-at": (options: InsertColumnAtOptions) => ReturnType;
       "delete-row": () => ReturnType;
       "delete-column": () => ReturnType;
       "delete-cell": () => ReturnType;
@@ -296,6 +320,12 @@ export const WIRED_DISPATCH: ReadonlySet<string> = new Set([
   "insert-row-below",
   "insert-column-left",
   "insert-column-right",
+  "move-row-up",
+  "move-row-down",
+  "move-row",
+  "move-column",
+  "insert-row-at",
+  "insert-column-at",
   "delete-row",
   "delete-column",
   "delete-cell",
@@ -2972,6 +3002,271 @@ export const DocumentCommands = Extension.create({
               if (r === $from.index(anchor.rowAt)) {
                 targetCellPos = cellPos;
               }
+            }
+            if (targetCellPos > 0) {
+              tr.setSelection(TextSelection.near(tr.doc.resolve(targetCellPos + 1)));
+            }
+            dispatch(tr.scrollIntoView());
+          }
+          return true;
+        },
+      "move-row-up":
+        () =>
+        ({ state, dispatch }: { state: EditorState; dispatch?: (tr: Transaction) => void }) => {
+          const anchor = tableAncestry(state);
+          if (anchor && anchor.rowAt >= 0) {
+            const { $from } = state.selection;
+            const tableNode = $from.node(anchor.tableAt);
+            const tablePos = $from.before(anchor.tableAt);
+            const rowIndex = $from.index(anchor.tableAt);
+            if (rowIndex <= 0) return false;
+            if (dispatch) {
+              const rows: PMNode[] = [];
+              for (let i = 0; i < tableNode.childCount; i++) {
+                rows.push(tableNode.child(i));
+              }
+              const [moved] = rows.splice(rowIndex, 1);
+              rows.splice(rowIndex - 1, 0, moved!);
+              const newTable = tableNode.type.create(tableNode.attrs, rows);
+              const tr = state.tr.replaceWith(tablePos, tablePos + tableNode.nodeSize, newTable);
+              let targetPos = tablePos + 1;
+              for (let i = 0; i < rowIndex - 1; i++) {
+                targetPos += rows[i]!.nodeSize;
+              }
+              const cellIndex = $from.index(anchor.rowAt);
+              const movedRow = rows[rowIndex - 1]!;
+              const targetCol = Math.min(cellIndex, movedRow.childCount - 1);
+              let targetCellPos = targetPos + 1;
+              for (let c = 0; c < targetCol; c++) {
+                targetCellPos += movedRow.child(c).nodeSize;
+              }
+              tr.setSelection(TextSelection.near(tr.doc.resolve(targetCellPos + 1)));
+              dispatch(tr.scrollIntoView());
+            }
+            return true;
+          }
+          const { $from } = state.selection;
+          if ($from.depth >= 1) {
+            const blockIndex = $from.index(0);
+            if (blockIndex <= 0) return false;
+            const doc = state.doc;
+            if (dispatch) {
+              const blocks: PMNode[] = [];
+              for (let i = 0; i < doc.childCount; i++) blocks.push(doc.child(i));
+              const [moved] = blocks.splice(blockIndex, 1);
+              blocks.splice(blockIndex - 1, 0, moved!);
+              const tr = state.tr.replaceWith(0, doc.content.size, Fragment.fromArray(blocks));
+              let targetPos = 0;
+              for (let i = 0; i < blockIndex - 1; i++) targetPos += blocks[i]!.nodeSize;
+              tr.setSelection(TextSelection.near(tr.doc.resolve(targetPos + 1)));
+              dispatch(tr.scrollIntoView());
+            }
+            return true;
+          }
+          return false;
+        },
+      "move-row-down":
+        () =>
+        ({ state, dispatch }: { state: EditorState; dispatch?: (tr: Transaction) => void }) => {
+          const anchor = tableAncestry(state);
+          if (anchor && anchor.rowAt >= 0) {
+            const { $from } = state.selection;
+            const tableNode = $from.node(anchor.tableAt);
+            const tablePos = $from.before(anchor.tableAt);
+            const rowIndex = $from.index(anchor.tableAt);
+            if (rowIndex < 0 || rowIndex >= tableNode.childCount - 1) return false;
+            if (dispatch) {
+              const rows: PMNode[] = [];
+              for (let i = 0; i < tableNode.childCount; i++) {
+                rows.push(tableNode.child(i));
+              }
+              const [moved] = rows.splice(rowIndex, 1);
+              rows.splice(rowIndex + 1, 0, moved!);
+              const newTable = tableNode.type.create(tableNode.attrs, rows);
+              const tr = state.tr.replaceWith(tablePos, tablePos + tableNode.nodeSize, newTable);
+              let targetPos = tablePos + 1;
+              for (let i = 0; i < rowIndex + 1; i++) {
+                targetPos += rows[i]!.nodeSize;
+              }
+              const cellIndex = $from.index(anchor.rowAt);
+              const movedRow = rows[rowIndex + 1]!;
+              const targetCol = Math.min(cellIndex, movedRow.childCount - 1);
+              let targetCellPos = targetPos + 1;
+              for (let c = 0; c < targetCol; c++) {
+                targetCellPos += movedRow.child(c).nodeSize;
+              }
+              tr.setSelection(TextSelection.near(tr.doc.resolve(targetCellPos + 1)));
+              dispatch(tr.scrollIntoView());
+            }
+            return true;
+          }
+          const { $from } = state.selection;
+          if ($from.depth >= 1) {
+            const blockIndex = $from.index(0);
+            const doc = state.doc;
+            if (blockIndex < 0 || blockIndex >= doc.childCount - 1) return false;
+            if (dispatch) {
+              const blocks: PMNode[] = [];
+              for (let i = 0; i < doc.childCount; i++) blocks.push(doc.child(i));
+              const [moved] = blocks.splice(blockIndex, 1);
+              blocks.splice(blockIndex + 1, 0, moved!);
+              const tr = state.tr.replaceWith(0, doc.content.size, Fragment.fromArray(blocks));
+              let targetPos = 0;
+              for (let i = 0; i < blockIndex + 1; i++) targetPos += blocks[i]!.nodeSize;
+              tr.setSelection(TextSelection.near(tr.doc.resolve(targetPos + 1)));
+              dispatch(tr.scrollIntoView());
+            }
+            return true;
+          }
+          return false;
+        },
+      "move-row":
+        (options: MoveRowOptions) =>
+        ({ state, dispatch }: { state: EditorState; dispatch?: (tr: Transaction) => void }) => {
+          const anchor = tableAncestry(state);
+          if (!anchor || anchor.rowAt < 0) return false;
+          const { $from } = state.selection;
+          const tableNode = $from.node(anchor.tableAt);
+          const tablePos = $from.before(anchor.tableAt);
+          const { fromIndex, toIndex } = options;
+          if (
+            fromIndex < 0 ||
+            fromIndex >= tableNode.childCount ||
+            toIndex < 0 ||
+            toIndex > tableNode.childCount ||
+            toIndex === fromIndex ||
+            toIndex === fromIndex + 1
+          ) {
+            return false;
+          }
+          if (dispatch) {
+            const rows: PMNode[] = [];
+            for (let i = 0; i < tableNode.childCount; i++) {
+              rows.push(tableNode.child(i));
+            }
+            const [moved] = rows.splice(fromIndex, 1);
+            const insertIdx = toIndex > fromIndex ? toIndex - 1 : toIndex;
+            rows.splice(insertIdx, 0, moved!);
+            const newTable = tableNode.type.create(tableNode.attrs, rows);
+            const tr = state.tr.replaceWith(tablePos, tablePos + tableNode.nodeSize, newTable);
+            let targetPos = tablePos + 1;
+            for (let i = 0; i < insertIdx; i++) {
+              targetPos += rows[i]!.nodeSize;
+            }
+            tr.setSelection(TextSelection.near(tr.doc.resolve(targetPos + 2)));
+            dispatch(tr.scrollIntoView());
+          }
+          return true;
+        },
+      "move-column":
+        (options: MoveColumnOptions) =>
+        ({ state, dispatch }: { state: EditorState; dispatch?: (tr: Transaction) => void }) => {
+          const anchor = tableAncestry(state);
+          if (!anchor || anchor.rowAt < 0) return false;
+          const { $from } = state.selection;
+          const tableNode = $from.node(anchor.tableAt);
+          const tablePos = $from.before(anchor.tableAt);
+          const { fromIndex, toIndex } = options;
+          if (fromIndex < 0 || toIndex < 0 || toIndex === fromIndex || toIndex === fromIndex + 1) {
+            return false;
+          }
+          if (dispatch) {
+            const colWidths = Array.isArray(tableNode.attrs.columnWidths)
+              ? [...tableNode.attrs.columnWidths]
+              : [];
+            if (colWidths.length > fromIndex && toIndex <= colWidths.length) {
+              const [w] = colWidths.splice(fromIndex, 1);
+              const insertIdx = toIndex > fromIndex ? toIndex - 1 : toIndex;
+              colWidths.splice(insertIdx, 0, w!);
+            }
+            const newRows: PMNode[] = [];
+            for (let r = 0; r < tableNode.childCount; r++) {
+              const rowNode = tableNode.child(r);
+              const cells: PMNode[] = [];
+              for (let c = 0; c < rowNode.childCount; c++) {
+                cells.push(rowNode.child(c));
+              }
+              if (fromIndex < cells.length && toIndex <= cells.length) {
+                const [moved] = cells.splice(fromIndex, 1);
+                const insertIdx = toIndex > fromIndex ? toIndex - 1 : toIndex;
+                cells.splice(insertIdx, 0, moved!);
+              }
+              newRows.push(rowNode.type.create(rowNode.attrs, cells));
+            }
+            const newTable = tableNode.type.create(
+              {
+                ...tableNode.attrs,
+                columnWidths: colWidths.length ? colWidths : undefined,
+              },
+              newRows,
+            );
+            const tr = state.tr.replaceWith(tablePos, tablePos + tableNode.nodeSize, newTable);
+            dispatch(tr.scrollIntoView());
+          }
+          return true;
+        },
+      "insert-row-at":
+        (options: InsertRowAtOptions) =>
+        ({ state, dispatch }: { state: EditorState; dispatch?: (tr: Transaction) => void }) => {
+          const anchor = tableAncestry(state);
+          if (!anchor || anchor.rowAt < 0) return false;
+          const { $from } = state.selection;
+          const tableNode = $from.node(anchor.tableAt);
+          const tablePos = $from.before(anchor.tableAt);
+          const idx = Math.max(0, Math.min(tableNode.childCount, options.index));
+          if (dispatch) {
+            const refRow = tableNode.child(Math.min(idx, tableNode.childCount - 1));
+            const emptyCells: PMNode[] = [];
+            refRow.forEach((cell) => {
+              const para = state.schema.nodes.paragraph.create();
+              emptyCells.push(cell.type.createAndFill(cell.attrs, [para])!);
+            });
+            const newRow = refRow.type.create(null, emptyCells);
+            let insertPos = tablePos + 1;
+            for (let i = 0; i < idx; i++) {
+              insertPos += tableNode.child(i).nodeSize;
+            }
+            const tr = state.tr.insert(insertPos, newRow);
+            tr.setSelection(TextSelection.near(tr.doc.resolve(insertPos + 2)));
+            dispatch(tr.scrollIntoView());
+          }
+          return true;
+        },
+      "insert-column-at":
+        (options: InsertColumnAtOptions) =>
+        ({ state, dispatch }: { state: EditorState; dispatch?: (tr: Transaction) => void }) => {
+          const anchor = tableAncestry(state);
+          if (!anchor || anchor.rowAt < 0) return false;
+          const { $from } = state.selection;
+          const tableNode = $from.node(anchor.tableAt);
+          const tablePos = $from.before(anchor.tableAt);
+          const idx = Math.max(0, options.index);
+          if (dispatch) {
+            const tr = state.tr;
+            let targetCellPos = -1;
+            for (let r = tableNode.childCount - 1; r >= 0; r -= 1) {
+              const rowNode = tableNode.child(r);
+              let rowPos = tablePos + 1;
+              for (let i = 0; i < r; i += 1) rowPos += tableNode.child(i).nodeSize;
+              const colIdx = Math.min(idx, rowNode.childCount);
+              let cellPos = rowPos + 1;
+              for (let c = 0; c < colIdx; c += 1) cellPos += rowNode.child(c).nodeSize;
+              const template = rowNode.child(Math.min(colIdx, rowNode.childCount - 1));
+              const para = state.schema.nodes.paragraph.create();
+              const emptyCell = template.type.createAndFill(template.attrs, [para])!;
+              tr.insert(cellPos, emptyCell);
+              if (r === 0) targetCellPos = cellPos;
+            }
+            const colWidths = Array.isArray(tableNode.attrs.columnWidths)
+              ? [...tableNode.attrs.columnWidths]
+              : [];
+            if (colWidths.length > 0) {
+              const avg = Math.round(colWidths.reduce((a, b) => a + b, 0) / colWidths.length);
+              colWidths.splice(Math.min(idx, colWidths.length), 0, avg);
+              tr.setNodeMarkup(tablePos, undefined, {
+                ...tableNode.attrs,
+                columnWidths: colWidths,
+              });
             }
             if (targetCellPos > 0) {
               tr.setSelection(TextSelection.near(tr.doc.resolve(targetCellPos + 1)));
