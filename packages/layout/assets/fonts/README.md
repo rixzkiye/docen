@@ -32,3 +32,13 @@ DOCEN_FONT_GOLDEN_UPDATE=1 pnpm exec vp test run packages/layout/src/text/defaul
 The browser fetch path and the Node `fs` path resolve the same files; passing
 `baseUrl` to `registerDefaultFonts()` points a bundler-managed copy at the
 same bytes (the hashes must match the golden).
+
+### Browser cross-check
+
+The golden is also reproducible inside a browser: serve the repo with Vite,
+import `@docen/layout`, shape the golden's cases with `ShapedMeasurer` and
+SHA-256 the same canonical payload (`fontName|size|upem|advance|glyph…`) with
+`crypto.subtle` — every case must hash equal to the Node golden. Verified
+2026-09-18: Chromium (Playwright, Vite dev server) vs Node — 11/11 cases
+identical, including bold/italic faces, kerning/ligature pairs, accents, and
+Cyrillic.
