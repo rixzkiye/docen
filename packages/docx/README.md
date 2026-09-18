@@ -130,6 +130,41 @@ const docOpts = compileDocument(json); // JSONContent → DocumentOptions
 await prepareDocument(json); // in place: http image URLs → data URLs
 ```
 
+### Generated fields and TOC (Word-faithful cached results)
+
+DOCX stores every field twice: the instruction and the cached result Word
+paints until the next update. `generateDOCX` / `generateDOCXSync` /
+`generateDOCXStream` re-derive the structural caches at generation time (the
+pass is non-mutating — the input JSON is untouched):
+
+- **SEQ** — per-label ordinals in document order, `\s <level>` heading
+  restarts, `\*` number formats (Arabic/Roman/Alphabetic) and the
+  `w:caption@w:sep` chapter separator.
+- **REF / NOTEREF** — the target bookmark's inner text (forward references
+  included). `\p`/`\n` keep the model's cache (they need reading-order terms
+  and paragraph numbering the builder does not own).
+- **TOC** — a `tocField` whose cached entries are missing (the from-scratch
+  placeholder) gets real entry paragraphs built from the document's headings
+  (`\o`/`\t`/`\u` switches honored) or, for a `\c` field, from the matching
+  captions. The field instruction stays intact, so Word/LibreOffice/the
+  editor's Update Table still refresh it; a TOC that already carries entries
+  is never recomputed.
+- **PAGE / NUMPAGES / PAGEREF / SECTION / SECTIONPAGES** — resolved through
+  the optional `fields` option: pass `pageOf` (and `pageCount`) from your
+  pagination. The editor's save path feeds its live canvas pages; without a
+  context these fields keep the model's cache rather than inventing a number:
+  Word updates them on open from its own pagination.
+
+```typescript
+// Page context for a headless save, e.g. after your own layout pass:
+await generateDOCX(json, {
+  fields: {
+    pageCount: 12,
+    pageOf: ({ index, bookmark }) => pageByFieldIndex.get(index), // 1-based
+  },
+});
+```
+
 ## Architecture
 
 ```

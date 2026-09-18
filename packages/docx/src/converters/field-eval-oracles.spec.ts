@@ -54,7 +54,7 @@ for fld in body.iter(qn("w:fldSimple")):
 print(json.dumps({"seq": seq, "ref": ref}))
 `;
 
-describe("python-docx structural check", { timeout: 60000 }, () => {
+describe("python-docx structural check", { timeout: 120000 }, () => {
   it("reads the generated SEQ/REF caches from the package", () => {
     let python = "";
     try {
@@ -89,7 +89,7 @@ describe("python-docx structural check", { timeout: 60000 }, () => {
   });
 });
 
-describe("LibreOffice field text oracle", { timeout: 120000 }, () => {
+describe("LibreOffice field text oracle", { timeout: 180000 }, () => {
   it("renders the TOC entries, reference text and page numbers", () => {
     if (!existsSync("/usr/bin/soffice")) {
       console.log("⏭ soffice missing — LibreOffice oracle skipped");

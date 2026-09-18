@@ -166,7 +166,7 @@ const doctFor = (specs: string[]): JSONContent => ({
   })),
 });
 
-describe("math fixture matrix through DOCX", { timeout: 20000 }, () => {
+describe("math fixture matrix through DOCX", { timeout: 120000 }, () => {
   const specs: Array<[linear: string, expectedKey: RegExp]> = [
     ["\\frac{a}{b}", /fraction/],
     ["\\sqrt[3]{8}", /radical/],

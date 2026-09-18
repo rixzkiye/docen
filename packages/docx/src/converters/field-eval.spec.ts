@@ -187,10 +187,14 @@ describe("TOC cached entries (item 13)", () => {
     expect(xml).toContain(">Beta<");
     expect(xml).toContain("TOC1");
     expect(xml).toContain("TOC2");
-    // Round-trip: the generated TOC parses back as a tocField with entries.
+    // Round-trip: the generated TOC parses back as a tocField with entries
+    // AND its field switches, so the editor's Update Table can rebuild it.
     const parsed = parseDOCXSync(bytes);
     const toc = parsed.content?.find((n) => n.type === "tocField");
     expect(toc?.content?.length).toBe(2);
+    expect(
+      (toc?.attrs?.options as { headingStyleRange?: string } | undefined)?.headingStyleRange,
+    ).toBe("1-3");
     expect(
       parsed.content?.some((n) => n.type === "paragraph" && n.content?.[0]?.text === "Body"),
     ).toBe(true);
