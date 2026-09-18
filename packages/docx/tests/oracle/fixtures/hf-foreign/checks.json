@@ -1,0 +1,51 @@
+{
+  "description": "python-docx authored input: titlePg + first/default headers, pgNumType + chapStyle, two sections",
+  "xml": [
+    {
+      "part": "word/document.xml",
+      "contains": ["<w:titlePg/>", "w:fmt=\"lowerRoman\"", "w:chapStyle=\"1\""]
+    }
+  ],
+  "python": [
+    {
+      "path": "document.sections",
+      "length": 2
+    },
+    {
+      "path": "document.sections[0].titlePg",
+      "equals": true
+    },
+    {
+      "path": "document.sections[0].pgNumType.format",
+      "equals": "lowerRoman"
+    },
+    {
+      "path": "document.sections[0].headerRefs.first",
+      "truthy": true
+    },
+    {
+      "path": "document.sections[0].headerRefs.default",
+      "truthy": true
+    },
+    {
+      "path": "document.sections[1].pgNumType.start",
+      "equals": 1
+    }
+  ],
+  "pdf": [
+    {
+      "page": 1,
+      "contains": ["FOREIGN-FIRST"],
+      "notContains": ["FOREIGN-DEFAULT"]
+    },
+    {
+      "page": 2,
+      "contains": ["FOREIGN-SECOND"],
+      "notContains": ["FOREIGN-FIRST"]
+    },
+    {
+      "page": 3,
+      "contains": ["FOREIGN-SECOND"]
+    }
+  ]
+}

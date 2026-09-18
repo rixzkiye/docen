@@ -1,0 +1,629 @@
+{
+  "sections": [
+    {
+      "properties": {
+        "pageSize": {
+          "width": 11906,
+          "height": 16838
+        },
+        "pageMargin": {
+          "top": 1440,
+          "bottom": 1440,
+          "left": 1800,
+          "right": 1800
+        },
+        "titlePage": true
+      },
+      "headers": {
+        "first": [
+          {
+            "paragraph": {
+              "children": [
+                {
+                  "text": "FIRST HEADER"
+                }
+              ]
+            }
+          }
+        ],
+        "default": [
+          {
+            "paragraph": {
+              "children": [
+                {
+                  "text": "DEFAULT HEADER"
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "footers": {
+        "first": [
+          {
+            "paragraph": {
+              "children": [
+                {
+                  "text": "FIRST FOOTER"
+                }
+              ]
+            }
+          }
+        ],
+        "default": [
+          {
+            "paragraph": {
+              "children": [
+                {
+                  "text": "DEFAULT FOOTER"
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "children": [
+        {
+          "paragraph": {
+            "children": [
+              {
+                "text": "FF-1"
+              }
+            ],
+            "spacing": {
+              "after": 0,
+              "line": 276,
+              "lineRule": "auto"
+            }
+          }
+        },
+        {
+          "paragraph": {
+            "children": [
+              {
+                "text": "FF-2"
+              }
+            ],
+            "spacing": {
+              "after": 0,
+              "line": 276,
+              "lineRule": "auto"
+            }
+          }
+        },
+        {
+          "paragraph": {
+            "children": [
+              {
+                "text": "FF-3"
+              }
+            ],
+            "spacing": {
+              "after": 0,
+              "line": 276,
+              "lineRule": "auto"
+            }
+          }
+        },
+        {
+          "paragraph": {
+            "children": [
+              {
+                "text": "FF-4"
+              }
+            ],
+            "spacing": {
+              "after": 0,
+              "line": 276,
+              "lineRule": "auto"
+            }
+          }
+        },
+        {
+          "paragraph": {
+            "children": [
+              {
+                "text": "FF-5"
+              }
+            ],
+            "spacing": {
+              "after": 0,
+              "line": 276,
+              "lineRule": "auto"
+            }
+          }
+        },
+        {
+          "paragraph": {
+            "children": [
+              {
+                "text": "FF-6"
+              }
+            ],
+            "spacing": {
+              "after": 0,
+              "line": 276,
+              "lineRule": "auto"
+            }
+          }
+        },
+        {
+          "paragraph": {
+            "children": [
+              {
+                "text": "FF-7"
+              }
+            ],
+            "spacing": {
+              "after": 0,
+              "line": 276,
+              "lineRule": "auto"
+            }
+          }
+        },
+        {
+          "paragraph": {
+            "children": [
+              {
+                "text": "FF-8"
+              }
+            ],
+            "spacing": {
+              "after": 0,
+              "line": 276,
+              "lineRule": "auto"
+            }
+          }
+        },
+        {
+          "paragraph": {
+            "children": [
+              {
+                "text": "FF-9"
+              }
+            ],
+            "spacing": {
+              "after": 0,
+              "line": 276,
+              "lineRule": "auto"
+            }
+          }
+        },
+        {
+          "paragraph": {
+            "children": [
+              {
+                "text": "FF-10"
+              }
+            ],
+            "spacing": {
+              "after": 0,
+              "line": 276,
+              "lineRule": "auto"
+            }
+          }
+        },
+        {
+          "paragraph": {
+            "children": [
+              {
+                "text": "FF-11"
+              }
+            ],
+            "spacing": {
+              "after": 0,
+              "line": 276,
+              "lineRule": "auto"
+            }
+          }
+        },
+        {
+          "paragraph": {
+            "children": [
+              {
+                "text": "FF-12"
+              }
+            ],
+            "spacing": {
+              "after": 0,
+              "line": 276,
+              "lineRule": "auto"
+            }
+          }
+        },
+        {
+          "paragraph": {
+            "children": [
+              {
+                "text": "FF-13"
+              }
+            ],
+            "spacing": {
+              "after": 0,
+              "line": 276,
+              "lineRule": "auto"
+            }
+          }
+        },
+        {
+          "paragraph": {
+            "children": [
+              {
+                "text": "FF-14"
+              }
+            ],
+            "spacing": {
+              "after": 0,
+              "line": 276,
+              "lineRule": "auto"
+            }
+          }
+        },
+        {
+          "paragraph": {
+            "children": [
+              {
+                "text": "FF-15"
+              }
+            ],
+            "spacing": {
+              "after": 0,
+              "line": 276,
+              "lineRule": "auto"
+            }
+          }
+        },
+        {
+          "paragraph": {
+            "children": [
+              {
+                "text": "FF-16"
+              }
+            ],
+            "spacing": {
+              "after": 0,
+              "line": 276,
+              "lineRule": "auto"
+            }
+          }
+        },
+        {
+          "paragraph": {
+            "children": [
+              {
+                "text": "FF-17"
+              }
+            ],
+            "spacing": {
+              "after": 0,
+              "line": 276,
+              "lineRule": "auto"
+            }
+          }
+        },
+        {
+          "paragraph": {
+            "children": [
+              {
+                "text": "FF-18"
+              }
+            ],
+            "spacing": {
+              "after": 0,
+              "line": 276,
+              "lineRule": "auto"
+            }
+          }
+        },
+        {
+          "paragraph": {
+            "children": [
+              {
+                "text": "FF-19"
+              }
+            ],
+            "spacing": {
+              "after": 0,
+              "line": 276,
+              "lineRule": "auto"
+            }
+          }
+        },
+        {
+          "paragraph": {
+            "children": [
+              {
+                "text": "FF-20"
+              }
+            ],
+            "spacing": {
+              "after": 0,
+              "line": 276,
+              "lineRule": "auto"
+            }
+          }
+        },
+        {
+          "paragraph": {
+            "children": [
+              {
+                "text": "FF-21"
+              }
+            ],
+            "spacing": {
+              "after": 0,
+              "line": 276,
+              "lineRule": "auto"
+            }
+          }
+        },
+        {
+          "paragraph": {
+            "children": [
+              {
+                "text": "FF-22"
+              }
+            ],
+            "spacing": {
+              "after": 0,
+              "line": 276,
+              "lineRule": "auto"
+            }
+          }
+        },
+        {
+          "paragraph": {
+            "children": [
+              {
+                "text": "FF-23"
+              }
+            ],
+            "spacing": {
+              "after": 0,
+              "line": 276,
+              "lineRule": "auto"
+            }
+          }
+        },
+        {
+          "paragraph": {
+            "children": [
+              {
+                "text": "FF-24"
+              }
+            ],
+            "spacing": {
+              "after": 0,
+              "line": 276,
+              "lineRule": "auto"
+            }
+          }
+        },
+        {
+          "paragraph": {
+            "children": [
+              {
+                "text": "FF-25"
+              }
+            ],
+            "spacing": {
+              "after": 0,
+              "line": 276,
+              "lineRule": "auto"
+            }
+          }
+        },
+        {
+          "paragraph": {
+            "children": [
+              {
+                "text": "FF-26"
+              }
+            ],
+            "spacing": {
+              "after": 0,
+              "line": 276,
+              "lineRule": "auto"
+            }
+          }
+        },
+        {
+          "paragraph": {
+            "children": [
+              {
+                "text": "FF-27"
+              }
+            ],
+            "spacing": {
+              "after": 0,
+              "line": 276,
+              "lineRule": "auto"
+            }
+          }
+        },
+        {
+          "paragraph": {
+            "children": [
+              {
+                "text": "FF-28"
+              }
+            ],
+            "spacing": {
+              "after": 0,
+              "line": 276,
+              "lineRule": "auto"
+            }
+          }
+        },
+        {
+          "paragraph": {
+            "children": [
+              {
+                "text": "FF-29"
+              }
+            ],
+            "spacing": {
+              "after": 0,
+              "line": 276,
+              "lineRule": "auto"
+            }
+          }
+        },
+        {
+          "paragraph": {
+            "children": [
+              {
+                "text": "FF-30"
+              }
+            ],
+            "spacing": {
+              "after": 0,
+              "line": 276,
+              "lineRule": "auto"
+            }
+          }
+        },
+        {
+          "paragraph": {
+            "children": [
+              {
+                "text": "FF-31"
+              }
+            ],
+            "spacing": {
+              "after": 0,
+              "line": 276,
+              "lineRule": "auto"
+            }
+          }
+        },
+        {
+          "paragraph": {
+            "children": [
+              {
+                "text": "FF-32"
+              }
+            ],
+            "spacing": {
+              "after": 0,
+              "line": 276,
+              "lineRule": "auto"
+            }
+          }
+        },
+        {
+          "paragraph": {
+            "children": [
+              {
+                "text": "FF-33"
+              }
+            ],
+            "spacing": {
+              "after": 0,
+              "line": 276,
+              "lineRule": "auto"
+            }
+          }
+        },
+        {
+          "paragraph": {
+            "children": [
+              {
+                "text": "FF-34"
+              }
+            ],
+            "spacing": {
+              "after": 0,
+              "line": 276,
+              "lineRule": "auto"
+            }
+          }
+        },
+        {
+          "paragraph": {
+            "children": [
+              {
+                "text": "FF-35"
+              }
+            ],
+            "spacing": {
+              "after": 0,
+              "line": 276,
+              "lineRule": "auto"
+            }
+          }
+        },
+        {
+          "paragraph": {
+            "children": [
+              {
+                "text": "FF-36"
+              }
+            ],
+            "spacing": {
+              "after": 0,
+              "line": 276,
+              "lineRule": "auto"
+            }
+          }
+        },
+        {
+          "paragraph": {
+            "children": [
+              {
+                "text": "FF-37"
+              }
+            ],
+            "spacing": {
+              "after": 0,
+              "line": 276,
+              "lineRule": "auto"
+            }
+          }
+        },
+        {
+          "paragraph": {
+            "children": [
+              {
+                "text": "FF-38"
+              }
+            ],
+            "spacing": {
+              "after": 0,
+              "line": 276,
+              "lineRule": "auto"
+            }
+          }
+        },
+        {
+          "paragraph": {
+            "children": [
+              {
+                "text": "FF-39"
+              }
+            ],
+            "spacing": {
+              "after": 0,
+              "line": 276,
+              "lineRule": "auto"
+            }
+          }
+        },
+        {
+          "paragraph": {
+            "children": [
+              {
+                "text": "FF-40"
+              }
+            ],
+            "spacing": {
+              "after": 0,
+              "line": 276,
+              "lineRule": "auto"
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

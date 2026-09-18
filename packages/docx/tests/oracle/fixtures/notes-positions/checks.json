@@ -1,0 +1,48 @@
+{
+  "description": "footnote/endnote position per section (beneathText/pageBottom, sectEnd/docEnd) and noEndnote flag",
+  "xml": [
+    {
+      "part": "word/document.xml",
+      "contains": [
+        "<w:footnotePr><w:pos w:val=\"beneathText\"/></w:footnotePr>",
+        "<w:endnotePr><w:pos w:val=\"sectEnd\"/><w:numFmt w:val=\"lowerRoman\"/></w:endnotePr>",
+        "<w:footnotePr><w:pos w:val=\"pageBottom\"/></w:footnotePr>",
+        "<w:endnotePr><w:pos w:val=\"docEnd\"/><w:numFmt w:val=\"decimal\"/></w:endnotePr>",
+        "<w:noEndnote w:val=\"0\"/>"
+      ]
+    }
+  ],
+  "python": [
+    {
+      "path": "document.sections[0].footnotePr.pos",
+      "equals": "beneathText"
+    },
+    {
+      "path": "document.sections[0].endnotePr.pos",
+      "equals": "sectEnd"
+    },
+    {
+      "path": "document.sections[1].footnotePr.pos",
+      "equals": "pageBottom"
+    },
+    {
+      "path": "document.sections[1].endnotePr.pos",
+      "equals": "docEnd"
+    },
+    {
+      "path": "document.sections[1].noEndnote",
+      "equals": false
+    }
+  ],
+  "pdf": [
+    {
+      "page": 1,
+      "contains": ["S1", "note one"],
+      "notContains": ["note two"]
+    },
+    {
+      "page": 2,
+      "contains": ["S2", "note two", "end one", "end two"]
+    }
+  ]
+}

@@ -9,7 +9,7 @@ patchedDependencies:
     hash: bf00814ae167bb6282561453bd093f7119eb6c8c32563339f8870de4ed84681a
     path: patches/@office-open__core@0.14.5.patch
   '@office-open/docx@0.14.5':
-    hash: 44440632b0beea142221d04679dfe619f4849db30dae7296e0438a19507037a2
+    hash: c70a6dc2c0c10b0341202cbeb5608f9aa1c4315005fb3f9c89aef0e8a761e599
     path: patches/@office-open__docx@0.14.5.patch
 
 importers:
@@ -76,7 +76,7 @@ importers:
         version: 0.14.5(patch_hash=bf00814ae167bb6282561453bd093f7119eb6c8c32563339f8870de4ed84681a)
       '@office-open/docx':
         specifier: 0.14.5
-        version: 0.14.5(patch_hash=44440632b0beea142221d04679dfe619f4849db30dae7296e0438a19507037a2)
+        version: 0.14.5(patch_hash=c70a6dc2c0c10b0341202cbeb5608f9aa1c4315005fb3f9c89aef0e8a761e599)
       '@tiptap/core':
         specifier: 3.31.3
         version: 3.31.3(@tiptap/pm@3.31.3)
@@ -3641,7 +3641,7 @@ snapshots:
       '@office-open/xml': 0.14.5
       fflate: 0.8.3
 
-  '@office-open/docx@0.14.5(patch_hash=44440632b0beea142221d04679dfe619f4849db30dae7296e0438a19507037a2)':
+  '@office-open/docx@0.14.5(patch_hash=c70a6dc2c0c10b0341202cbeb5608f9aa1c4315005fb3f9c89aef0e8a761e599)':
     dependencies:
       '@office-open/core': 0.14.5(patch_hash=bf00814ae167bb6282561453bd093f7119eb6c8c32563339f8870de4ed84681a)
       '@office-open/xml': 0.14.5

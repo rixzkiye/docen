@@ -207,6 +207,9 @@ export interface ImageAttrs {
   outline: NonNullable<PictureOptions["outline"]> | null;
   crop: NonNullable<PictureOptions["sourceRectangle"]> | null;
   display: string | null;
+  /** office-open DocPropertiesOptions (wp:docPr) beyond alt/title — carries
+   *  the source drawing id and any other fields verbatim so saves are stable. */
+  altText: NonNullable<PictureOptions["altText"]> | null;
   // 0.9.7+ fidelity fields (office-open native; near-identity passthrough)
   nonVisualProperties: NonNullable<PictureOptions["nonVisualProperties"]> | null; // pic:cNvPr (id/name/descr)
   effectExtent: { l: number; t: number; r: number; b: number } | null; // wp:effectExtent EMUs
@@ -283,11 +286,17 @@ export interface ParagraphNode extends TiptapJSONContent {
  * Header/footer slots in Tiptap JSON — each slot is the JSONContent[] produced
  * by resolving that slot's SectionChild[] (paragraphs/tables/…). Mirrors
  * SectionOptions.headers/footers in the runtime model.
+ *
+ * `partNames` carries the source part file names (`header3.xml`) so an opened
+ * package keeps its header/footer parts — and the relationship ids that point
+ * at them — stable across saves. Editor edits may drop it; generate then
+ * allocates canonical names.
  */
 export interface HeaderFooterSlots {
   default?: TiptapJSONContent[];
   first?: TiptapJSONContent[];
   even?: TiptapJSONContent[];
+  partNames?: { default?: string; first?: string; even?: string };
 }
 
 // -- Table nodes --

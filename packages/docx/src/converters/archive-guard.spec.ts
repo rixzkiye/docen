@@ -77,6 +77,55 @@ function zipWithDataDescriptor(name: string, content: Uint8Array): Uint8Array {
   return archive;
 }
 
+/**
+ * Convert the archive's last local entry to a streaming (data-descriptor)
+ * write: zero its local CRC/sizes, set bit 3 in both headers and insert a
+ * signed descriptor after the payload, shifting the central directory and
+ * EOCD offset. Only the last entry is converted so the earlier local-header
+ * offsets recorded in the central directory stay valid — this rewrites a real
+ * multi-part engine package (`validDocx`) into the LibreOffice write shape.
+ */
+function withDataDescriptor(input: Uint8Array): Uint8Array {
+  const ordered = entriesOf(input).sort((a, b) => a.localOffset - b.localOffset);
+  const entry = ordered[ordered.length - 1];
+  if (!entry) throw new Error("archive has no entries");
+  const view = new DataView(input.buffer, input.byteOffset, input.byteLength);
+  const nameLength = view.getUint16(entry.localOffset + 26, true);
+  const extraLength = view.getUint16(entry.localOffset + 28, true);
+  const dataEnd = entry.localOffset + 30 + nameLength + extraLength + entry.compressed;
+  const descriptor = new Uint8Array(16);
+  const dview = new DataView(descriptor.buffer);
+  dview.setUint32(0, 0x08074b50, true);
+  dview.setUint32(4, entry.crc, true);
+  dview.setUint32(8, entry.compressed, true);
+  dview.setUint32(12, entry.uncompressed, true);
+
+  const out = new Uint8Array(input.length + descriptor.length);
+  out.set(input.subarray(0, dataEnd), 0);
+  out.set(descriptor, dataEnd);
+  out.set(input.subarray(dataEnd), dataEnd + descriptor.length);
+  const outView = new DataView(out.buffer);
+  outView.setUint16(
+    entry.localOffset + 6,
+    view.getUint16(entry.localOffset + 6, true) | 0x08,
+    true,
+  );
+  outView.setUint32(entry.localOffset + 14, 0, true);
+  outView.setUint32(entry.localOffset + 18, 0, true);
+  outView.setUint32(entry.localOffset + 22, 0, true);
+  outView.setUint16(
+    entry.centralOffset + descriptor.length + 8,
+    view.getUint16(entry.centralOffset + 8, true) | 0x08,
+    true,
+  );
+  let oldEocd = input.length - 22;
+  while (oldEocd >= 0 && view.getUint32(oldEocd, true) !== 0x06054b50) oldEocd -= 1;
+  let eocd = out.length - 22;
+  while (eocd >= 0 && outView.getUint32(eocd, true) !== 0x06054b50) eocd -= 1;
+  outView.setUint32(eocd + 16, view.getUint32(oldEocd + 16, true) + descriptor.length, true);
+  return out;
+}
+
 interface EntryHeader {
   name: string;
   flags: number;
@@ -243,6 +292,22 @@ describe("archive admission limits", () => {
     // sizes are zeroed and a data descriptor follows the payload.
     const archive = zipWithDataDescriptor("word/document.xml", bytes("<a/>"));
     expect(() => assertArchiveWithinLimits(archive)).not.toThrow();
+
+    // The same shape on a real multi-part engine package opens end to end.
+    const streamed = withDataDescriptor(validDocx());
+    expect(() => assertArchiveWithinLimits(streamed)).not.toThrow();
+    expect(parseDOCXSync(streamed)).toBeDefined();
+
+    // A descriptor whose sizes disagree with the central directory is rejected
+    // even though the payload itself is untouched.
+    const view = new DataView(streamed.buffer, streamed.byteOffset, streamed.byteLength);
+    const entries = entriesOf(streamed);
+    const target = entries[entries.length - 1]!;
+    const nameLength = view.getUint16(target.localOffset + 26, true);
+    const extraLength = view.getUint16(target.localOffset + 28, true);
+    const descriptor = target.localOffset + 30 + nameLength + extraLength + target.compressed + 4;
+    view.setUint32(descriptor + 8, 123_456, true);
+    expectRejection(() => assertArchiveWithinLimits(streamed), "ZIP_LOCAL_HEADER_INVALID");
   });
 
   it("rejects a data descriptor that disagrees with the central directory", () => {

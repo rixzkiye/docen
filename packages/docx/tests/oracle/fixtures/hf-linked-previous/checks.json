@@ -1,0 +1,51 @@
+{
+  "description": "linked-to-previous header/footer: absent slots inherit, an explicit blank header stays blank",
+  "xml": [
+    {
+      "part": "word/document.xml",
+      "contains": ["<w:headerReference r:id=\"rId", "w:type=\"default\""]
+    }
+  ],
+  "python": [
+    {
+      "path": "document.sections",
+      "length": 4
+    },
+    {
+      "path": "document.sections[1].headerRefs",
+      "equals": {}
+    },
+    {
+      "path": "document.sections[1].footerRefs",
+      "equals": {}
+    },
+    {
+      "path": "document.sections[2].headerRefs.default",
+      "truthy": true
+    },
+    {
+      "path": "document.sections[3].headerRefs.default",
+      "truthy": true
+    }
+  ],
+  "pdf": [
+    {
+      "page": 1,
+      "contains": ["S1 HEADER", "S1 FOOTER"]
+    },
+    {
+      "page": 2,
+      "contains": ["S1 HEADER", "S1 FOOTER"]
+    },
+    {
+      "page": 3,
+      "notContains": ["S1 HEADER", "S4 HEADER"]
+    },
+    {
+      "page": 4,
+      "contains": ["S4 HEADER", "S4 FOOTER"],
+      "notContains": ["S1 HEADER"]
+    }
+  ],
+  "pdfStable": true
+}

@@ -1,0 +1,64 @@
+{
+  "description": "multiple sections with distinct headers/footers/page numbering and even/odd inheritance",
+  "xml": [
+    {
+      "part": "word/document.xml",
+      "contains": [
+        "<w:pgNumType w:start=\"2\" w:fmt=\"upperRoman\"/>",
+        "<w:pgNumType w:start=\"1\" w:fmt=\"decimal\"/>",
+        "<w:titlePg/>"
+      ]
+    }
+  ],
+  "python": [
+    {
+      "path": "document.sections",
+      "length": 3
+    },
+    {
+      "path": "document.sections[0].titlePg",
+      "equals": true
+    },
+    {
+      "path": "document.sections[0].pgNumType.format",
+      "equals": "upperRoman"
+    },
+    {
+      "path": "document.sections[1].pgNumType.format",
+      "equals": "decimal"
+    },
+    {
+      "path": "document.sections[1].headerRefs.default",
+      "truthy": true
+    },
+    {
+      "path": "document.sections[1].headerRefs.even",
+      "truthy": false
+    },
+    {
+      "path": "document.sections[2].headerRefs.default",
+      "truthy": true
+    },
+    {
+      "path": "document.sections[2].footerRefs",
+      "equals": {}
+    }
+  ],
+  "pdf": [
+    {
+      "page": 1,
+      "contains": ["A-FIRST"],
+      "notContains": ["A-DEF", "A-FOOT"]
+    },
+    {
+      "page": 2,
+      "contains": ["A-EVEN", "A-EVEN-FOOT"],
+      "notContains": ["A-DEF"]
+    },
+    {
+      "page": 3,
+      "contains": ["C-DEF", "B-FOOT"],
+      "notContains": ["A-FOOT"]
+    }
+  ]
+}

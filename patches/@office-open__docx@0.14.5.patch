@@ -1,5 +1,5 @@
 diff --git a/dist/index.mjs b/dist/index.mjs
-index 458eaeb0d38b558005c2e09bd467eb246e038611..d2d3ca5b210b953cfb43bf4909543068b71834dd 100644
+index 458eaeb0d38b558005c2e09bd467eb246e038611..6cee54fd54753d3b3f8eeda4a625233f68065117 100644
 --- a/dist/index.mjs
 +++ b/dist/index.mjs
 @@ -4420,10 +4420,25 @@ var FontWrapper = class {
@@ -58,7 +58,50 @@ index 458eaeb0d38b558005c2e09bd467eb246e038611..d2d3ca5b210b953cfb43bf4909543068
  	return stringifyNonVisualDrawingProperties("wp:docPr", id, opts, "", buildHyperlinkChildren(hlIds));
  }
  /** Build `<a:srcRect .../>` from a crop spec, or "" when there is no crop. */
-@@ -14453,12 +14474,31 @@ function parseHeaderFooterRef(rId, ctx) {
+@@ -14240,7 +14261,7 @@ var DocxWriteContext = class {
+ 		this._sectionProperties.push(sectPrOptions);
+ 	}
+ 	createHeader(header, partName) {
+-		const referenceId = this.document.relationships.nextRelationshipId;
++		const referenceId = this.headerFooterReferenceId(partName, RELATIONSHIP_TYPES.header);
+ 		const entry = {
+ 			children: header,
+ 			relationships: new Relationships(),
+@@ -14250,7 +14271,7 @@ var DocxWriteContext = class {
+ 		return entry;
+ 	}
+ 	createFooter(footer, partName) {
+-		const referenceId = this.document.relationships.nextRelationshipId;
++		const referenceId = this.headerFooterReferenceId(partName, RELATIONSHIP_TYPES.footer);
+ 		const entry = {
+ 			children: footer,
+ 			relationships: new Relationships(),
+@@ -14259,6 +14280,24 @@ var DocxWriteContext = class {
+ 		this.addFooterToDocument(entry, partName);
+ 		return entry;
+ 	}
++	/** Reference id for a header/footer part. When a round-tripped part keeps
++	*  its source file name, reuse the related source relationship's rId
++	*  (kind+target match) so saving an opened document does not monotonically
++	*  grow the id counter and shift every header/footer reference each cycle.
++	*  A part already wired in this generation (two slots sharing one part)
++	*  reuses its registered id; a fresh compile allocates the next one. */
++	headerFooterReferenceId(partName, type) {
++		if (!partName) return this.document.relationships.nextRelationshipId;
++		const existing = this.document.relationships.idOf(type, partName);
++		if (existing) {
++			const m = /^rId(\d+)$/.exec(existing);
++			if (m) return Number(m[1]);
++		}
++		const source = (this._options.passthroughRelationships ?? []).find((r) => r.source === "word/document.xml" && r.relationshipType === type && (r.target === partName || r.target.endsWith(`/${partName}`)));
++		const m = source ? /^rId(\d+)$/.exec(source.rId) : void 0;
++		if (m && !this.document.relationships.hasId(m[0])) return Number(m[1]);
++		return this.document.relationships.nextRelationshipId;
++	}
+ 	addHeaderToDocument(header, partName) {
+ 		this._headers.push(header);
+ 		header.partName = this.nextPartName(this._headers, partName, "header");
+@@ -14453,12 +14492,31 @@ function parseHeaderFooterRef(rId, ctx) {
  	};
  }
  /**
@@ -91,7 +134,7 @@ index 458eaeb0d38b558005c2e09bd467eb246e038611..d2d3ca5b210b953cfb43bf4909543068
  			if (pict) {
  				if (findFirst(pict, "v:textbox")) return { textbox: parseTextbox(pict, ctx, parseSectionChildrenElements) };
  			}
-@@ -14679,9 +14719,11 @@ function parseBodyChildren(elements, ctx) {
+@@ -14679,9 +14737,11 @@ function parseBodyChildren(elements, ctx) {
  function buildTocChild(els, ctx) {
  	const tocOpts = parseTocFieldFromElements(els);
  	tocOpts.bare = true;
@@ -105,7 +148,7 @@ index 458eaeb0d38b558005c2e09bd467eb246e038611..d2d3ca5b210b953cfb43bf4909543068
  	if (entryEls.length > 0) tocOpts.entries = entryEls.map((el) => el.name === "w:p" ? { paragraph: parseParagraph(el, ctx) } : parseSectionChild(el, ctx));
  	captureTocFieldRPr(els, tocOpts);
  	return { toc: tocOpts };
-@@ -14830,16 +14872,23 @@ function splitAroundOuterField(els) {
+@@ -14830,16 +14890,23 @@ function splitAroundOuterField(els) {
  	let endIdx = -1;
  	for (let i = 0; i < els.length; i++) {
  		const depthBefore = depth;
@@ -132,7 +175,7 @@ index 458eaeb0d38b558005c2e09bd467eb246e038611..d2d3ca5b210b953cfb43bf4909543068
  		if (startIdx >= 0 && endIdx < 0 && depthBefore > 0 && depth === 0) {
  			endIdx = i;
  			break;
-@@ -14947,8 +14996,9 @@ function selectTocEntryElements(els) {
+@@ -14947,8 +15014,9 @@ function selectTocEntryElements(els) {
  			for (const c of node.elements ?? []) if (c.type === "element") walk(c);
  		};
  		walk(el);
@@ -144,7 +187,7 @@ index 458eaeb0d38b558005c2e09bd467eb246e038611..d2d3ca5b210b953cfb43bf4909543068
  			afterSeparate = false;
  		} else if (afterSeparate && depth >= 1 && findFirst(el, "w:t") !== void 0) entries.push(el);
  	}
-@@ -14967,7 +15017,30 @@ function selectTocEntryElements(els) {
+@@ -14967,7 +15035,30 @@ function selectTocEntryElements(els) {
  * not the TOC.
  */
  function keepTocClosingParagraph(el, hasEntries) {
@@ -176,7 +219,7 @@ index 458eaeb0d38b558005c2e09bd467eb246e038611..d2d3ca5b210b953cfb43bf4909543068
  }
  /**
  * Concatenate the instrText runs of the OUTERMOST field in the given
-@@ -15166,7 +15239,7 @@ const endnotesDesc = createNotesDesc({
+@@ -15166,7 +15257,7 @@ const endnotesDesc = createNotesDesc({
  	refRunXml: "<w:r><w:rPr><w:rStyle w:val=\"EndnoteReference\"/></w:rPr><w:endnoteRef/></w:r>",
  	separatorXml: "<w:endnote w:type=\"separator\" w:id=\"-1\"><w:p><w:pPr><w:spacing w:after=\"0\" w:line=\"240\" w:lineRule=\"auto\"/></w:pPr><w:r><w:separator/></w:r></w:p></w:endnote>",
  	continuationSeparatorXml: "<w:endnote w:type=\"continuationSeparator\" w:id=\"0\"><w:p><w:pPr><w:spacing w:after=\"0\" w:line=\"240\" w:lineRule=\"auto\"/></w:pPr><w:r><w:continuationSeparator/></w:r></w:p></w:endnote>",
@@ -185,7 +228,7 @@ index 458eaeb0d38b558005c2e09bd467eb246e038611..d2d3ca5b210b953cfb43bf4909543068
  });
  //#endregion
  //#region src/parts/perm-start.ts
-@@ -15826,7 +15899,10 @@ const COMMENTS_NS = documentNamespaceAttributes([
+@@ -15826,7 +15917,10 @@ const COMMENTS_NS = documentNamespaceAttributes([
  ]) + " mc:Ignorable=\"w14 w15 wp14\"";
  function stringifyComment(opts, ctx) {
  	const attrs = [`w:id="${opts.id}"`, `w:author="${escapeXml(opts.author ?? "")}"`];
@@ -197,7 +240,7 @@ index 458eaeb0d38b558005c2e09bd467eb246e038611..d2d3ca5b210b953cfb43bf4909543068
  	if (dateStr !== void 0) attrs.push(`w:date="${escapeXml(dateStr)}"`);
  	if (opts.initials !== void 0) attrs.push(`w:initials="${escapeXml(opts.initials)}"`);
  	const parts = [];
-@@ -18192,11 +18268,12 @@ function resolveEmbeddedFontData(fonts, doc) {
+@@ -18192,11 +18286,12 @@ function resolveEmbeddedFontData(fonts, doc) {
  		if (!font.embedRid) continue;
  		const odttfPath = ridToPath.get(font.embedRid);
  		if (!odttfPath) continue;
@@ -212,7 +255,7 @@ index 458eaeb0d38b558005c2e09bd467eb246e038611..d2d3ca5b210b953cfb43bf4909543068
  		}
  	}
  }
-@@ -19225,7 +19302,10 @@ function compileDocument(options, overrides = [], mediaLevel = 0) {
+@@ -19225,7 +19320,10 @@ function compileDocument(options, overrides = [], mediaLevel = 0) {
  	for (const font of ctx.fontTable.fontOptionsWithKey) {
  		if (font.data === void 0) continue;
  		const [nameWithoutExtension] = font.name.split(".");

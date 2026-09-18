@@ -31,6 +31,11 @@ function docWithAttrs(attrs: Record<string, unknown>): JSONContent {
   };
 }
 
+const PAGE = {
+  pageSize: { width: 11906, height: 16838 },
+  pageMargin: { top: 1440, bottom: 1440, left: 1800, right: 1800 },
+};
+
 describe("compileDocument numbering persistence", () => {
   it("carries the full NumberingOptions through resolve→compile", () => {
     const doc: DocumentOptions = {
@@ -510,5 +515,61 @@ describe("embedded-font relationship escaping", () => {
     const rels2 = decoder.decode(zip2["word/_rels/fontTable.xml.rels"]);
     expect(/Target="([^"]+)"/.exec(rels2)?.[1]).toBe(target1);
     expect(zip2[part1]).toEqual(zip1[part1]);
+  });
+});
+
+describe("header/footer relationship stability", () => {
+  /**
+   * An opened package keeps its header/footer parts and the document
+   * relationships that point at them. Re-generating must reuse the source
+   * relationship ids (kind+target) instead of allocating fresh ones above the
+   * reserved source range: allocating grew rId21…rId26 → rId27…rId32 on every
+   * save and made byte-stable round-trips impossible.
+   */
+  it("reuses the source rIds and part names across save cycles", () => {
+    const doc: DocumentOptions = {
+      settings: { evenAndOddHeaders: true },
+      sections: [
+        {
+          properties: {
+            ...PAGE,
+            titlePage: true,
+            pageNumberType: { format: "lowerRoman", start: 1 },
+          },
+          headers: {
+            default: [{ paragraph: { text: "A-DEF" } }],
+            first: [{ paragraph: { text: "A-FIRST" } }],
+            even: [{ paragraph: { text: "A-EVEN" } }],
+          },
+          footers: { default: [{ paragraph: { text: "A-FOOT" } }] },
+          children: [{ paragraph: { text: "section one" } }],
+        },
+        {
+          properties: PAGE,
+          headers: { default: [{ paragraph: { text: "B-DEF" } }] },
+          children: [{ paragraph: { text: "section two" } }],
+        },
+      ],
+    };
+
+    const gen1 = generateDOCXSync(resolveDocument(doc), { prepare: false });
+    const parsed1 = parseDOCXSync(gen1) as JSONContent;
+    const slots = parsed1.content?.[0]?.attrs?.sectionHeaders as
+      | { partNames?: Record<string, string> }
+      | undefined;
+    expect(slots?.partNames?.default).toBe("header1.xml");
+
+    const gen2 = generateDOCXSync(parsed1, { prepare: false });
+    const gen3 = generateDOCXSync(parseDOCXSync(gen2), { prepare: false });
+    expect(Buffer.from(gen2).equals(Buffer.from(gen3))).toBe(true);
+
+    const refs = (bytes: Uint8Array): string[] => {
+      const rels = new TextDecoder().decode(unzipSync(bytes)["word/_rels/document.xml.rels"]);
+      return [...rels.matchAll(/Id="(rId\d+)" Type="[^"]*\/(?:header|footer)" Target="([^"]+)"/g)]
+        .map((match) => `${match[1]}:${match[2]}`)
+        .sort();
+    };
+    expect(refs(gen3)).toEqual(refs(gen2));
+    expect(refs(gen2).some((entry) => entry.endsWith(":header1.xml"))).toBe(true);
   });
 });
