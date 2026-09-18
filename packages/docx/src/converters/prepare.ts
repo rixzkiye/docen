@@ -6,7 +6,9 @@ import type { JSONContent } from "../core";
 // ── Types ──
 
 /**
- * A prepare step that transforms Tiptap JSON in place (e.g. fetch external resources).
+ * A prepare step that transforms Tiptap JSON. Steps run on a caller-owned copy
+ * of the document and may mutate it in place (e.g. embed fetched resources);
+ * {@link prepareDocument} never mutates the document it is given.
  */
 export type PrepareStep = (json: JSONContent) => Promise<void>;
 
@@ -18,35 +20,84 @@ export type PrepareStep = (json: JSONContent) => Promise<void>;
  */
 export type ImageFetchHandler = (url: string) => Promise<Uint8Array>;
 
-// ── Built-in steps ──
-
 /**
- * Default fetch handler using the global `fetch` API (Node 18+ and browsers).
+ * Explicit opt-in policy for fetching `http(s)` images. There is no implicit
+ * network access: {@link prepareImages} without `allow` entries is a no-op, and
+ * only the listed hosts are contacted.
  */
-export async function fetchImageHandler(url: string): Promise<Uint8Array> {
-  const response = await fetch(url);
-  if (!response.ok) {
-    throw new Error(`Failed to fetch image from ${url}: ${response.status} ${response.statusText}`);
-  }
-  const buffer = await response.arrayBuffer();
-  return new Uint8Array(buffer);
+export interface PrepareImagesPolicy {
+  /**
+   * Hostnames allowed to be fetched (required — an empty list disables the
+   * step). Case-insensitive match on `URL.hostname`: an exact entry matches
+   * only that host, a `*.` prefix matches the bare domain and its subdomains
+   * (`"*.example.com"` → `example.com`, `a.example.com`). Ports are ignored; a
+   * custom `fetch` transport is trusted with the allowlisted URL.
+   */
+  allow: readonly string[];
+  /** Maximum accepted image size in bytes (default {@link DEFAULT_IMAGE_MAX_BYTES}). */
+  maxBytes?: number;
+  /** Maximum redirects followed by the default transport (default {@link DEFAULT_IMAGE_MAX_REDIRECTS}). */
+  maxRedirects?: number;
+  /** Per-request timeout in ms for the default transport (default {@link DEFAULT_IMAGE_TIMEOUT_MS}). */
+  timeoutMs?: number;
+  /**
+   * Custom transport (proxy/auth/caching). Passing one is an explicit opt-in;
+   * the scheme/host allowlist and the `maxBytes` cap still apply to it, while
+   * redirect/timeout policy is the transport's own.
+   */
+  fetch?: ImageFetchHandler;
 }
 
+// ── Built-in steps ──
+
+/** Default per-image response cap (8 MiB, mirroring the Akademi importer's owned-media cap). */
+export const DEFAULT_IMAGE_MAX_BYTES = 8 * 1024 * 1024;
+/** Default redirect cap for the built-in transport. */
+export const DEFAULT_IMAGE_MAX_REDIRECTS = 3;
+/** Default per-request timeout for the built-in transport. */
+export const DEFAULT_IMAGE_TIMEOUT_MS = 10_000;
+
+const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
+
 /**
- * Create a prepare step that fetches external image URLs and converts them to data URLs.
+ * Create a prepare step that fetches external image URLs and converts them to
+ * data URLs. Network access only happens when a policy with a non-empty
+ * `allow` list is passed — the default is a no-op that leaves external URLs
+ * untouched (the renderer drops images without embedded data).
  *
- * @param handler - Custom fetch handler (defaults to `fetchImageHandler`)
+ * Enforced on every fetch: `http(s)` scheme only, host allowlist, response
+ * size cap, redirect cap and a per-request timeout (defaults to the built-in
+ * `fetch`; a custom `fetch` transport keeps the scheme/host/size caps).
  *
  * @example
  * ```ts
- * // Use with defaults
- * await prepareDocument(json);
+ * // Server opt-in: fetch only from the CDN
+ * await generateDOCX(json, {
+ *   prepare: [prepareImages({ allow: ["cdn.example.com"] }), prepareImageSizes()],
+ * });
  *
- * // Custom handler
- * await prepareDocument(json, [prepareImages(myHandler)]);
+ * // Default: no network — external http images stay untouched
+ * await prepareDocument(json);
  * ```
  */
-export function prepareImages(handler: ImageFetchHandler = fetchImageHandler): PrepareStep {
+export function prepareImages(policy?: PrepareImagesPolicy): PrepareStep {
+  const allow = normalizeAllowList(policy?.allow);
+  if (!policy || allow.length === 0) return async () => undefined;
+
+  const maxBytes = policy.maxBytes ?? DEFAULT_IMAGE_MAX_BYTES;
+  const maxRedirects = policy.maxRedirects ?? DEFAULT_IMAGE_MAX_REDIRECTS;
+  const timeoutMs = policy.timeoutMs ?? DEFAULT_IMAGE_TIMEOUT_MS;
+  const handler = async (url: string): Promise<Uint8Array> => {
+    assertAllowedUrl(url, allow);
+    const bytes = policy.fetch
+      ? await policy.fetch(url)
+      : await fetchWithinPolicy(url, { allow, maxBytes, maxRedirects, timeoutMs });
+    if (bytes.byteLength > maxBytes) {
+      throw new Error(`Image exceeds the ${maxBytes}-byte cap: ${url}`);
+    }
+    return bytes;
+  };
+
   return async (json: JSONContent) => {
     await walkImages(json, handler);
   };
@@ -72,33 +123,146 @@ export function prepareImageSizes(): PrepareStep {
 // ── Pipeline ──
 
 /** Built-in prepare steps, run when no custom steps are provided. */
-const DEFAULT_STEPS: readonly PrepareStep[] = [prepareImages(), prepareImageSizes()];
+const DEFAULT_STEPS: readonly PrepareStep[] = [prepareImageSizes()];
 
 /**
- * Run prepare steps on a Tiptap JSON document before compilation.
+ * Run prepare steps on a copy of a Tiptap JSON document before compilation.
  *
- * Each step receives the JSON and may mutate it in place (e.g. replace external
- * URLs with embedded data). Steps run sequentially in order.
+ * The input is never mutated: the document is `structuredClone`d and the steps
+ * run on the clone, which is returned. Steps run sequentially in order.
  *
- * Defaults to `[prepareImages(), prepareImageSizes()]` when no steps are provided.
+ * Defaults to `[prepareImageSizes()]` when no steps are provided — the default
+ * pipeline never touches the network. Fetching `http(s)` images requires an
+ * explicit {@link prepareImages} policy with an `allow` list.
+ *
+ * @returns The prepared copy (safe to compile; the input keeps its own value).
  *
  * @example
  * ```ts
  * const json = parseHTML(html);
- * await prepareDocument(json);             // default: fetch images
- * const docOpts = compileDocument(json);
+ * const prepared = await prepareDocument(json); // local-only; json unchanged
+ * const docOpts = compileDocument(prepared);
  * ```
  */
 export async function prepareDocument(
   json: JSONContent,
   steps: readonly PrepareStep[] = DEFAULT_STEPS,
-): Promise<void> {
+): Promise<JSONContent> {
+  const prepared = structuredClone(json);
   for (const step of steps) {
-    await step(json);
+    await step(prepared);
   }
+  return prepared;
 }
 
 // ── Internals ──
+
+function normalizeAllowList(allow: readonly string[] | undefined): readonly string[] {
+  return (allow ?? []).map((host) => host.trim().toLowerCase()).filter((host) => host.length > 0);
+}
+
+function hostAllowed(hostname: string, allow: readonly string[]): boolean {
+  const host = hostname.toLowerCase();
+  return allow.some((entry) =>
+    entry.startsWith("*.")
+      ? host === entry.slice(2) || host.endsWith(entry.slice(1))
+      : host === entry,
+  );
+}
+
+/** Reject anything that is not an allowlisted `http(s)` URL without credentials. */
+function assertAllowedUrl(raw: string, allow: readonly string[]): void {
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    throw new Error(`Unsupported image URL: ${raw}`);
+  }
+  if (url.protocol !== "http:" && url.protocol !== "https:") {
+    throw new Error(`Unsupported image URL scheme: ${url.protocol}`);
+  }
+  if (url.username || url.password) {
+    throw new Error("Image URL credentials are not allowed");
+  }
+  if (!hostAllowed(url.hostname, allow)) {
+    throw new Error(`Image host is not allowlisted: ${url.hostname}`);
+  }
+}
+
+interface FetchPolicy {
+  readonly allow: readonly string[];
+  readonly maxBytes: number;
+  readonly maxRedirects: number;
+  readonly timeoutMs: number;
+}
+
+/**
+ * Default transport: manual redirects (each hop re-validated against the
+ * allowlist and counted), streamed body with a byte cap, per-hop timeout.
+ */
+async function fetchWithinPolicy(raw: string, policy: FetchPolicy): Promise<Uint8Array> {
+  let current = raw;
+  for (let redirects = 0; ; redirects++) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), policy.timeoutMs);
+    try {
+      const response = await fetch(current, { redirect: "manual", signal: controller.signal });
+      if (REDIRECT_STATUSES.has(response.status)) {
+        if (redirects >= policy.maxRedirects) {
+          throw new Error(`Image exceeded the ${policy.maxRedirects}-redirect cap: ${raw}`);
+        }
+        const location = response.headers.get("location");
+        if (!location) throw new Error(`Redirect without a Location header: ${current}`);
+        current = new URL(location, current).toString();
+        assertAllowedUrl(current, policy.allow);
+        continue;
+      }
+      if (!response.ok) {
+        throw new Error(
+          `Failed to fetch image from ${current}: ${response.status} ${response.statusText}`,
+        );
+      }
+      const declared = Number(response.headers.get("content-length"));
+      if (Number.isFinite(declared) && declared > policy.maxBytes) {
+        throw new Error(`Image exceeds the ${policy.maxBytes}-byte cap: ${current}`);
+      }
+      return await readCapped(response, policy.maxBytes, current);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+}
+
+/** Read a response body, aborting as soon as it crosses `maxBytes`. */
+async function readCapped(response: Response, maxBytes: number, url: string): Promise<Uint8Array> {
+  if (!response.body) {
+    const bytes = new Uint8Array(await response.arrayBuffer());
+    if (bytes.byteLength > maxBytes) {
+      throw new Error(`Image exceeds the ${maxBytes}-byte cap: ${url}`);
+    }
+    return bytes;
+  }
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > maxBytes) {
+      await reader.cancel();
+      throw new Error(`Image exceeds the ${maxBytes}-byte cap: ${url}`);
+    }
+    chunks.push(value);
+  }
+  const bytes = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return bytes;
+}
 
 async function toDataUrl(src: string, handler: ImageFetchHandler): Promise<string> {
   const data = await handler(src);

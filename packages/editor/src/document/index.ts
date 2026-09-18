@@ -3554,10 +3554,9 @@ class DocenDocument extends AddinHost<Editor> {
     if (mode !== "edit" || !this.editor) return;
     const recipients = this.#merge.recipients();
     if (!recipients) return;
-    // Prepare images once on a clone — the per-row merges below then carry
-    // embedded data and skip the fetch.
-    const json = structuredClone(this.getJSON());
-    await prepareDocument(json);
+    // Prepare a copy once — the per-row merges below then carry whatever the
+    // local (network-free) default preparation embedded.
+    const json = await prepareDocument(this.getJSON());
     const body = json.content ?? [];
     const bodyAttrs = (json.attrs ?? {}) as {
       sectionProperties?: SectionPropertiesOptions | null;

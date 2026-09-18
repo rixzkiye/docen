@@ -1,0 +1,11 @@
+# Pinned Rust toolchain for the @docen/shaping WASM artifact.
+#
+# The build must be reproducible: the same source + this pin must produce the
+# byte-identical `wasm/docen_shaping.wasm` recorded in
+# `wasm/docen_shaping.wasm.sha256`. Change the channel only with the crate
+# updates that require it, then rerun `pnpm --filter @docen/shaping build:wasm`
+# and commit the new hash (the script refuses a silent artifact change).
+[toolchain]
+channel = "1.97.1"
+targets = ["wasm32-unknown-unknown"]
+profile = "minimal"

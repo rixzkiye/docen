@@ -190,6 +190,30 @@ place.
 
 ---
 
+## Reproducible WASM build
+
+The committed `wasm/docen_shaping.wasm` is built with the Rust toolchain pinned
+in [`rust-toolchain.toml`](./rust-toolchain.toml) (currently `1.97.1`,
+`wasm32-unknown-unknown`). The artifact hash is recorded in
+`wasm/docen_shaping.wasm.sha256` and verified by
+[`test/reproducibility.spec.ts`](./test/reproducibility.spec.ts).
+
+```bash
+# Rebuild + verify against the recorded hash
+pnpm --filter @docen/shaping build:wasm
+
+# CI check: hash the committed artifact only (no toolchain required)
+pnpm --filter @docen/shaping check:wasm
+
+# Intentional crate changes: rebuild and record the new hash
+DOCEN_WASM_UPDATE=1 pnpm --filter @docen/shaping build:wasm
+```
+
+A build with a different toolchain/dependency resolution produces a different
+hash; the check fails loudly instead of silently shipping an unreproducible
+binary. The script refuses to overwrite the recorded hash unless
+`DOCEN_WASM_UPDATE=1` is explicit.
+
 ## License
 
 - `@docen/shaping` is licensed under [MIT](../../LICENSE) &copy; [Demo Macro](https://www.demomacro.com/).

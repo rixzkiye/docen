@@ -70,6 +70,7 @@ export {
   type RunPropMark,
 } from "./converters/docx";
 export { decodePassthroughData, encodePassthroughData } from "./extensions/passthrough";
+export { DOCX_EPOCH } from "./converters/determinism";
 export {
   type TocSwitches,
   tokenizeTocInstruction,
@@ -84,7 +85,11 @@ export { patchDOCX, type DocxPatchOptions, type DocxPatchContent } from "./conve
 export {
   prepareDocument,
   prepareImages,
-  fetchImageHandler,
+  prepareImageSizes,
+  DEFAULT_IMAGE_MAX_BYTES,
+  DEFAULT_IMAGE_MAX_REDIRECTS,
+  DEFAULT_IMAGE_TIMEOUT_MS,
+  type PrepareImagesPolicy,
   type PrepareStep,
   type ImageFetchHandler,
 } from "./converters/prepare";

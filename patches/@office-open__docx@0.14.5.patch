@@ -1,5 +1,5 @@
 diff --git a/dist/index.mjs b/dist/index.mjs
-index 458eaeb0d38b558005c2e09bd467eb246e038611..7ddfee27b831b47f8da1ccf43658f1d3d8f29b9c 100644
+index 458eaeb0d38b558005c2e09bd467eb246e038611..d2d3ca5b210b953cfb43bf4909543068b71834dd 100644
 --- a/dist/index.mjs
 +++ b/dist/index.mjs
 @@ -4420,10 +4420,25 @@ var FontWrapper = class {
@@ -37,7 +37,28 @@ index 458eaeb0d38b558005c2e09bd467eb246e038611..7ddfee27b831b47f8da1ccf43658f1d3
  	if (info?.floating) opts.floating = info.floating;
  	return { chart: opts };
  }
-@@ -14453,12 +14469,31 @@ function parseHeaderFooterRef(rId, ctx) {
+@@ -7775,6 +7791,8 @@ const NOOP_CTX = {
+ 	addHyperlink: () => {}
+ };
+ let _docPropsIdGen = uniqueNumericIdCreator();
++/** docen determinism seam (patched) — see @docen/docx `docs/determinism.md`. */
++const docenGenerationScope = () => globalThis[Symbol.for("docen.ooxml.determinism")];
+ /** Reset the doc properties ID generator (for testing). */
+ const resetDrawingIdGen = () => {
+ 	_docPropsIdGen = uniqueNumericIdCreator();
+@@ -7815,7 +7833,10 @@ function buildHyperlinkChildren(ids) {
+ 	return parts.join("");
+ }
+ function stringifyDocPr(opts, hlIds) {
+-	const id = opts?.id ?? _docPropsIdGen();
++	const id = opts?.id ?? (() => {
++		const scope = docenGenerationScope();
++		return scope ? scope.nextDocPr() : _docPropsIdGen();
++	})();
+ 	return stringifyNonVisualDrawingProperties("wp:docPr", id, opts, "", buildHyperlinkChildren(hlIds));
+ }
+ /** Build `<a:srcRect .../>` from a crop spec, or "" when there is no crop. */
+@@ -14453,12 +14474,31 @@ function parseHeaderFooterRef(rId, ctx) {
  	};
  }
  /**
@@ -70,7 +91,7 @@ index 458eaeb0d38b558005c2e09bd467eb246e038611..7ddfee27b831b47f8da1ccf43658f1d3
  			if (pict) {
  				if (findFirst(pict, "v:textbox")) return { textbox: parseTextbox(pict, ctx, parseSectionChildrenElements) };
  			}
-@@ -14679,9 +14714,11 @@ function parseBodyChildren(elements, ctx) {
+@@ -14679,9 +14719,11 @@ function parseBodyChildren(elements, ctx) {
  function buildTocChild(els, ctx) {
  	const tocOpts = parseTocFieldFromElements(els);
  	tocOpts.bare = true;
@@ -84,7 +105,7 @@ index 458eaeb0d38b558005c2e09bd467eb246e038611..7ddfee27b831b47f8da1ccf43658f1d3
  	if (entryEls.length > 0) tocOpts.entries = entryEls.map((el) => el.name === "w:p" ? { paragraph: parseParagraph(el, ctx) } : parseSectionChild(el, ctx));
  	captureTocFieldRPr(els, tocOpts);
  	return { toc: tocOpts };
-@@ -14830,16 +14867,23 @@ function splitAroundOuterField(els) {
+@@ -14830,16 +14872,23 @@ function splitAroundOuterField(els) {
  	let endIdx = -1;
  	for (let i = 0; i < els.length; i++) {
  		const depthBefore = depth;
@@ -111,7 +132,7 @@ index 458eaeb0d38b558005c2e09bd467eb246e038611..7ddfee27b831b47f8da1ccf43658f1d3
  		if (startIdx >= 0 && endIdx < 0 && depthBefore > 0 && depth === 0) {
  			endIdx = i;
  			break;
-@@ -14947,8 +14991,9 @@ function selectTocEntryElements(els) {
+@@ -14947,8 +14996,9 @@ function selectTocEntryElements(els) {
  			for (const c of node.elements ?? []) if (c.type === "element") walk(c);
  		};
  		walk(el);
@@ -123,7 +144,7 @@ index 458eaeb0d38b558005c2e09bd467eb246e038611..7ddfee27b831b47f8da1ccf43658f1d3
  			afterSeparate = false;
  		} else if (afterSeparate && depth >= 1 && findFirst(el, "w:t") !== void 0) entries.push(el);
  	}
-@@ -14967,7 +15012,30 @@ function selectTocEntryElements(els) {
+@@ -14967,7 +15017,30 @@ function selectTocEntryElements(els) {
  * not the TOC.
  */
  function keepTocClosingParagraph(el, hasEntries) {
@@ -155,7 +176,7 @@ index 458eaeb0d38b558005c2e09bd467eb246e038611..7ddfee27b831b47f8da1ccf43658f1d3
  }
  /**
  * Concatenate the instrText runs of the OUTERMOST field in the given
-@@ -15166,7 +15234,7 @@ const endnotesDesc = createNotesDesc({
+@@ -15166,7 +15239,7 @@ const endnotesDesc = createNotesDesc({
  	refRunXml: "<w:r><w:rPr><w:rStyle w:val=\"EndnoteReference\"/></w:rPr><w:endnoteRef/></w:r>",
  	separatorXml: "<w:endnote w:type=\"separator\" w:id=\"-1\"><w:p><w:pPr><w:spacing w:after=\"0\" w:line=\"240\" w:lineRule=\"auto\"/></w:pPr><w:r><w:separator/></w:r></w:p></w:endnote>",
  	continuationSeparatorXml: "<w:endnote w:type=\"continuationSeparator\" w:id=\"0\"><w:p><w:pPr><w:spacing w:after=\"0\" w:line=\"240\" w:lineRule=\"auto\"/></w:pPr><w:r><w:continuationSeparator/></w:r></w:p></w:endnote>",
@@ -164,7 +185,19 @@ index 458eaeb0d38b558005c2e09bd467eb246e038611..7ddfee27b831b47f8da1ccf43658f1d3
  });
  //#endregion
  //#region src/parts/perm-start.ts
-@@ -18192,11 +18260,12 @@ function resolveEmbeddedFontData(fonts, doc) {
+@@ -15826,7 +15899,10 @@ const COMMENTS_NS = documentNamespaceAttributes([
+ ]) + " mc:Ignorable=\"w14 w15 wp14\"";
+ function stringifyComment(opts, ctx) {
+ 	const attrs = [`w:id="${opts.id}"`, `w:author="${escapeXml(opts.author ?? "")}"`];
+-	const dateStr = opts.date === null ? void 0 : opts.date ?? (/* @__PURE__ */ new Date()).toISOString();
++	const dateStr = opts.date === null ? void 0 : opts.date ?? (() => {
++		const scope = globalThis[Symbol.for("docen.ooxml.determinism")];
++		return scope ? scope.now : (/* @__PURE__ */ new Date()).toISOString();
++	})();
+ 	if (dateStr !== void 0) attrs.push(`w:date="${escapeXml(dateStr)}"`);
+ 	if (opts.initials !== void 0) attrs.push(`w:initials="${escapeXml(opts.initials)}"`);
+ 	const parts = [];
+@@ -18192,11 +18268,12 @@ function resolveEmbeddedFontData(fonts, doc) {
  		if (!font.embedRid) continue;
  		const odttfPath = ridToPath.get(font.embedRid);
  		if (!odttfPath) continue;
@@ -179,7 +212,7 @@ index 458eaeb0d38b558005c2e09bd467eb246e038611..7ddfee27b831b47f8da1ccf43658f1d3
  		}
  	}
  }
-@@ -19225,7 +19294,10 @@ function compileDocument(options, overrides = [], mediaLevel = 0) {
+@@ -19225,7 +19302,10 @@ function compileDocument(options, overrides = [], mediaLevel = 0) {
  	for (const font of ctx.fontTable.fontOptionsWithKey) {
  		if (font.data === void 0) continue;
  		const [nameWithoutExtension] = font.name.split(".");
