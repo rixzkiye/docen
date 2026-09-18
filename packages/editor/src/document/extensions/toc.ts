@@ -1,4 +1,4 @@
-import { detectHeadingLevel, type StylesOptions } from "@docen/docx";
+import { detectHeadingLevel, parseCustomStyles, type StylesOptions } from "@docen/docx";
 import { Extension } from "@docen/docx/core";
 import type { Node as PMNode } from "@tiptap/pm/model";
 
@@ -40,30 +40,9 @@ function headingRangeOf(range: unknown): { min: number; max: number } {
   return min >= 1 && max >= min && max <= 9 ? { min, max } : { min: 1, max: 3 };
 }
 
-/** Parse \t switch custom styles mapping (e.g. "MyHeader,1,Subtitle,2" or { MyHeader: 1 }). */
-export function parseCustomStyles(raw: unknown): Map<string, number> {
-  const map = new Map<string, number>();
-  if (!raw) return map;
-  if (typeof raw === "object" && raw !== null && !Array.isArray(raw)) {
-    for (const [k, v] of Object.entries(raw)) {
-      const num = Number(v);
-      if (num >= 1 && num <= 9) map.set(k.toLowerCase(), num);
-    }
-    return map;
-  }
-  if (typeof raw === "string") {
-    const parts = raw
-      .split(/[,;]/)
-      .map((s) => s.trim())
-      .filter(Boolean);
-    for (let i = 0; i < parts.length; i += 2) {
-      const name = parts[i];
-      const lvl = Number(parts[i + 1]);
-      if (name && lvl >= 1 && lvl <= 9) map.set(name.toLowerCase(), lvl);
-    }
-  }
-  return map;
-}
+/** Parse \t switch custom styles mapping (re-exported from @docen/docx —
+ *  shared with the generation-time TOC cache pass). */
+export { parseCustomStyles };
 
 /** Max bookmark id already carried in the document passthroughs. */
 function maxBookmarkIdOf(doc: PMNode): number {
