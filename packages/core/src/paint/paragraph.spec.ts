@@ -475,6 +475,41 @@ describe("paintParagraph character effects", () => {
     ).toHaveLength(0);
   });
 
+  it("paints a w14 bevel as light top-left and dark bottom-right edges", () => {
+    const root = paint(
+      paraOf({
+        kind: "text",
+        text: "bevel",
+        style: style({
+          bevel: {
+            top: { widthPx: 2, heightPx: 1.5, preset: "circle" },
+            bottom: { widthPx: 2, heightPx: 1.5, preset: "circle" },
+          },
+        }),
+      }),
+    );
+    const [text] = nodesOf(root, "Text");
+    const shadow = text!.props.shadow as { x: number; y: number }[];
+    expect(Array.isArray(shadow)).toBe(true);
+    expect(shadow).toHaveLength(2);
+    expect(shadow[0]).toMatchObject({ x: -2, y: -1.5 });
+    expect(shadow[1]).toMatchObject({ x: 2, y: 1.5 });
+  });
+
+  it("renders w14 3-D rotation on the text element", () => {
+    const root = paint(
+      paraOf({
+        kind: "text",
+        text: "rot",
+        style: style({ rotation3d: { x: 60, y: 0, z: 45 } }),
+      }),
+    );
+    const [text] = nodesOf(root, "Text");
+    expect(text!.props.rotation).toBe(45);
+    expect(text!.props.origin).toBe("center");
+    expect(Number(text!.props.scaleY)).toBeCloseTo(Math.cos(Math.PI / 3), 5);
+  });
+
   it("paints vertical bar tab line at stop position", () => {
     const tree = new Group();
     paintParagraph(

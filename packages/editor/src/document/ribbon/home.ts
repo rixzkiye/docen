@@ -18,6 +18,7 @@ import {
   styleGalleryItems,
   tabNode,
 } from "./shared";
+import { textEffectsItems } from "./text-effects";
 
 // --- Option sets (menu/combobox items) ---------------------------------------
 
@@ -162,6 +163,9 @@ export const homeTab = (styles?: StylesOptions | null): RibbonTab =>
             sep(),
             picker("highlight", "highlight", "FFFF00", { palette: "highlight" }),
             picker("font-color", "font-color", "000000"),
+            split("text-effects", "text-effects", parsedItems(textEffectsItems()), {
+              iconOnly: true,
+            }),
           ]),
         ]),
       ],

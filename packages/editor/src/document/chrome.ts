@@ -314,6 +314,7 @@ export const documentTemplate = html`
   <docen-watermark-dialog part="watermark-dialog"></docen-watermark-dialog>
   <docen-fill-effects-dialog part="fill-effects"></docen-fill-effects-dialog>
   <docen-online-pictures-dialog part="online-pictures"></docen-online-pictures-dialog>
+  <docen-text-effects-dialog part="text-effects"></docen-text-effects-dialog>
   <docen-inspect-dialog part="inspect"></docen-inspect-dialog>
   <docen-template-dialog part="template"></docen-template-dialog>
   <docen-print-preview part="print-preview"></docen-print-preview>

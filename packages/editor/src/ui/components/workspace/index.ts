@@ -54,6 +54,7 @@ export { default as DocenBordersShadingDialog } from "./borders-shading-dialog";
 export { default as DocenWatermarkDialog } from "./watermark-dialog";
 export { default as DocenFillEffectsDialog } from "./fill-effects-dialog";
 export { default as DocenOnlinePicturesDialog } from "./online-pictures-dialog";
+export { default as DocenTextEffectsDialog } from "./text-effects-dialog";
 export { default as DocenInspectDialog } from "./inspect-dialog";
 export { default as DocenTemplateDialog } from "./template-dialog";
 export { default as DocenModifyStyleDialog } from "./modify-style-dialog";

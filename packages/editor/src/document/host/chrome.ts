@@ -57,7 +57,7 @@ import type { StoriesDomain } from "./stories";
  *  set persists in localStorage (`docen:qat`); the order here is the bar's. */
 /** Split-button faces whose command greys from the text selection, not the
  *  dropdown value. */
-const FACE_ONLY_SPLITS: ReadonlySet<string> = new Set(["autofit", "columns"]);
+const FACE_ONLY_SPLITS: ReadonlySet<string> = new Set(["autofit", "columns", "text-effects"]);
 
 /** Arrange events that need a floating object (Word greys the rest). */
 const FLOATING_ONLY = new Set([

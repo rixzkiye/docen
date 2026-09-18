@@ -42,7 +42,7 @@ function fakeHost(): { host: DrawingPicturesHostView; opens: () => number } {
     insertShapeAt: vi.fn(),
     armShapeDrawer: vi.fn(),
     insertWordArt: vi.fn(),
-  } as DrawingPicturesHostView;
+  } as unknown as DrawingPicturesHostView;
   return { host, opens: () => opens };
 }
 

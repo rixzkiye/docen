@@ -51,6 +51,34 @@ const HIGHLIGHT_COLOR: Record<string, string> = {
   white: "#FFFFFF",
 };
 
+/** One drop-shadow spec (Leafer's shadow prop shape). */
+interface ShadowSpec {
+  x: number;
+  y: number;
+  blur?: number;
+  color: string;
+}
+
+/** The w14:scene3d text rotation as Leafer text transforms: z rotates the run
+ *  about its center, x/y squash it on the view axes (the flat-canvas stand-in
+ *  for the 3-D projection). */
+function rotationPropsOf(rotation: {
+  x?: number;
+  y?: number;
+  z?: number;
+}): Record<string, unknown> {
+  const x = (((rotation.x ?? 0) % 360) * Math.PI) / 180;
+  const y = (((rotation.y ?? 0) % 360) * Math.PI) / 180;
+  const props: Record<string, unknown> = {};
+  if (rotation.z) props.rotation = rotation.z;
+  if (x || y) {
+    props.origin = "center";
+    if (x) props.scaleY = Math.max(0.05, Math.abs(Math.cos(x)));
+    if (y) props.scaleX = Math.max(0.05, Math.abs(Math.cos(y)));
+  }
+  return props;
+}
+
 /** The w:u pattern to hand-stroke — undefined for the plain single line (and
  *  for runs with no underline at all), which stay on Leafer's textDecoration. */
 function underlinePatternOf(style: LayoutTextStyle): string | undefined {
@@ -643,7 +671,7 @@ export function paintParagraph(
         let fill: string | undefined = textColor;
         let stroke: string | undefined;
         let strokeWidth: number | undefined;
-        let shadow: { x: number; y: number; blur: number; color: string } | undefined;
+        let shadow: ShadowSpec | ShadowSpec[] | undefined;
 
         if (inline.style.outline) {
           const out = typeof inline.style.outline === "object" ? inline.style.outline : undefined;
@@ -680,8 +708,33 @@ export function paintParagraph(
           };
         }
 
+        // 3-D Format bevel (w14:props3d): raise the glyphs with a light
+        // top-left edge and a dark bottom-right edge — the flat-canvas
+        // rendering of Word's beveled text.
+        if (inline.style.bevel) {
+          const bevel = inline.style.bevel;
+          const edges: ShadowSpec[] = [];
+          if (bevel.top) {
+            edges.push({
+              x: -(bevel.top.widthPx ?? 1),
+              y: -(bevel.top.heightPx ?? 1),
+              blur: 0,
+              color: "rgba(255,255,255,0.85)",
+            });
+          }
+          if (bevel.bottom) {
+            edges.push({
+              x: bevel.bottom.widthPx ?? 1,
+              y: bevel.bottom.heightPx ?? 1,
+              blur: 0,
+              color: "rgba(0,0,0,0.45)",
+            });
+          }
+          shadow = [...(Array.isArray(shadow) ? shadow : shadow ? [shadow] : []), ...edges];
+        }
+
         let paintedGlyphs = false;
-        if (item.glyphRun && item.glyphRun.glyphs.length > 0) {
+        if (item.glyphRun && item.glyphRun.glyphs.length > 0 && !inline.style.rotation3d) {
           // Target painted width (justified interval or the squeezed item
           // width) vs the run's natural scaled advance — the glyph positions
           // and x scale stretch by the ratio, matching how the Text path
@@ -744,6 +797,7 @@ export function paintParagraph(
               ? { type: "px", value: inline.style.letterSpacingPx }
               : undefined,
             ...(scale !== 1 ? { scaleX: scale, origin: "left" as const } : {}),
+            ...(inline.style.rotation3d ? rotationPropsOf(inline.style.rotation3d) : {}),
           });
           tree.add(textEl);
         } else {

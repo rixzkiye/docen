@@ -18,6 +18,7 @@ import {
   generateDOCX,
   normalizeDocument,
   parseDOCX,
+  parseTextEffects,
   prepareDocument,
   selectionSlicePayload,
   type HtmlGenerateOptions,
@@ -44,6 +45,7 @@ import { initShapingWasm } from "@docen/shaping";
 import { attr, customElement } from "@microsoft/fast-element";
 import type { Mark, Node as PMNode } from "@tiptap/pm/model";
 import { EditorState, NodeSelection, TextSelection, type Transaction } from "@tiptap/pm/state";
+import { DocAttrStep } from "@tiptap/pm/transform";
 
 import { descendGroupChild, drawingNodePos } from "../drawing";
 import type { DocenAddin } from "../ui";
@@ -127,6 +129,7 @@ import {
 } from "./defaults";
 import type { NewStyleDefinition } from "./extensions/commands";
 import type { ModifyStylePatch, ParagraphDialogPatch } from "./extensions/commands";
+import { stampStyleRunPatches } from "./extensions/commands";
 import { type FieldFrame } from "./fields";
 import { READONLY_LIVE, type SaveFormat } from "./file-formats";
 import { ChromeDomain } from "./host/chrome";
@@ -168,6 +171,7 @@ import {
 } from "./settings";
 import { getSynonyms, spellSuggestions } from "./spelling";
 import { attachTemplate, type DotxTemplatePackage } from "./template-manager";
+import { textEffectThemeXml } from "./text-effects";
 import { translateText } from "./translation";
 
 /** Double-click window (ms) — the format painter's sticky toggle and the
@@ -1784,6 +1788,31 @@ class DocenDocument extends AddinHost<Editor> {
     this.#styles.restoreStylesSnapshot();
   }
 
+  /** Design → Document Formatting → Text Effects: stamp the chosen effect
+   *  theme onto the Title/Heading 1-3 styles (Word's document text-effects
+   *  gallery). "none" clears the effect from those styles. */
+  #setTextEffectsTheme(value?: string): void {
+    const xml = textEffectThemeXml(value);
+    if (xml === undefined) return;
+    const editor = this.editor;
+    if (!editor) return;
+    const patch = { w14RawXml: xml };
+    const styles = (editor.state.doc.attrs.styles ?? {}) as Record<string, unknown>;
+    editor.view.dispatch(
+      editor.state.tr.step(
+        new DocAttrStep(
+          "styles",
+          stampStyleRunPatches(styles, {
+            title: patch,
+            heading1: patch,
+            heading2: patch,
+            heading3: patch,
+          }),
+        ),
+      ),
+    );
+  }
+
   /** Design → Set as Default: persist this document's theme + style set as the
    *  formatting newly created documents start from. Word stores it on the
    *  Normal template; the browser element stores it in localStorage (see
@@ -2601,6 +2630,11 @@ class DocenDocument extends AddinHost<Editor> {
       "online-picture:ok",
       this.#onOnlinePictureOk as EventListener,
     );
+    // Text Effects dialog — apply the staged w14 effect patch.
+    this.shadowRoot!.querySelector("docen-text-effects-dialog")?.addEventListener(
+      "text-effects:ok",
+      this.#onTextEffectsOk as EventListener,
+    );
     this.shadowRoot!.querySelector("docen-status-bar")?.addEventListener(
       "zoom:open",
       this.#status.onZoomOpen as EventListener,
@@ -3198,6 +3232,9 @@ class DocenDocument extends AddinHost<Editor> {
     this.shadowRoot
       ?.querySelector("docen-online-pictures-dialog")
       ?.removeEventListener("online-picture:ok", this.#onOnlinePictureOk as EventListener);
+    this.shadowRoot
+      ?.querySelector("docen-text-effects-dialog")
+      ?.removeEventListener("text-effects:ok", this.#onTextEffectsOk as EventListener);
     this.shadowRoot
       ?.querySelector("docen-page-setup-dialog")
       ?.removeEventListener("page-setup:ok", this.#sections.onPageSetupOk as EventListener);
@@ -4170,6 +4207,31 @@ class DocenDocument extends AddinHost<Editor> {
     });
   };
 
+  /** Home → Font → Text Effects → Options: open the custom dialog prefilled
+   *  from the selection's run effects. */
+  #openTextEffectsDialog(): void {
+    const dialog = this.shadowRoot?.querySelector("docen-text-effects-dialog") as {
+      show?(current?: unknown): void;
+    } | null;
+    if (!dialog) return;
+    const editor = this.#bridge?.activeEditor() ?? this.editor;
+    const raw = editor
+      ? (editor.getAttributes("textStyle") as { w14RawXml?: unknown }).w14RawXml
+      : undefined;
+    dialog.show?.(typeof raw === "string" ? parseTextEffects(raw) : {});
+  }
+
+  /** The custom Text Effects dialog's commit — patch the selected runs' w14
+   *  effects (a null entry clears that family). */
+  readonly #onTextEffectsOk = (event: CustomEvent<Record<string, unknown>>): void => {
+    const patch = event.detail;
+    if (!patch || typeof patch !== "object") return;
+    const editor = this.#bridge?.activeEditor() ?? this.editor;
+    if (!editor) return;
+    editor.commands["text-effects-apply"](JSON.stringify(patch));
+    this.#bridge?.focus();
+  };
+
   /** Event → handler tables for the extracted host-command domains. Built on
    *  first dispatch (the adapter closures read live element state), then
    *  cached. Each domain receives only the narrow view its bodies call. */
@@ -4357,6 +4419,7 @@ class DocenDocument extends AddinHost<Editor> {
           drawingMulti: () => this.#bridge?.drawingMulti(),
           pickImage: () => this.#imageInput?.click(),
           openOnlinePictures: () => this.#openOnlinePicturesDialog(),
+          openTextEffectsDialog: () => this.#openTextEffectsDialog(),
           pickPicture: () => this.#pictureInput?.click(),
           focusBridge: () => this.#bridge?.focus(),
           drawingState: () => this.#drawingStateOf(),
@@ -4434,6 +4497,7 @@ class DocenDocument extends AddinHost<Editor> {
           openWatermarkDialog: () => this.#design.openWatermarkDialog(),
           setWatermark: (preset) => this.#design.setWatermark(preset),
           openFillEffectsDialog: () => this.#design.openFillEffectsDialog(),
+          setTextEffectsTheme: (value) => this.#setTextEffectsTheme(value),
           setAsDefault: () => this.#setAsDefault(),
           restoreStylesSnapshot: () => this.#restoreStylesSnapshot(),
         },

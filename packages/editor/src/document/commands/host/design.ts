@@ -15,6 +15,9 @@ export interface DesignHostView {
   setWatermark(preset?: string): void;
   /** Open the page background's Fill Effects dialog. */
   openFillEffectsDialog(): void;
+  /** Design → Document Formatting → Text Effects: stamp the document-wide
+   *  effect theme onto the Title/Heading styles ("none" clears). */
+  setTextEffectsTheme(value?: string): void;
   /** Design → Set as Default: persist the document's theme + style set for
    *  newly created documents. */
   setAsDefault(): void;
@@ -39,6 +42,7 @@ export class DesignHostCommands implements HostCommandDomain {
     "fill-effects",
     "style-set",
     "set-default",
+    "effects",
   ];
 
   run(event: string, value?: string): boolean {
@@ -80,6 +84,12 @@ export class DesignHostCommands implements HostCommandDomain {
     // documents (Word's Design → Document Formatting → Set as Default).
     if (event === "set-default") {
       this.host.setAsDefault();
+      return true;
+    }
+    // Text Effects theme — stamp the document-wide effect onto the heading
+    // styles (Word's Design → Document Formatting → Text Effects gallery).
+    if (event === "effects") {
+      this.host.setTextEffectsTheme(typeof value === "string" ? value : undefined);
       return true;
     }
     // The style-set gallery's "document default" entry restores the styles

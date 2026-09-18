@@ -19,3 +19,7 @@ export {
 export { renderDocx as renderParagraphDocx, parseDocx as parseParagraphDocx } from "./paragraph";
 export * from "./vml-promotion";
 export * from "./drawing-3d-ink";
+// Word's Text Effects (w14 run effects): structured parse/serialize over the
+// TextStyle `w14RawXml` carrier — the editor gallery and the layout projection
+// share this one model.
+export * from "./text-effects";
