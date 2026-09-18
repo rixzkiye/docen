@@ -6,10 +6,10 @@ settings:
 
 patchedDependencies:
   '@office-open/core@0.14.5':
-    hash: 9d34ff0d0c48d2b9bdf8b8d28993ff123676f47eff6b480ace6eccbdfaa918fc
+    hash: bf00814ae167bb6282561453bd093f7119eb6c8c32563339f8870de4ed84681a
     path: patches/@office-open__core@0.14.5.patch
   '@office-open/docx@0.14.5':
-    hash: a1c6b1a9523b384490da48bdb55e975e92f7f7d1fa2faf9045a0f5ce212b654c
+    hash: 44440632b0beea142221d04679dfe619f4849db30dae7296e0438a19507037a2
     path: patches/@office-open__docx@0.14.5.patch
 
 importers:
@@ -36,7 +36,7 @@ importers:
         version: link:../shaping
       '@office-open/core':
         specifier: 0.14.5
-        version: 0.14.5(patch_hash=9d34ff0d0c48d2b9bdf8b8d28993ff123676f47eff6b480ace6eccbdfaa918fc)
+        version: 0.14.5(patch_hash=bf00814ae167bb6282561453bd093f7119eb6c8c32563339f8870de4ed84681a)
       leafer-ui:
         specifier: 2.2.10
         version: 2.2.10
@@ -76,10 +76,10 @@ importers:
         version: link:../shaping
       '@office-open/core':
         specifier: 0.14.5
-        version: 0.14.5(patch_hash=9d34ff0d0c48d2b9bdf8b8d28993ff123676f47eff6b480ace6eccbdfaa918fc)
+        version: 0.14.5(patch_hash=bf00814ae167bb6282561453bd093f7119eb6c8c32563339f8870de4ed84681a)
       '@office-open/docx':
         specifier: 0.14.5
-        version: 0.14.5(patch_hash=a1c6b1a9523b384490da48bdb55e975e92f7f7d1fa2faf9045a0f5ce212b654c)
+        version: 0.14.5(patch_hash=44440632b0beea142221d04679dfe619f4849db30dae7296e0438a19507037a2)
       '@tiptap/core':
         specifier: 3.31.3
         version: 3.31.3(@tiptap/pm@3.31.3)
@@ -89,6 +89,9 @@ importers:
       '@tiptap/pm':
         specifier: 3.31.3
         version: 3.31.3
+      fflate:
+        specifier: 0.8.3
+        version: 0.8.3
       image-meta:
         specifier: 0.2.2
         version: 0.2.2
@@ -187,7 +190,7 @@ importers:
         version: link:../layout
       '@office-open/core':
         specifier: 0.14.5
-        version: 0.14.5(patch_hash=9d34ff0d0c48d2b9bdf8b8d28993ff123676f47eff6b480ace6eccbdfaa918fc)
+        version: 0.14.5(patch_hash=bf00814ae167bb6282561453bd093f7119eb6c8c32563339f8870de4ed84681a)
       '@office-open/pptx':
         specifier: 0.14.5
         version: 0.14.5
@@ -2379,8 +2382,8 @@ packages:
     resolution: {integrity: sha512-Y3wQdFg2Va6etvQ5I82yUhGdsKrcYox6p7FfL1LbK2J4V01F9TGlepTIhnK24t7koZibmg82KGglhA1XK5IsLQ==}
     engines: {node: '>=10'}
 
-  nanoid@3.3.19:
-    resolution: {integrity: sha512-Y2tUNy4ouw6tq5oDSKeQYGOyhkUBhNOcGV/02KC+6kd9eDGqdZd++mjMiIDilrBYvjEnCYvVtsuHCuP+okSfug==}
+  nanoid@3.3.18:
+    resolution: {integrity: sha512-DTg4MJbGMWkfi6VZFdNt2/caMbQy4Ou+Op/hJQvGEWcnVfoA1QA+xzRKAzw9jD6+GVOOeYr/mIcuDSdug6F6+w==}
     engines: {node: ^10 || ^12 || ^13.7 || ^14 || >=15.0.1}
     hasBin: true
 
@@ -3632,20 +3635,20 @@ snapshots:
 
   '@noble/hashes@2.3.0': {}
 
-  '@office-open/core@0.14.5(patch_hash=9d34ff0d0c48d2b9bdf8b8d28993ff123676f47eff6b480ace6eccbdfaa918fc)':
+  '@office-open/core@0.14.5(patch_hash=bf00814ae167bb6282561453bd093f7119eb6c8c32563339f8870de4ed84681a)':
     dependencies:
       '@noble/hashes': 2.3.0
       '@office-open/xml': 0.14.5
       fflate: 0.8.3
 
-  '@office-open/docx@0.14.5(patch_hash=a1c6b1a9523b384490da48bdb55e975e92f7f7d1fa2faf9045a0f5ce212b654c)':
+  '@office-open/docx@0.14.5(patch_hash=44440632b0beea142221d04679dfe619f4849db30dae7296e0438a19507037a2)':
     dependencies:
-      '@office-open/core': 0.14.5(patch_hash=9d34ff0d0c48d2b9bdf8b8d28993ff123676f47eff6b480ace6eccbdfaa918fc)
+      '@office-open/core': 0.14.5(patch_hash=bf00814ae167bb6282561453bd093f7119eb6c8c32563339f8870de4ed84681a)
       '@office-open/xml': 0.14.5
 
   '@office-open/pptx@0.14.5':
     dependencies:
-      '@office-open/core': 0.14.5(patch_hash=9d34ff0d0c48d2b9bdf8b8d28993ff123676f47eff6b480ace6eccbdfaa918fc)
+      '@office-open/core': 0.14.5(patch_hash=bf00814ae167bb6282561453bd093f7119eb6c8c32563339f8870de4ed84681a)
       '@office-open/xml': 0.14.5
 
   '@office-open/xml@0.14.5': {}
@@ -4747,7 +4750,7 @@ snapshots:
 
   mrmime@2.0.1: {}
 
-  nanoid@3.3.19: {}
+  nanoid@3.3.18: {}
 
   npm-run-path@6.0.0:
     dependencies:
@@ -4854,7 +4857,7 @@ snapshots:
 
   postcss@8.5.28:
     dependencies:
-      nanoid: 3.3.19
+      nanoid: 3.3.18
       picocolors: 1.1.1
       source-map-js: 1.2.1
 

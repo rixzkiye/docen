@@ -46,7 +46,8 @@
   },
   "scripts": {
     "build": "vp pack",
-    "build:wasm": "./scripts/build-wasm.sh"
+    "build:wasm": "./scripts/build-wasm.sh",
+    "check:wasm": "./scripts/build-wasm.sh --check"
   },
   "devDependencies": {
     "harfbuzzjs": "^1.6.1"
