@@ -147,8 +147,12 @@ export function renderDocx(node: JSONContent): Record<string, unknown> | null {
   if (flipVSet) transformation.flipVertical = attrs.flipV as boolean;
   imageOpts.transformation = transformation;
 
-  // altText: alt → name, title → description (DocPropertiesOptions)
-  const altText: Record<string, string> = {};
+  // altText: alt → name, title → description (DocPropertiesOptions).
+  // Any other source fields (wp:docPr `id`, hyperlink, …) ride in the
+  // `altText` attr so a re-export keeps its drawing id instead of allocating
+  // a fresh global one — a dropped id makes repeated saves differ.
+  const source = attrs.altText as Record<string, unknown> | null | undefined;
+  const altText: Record<string, unknown> = source ? { ...source } : {};
   if (attrs.alt) altText.name = attrs.alt as string;
   if (attrs.title) altText.description = attrs.title as string;
   if (Object.keys(altText).length > 0) imageOpts.altText = altText;
@@ -198,9 +202,11 @@ export function parseDocx(picture: PictureOptions): Record<string, unknown> {
     if (transformation.flipVertical !== undefined) attrs.flipV = transformation.flipVertical;
   }
 
-  // altText → alt/title
+  // altText → alt/title; the full DocPropertiesOptions rides along in
+  // `altText` so the wp:docPr id and any other source fields survive.
   const { altText } = picture;
   if (altText) {
+    attrs.altText = altText;
     if (altText.name) attrs.alt = altText.name;
     if (altText.description) attrs.title = altText.description;
   }
@@ -226,19 +232,25 @@ export function parseDocx(picture: PictureOptions): Record<string, unknown> {
 /** ParagraphChild `{ picture: PictureOptions }` → image node. Mirrors the old
  *  DocxManager.resolveImage: reflective attrs parse, then rebuild the data URL
  *  from the embedded bytes (encodeBase64 handles platform dispatch + stack
- *  guard). */
+ *  guard). office-open's own writer accepts a Uint8Array, a raw base64 string
+ *  or a `data:` URL for `picture.data`; the resolver rebuilds `src` for all
+ *  three, so an authored DocumentOptions picture never loses its bytes (a
+ *  dropped `src` silently omits the drawing at generate time). */
 function resolveImage(picture: PictureOptions, ctx: ResolveContext): JSONContent {
   const attrs = ctx.parseNodeAttrs("image", picture);
   const { data, type } = picture;
-  // office-open parse always yields bytes; guard the other DataType members
-  // (string/ArrayBuffer) so the data URL is built from Uint8Array only.
-  const bytes =
-    data instanceof Uint8Array ? data : data instanceof ArrayBuffer ? new Uint8Array(data) : null;
-  if (bytes && type) {
-    attrs.src =
-      bytes.byteLength > MEDIA_INLINE_LIMIT
-        ? registerMediaBlob(bytes, type)
-        : `data:image/${type};base64,${encodeBase64(bytes)}`;
+  const mime = type ?? "png";
+  if (typeof data === "string" && data.length > 0) {
+    attrs.src = data.startsWith("data:") ? data : `data:image/${mime};base64,${data}`;
+  } else {
+    const bytes =
+      data instanceof Uint8Array ? data : data instanceof ArrayBuffer ? new Uint8Array(data) : null;
+    if (bytes && bytes.byteLength > 0) {
+      attrs.src =
+        bytes.byteLength > MEDIA_INLINE_LIMIT
+          ? registerMediaBlob(bytes, mime)
+          : `data:image/${mime};base64,${encodeBase64(bytes)}`;
+    }
   }
   return { type: "image", attrs };
 }
@@ -350,6 +362,15 @@ export const Image = Node.create({
           const m = style.match(/(?:^|;)\s*height:\s*([\d.]+)px/);
           return m ? parseFloat(m[1]) : null;
         },
+      },
+
+      // office-open DocPropertiesOptions (wp:docPr) beyond alt/title, carried
+      // verbatim so the source drawing `id` (and future fields) survive a
+      // save. Editor-editable alt/title win over `name`/`description` when
+      // both are present.
+      altText: {
+        default: null,
+        rendered: false,
       },
 
       // Nested office-open Floating (JSON in data-floating)

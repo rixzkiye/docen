@@ -191,12 +191,14 @@ type SectionHeaderFooterGroup = {
   default?: SectionChild[];
   first?: SectionChild[];
   even?: SectionChild[];
+  partNames?: { default?: string; first?: string; even?: string };
 };
 
 interface HeaderFooterSlots {
   default?: JSONContent[];
   first?: JSONContent[];
   even?: JSONContent[];
+  partNames?: { default?: string; first?: string; even?: string };
 }
 
 // ── DocxManager ──
@@ -560,6 +562,15 @@ export class DocxManager {
       }
       if (children.length > 0) group[slot] = children;
     }
+    // Source part names ride back only for slots that still carry content, so
+    // generate can reuse the opened package's headerN.xml parts (and their
+    // relationship ids) instead of allocating fresh ones each save.
+    const names: NonNullable<SectionHeaderFooterGroup["partNames"]> = {};
+    for (const slot of ["default", "first", "even"] as const) {
+      const name = slots.partNames?.[slot];
+      if (name && group[slot]) names[slot] = name;
+    }
+    if (Object.keys(names).length > 0) group.partNames = names;
     return Object.keys(group).length > 0 ? group : undefined;
   }
 
@@ -578,7 +589,14 @@ export class DocxManager {
         slots[slot] = this.resolveSectionChildren(children);
       }
     }
-    return Object.keys(slots).length > 0 ? slots : null;
+    if (Object.keys(slots).length === 0) return null;
+    const names: NonNullable<HeaderFooterSlots["partNames"]> = {};
+    for (const slot of ["default", "first", "even"] as const) {
+      const name = group.partNames?.[slot];
+      if (name && slots[slot]) names[slot] = name;
+    }
+    if (Object.keys(names).length > 0) slots.partNames = names;
+    return slots;
   }
 
   resolve(docOpts: DocumentOptions): JSONContent {
