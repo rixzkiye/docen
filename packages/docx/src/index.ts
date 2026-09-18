@@ -32,11 +32,15 @@ import type { ChartType as OfficeChartType } from "@office-open/core";
 export type ChartType = OfficeChartType | "combo";
 export type { ChartOptions } from "@office-open/docx";
 export type { ChartSeriesData, LegendPosition } from "@office-open/core";
-// Re-export the engine's section-geometry defaults (MS Office zh-CN "Normal":
-// A4 + top/bottom 1440tw, left/right 1800tw) so editor-side geometry fallbacks
-// — content-width for image capping, page measurement — reuse the SAME defaults
-// the engine uses to fill an empty sectPr, instead of hardcoding divergent ones.
-export { sectionMarginDefaults, sectionPageSizeDefaults } from "@office-open/docx";
+// docen-owned section-geometry defaults — generation stamps these into every
+// sectPr (never office-open's zh-CN `sectionMarginDefaults`), and editor-side
+// geometry fallbacks — content-width for image capping, page measurement —
+// reuse the SAME constants instead of hardcoding divergent ones.
+export {
+  DOCEN_DEFAULT_PAGE_SIZE,
+  DOCEN_DEFAULT_PAGE_MARGIN,
+  docenDefaultSectionProperties,
+} from "./converters/section-defaults";
 // Re-export the engine's length conversion (mm → twips) so the editor layer can
 // build OOXML page geometry from mm presets without a direct @office-open/core
 // dependency. (@office-open/docx does not re-export this from core.) Sourced from

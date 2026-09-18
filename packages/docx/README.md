@@ -177,6 +177,22 @@ payload is streamed through a capped inflater, so a size-lying zip bomb is
 stopped at its declared cap instead of being materialized; violations throw an
 `ArchiveRejection` (`error.code` names the failed rule).
 
+### Generation defaults (page geometry & styles)
+
+Generation never lets the engine's MS Office **zh-CN** defaults leak. Every
+compiled section carries explicit `sectionProperties` from docen's own
+constants — A4, 1" (1440-twip) margins on all sides, 0.5" header/footer
+distance (`DOCEN_DEFAULT_PAGE_SIZE`, `DOCEN_DEFAULT_PAGE_MARGIN`,
+`docenDefaultSectionProperties()`), instead of office-open's
+`sectionMarginDefaults` (1.25" side margins, 851/992 header/footer). A
+model-supplied sectPr is preserved verbatim; only a section without one gets
+the defaults. The document style table keeps office-open's locale-neutral
+ECMA-376 defaults (theme font refs — Calibri/Calibri Light — and `en-US`
+language), and theme-only East Asian font tokens resolve with the
+caller-supplied document language (`DOCEN_DEFAULT_EAST_ASIA_LANGUAGE` is
+`en-US`; pass `"zh-CN"` explicitly for a zh-CN document) — never an implicit
+zh-CN face (`等线`/DengXian).
+
 ### Streaming benchmark
 
 `generateDOCXStream` on 100–300 page documents is measured by

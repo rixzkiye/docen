@@ -52,6 +52,7 @@ import {
 } from "./archive-guard";
 import { DOCX_EPOCH, toIsoDate, withGenerationScope } from "./determinism";
 import { prepareDocument, type PrepareStep } from "./prepare";
+import { docenDefaultSectionProperties } from "./section-defaults";
 import { buildTextBlock } from "./styles";
 
 export type { DocumentOptions };
@@ -531,7 +532,11 @@ export class DocxManager {
     };
   }
 
-  /** Assemble a SectionOptions from compiled children + optional layout/headers/footers. */
+  /** Assemble a SectionOptions from compiled children + optional layout/headers/footers.
+   *  A section the model gives no properties is stamped with the docen
+   *  defaults — every generated document carries its own explicit page
+   *  geometry instead of inheriting office-open's zh-CN
+   *  `sectionMarginDefaults` at stringify time. */
   private buildSection(
     children: SectionChild[],
     properties: SectionPropertiesOptions | null,
@@ -540,7 +545,7 @@ export class DocxManager {
   ): DocumentOptions["sections"][number] {
     return {
       children,
-      ...(properties ? { properties } : {}),
+      properties: properties ?? docenDefaultSectionProperties(),
       ...(headers ? { headers } : {}),
       ...(footers ? { footers } : {}),
     };
@@ -2145,7 +2150,7 @@ export function compileDocument(
 }
 
 /**
- * Fill in office-open's ECMA-376 schema defaults that a hand-built JSON lacks.
+ * Fill in the document-level defaults that a hand-built JSON lacks.
  *
  * A document constructed by hand (not via {@link parseDOCX}) carries no
  * `doc.attrs.styles` (docDefaults: body font/size/spacing + the built-in style
@@ -2155,12 +2160,13 @@ export function compileDocument(
  * page geometry, and no document grid for snapToGrid to pitch against, and
  * rendering/pagination drift.
  *
- * Harvests the defaults by round-tripping an EMPTY document through office-open
- * (`generateDOCXSync` → `parseDOCX`) and taking exactly those two attrs — the
- * empty doc's remaining attrs (documentExtras with passthrough binaries,
- * settings, contentTypes) are round-trip artifacts a hand-built doc must not
- * inherit: rawParts carries Uint8Array bytes that break JSON serialization of
- * the attrs (a host embedding `JSON.stringify(normalizeDocument(...))` then
+ * Harvests the style table by round-tripping an EMPTY document through
+ * office-open (`generateDOCXSync` → `parseDOCX`) and takes that attr plus
+ * docen's own {@link docenDefaultSectionProperties} — the empty doc's
+ * remaining attrs (documentExtras with passthrough binaries, settings,
+ * contentTypes) are round-trip artifacts a hand-built doc must not inherit:
+ * rawParts carries Uint8Array bytes that break JSON serialization of the
+ * attrs (a host embedding `JSON.stringify(normalizeDocument(...))` then
  * crashes the next save-as in office-open's media reader). Content nodes
  * (paragraphs/runs/marks) pass through verbatim, avoiding the mark pollution a
  * full-content round-trip would cause (a paragraph's default run props leak
@@ -2183,7 +2189,10 @@ export function normalizeDocument(json: JSONContent, extensions?: Extensions): J
   );
   const harvested = {
     styles: baseAttrs.styles,
-    sectionProperties: baseAttrs.sectionProperties,
+    // Our own explicit geometry — never the empty round-trip's (absent)
+    // sectionProperties, which made a hand-built doc depend on office-open's
+    // implicit zh-CN `sectionMarginDefaults` for its page box.
+    sectionProperties: docenDefaultSectionProperties(),
   };
   return { ...json, attrs: { ...harvested, ...userAttrs } };
 }
