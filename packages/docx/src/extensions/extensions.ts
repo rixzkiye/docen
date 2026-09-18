@@ -4,13 +4,27 @@ import type { AnyExtension } from "../core";
 import { Chart } from "./chart";
 import { ColumnBreak } from "./column-break";
 import { Document } from "./document";
+import { FormField } from "./form-field";
 import { Image } from "./image";
 import { Link } from "./link";
-import { Bold, Code, Highlight, Italic, Strike, Subscript, Superscript, Underline } from "./marks";
+import {
+  Bold,
+  Code,
+  Highlight,
+  Italic,
+  Strike,
+  Subscript,
+  Superscript,
+  Underline,
+  SoftHyphen,
+  Dir,
+  Bdo,
+} from "./marks";
 import { MathInline } from "./math";
 import { PageBreak } from "./page-break";
 import { Paragraph } from "./paragraph";
 import { Passthrough, InlinePassthrough } from "./passthrough";
+import { PermStart, PermEnd } from "./perm-range";
 import { Ruby } from "./ruby";
 import { SdtBlock, SdtInline } from "./sdt";
 import { SectionBreak } from "./section-break";
@@ -38,6 +52,18 @@ const HardBreak = TiptapNode.create({
   inline: true,
   group: "inline",
   selectable: false,
+  addAttributes() {
+    return {
+      variant: {
+        default: "textWrapping",
+        parseHTML: (el) => el.getAttribute("data-variant") || "textWrapping",
+        renderHTML: (attrs) =>
+          attrs.variant && attrs.variant !== "textWrapping"
+            ? { "data-variant": attrs.variant }
+            : {},
+      },
+    };
+  },
   parseHTML() {
     return [{ tag: "br" }];
   },
@@ -66,6 +92,9 @@ export const tiptapNodeExtensions: AnyExtension[] = [
   Table,
   TableRow,
   TableCell,
+  FormField,
+  PermStart,
+  PermEnd,
 ];
 
 // Marks
@@ -84,6 +113,9 @@ export const tiptapMarkExtensions: AnyExtension[] = [
   Superscript,
   TextStyle,
   Underline,
+  SoftHyphen,
+  Dir,
+  Bdo,
 ];
 
 // DOCX schema + DOCX-specific extensions. Editing-behavior extensions
@@ -97,7 +129,19 @@ export const docxExtensions: AnyExtension[] = [...tiptapNodeExtensions, ...tipta
 // Re-export explicitly (no `export *`) so the public surface is visible.
 // Customized extensions export their local version; upstream-only ones re-export
 // from @tiptap/* directly, base marks (with DOCX hooks) from ./marks.
-export { Bold, Code, Highlight, Italic, Strike, Subscript, Superscript, Underline } from "./marks";
+export {
+  Bold,
+  Code,
+  Highlight,
+  Italic,
+  Strike,
+  Subscript,
+  Superscript,
+  Underline,
+  SoftHyphen,
+  Dir,
+  Bdo,
+} from "./marks";
 export { Document, createDocument } from "./document";
 export { Paragraph } from "./paragraph";
 export { detectHeadingLevel, HEADING_COMPILE_MAP } from "./paragraph";
@@ -141,3 +185,5 @@ export { SdtBlock, SdtInline } from "./sdt";
 export { MathInline, convertLinearToOMML, convertOMMLToLinear } from "./math";
 export { Textbox } from "./textbox";
 export { Tab } from "./tab";
+export { FormField, extractFormFieldText } from "./form-field";
+export { PermStart, PermEnd } from "./perm-range";

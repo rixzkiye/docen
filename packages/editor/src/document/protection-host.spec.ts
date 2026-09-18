@@ -9,8 +9,13 @@ import { describe, expect, it } from "vitest";
 
 import { DocenRestrictEditingPane } from "../ui/components/workspace/restrict-editing-pane";
 import {
+  addPermissionRange,
   applyProtectionMode,
   enforceProtection,
+  findNextPermissionRange,
+  findPermissionRanges,
+  isInsideEditableField,
+  isInsideEditablePermission,
   isInsideEditableSdt,
   stopProtection,
   withProtection,
@@ -242,7 +247,6 @@ describe("forms enforcement through the edit bridge", () => {
     expect(editor.state.doc.textContent).toContain("X");
   });
 });
-
 describe("table cell protection in forms mode", () => {
   const tableContent = {
     type: "doc",
@@ -302,5 +306,89 @@ describe("table cell protection in forms mode", () => {
     // Cell containing locked SDT: write-protected in forms mode
     editor.commands.setTextSelection(posIn(editor, "Locked Cell"));
     expect(isInsideEditableSdt(editor)).toBe(false);
+  });
+});
+
+describe("isInsideEditableField", () => {
+  it("allows editing inside formField nodes", () => {
+    const docWithFf = {
+      type: "doc",
+      content: [
+        {
+          type: "paragraph",
+          content: [
+            { type: "text", text: "Outside text" },
+            {
+              type: "formField",
+              attrs: { formField: { textInput: { value: "inside form field" } } },
+              content: [{ type: "text", text: "inside form field" }],
+            },
+          ],
+        },
+      ],
+    };
+    const editor = makeEditor(docWithFf);
+    editor.commands.setTextSelection(posIn(editor, "Outside text"));
+    expect(isInsideEditableField(editor)).toBe(false);
+
+    editor.commands.setTextSelection(posIn(editor, "inside form field"));
+    expect(isInsideEditableField(editor)).toBe(true);
+  });
+});
+
+describe("permission ranges", () => {
+  it("enforces editability inside permStart ... permEnd for everyone", () => {
+    const docWithPerms = {
+      type: "doc",
+      content: [
+        {
+          type: "paragraph",
+          content: [
+            { type: "text", text: "Before perm " },
+            { type: "permStart", attrs: { id: 1, editGroup: "everyone" } },
+            { type: "text", text: "Inside perm" },
+            { type: "permEnd", attrs: { id: 1 } },
+            { type: "text", text: "After perm" },
+          ],
+        },
+      ],
+    };
+    const editor = makeEditor(docWithPerms);
+    const ranges = findPermissionRanges(editor.state.doc);
+    expect(ranges).toHaveLength(1);
+    expect(ranges[0].editGroup).toBe("everyone");
+
+    editor.commands.setTextSelection(posIn(editor, "Before perm "));
+    expect(isInsideEditablePermission(editor)).toBe(false);
+
+    editor.commands.setTextSelection(posIn(editor, "After perm"));
+    expect(isInsideEditablePermission(editor)).toBe(false);
+
+    editor.commands.setTextSelection(posIn(editor, "Inside perm"));
+    expect(isInsideEditablePermission(editor)).toBe(true);
+  });
+
+  it("adds and navigates permission ranges", () => {
+    const editor = makeEditor({
+      type: "doc",
+      content: [
+        {
+          type: "paragraph",
+          content: [{ type: "text", text: "Selectable text for permission" }],
+        },
+      ],
+    });
+    const from = 2;
+    const to = 10;
+    editor.commands.setTextSelection({ from, to });
+    const added = addPermissionRange(editor, { editGroup: "everyone" });
+    expect(added).toBe(true);
+
+    const ranges = findPermissionRanges(editor.state.doc);
+    expect(ranges).toHaveLength(1);
+    expect(ranges[0].editGroup).toBe("everyone");
+
+    const navigated = findNextPermissionRange(editor);
+    expect(navigated).toBe(true);
   });
 });

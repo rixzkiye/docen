@@ -127,9 +127,13 @@ import { StylesDomain } from "./host/styles";
 import { mergeSectionProperties } from "./page-setup";
 import { compressPictureSrc, pickTransparentColor, type CropRect } from "./pixels";
 import {
+  addPermissionRange,
   applyProtectionMode,
   enforceProtection,
-  isInsideEditableSdt,
+  findNextPermissionRange,
+  hasPermissionRanges,
+  isInsideEditableField,
+  isInsideEditablePermission,
   stopProtection,
   withProtection,
   type ProtectionHostView,
@@ -1066,6 +1070,20 @@ class DocenDocument extends AddinHost<Editor> {
     stopProtection(this.#protectionView());
   };
 
+  readonly #onProtectionToggleException = (event: CustomEvent<any>): void => {
+    const editor = this.#bridge?.activeEditor() ?? this.editor;
+    if (!editor) return;
+    const { group } = event.detail ?? {};
+    addPermissionRange(editor, { editGroup: group ?? "everyone" });
+    this.#syncEditable();
+  };
+
+  readonly #onProtectionFindNext = (): void => {
+    const editor = this.#bridge?.activeEditor() ?? this.editor;
+    if (!editor) return;
+    findNextPermissionRange(editor);
+  };
+
   readonly #onA11ySelectIssue = (event: CustomEvent<any>): void => {
     const issue = event.detail?.issue;
     if (!issue) return;
@@ -1656,7 +1674,11 @@ class DocenDocument extends AddinHost<Editor> {
 
     this.#bridge = mountEditBridge({
       host: this.#stageHost,
-      canEdit: (ed) => (this.#protectionMode === "forms" ? isInsideEditableSdt(ed) : true),
+      canEdit: (ed) => {
+        if (this.#protectionMode === "forms") return isInsideEditableField(ed);
+        if (this.#protectionMode === "readOnly") return isInsideEditablePermission(ed);
+        return true;
+      },
       // The textarea must live outside docen-context-menu (fluent-menu eats
       // Space/Enter) — the input layer at the shadow root is menu-free.
       inputHost: this.shadowRoot!.querySelector<HTMLElement>(".input-layer")!,
@@ -2126,6 +2148,14 @@ class DocenDocument extends AddinHost<Editor> {
       "protection:stop",
       this.#onProtectionStop as EventListener,
     );
+    this.shadowRoot!.querySelector("docen-restrict-editing-pane")?.addEventListener(
+      "protection:toggle-exception",
+      this.#onProtectionToggleException as EventListener,
+    );
+    this.shadowRoot!.querySelector("docen-restrict-editing-pane")?.addEventListener(
+      "protection:find-next",
+      this.#onProtectionFindNext as EventListener,
+    );
     this.shadowRoot!.querySelector("docen-reveal-formatting-pane")?.addEventListener(
       "reveal:compare-toggle",
       this.#onRevealCompareToggle as EventListener,
@@ -2488,8 +2518,11 @@ class DocenDocument extends AddinHost<Editor> {
    *  protection changes just flip #docProtected and re-run it. */
   #syncEditable(): void {
     if (!this.editor) return;
+    const hasPerms = hasPermissionRanges(this.editor.state.doc);
+    const effectiveProtected =
+      this.#docProtected && !(this.#protectionMode === "readOnly" && hasPerms);
     const editable =
-      this.editable !== "false" && this.#viewMode() !== "read" && !this.#docProtected;
+      this.editable !== "false" && this.#viewMode() !== "read" && !effectiveProtected;
     if (this.editor.isEditable !== editable) {
       this.editor.setEditable(editable);
       this.#syncEditModeMenu();
@@ -4112,16 +4145,21 @@ class DocenDocument extends AddinHost<Editor> {
         return;
       }
     }
-    // Forms protection mode: allow only content control interaction outside readonly live
+    // Forms or ReadOnly protection mode: allow only field / permission region interaction outside readonly live
     if (
-      this.#protectionMode === "forms" &&
+      (this.#protectionMode === "forms" || this.#protectionMode === "readOnly") &&
       !READONLY_LIVE.has(name) &&
       !name.startsWith("sdt-") &&
       name !== "toggle-checkbox"
     ) {
       const active = this.#bridge?.activeEditor() ?? this.editor;
-      if (active && !isInsideEditableSdt(active)) {
-        return;
+      if (active) {
+        if (this.#protectionMode === "forms" && !isInsideEditableField(active)) {
+          return;
+        }
+        if (this.#protectionMode === "readOnly" && !isInsideEditablePermission(active)) {
+          return;
+        }
       }
     }
     // Local host commands (chrome actions plus document actions the engine
