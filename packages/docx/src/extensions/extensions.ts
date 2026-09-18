@@ -4,6 +4,7 @@ import type { AnyExtension } from "../core";
 import { Chart } from "./chart";
 import { ColumnBreak } from "./column-break";
 import { Document } from "./document";
+import { Model3D, Ink } from "./drawing-3d-ink";
 import { FormField } from "./form-field";
 import { Image } from "./image";
 import { Link } from "./link";
@@ -93,6 +94,8 @@ export const tiptapNodeExtensions: AnyExtension[] = [
   Textbox,
   Chart,
   Image,
+  Model3D,
+  Ink,
   WpgGroup,
   WpsShape,
   Table,
@@ -221,3 +224,4 @@ export {
 export { Tab } from "./tab";
 export { FormField, extractFormFieldText } from "./form-field";
 export { PermStart, PermEnd } from "./perm-range";
+export { Model3D, Ink, Drawing3D, DrawingInk, DELEGATION_NOTICE } from "./drawing-3d-ink";

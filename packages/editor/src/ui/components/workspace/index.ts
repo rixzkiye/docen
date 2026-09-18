@@ -78,3 +78,5 @@ export { DocenRuler, default as DocenRulerDefault } from "./ruler";
 export { DocenNavPane, default as DocenNavPaneDefault } from "./nav-pane";
 export { DocenPrintPreview, default as DocenPrintPreviewDefault } from "./print-preview";
 export { DocenTranslatePane, default as DocenTranslatePaneDefault } from "./translate-pane";
+export { DocenAltTextPane, default as DocenAltTextPaneDefault } from "./alt-text-pane";
+

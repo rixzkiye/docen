@@ -6,6 +6,8 @@ import {
   nextMultilevelReference,
   nextOrderedReference,
   ORDERED_FORMATS,
+  updateDocPr,
+  updateExtent,
 } from "@docen/docx";
 import { Extension } from "@docen/docx/core";
 import { EMU_PER_PX } from "@docen/layout";
@@ -249,8 +251,9 @@ declare module "@tiptap/core" {
       "move-drawing": (value?: string) => ReturnType;
       "place-drawing": (value?: string) => ReturnType;
       "reanchor-drawing": (value?: string) => ReturnType;
-      "rotate-drawing": (value?: string) => ReturnType;
+      "rotate-drawing": (value?: string | number) => ReturnType;
       "drawing-properties-apply": (patch?: DrawingPropertiesPatch) => ReturnType;
+      "drawing-alt-text": (value?: string | { title?: string; descr?: string }) => ReturnType;
       "drawing-crop-apply": (patch?: DrawingCropPatch) => ReturnType;
       "drawing-crop-reset": () => ReturnType;
       // Word's Crop → Aspect Ratio presets — a "W:H" ratio string.
@@ -441,6 +444,7 @@ export const WIRED_DISPATCH: ReadonlySet<string> = new Set([
   "reanchor-drawing",
   "rotate-drawing",
   "drawing-properties-apply",
+  "drawing-alt-text",
   "drawing-crop-apply",
   "drawing-crop-reset",
   "drawing-crop-aspect",
@@ -1246,7 +1250,7 @@ function stampRows(
 export type FloatingDrawing = {
   pos: number;
   attrs: Record<string, unknown>;
-  kind: "image" | "shape" | "group" | "chart";
+  kind: "image" | "shape" | "group" | "chart" | "model3d" | "ink";
 };
 
 export function floatingDrawingAt(state: EditorState): FloatingDrawing | null {
@@ -1276,20 +1280,43 @@ function drawingAtPos(doc: PMNode, pos: number): FloatingDrawing | null {
     const chart = attrs.chart as Record<string, unknown> | null;
     return chart?.floating ? { pos, attrs, kind: "chart" } : null;
   }
+  if (node.type.name === "model3d") {
+    const model = attrs.model3d as Record<string, unknown> | null;
+    const floating = (model?.floating ?? attrs.floating) as Record<string, unknown> | null;
+    return floating ? { pos, attrs, kind: "model3d" } : null;
+  }
+  if (node.type.name === "ink") {
+    const ink = attrs.ink as Record<string, unknown> | null;
+    const floating = (ink?.floating ?? attrs.floating) as Record<string, unknown> | null;
+    return floating ? { pos, attrs, kind: "ink" } : null;
+  }
   return null;
 }
 
 /** Where each non-image kind carries its Floating object (the chart's rides
  *  its own payload). */
-const FLOATING_CARRIER = { shape: "wpsShape", group: "wpgGroup", chart: "chart" } as const;
+const FLOATING_CARRIER = {
+  shape: "wpsShape",
+  group: "wpgGroup",
+  chart: "chart",
+  model3d: "model3d",
+  ink: "ink",
+} as const;
 
 /** The drawing's Floating object (image: a flat attr; shape/group/chart:
  *  inside their payload). */
 function floatingOf(target: FloatingDrawing): Record<string, unknown> {
-  const carrier =
-    target.kind === "image"
-      ? target.attrs.floating
-      : (target.attrs[FLOATING_CARRIER[target.kind]] as Record<string, unknown>).floating;
+  if (target.kind === "image") return target.attrs.floating as Record<string, unknown>;
+  if (target.kind === "model3d") {
+    const m = target.attrs.model3d as Record<string, unknown> | null;
+    return (m?.floating ?? target.attrs.floating) as Record<string, unknown>;
+  }
+  if (target.kind === "ink") {
+    const k = target.attrs.ink as Record<string, unknown> | null;
+    return (k?.floating ?? target.attrs.floating) as Record<string, unknown>;
+  }
+  const carrier = (target.attrs[FLOATING_CARRIER[target.kind]] as Record<string, unknown>)
+    ?.floating;
   return carrier as Record<string, unknown>;
 }
 
@@ -1316,6 +1343,16 @@ export function inlineDrawingAt(state: EditorState): FloatingDrawing | null {
     case "chart": {
       const chart = attrs.chart as Record<string, unknown> | null;
       return chart && !chart.floating ? { pos, attrs, kind: "chart" } : null;
+    }
+    case "model3d": {
+      const model = attrs.model3d as Record<string, unknown> | null;
+      const floating = (model?.floating ?? attrs.floating) as Record<string, unknown> | null;
+      return !floating ? { pos, attrs, kind: "model3d" } : null;
+    }
+    case "ink": {
+      const ink = attrs.ink as Record<string, unknown> | null;
+      const floating = (ink?.floating ?? attrs.floating) as Record<string, unknown> | null;
+      return !floating ? { pos, attrs, kind: "ink" } : null;
     }
     default:
       return null;
@@ -1589,11 +1626,11 @@ function offsetFloating(
  *  has no standalone in-group carrier yet — null declines the grouping.
  *  Everything else (src/crop/fill/body) rides along untouched. */
 function memberInGroupAttrs(
-  kind: "image" | "shape" | "group" | "chart",
+  kind: "image" | "shape" | "group" | "chart" | "model3d" | "ink",
   attrs: Record<string, unknown>,
   child: { x: number; y: number; cx: number; cy: number },
 ): Record<string, unknown> | null {
-  if (kind === "chart") return null;
+  if (kind === "chart" || kind === "model3d" || kind === "ink") return null;
   if (kind === "image") {
     const next: Record<string, unknown> = { ...attrs, groupXfrm: child };
     delete next.floating;
@@ -1893,6 +1930,20 @@ function tradeCropExtent(
   if (sel.node.type.name === "image") {
     const attrs = { ...sel.node.attrs };
     attrs[axis] = px;
+    tr.setNodeMarkup(sel.from, undefined, attrs);
+    tr.setSelection(NodeSelection.create(tr.doc, sel.from) as never);
+    return true;
+  }
+  if (sel.node.type.name === "model3d" || sel.node.type.name === "ink") {
+    const attrs = { ...sel.node.attrs } as Record<string, unknown>;
+    attrs[axis] = px;
+    if (axis === "width") attrs.cx = emu;
+    if (axis === "height") attrs.cy = emu;
+    if (typeof attrs.rawXml === "string" && attrs.rawXml) {
+      const cx = (attrs.cx as number) ?? emu;
+      const cy = (attrs.cy as number) ?? emu;
+      attrs.rawXml = updateExtent(attrs.rawXml, cx, cy);
+    }
     tr.setNodeMarkup(sel.from, undefined, attrs);
     tr.setSelection(NodeSelection.create(tr.doc, sel.from) as never);
     return true;
@@ -5222,6 +5273,37 @@ export const DocumentCommands = Extension.create({
               floating: applyFloatingExtras(floatingOf(target), patch, offsetHCm, offsetVCm),
             });
           }
+          if (target.kind === "model3d" || target.kind === "ink") {
+            const attrs = { ...target.attrs };
+            if (widthCm != null) {
+              attrs.width = cmTo(widthCm, PX_PER_CM);
+              attrs.cx = cmTo(widthCm, EMU_PER_CM);
+            }
+            if (heightCm != null) {
+              attrs.height = cmTo(heightCm, PX_PER_CM);
+              attrs.cy = cmTo(heightCm, EMU_PER_CM);
+            }
+            if (rotationDeg != null) attrs.rotation = rotationDeg;
+            if (typeof patch.altText === "string") {
+              attrs.descr = patch.altText;
+              if (typeof attrs.rawXml === "string" && attrs.rawXml) {
+                attrs.rawXml = updateDocPr(attrs.rawXml, { descr: patch.altText });
+              }
+            }
+            if (
+              typeof attrs.rawXml === "string" &&
+              attrs.rawXml &&
+              (widthCm != null || heightCm != null)
+            ) {
+              const cx = (attrs.cx as number) ?? (attrs.width as number) * 9525;
+              const cy = (attrs.cy as number) ?? (attrs.height as number) * 9525;
+              attrs.rawXml = updateExtent(attrs.rawXml, cx, cy);
+            }
+            return stampAttrs(tr, target, {
+              ...attrs,
+              floating: applyFloatingExtras(floatingOf(target), patch, offsetHCm, offsetVCm),
+            });
+          }
           const key = FLOATING_CARRIER[target.kind];
           const payload = { ...(target.attrs[key] as Record<string, unknown>) };
           const t = { ...((payload.transformation ?? {}) as Record<string, unknown>) };
@@ -5233,6 +5315,47 @@ export const DocumentCommands = Extension.create({
           // image's.
           payload.floating = applyFloatingExtras(floatingOf(target), patch, offsetHCm, offsetVCm);
           return stampAttrs(tr, target, { ...target.attrs, [key]: payload });
+        },
+      "drawing-alt-text":
+        (value?) =>
+        ({ state, tr }) => {
+          const target = floatingDrawingAt(state) ?? inlineDrawingAt(state);
+          if (!target) return false;
+          let title: string | undefined;
+          let descr: string | undefined;
+          if (typeof value === "string") {
+            descr = value;
+          } else if (value && typeof value === "object") {
+            title = value.title;
+            descr = value.descr;
+          } else {
+            return false;
+          }
+          const attrs = { ...target.attrs };
+          if (target.kind === "image") {
+            if (title !== undefined) attrs.name = title;
+            if (descr !== undefined) attrs.title = descr;
+            return stampAttrs(tr, target, attrs);
+          }
+          if (target.kind === "model3d" || target.kind === "ink") {
+            if (title !== undefined) attrs.title = title;
+            if (descr !== undefined) attrs.descr = descr;
+            if (typeof attrs.rawXml === "string" && attrs.rawXml) {
+              attrs.rawXml = updateDocPr(attrs.rawXml, {
+                title: title !== undefined ? title : (attrs.title as string | undefined),
+                descr: descr !== undefined ? descr : (attrs.descr as string | undefined),
+              });
+            }
+            return stampAttrs(tr, target, attrs);
+          }
+          if (target.kind === "shape" || target.kind === "group" || target.kind === "chart") {
+            const key = FLOATING_CARRIER[target.kind];
+            const payload = { ...(attrs[key] as Record<string, unknown>) };
+            if (title !== undefined) payload.title = title;
+            if (descr !== undefined) payload.descr = descr;
+            return stampAttrs(tr, target, { ...attrs, [key]: payload });
+          }
+          return false;
         },
       // The crop overlay's commit: the selected image's new a:srcRect insets
       // as source fractions, stored as the raw ST_Percentage ints the attrs

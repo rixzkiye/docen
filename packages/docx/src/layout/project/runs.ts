@@ -15,6 +15,12 @@ import {
   type LayoutTextStyle,
 } from "@docen/layout";
 
+import {
+  is3DModelXml,
+  isInkXml,
+  parse3DModelFromXml,
+  parseInkFromXml,
+} from "../../extensions/drawing-3d-ink";
 import { mergeStyleChain } from "../../style-cascade";
 import type { MarkupDisplay, ProjectContext } from "./context";
 import { markStateful } from "./context";
@@ -732,6 +738,76 @@ export function projectRuns(
             ...(typeof tr.rotation === "number" && tr.rotation !== 0
               ? { rotation: tr.rotation }
               : {}),
+          });
+        }
+      }
+      if (
+        isRecord(child.model3d) ||
+        (typeof child.rawXml === "string" && is3DModelXml(child.rawXml))
+      ) {
+        const m = isRecord(child.model3d)
+          ? (child.model3d as Rec)
+          : (parse3DModelFromXml(child.rawXml as string) as unknown as Rec);
+        if (!isRecord(m.floating)) {
+          const cx = num(m.cx);
+          const cy = num(m.cy);
+          const widthPx = num(m.width) ?? (cx ? emuToPx(cx) : 200);
+          const heightPx = num(m.height) ?? (cy ? emuToPx(cy) : 200);
+          const title = str(m.title) ?? "";
+          const descr = str(m.descr) ?? "";
+          out.push({
+            kind: "picture",
+            widthPx,
+            heightPx,
+            members: [
+              {
+                kind: "model3d",
+                x: 0,
+                y: 0,
+                width: widthPx,
+                height: heightPx,
+                model3d: m,
+                title,
+                descr,
+                altText: title || descr,
+                ...(typeof m.rotation === "number" ? { rotation: m.rotation } : {}),
+                camera: m.camera,
+              },
+            ],
+            ...(typeof m.rotation === "number" && m.rotation !== 0 ? { rotation: m.rotation } : {}),
+          });
+        }
+      }
+      if (isRecord(child.ink) || (typeof child.rawXml === "string" && isInkXml(child.rawXml))) {
+        const k = isRecord(child.ink)
+          ? (child.ink as Rec)
+          : (parseInkFromXml(child.rawXml as string) as unknown as Rec);
+        if (!isRecord(k.floating)) {
+          const cx = num(k.cx);
+          const cy = num(k.cy);
+          const widthPx = num(k.width) ?? (cx ? emuToPx(cx) : 160);
+          const heightPx = num(k.height) ?? (cy ? emuToPx(cy) : 80);
+          const title = str(k.title) ?? "";
+          const descr = str(k.descr) ?? "";
+          out.push({
+            kind: "picture",
+            widthPx,
+            heightPx,
+            members: [
+              {
+                kind: "ink",
+                x: 0,
+                y: 0,
+                width: widthPx,
+                height: heightPx,
+                ink: k,
+                title,
+                descr,
+                altText: title || descr,
+                ...(typeof k.rotation === "number" ? { rotation: k.rotation } : {}),
+              },
+            ],
+            ...(typeof k.rotation === "number" && k.rotation !== 0 ? { rotation: k.rotation } : {}),
           });
         }
       }

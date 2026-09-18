@@ -6,7 +6,7 @@ import { NodeSelection, type EditorState, type Selection } from "@tiptap/pm/stat
  *  "chart" (Chart Tools). Null on any other selection (text, table, math, …). */
 export function drawingSelectionKind(
   state: EditorState,
-): "picture" | "shape" | "group" | "chart" | null {
+): "picture" | "shape" | "group" | "chart" | "model3d" | "ink" | null {
   const sel = state.selection;
   if (!(sel instanceof NodeSelection)) return null;
   const name = sel.node.type.name;
@@ -14,6 +14,8 @@ export function drawingSelectionKind(
   if (name === "wpsShape") return "shape";
   if (name === "wpgGroup") return "group";
   if (name === "chart") return "chart";
+  if (name === "model3d") return "model3d";
+  if (name === "ink") return "ink";
   return null;
 }
 
@@ -52,15 +54,34 @@ export function drawingNodePos(
     if (child.type.name === "image") return child.attrs.floating != null;
     if (child.type.name === "chart")
       return (child.attrs.chart as Record<string, unknown> | null)?.floating != null;
+    if (child.type.name === "model3d")
+      return (
+        (child.attrs.model3d as Record<string, unknown> | null)?.floating != null ||
+        child.attrs.floating != null
+      );
+    if (child.type.name === "ink")
+      return (
+        (child.attrs.ink as Record<string, unknown> | null)?.floating != null ||
+        child.attrs.floating != null
+      );
     return false;
   };
   let seen = 0;
   let hit = -1;
   parentNode.forEach((child, offset) => {
+    const isDrawingNode =
+      child.type.name === "image" ||
+      child.type.name === "chart" ||
+      child.type.name === "model3d" ||
+      child.type.name === "ink" ||
+      child.type.name === "wpsShape" ||
+      child.type.name === "wpgGroup";
     const target =
       kind === "drawing"
-        ? child.type.name === "wpsShape" || child.type.name === "wpgGroup" || floating(child)
-        : (child.type.name === "image" || child.type.name === "chart") && !floating(child);
+        ? child.type.name === "wpsShape" ||
+          child.type.name === "wpgGroup" ||
+          (isDrawingNode && floating(child))
+        : isDrawingNode && !floating(child);
     if (target && hit < 0 && seen++ === index) hit = innerPos + offset;
   });
   if (hit < 0) return null;

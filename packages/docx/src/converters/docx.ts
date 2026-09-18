@@ -1201,6 +1201,12 @@ export class DocxManager {
           if (chartRun) children.push(chartRun);
           break;
         }
+        case "model3d":
+        case "ink": {
+          const drawingRun = this.nodeRender.get(node.type)?.(node) ?? null;
+          if (drawingRun) children.push(drawingRun as ParagraphChild);
+          break;
+        }
         case "wpgGroup": {
           // attrs.wpgGroup is GroupOptions minus children; the member sequence
           // compiles back through group-members (reverse of resolveGroupOptions).
