@@ -42,7 +42,8 @@
     "./subsetter": {
       "types": "./dist/subsetter.d.mts",
       "import": "./dist/subsetter.mjs"
-    }
+    },
+    "./wasm/*": "./wasm/*"
   },
   "scripts": {
     "build": "vp pack",

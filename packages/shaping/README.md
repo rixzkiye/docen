@@ -167,6 +167,65 @@ const result = await client.shape(fontId, "Text shaped off-thread", {
 
 ---
 
+## Bundler / Next.js setup
+
+`initShapingWasm()` loads the shipped `wasm/docen_shaping.wasm` from
+`new URL("../wasm/docen_shaping.wasm", import.meta.url)` — in Node it reads the
+file from the package, in the browser it `fetch`es the emitted asset URL. The
+asset ships inside the npm tarball (`@docen/shaping/wasm/docen_shaping.wasm` is
+an exported subpath), so no postinstall step is required.
+
+Bundlers that understand `new URL(..., import.meta.url)` (webpack 5, Vite,
+Turbopack) emit/copy the `.wasm` automatically. Next.js is the common case that
+needs explicit guidance:
+
+- **webpack (default in Next.js):** `new URL` asset references are supported
+  out of the box. If a custom webpack config turns `.wasm` into a module, keep
+  it an asset instead:
+
+  ```js
+  // next.config.mjs
+  export default {
+    webpack(config) {
+      config.module.rules.push({ test: /docen_shaping\.wasm$/, type: "asset/resource" });
+      return config;
+    },
+  };
+  ```
+
+- **Turbopack (`next dev --turbopack`):** Turbopack's built-in `.wasm` rule
+  treats the file as a WebAssembly ES module, which is not what the loader
+  fetches. Register it as a URL asset:
+
+  ```js
+  // next.config.mjs
+  export default {
+    turbopack: {
+      rules: {
+        "*.wasm": { type: "asset" },
+      },
+    },
+  };
+  ```
+
+- **Any other environment / explicit control:** pass the bytes yourself — the
+  loader accepts them and skips its default resolution entirely:
+
+  ```ts
+  import { readFileSync } from "node:fs";
+  import { createRequire } from "node:module";
+  import { initShapingWasm } from "@docen/shaping";
+
+  // Node / server runtime
+  const wasmPath = createRequire(import.meta.url).resolve("@docen/shaping/wasm/docen_shaping.wasm");
+  await initShapingWasm(readFileSync(wasmPath));
+
+  // Browser: fetch your own copy of the asset
+  // await initShapingWasm(await (await fetch("/assets/docen_shaping.wasm")).arrayBuffer());
+  ```
+
+---
+
 ## Performance Budgets
 
 Measured on the audited fix branch (`r6/fix-audit`) with Node 24, rustc 1.97.1;

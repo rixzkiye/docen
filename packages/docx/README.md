@@ -26,6 +26,11 @@ $ pnpm add @docen/docx
 $ npm install @docen/docx
 ```
 
+### Runtime dependencies
+
+- `@docen/markdown` (the Markdown IR layer behind `parseMarkdown`/`generateMarkdown`) is **bundled into `dist`**: the published package is self-contained and never resolves a separate markdown package at install time.
+- `linkedom` is a real **runtime dependency** — `parseHTML` lazily imports it on the server, where no native DOM exists. Browser bundles take the native `DOMParser` path and never load it.
+
 ## Quick Start
 
 ```typescript
