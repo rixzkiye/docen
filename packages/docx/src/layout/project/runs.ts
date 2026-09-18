@@ -341,6 +341,8 @@ export function projectRuns(
     const imprint = own.imprint ?? defRun.imprint;
     const glow = own.glow ?? defRun.glow;
     const reflection = own.reflection ?? defRun.reflection;
+    const bevel = own.bevel ?? defRun.bevel;
+    const rotation3d = own.rotation3d ?? defRun.rotation3d;
     return {
       family: toFamily(own.font, fontAttr(chainRPr.font) ?? fontAttr(docRPr.font)) ?? defRun.family,
       sizePx: ptToPx(effectiveSizePt),
@@ -374,6 +376,8 @@ export function projectRuns(
       ...(imprint ? { imprint: true } : {}),
       ...(glow ? { glow } : {}),
       ...(reflection ? { reflection } : {}),
+      ...(bevel ? { bevel } : {}),
+      ...(rotation3d ? { rotation3d } : {}),
       ...((own.ligatures ?? defRun.ligatures)
         ? { ligatures: own.ligatures ?? defRun.ligatures }
         : {}),

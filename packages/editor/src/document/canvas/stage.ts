@@ -505,6 +505,19 @@ export class CanvasStage {
     this.#repaintViewFlagStaleRest();
   }
 
+  /** Mailings → Highlight Merge Fields (Word's view-only yellow tint). */
+  #highlightMergeFields = false;
+
+  getHighlightMergeFields(): boolean {
+    return this.#highlightMergeFields;
+  }
+
+  setHighlightMergeFields(on: boolean): void {
+    if (on === this.#highlightMergeFields) return;
+    this.#highlightMergeFields = on;
+    this.#repaintViewFlagStaleRest();
+  }
+
   /** The document view (Word's View tab): print = paginated pages with
    *  furniture; draft = paginated, body only (no headers/footers, white
    *  background); web/read = the section laid as ONE continuous page rendered
@@ -1373,6 +1386,7 @@ export class CanvasStage {
       pageCount: this.pages.length,
       layer: "behind",
       fieldShading: this.#fieldShading,
+      highlightMergeFields: this.#highlightMergeFields,
       showMarks: this.#showMarks,
       showGridlines: this.#showGridlines,
       marksLabels: this.ctx.marksLabels,

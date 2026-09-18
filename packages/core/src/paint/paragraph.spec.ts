@@ -78,7 +78,7 @@ vi.mock("leafer-ui", () => {
 });
 
 const { Group } = await import("leafer-ui");
-const { paintParagraph } = await import("./paragraph");
+const { paintParagraph, MERGE_FIELD_HIGHLIGHT } = await import("./paragraph");
 
 // ── tracked-format-change margin bars ──────────────────────────────────────
 
@@ -449,6 +449,65 @@ describe("paintParagraph character effects", () => {
     expect(texts).toHaveLength(2);
     expect(texts[1].props.scaleY).toBe(-0.6);
     expect(texts[1].props.opacity).toBe(0.5);
+  });
+
+  it("tints MERGEFIELD runs for Highlight Merge Fields and leaves other fields alone", () => {
+    const paintWith = (inline: LayoutInline, context: PaintContext): StubNode => {
+      const root = new Group({}) as unknown as StubNode;
+      paintParagraph(root as never, paraOf(inline), 0, 0, context);
+      return root;
+    };
+    const merge: LayoutInline = {
+      kind: "text",
+      text: "«Name»",
+      style: style(),
+      instruction: " MERGEFIELD Name \\* MERGEFORMAT ",
+    };
+    const page: LayoutInline = { kind: "text", text: "1", style: style(), field: "page" };
+
+    const tinted = paintWith(merge, { ...ctxOf(), highlightMergeFields: true });
+    expect(nodesOf(tinted, "Rect").map((r) => r.props.fill)).toContain(MERGE_FIELD_HIGHLIGHT);
+
+    // Off by default, and a non-merge field stays untinted with the flag on.
+    expect(nodesOf(paintWith(merge, ctxOf()), "Rect")).toHaveLength(0);
+    expect(
+      nodesOf(paintWith(page, { ...ctxOf(), highlightMergeFields: true }), "Rect"),
+    ).toHaveLength(0);
+  });
+
+  it("paints a w14 bevel as light top-left and dark bottom-right edges", () => {
+    const root = paint(
+      paraOf({
+        kind: "text",
+        text: "bevel",
+        style: style({
+          bevel: {
+            top: { widthPx: 2, heightPx: 1.5, preset: "circle" },
+            bottom: { widthPx: 2, heightPx: 1.5, preset: "circle" },
+          },
+        }),
+      }),
+    );
+    const [text] = nodesOf(root, "Text");
+    const shadow = text!.props.shadow as { x: number; y: number }[];
+    expect(Array.isArray(shadow)).toBe(true);
+    expect(shadow).toHaveLength(2);
+    expect(shadow[0]).toMatchObject({ x: -2, y: -1.5 });
+    expect(shadow[1]).toMatchObject({ x: 2, y: 1.5 });
+  });
+
+  it("renders w14 3-D rotation on the text element", () => {
+    const root = paint(
+      paraOf({
+        kind: "text",
+        text: "rot",
+        style: style({ rotation3d: { x: 60, y: 0, z: 45 } }),
+      }),
+    );
+    const [text] = nodesOf(root, "Text");
+    expect(text!.props.rotation).toBe(45);
+    expect(text!.props.origin).toBe("center");
+    expect(Number(text!.props.scaleY)).toBeCloseTo(Math.cos(Math.PI / 3), 5);
   });
 
   it("paints vertical bar tab line at stop position", () => {
