@@ -2027,6 +2027,9 @@ class DocenDocument extends AddinHost<Editor> {
       drawingAt: (page, lx, ly) => this.#stage?.drawingAt(page, lx, ly) ?? null,
       // Select Objects' marquee scans every painted drawing box.
       drawingBoxes: () => this.#stage?.drawingBoxes() ?? [],
+      // The mode can exit inside the bridge (Esc / empty click) — mirror the
+      // host state and lit ribbon toggle either way.
+      onObjectSelectChange: (on) => this.#applyObjectSelectState(on),
       // Margin balloons: the stage's painted card table routes clicks to the
       // comment/revision commands and the hover tone back to the stage.
       balloonAt: (page, lx, ly) => this.#stage?.balloonAt(page, lx, ly) ?? null,
@@ -5880,6 +5883,8 @@ class DocenDocument extends AddinHost<Editor> {
   setHighlightMergeFields(on: boolean): void {
     this.#highlightMergeFields = on;
     this.#stage?.setHighlightMergeFields(on);
+    // The click lands outside any transaction — re-stamp the lit toggle now.
+    this.#syncFormatButtons();
   }
 
   /**
@@ -5891,8 +5896,20 @@ class DocenDocument extends AddinHost<Editor> {
    */
   setObjectSelect(on: boolean): void {
     if (on === this.#objectSelect) return;
+    if (this.#bridge) {
+      // The bridge notifies back through onObjectSelectChange (the one writer
+      // of host state), so Esc/empty-click exits stay in sync.
+      this.#bridge.setObjectSelect(on);
+      return;
+    }
+    this.#applyObjectSelectState(on);
+  }
+
+  /** Mirror the bridge's object-mode state into the host UI (ribbon checkmark,
+   *  lit Draw button, cursor handled by the bridge). */
+  #applyObjectSelectState(on: boolean): void {
+    if (on === this.#objectSelect) return;
     this.#objectSelect = on;
-    this.#bridge?.setObjectSelect(on);
     this.#syncSelectMenu();
     this.#syncFormatButtons();
   }

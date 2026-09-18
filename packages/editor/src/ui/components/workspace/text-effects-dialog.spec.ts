@@ -48,6 +48,20 @@ describe("<docen-text-effects-dialog>", () => {
     );
     expect((field(dialog, "rotation-on") as HTMLInputElement).checked).toBe(true);
     expect(Number((field(dialog, "rotation-z") as HTMLInputElement).value)).toBe(90);
+    // The bevel preset select carries all eight ST_BevelPresetType options and
+    // prefills the run's preset (the FAST-array regression guard).
+    const preset = field<HTMLSelectElement>(dialog, "bevel-preset");
+    expect(Array.from(preset.options).map((option) => option.value)).toEqual([
+      "circle",
+      "relaxedInset",
+      "cross",
+      "coolSlant",
+      "angle",
+      "softRound",
+      "convex",
+      "slope",
+    ]);
+    expect(preset.value).toBe("circle");
     // Families the run does not carry stay off.
     expect((field(dialog, "shadow-on") as HTMLInputElement).checked).toBe(false);
     dialog.remove();

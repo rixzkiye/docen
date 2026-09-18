@@ -3,17 +3,6 @@ import { FASTElement, css, customElement, html, observable, ref } from "@microso
 
 import { observeLang, t } from "../../i18n/localize";
 
-const BEVEL_PRESETS = [
-  "circle",
-  "relaxedInset",
-  "cross",
-  "coolSlant",
-  "angle",
-  "softRound",
-  "convex",
-  "slope",
-] as const;
-
 const styles = css`
   :host {
     display: contents;
@@ -169,7 +158,14 @@ const template = html<DocenTextEffectsDialog>`
         <div class="te-row">
           <label data-i18n="textEffects.preset"></label>
           <select data-field="bevel-preset">
-            ${BEVEL_PRESETS.map((preset) => html`<option value="${preset}">${preset}</option>`)}
+            <option value="circle">Circle</option>
+            <option value="relaxedInset">Relaxed Inset</option>
+            <option value="cross">Cross</option>
+            <option value="coolSlant">Cool Slant</option>
+            <option value="angle">Angle</option>
+            <option value="softRound">Soft Round</option>
+            <option value="convex">Convex</option>
+            <option value="slope">Slope</option>
           </select>
           <label data-i18n="textEffects.width"></label>
           <input type="number" data-field="bevel-width" min="0" max="100" step="0.5" value="5.5" />

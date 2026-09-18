@@ -111,8 +111,8 @@ export const designTab = (): RibbonTab =>
       split("theme", "theme", parsedItems(themeItems()), { size: "large" }),
       split("font-color", "theme-color", parsedItems(themeColorItems()), { size: "large" }),
       split("text-font", "theme-font", parsedItems(themeFontItems()), { size: "large" }),
-      btn("text-effects", "effects", { size: "large" }),
-      // Document text-effect theme (stamped onto the heading styles).
+      // Document text-effect theme (stamped onto the heading styles) — Word's
+      // Design → Document Formatting → Text Effects gallery.
       split("text-effects", "effects", parsedItems(textEffectThemeItems()), { size: "large" }),
       col([
         grid([

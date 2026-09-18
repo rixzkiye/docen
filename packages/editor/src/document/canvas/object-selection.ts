@@ -26,8 +26,10 @@ export interface ObjectSelectionHost {
   nodePosOf(hit: DrawingHit): number | null;
   /** The page frame element (overlay geometry + marquee coordinate space). */
   pageHost(page: number): HTMLElement | null;
-  /** The absolutely-positioned element the overlays mount in. */
+  /** The overlay host element the frames/marquee mount in. */
   overlayHost(): HTMLElement | null;
+  /** Mode-state notifier: the host mirrors it (ribbon lit state, cursor). */
+  onChange?(active: boolean): void;
   scale(): number;
   editor(): Editor;
 }
@@ -103,6 +105,11 @@ export class ObjectSelectionMode {
     return this.#items.length;
   }
 
+  /** Painted overlay elements (selection frames + a live marquee). */
+  get frameCount(): number {
+    return this.#frames.length;
+  }
+
   get dragging(): boolean {
     return this.#marquee?.moved === true;
   }
@@ -121,6 +128,7 @@ export class ObjectSelectionMode {
       this.#cancelMarquee();
     }
     this.place();
+    this.#host.onChange?.(on);
   }
 
   clearSelection(): void {
@@ -250,39 +258,36 @@ export class ObjectSelectionMode {
     this.el.remove();
   }
 
-  /** Redraw the overlay: one frame per selected object, plus the marquee. */
+  /** Redraw the overlay: one frame per selected object (mounted inside its
+   *  page frame, so it scrolls with the page like the drawing overlay), plus
+   *  the viewport-space marquee. */
   place(): void {
     for (const frame of this.#frames) frame.remove();
     this.#frames = [];
-    // Drop stale marquee geometry once the press is gone.
     if (!this.#active) {
       this.el.style.display = "none";
       return;
     }
-    const host = this.#host.overlayHost();
-    const hostRect = host?.getBoundingClientRect();
     const scale = this.#host.scale();
-    if (host && hostRect) {
-      for (const hit of this.#items) {
-        const frame = this.#host.pageHost(hit.page);
-        const rect = frame?.getBoundingClientRect();
-        if (!rect) continue;
-        const el = document.createElement("div");
-        el.className = "docen-object-selection-frame";
-        Object.assign(el.style, {
-          position: "absolute",
-          left: `${rect.left - hostRect.left + hit.x * scale}px`,
-          top: `${rect.top - hostRect.top + hit.y * scale}px`,
-          width: `${Math.max(1, hit.width * scale)}px`,
-          height: `${Math.max(1, hit.height * scale)}px`,
-          border: "1.5px solid var(--docen-theme-accent1, #2b579a)",
-          background: "rgba(43, 87, 154, 0.08)",
-          pointerEvents: "none",
-          boxSizing: "border-box",
-        } satisfies Partial<CSSStyleDeclaration>);
-        this.el.append(el);
-        this.#frames.push(el);
-      }
+    for (const hit of this.#items) {
+      const frameHost = this.#host.pageHost(hit.page);
+      if (!frameHost) continue;
+      const el = document.createElement("div");
+      el.className = "docen-object-selection-frame";
+      Object.assign(el.style, {
+        position: "absolute",
+        left: `${hit.x * scale}px`,
+        top: `${hit.y * scale}px`,
+        width: `${Math.max(1, hit.width * scale)}px`,
+        height: `${Math.max(1, hit.height * scale)}px`,
+        border: "1.5px solid var(--docen-theme-accent1, #2b579a)",
+        background: "rgba(43, 87, 154, 0.08)",
+        pointerEvents: "none",
+        boxSizing: "border-box",
+        zIndex: "9",
+      } satisfies Partial<CSSStyleDeclaration>);
+      frameHost.append(el);
+      this.#frames.push(el);
     }
     const marquee = this.#marquee;
     if (marquee?.moved) {
@@ -304,7 +309,9 @@ export class ObjectSelectionMode {
       this.el.append(box);
       this.#frames.push(box);
     }
-    this.el.style.display = this.#frames.length > 0 ? "block" : "none";
+    // The shared overlay hosts only the viewport-space marquee; the selection
+    // frames ride their page hosts.
+    this.el.style.display = marquee?.moved ? "block" : "none";
   }
 
   /** The floating drawings whose painted boxes intersect the marquee. The

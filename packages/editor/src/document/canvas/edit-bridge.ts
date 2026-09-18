@@ -199,6 +199,9 @@ export interface EditBridgeOptions {
   /** Every painted drawing box across pages — Select Objects' marquee
    *  candidate set. Absent, the marquee selects nothing. */
   drawingBoxes?: () => DrawingHit[];
+  /** Select Objects mode changed (including Esc/empty-click exits inside the
+   *  bridge) — the host mirrors the ribbon toggle and cursor. */
+  onObjectSelectChange?: (on: boolean) => void;
   /** Balloon hit-test (page-local px) — the stage's painted card table. A hit
    *  selects/opens the comment or reveals the revision (Word's balloon
    *  click); absent, balloon clicks fall through to the text. */
@@ -1466,6 +1469,10 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
     nodePosOf: (hit) => opts.drawingSelection?.(hit) ?? null,
     pageHost: (page) => opts.pageHost?.(page) ?? null,
     overlayHost: () => opts.inputHost,
+    onChange: (on) => {
+      opts.host.style.cursor = on ? "default" : "";
+      opts.onObjectSelectChange?.(on);
+    },
     scale: () => opts.scale?.() ?? 1,
     editor: () => main.editor,
   });
@@ -4982,7 +4989,6 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
     /** Select Objects mode — the host's ribbon toggle. */
     setObjectSelect(on: boolean): void {
       objectSel.setActive(on);
-      opts.host.style.cursor = on ? "default" : "";
     },
     get objectSelect(): boolean {
       return objectSel.active;

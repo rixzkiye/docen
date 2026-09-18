@@ -12,8 +12,12 @@ import { ObjectSelectionMode, type ObjectSelectionHost } from "./object-selectio
 const rect = (left: number, top: number, width = 600, height = 800): DOMRect =>
   ({ left, top, width, height, right: left + width, bottom: top + height }) as DOMRect;
 
-const pageEl = (r: DOMRect): HTMLElement =>
-  ({ getBoundingClientRect: () => r }) as unknown as HTMLElement;
+const pageEl = (r: DOMRect): HTMLElement => {
+  // A real element (the frames mount inside page hosts) with a fixed rect.
+  const el = document.createElement("div");
+  el.getBoundingClientRect = () => r;
+  return el;
+};
 
 interface Box extends DrawingHit {
   para: string;
@@ -101,11 +105,11 @@ describe("ObjectSelectionMode", () => {
     expect(mode.press(press({ lx: 20, ly: 20, clientX: 120, clientY: 70 }))).toBe(true);
     expect(mode.count).toBe(1);
     // A frame is painted for the selection.
-    expect(mode.el.querySelectorAll(".docen-object-selection-frame")).toHaveLength(1);
+    expect(mode.frameCount).toBe(1);
 
     mode.press(press({ lx: 210, ly: 20, clientX: 310, clientY: 70 }));
     expect(mode.count).toBe(1);
-    expect(mode.el.querySelectorAll(".docen-object-selection-frame")).toHaveLength(1);
+    expect(mode.frameCount).toBe(1);
   });
 
   it("toggles membership with Ctrl+click", () => {
@@ -129,7 +133,7 @@ describe("ObjectSelectionMode", () => {
     // A and B intersect the band; C is on page 1 and the inline image is
     // excluded.
     expect(mode.count).toBe(2);
-    expect(mode.el.querySelectorAll(".docen-object-selection-frame")).toHaveLength(2);
+    expect(mode.frameCount).toBe(2);
   });
 
   it("clears the selection on an empty click and exits when nothing is selected", () => {
@@ -205,5 +209,17 @@ describe("ObjectSelectionMode", () => {
     const mode = new ObjectSelectionMode(makeHost([A], { A: 0 }));
     expect(mode.press(press())).toBe(false);
     expect(mode.count).toBe(0);
+  });
+
+  it("notifies the host on every mode change (so Esc exits stay in sync)", () => {
+    const events: boolean[] = [];
+    const host = makeHost([A], { A: 0 });
+    host.onChange = (on) => events.push(on);
+    const mode = new ObjectSelectionMode(host);
+    mode.setActive(true);
+    // Empty click with nothing selected leaves the mode.
+    mode.press(press({ lx: 500, ly: 500, clientX: 600, clientY: 550 }));
+    mode.release();
+    expect(events).toEqual([true, false]);
   });
 });
