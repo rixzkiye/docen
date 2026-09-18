@@ -131,7 +131,6 @@ export interface RenderHostView {
   setProgress(label?: string): void;
   updateStatus(): void;
   syncStatusLanguage(): void;
-  syncActiveTabStops(): void;
   viewMode(): "print" | "web" | "draft" | "read" | "outline";
 }
 
@@ -458,6 +457,9 @@ export class RenderDomain {
     doc: JSONContent,
   ): Promise<void> {
     const stage = this.host.armStage(projected);
+    // The flow box feeds every content-width consumer (table inserts, the
+    // ruler) — the incremental path must publish it like the full one does.
+    this.host.setFlow(projected.sections[0]?.flow);
     const pages: FlowPage[] = [];
     const sectionOfPage: number[] = [];
     const origin = this.host.pageOriginOf(projected.sections, sectionOfPage);
@@ -560,6 +562,5 @@ export class RenderDomain {
     this.host.revisions().syncRevisionsPane();
     this.host.spelling().schedule();
     this.host.syncStatusLanguage();
-    this.host.syncActiveTabStops();
   }
 }

@@ -20,7 +20,6 @@ import type { HyphenationDialogOptions } from "../../ui/components/workspace/hyp
 import type { LinkValues } from "../../ui/components/workspace/link-dialog";
 import type { DocenTabsDialog } from "../../ui/components/workspace/tabs-dialog";
 import type { EditBridge } from "../canvas/edit-bridge";
-import type { CanvasStage } from "../canvas/stage";
 import { equationSeed } from "../commands/equation";
 import type { MailMergeCommands } from "../commands/mail-merge";
 import { applyRecipientsRow } from "../commands/mail-merge";
@@ -32,7 +31,6 @@ export interface InsertHostView {
   root(): ShadowRoot | null;
   editor(): Editor | undefined;
   bridge(): EditBridge | undefined;
-  stage(): CanvasStage | undefined;
   flow(): ProjectedFlowBox | undefined;
   pages(): readonly FlowPage[];
   hyphenation(): {
@@ -335,46 +333,6 @@ export class InsertDomain {
     this.host.editor()?.commands.insertContent("\u00AD");
   }
 
-  addTabStopAt(posTw: number): void {
-    const state = this.host.editor()?.state;
-    if (!state) return;
-    let currentStops: Array<{ position: number; type?: string; leader?: string }> = [];
-    state.doc.nodesBetween(state.selection.from, state.selection.to, (node) => {
-      if (node.type.name === "paragraph" && Array.isArray(node.attrs.tabStops)) {
-        currentStops = [...node.attrs.tabStops];
-        return false;
-      }
-    });
-    const nextStops = currentStops.filter((s) => Math.abs((s.position ?? 0) - posTw) >= 15);
-    nextStops.push({ position: posTw, type: "left" });
-    nextStops.sort((a, b) => (a.position ?? 0) - (b.position ?? 0));
-    this.host.editor()?.commands["set-paragraph-tabs"](nextStops);
-    this.syncActiveTabStops();
-    this.host.bridge()?.focus();
-  }
-
-  syncActiveTabStops(): void {
-    if (!this.host.stage()) return;
-    const state = this.host.editor()?.state;
-    if (!state) return;
-    let stops: Array<{
-      positionPx: number;
-      type: "left" | "center" | "right" | "decimal" | "bar";
-    }> = [];
-    state.doc.nodesBetween(state.selection.from, state.selection.to, (node) => {
-      if (node.type.name === "paragraph" && Array.isArray(node.attrs.tabStops)) {
-        stops = node.attrs.tabStops.map(
-          (s: { position?: number; type?: "left" | "center" | "right" | "decimal" | "bar" }) => ({
-            positionPx: (s.position ?? 0) / 15,
-            type: s.type ?? "left",
-          }),
-        );
-        return false;
-      }
-    });
-    this.host.stage()!.setActiveTabStops(stops);
-  }
-
   /** Insert Bookmark: open the Bookmark dialog. */
   insertBookmark(): void {
     this.host.openBookmarkDialog();
@@ -575,7 +533,6 @@ export class InsertDomain {
         this.host.setJSON(doc);
       }
     }
-    this.syncActiveTabStops();
     this.host.bridge()?.focus();
   };
 

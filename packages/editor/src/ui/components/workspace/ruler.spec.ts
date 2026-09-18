@@ -218,6 +218,26 @@ describe("DocenRuler (<docen-ruler>) (W5.2)", () => {
     expect(ruler.showTooltip).toBe(false);
   });
 
+  it("renders a marker element per tab stop (repeat binding)", async () => {
+    // tabStops set before connect: the first render must already emit one
+    // marker per stop (a plain array binding renders nothing).
+    const ruler = new DocenRuler();
+    created.push(ruler);
+    ruler.tabStops = [
+      { position: 1440, type: "left" },
+      { position: 2880, type: "right" },
+    ];
+    document.body.append(ruler);
+    await settle();
+    expect(ruler.shadowRoot!.querySelectorAll(".tab-stop-item").length).toBe(2);
+
+    const empty = new DocenRuler();
+    created.push(empty);
+    document.body.append(empty);
+    await settle();
+    expect(empty.shadowRoot!.querySelectorAll(".tab-stop-item").length).toBe(0);
+  });
+
   it("synchronizes two-way with ProseMirror active paragraph", async () => {
     const editor = new Editor({
       element: null,
