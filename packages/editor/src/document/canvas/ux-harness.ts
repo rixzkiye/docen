@@ -55,6 +55,8 @@ export interface CdpSession {
   pressShortcut(combo: string): Promise<void>;
   captureScreenshot(): Promise<Uint8Array>;
   evaluate<T = unknown>(expression: string): Promise<T>;
+  /** Await a page-side promise before returning (async scenario setups). */
+  evaluateAsync<T = unknown>(expression: string): Promise<T>;
   getComputedCursor(selector: string): Promise<string>;
   close(): Promise<void>;
 }
@@ -310,6 +312,10 @@ class EmulatedCdpSession implements CdpSession {
     return true as unknown as T;
   }
 
+  async evaluateAsync<T = unknown>(expression: string): Promise<T> {
+    return this.evaluate<T>(expression);
+  }
+
   async getComputedCursor(_selector: string): Promise<string> {
     return this.#simulatedCursor;
   }
@@ -561,6 +567,15 @@ class LiveChromiumSession implements CdpSession {
   async evaluate<T = unknown>(expression: string): Promise<T> {
     const res = await this.call("Runtime.evaluate", {
       expression,
+      returnByValue: true,
+    });
+    return res.result?.value as T;
+  }
+
+  async evaluateAsync<T = unknown>(expression: string): Promise<T> {
+    const res = await this.call("Runtime.evaluate", {
+      expression,
+      awaitPromise: true,
       returnByValue: true,
     });
     return res.result?.value as T;

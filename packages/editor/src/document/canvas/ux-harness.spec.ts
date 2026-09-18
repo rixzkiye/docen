@@ -77,6 +77,13 @@ describe("UX Interaction Harness (Headless Chromium + CDP)", () => {
   });
 
   describe("Screenshot Diffing & Visual State Verification", () => {
+    it("resolves async page expressions through evaluateAsync", async () => {
+      if (!session.isLive) return; // the emulated fallback has no page runtime
+      await session.setContent(`<html><body><script>window.__async = 1;</script></body></html>`);
+      const value = await session.evaluateAsync<number>("Promise.resolve(42)");
+      expect(value).toBe(42);
+    });
+
     it("detects identical screenshots", () => {
       const a = new Uint8Array([1, 2, 3, 4, 5]);
       const b = new Uint8Array([1, 2, 3, 4, 5]);
