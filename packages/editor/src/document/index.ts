@@ -778,6 +778,7 @@ class DocenDocument extends AddinHost<Editor> {
    *  ignored inside ribbon comboboxes and other inputs (so the keystroke reaches
    *  them); Ctrl+F is global. preventDefault blocks the browser's native zoom/find. */
   readonly #onZoomKey = (event: KeyboardEvent): void => {
+    if (event.defaultPrevented) return;
     // Alt+Q focuses the command search (Office's "Tell me what you want to
     // do" shortcut). Handled before the Ctrl/Meta gate below.
     if (

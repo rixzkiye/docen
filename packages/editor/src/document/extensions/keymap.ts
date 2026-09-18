@@ -34,34 +34,73 @@ export const KEYBOARD_SHORTCUTS: Readonly<Record<string, string>> = {
   // priority: HardBreak also maps Mod-Enter (to a soft break), and these must win.
   "Mod-Enter": "page-break",
   "Mod-Shift-Enter": "column-break",
-  // Character formatting (Word's Ctrl+B/I/U; strike follows the Tiptap
-  // convention). Names are the documentCommands wrappers (toggleMark based).
+
+  // Character formatting (W4.1)
   "Mod-B": "bold",
   "Mod-I": "italic",
   "Mod-U": "underline",
   "Mod-Shift-X": "strike",
-  // Alignment (Word's Ctrl+E/L/R/J). Line-spacing Ctrl+1/2/5 are browser
-  // tab-switch reserved keys — not bindable on the web. Ctrl+= (sub/super-
-  // script in Word) stays on the host's zoom, Ctrl+Shift+< / > grow/shrink.
+  "Mod-Shift-W": "underline-words",
+  "Mod-Shift-K": "small-caps",
+  "Mod-Shift-D": "underline-double",
+  "Mod-Shift->": "grow-font",
+  "Mod-Shift-<": "shrink-font",
+  "Mod-Space": "clear-format",
+  "Mod-D": "font-dialog",
+
+  // Format painter (W4.1)
+  "Mod-Shift-C": "copy-format",
+  "Mod-Shift-V": "paste-format",
+
+  // Paragraph formatting (W4.1, W4.2)
+  "Mod-Q": "clear-paragraph-format",
+  "Mod-M": "indent-increase",
+  "Mod-Shift-M": "indent-decrease",
+  "Mod-T": "hanging-indent-increase",
+  "Mod-Shift-T": "hanging-indent-decrease",
   "Mod-E": "align-center",
   "Mod-L": "align-left",
   "Mod-R": "align-right",
   "Mod-J": "justify",
-  "Mod-Shift->": "grow-font",
-  "Mod-Shift-<": "shrink-font",
-  // Style application (Word's Ctrl+Alt+1/2/3 heading shortcuts; the value
-  // form routes through the style gallery's command).
+  "Mod-Shift-8": "show-marks",
+  "Mod-Shift-*": "show-marks",
+
+  // Line spacing & paragraph space (W4.2)
+  "Mod-1": "line-spacing:1",
+  "Mod-2": "line-spacing:2",
+  "Mod-5": "line-spacing:1.5",
+  "Mod-0": "line-spacing:toggle-before",
+
+  // Styles (W4.1, W4.2)
+  "Mod-Shift-N": "style:Normal",
   "Mod-Alt-1": "style:Heading1",
   "Mod-Alt-2": "style:Heading2",
   "Mod-Alt-3": "style:Heading3",
-  // Word's F3 = AutoText / Quick Parts: the building-block name typed before
-  // the caret expands to its content (no modifier; the bridge matches the
-  // plain-key entry itself, DocenKeymap covers a DOM route).
+
+  // Lists (W4.2)
+  "Mod-Shift-L": "bullet-list",
+  "Mod-Shift-7": "ordered-list",
+  "Mod-Shift-&": "ordered-list",
+
+  // Review & notes (W4.4)
+  "Mod-Shift-E": "track-changes",
+  "Mod-Alt-M": "new-comment",
+  "Mod-Alt-F": "insert-footnote",
+  "Mod-Alt-D": "insert-footnote:endnote",
+
+  // Outline / Action (W4.5)
+  "Alt-Shift-ArrowLeft": "promote-heading",
+  "Alt-Shift-Left": "promote-heading",
+  "Alt-Shift-ArrowRight": "demote-heading",
+  "Alt-Shift-Right": "demote-heading",
+  "Alt-Shift-ArrowUp": "move-block-up",
+  "Alt-Shift-Up": "move-block-up",
+  "Alt-Shift-ArrowDown": "move-block-down",
+  "Alt-Shift-Down": "move-block-down",
+
+  // Function keys (W4.3)
   F3: "autotext-f3",
-  // Word's Alt+Shift+Up/Down: move table row or outline block up/down
-  "Alt-Shift-ArrowUp": "move-row-up",
-  "Alt-Shift-ArrowDown": "move-row-down",
-  // A value rides after ":" — `line-spacing:2` calls the command with "2".
+  "Shift-F3": "change-case:cycle",
 };
 
 export const DocenKeymap = Extension.create({
