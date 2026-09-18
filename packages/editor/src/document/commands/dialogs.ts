@@ -2329,3 +2329,28 @@ export class DialogCommands {
     return { ...branch, [kind]: { ...(field as Record<string, unknown>), ...patch } };
   }
 }
+
+/**
+ * Automatically evaluate and refresh all dynamic fields (PAGE, NUMPAGES, DATE, TOC, SEQ, FORMULA)
+ * prior to layout compilation for print or print preview.
+ */
+export function updateDynamicFieldsBeforePrint(
+  dialogs: DialogCommands,
+  commands?: unknown,
+  pageOf?: (pos: number) => number | null | undefined,
+): { fieldsUpdated: number; tocUpdated: boolean } {
+  const fieldsUpdated = dialogs.updateAllFields();
+  let tocUpdated = false;
+  if (commands && typeof commands === "object") {
+    const cmdMap = commands as Record<string, ((...args: unknown[]) => unknown) | undefined>;
+    const updateToc = cmdMap["update-toc"];
+    if (typeof updateToc === "function") {
+      tocUpdated = Boolean(updateToc(pageOf));
+    }
+    const updateFig = cmdMap["update-figure-table"];
+    if (typeof updateFig === "function") {
+      updateFig(pageOf);
+    }
+  }
+  return { fieldsUpdated, tocUpdated };
+}

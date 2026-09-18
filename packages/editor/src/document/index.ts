@@ -96,7 +96,7 @@ import { ClipboardCommands } from "./commands/clipboard";
 import { CommentsCommands } from "./commands/comments";
 import { combineDocs, compareDocs } from "./commands/compare";
 import { DesignCommands } from "./commands/design";
-import { DialogCommands } from "./commands/dialogs";
+import { DialogCommands, updateDynamicFieldsBeforePrint } from "./commands/dialogs";
 import { hostCommands, type HostCommandRegistry } from "./commands/host";
 import {
   BuildingBlocksHostCommands,
@@ -120,9 +120,9 @@ import { ChromeDomain } from "./host/chrome";
 import { InsertDomain } from "./host/insert";
 import { IODomain } from "./host/io";
 import { RenderDomain } from "./host/render";
+import { StatusDomain } from "./host/status";
 // Side-effect import: registers the ribbon/header translation tables.
 import "./i18n";
-import { StatusDomain } from "./host/status";
 import { pageInsets, StoriesDomain } from "./host/stories";
 import { StylesDomain } from "./host/styles";
 import { mergeSectionProperties } from "./page-setup";
@@ -154,6 +154,7 @@ import {
   type SettingsPatch,
 } from "./settings";
 import { getSynonyms, spellSuggestions } from "./spelling";
+import { attachTemplate, type DotxTemplatePackage } from "./template-manager";
 
 /** Double-click window (ms) — the format painter's sticky toggle and the
  *  bare-click stroke deferral both track the system double-click time. */
@@ -260,6 +261,9 @@ class DocenDocument extends AddinHost<Editor> {
   /** The Markdown input mode (Options → Markdown) — session-level, like the
    *  spelling toggle: the bridge reads it per keystroke via a getter. */
   #markdown = true;
+  #fieldShading: "never" | "always" | "whenSelected" = "whenSelected";
+  #updateFieldsBeforePrint = false;
+  #printMarkup = false;
   /** Whether the document's settings.xml carries a read-only editing
    *  restriction (Options → Document). Folds into every editable
    *  computation — never a second setEditable writer. */
@@ -443,6 +447,7 @@ class DocenDocument extends AddinHost<Editor> {
     applyDocumentTheme: (kind, value, persist) => this.#applyDocumentTheme(kind, value, persist),
     snapshotStyles: () => this.#snapshotStyles(),
     syncEditable: () => this.#syncEditable(),
+    syncDocumentSettings: (settings) => this.#syncDocumentSettings(settings),
   });
   /** Styles pane / gallery / Modify Style dialogs, split out of this class —
    *  see host/styles.ts. */
@@ -2098,6 +2103,37 @@ class DocenDocument extends AddinHost<Editor> {
     this.shadowRoot!.querySelector("docen-template-dialog")?.addEventListener("template:create", ((
       event: CustomEvent<{ id: string }>,
     ) => this.#newFromTemplate(event.detail.id)) as EventListener);
+    this.shadowRoot!.querySelector("docen-template-dialog")?.addEventListener("template:attach", ((
+      event: CustomEvent<{ data: Uint8Array; autoUpdateStyles: boolean; filename: string }>,
+    ) =>
+      this.attachTemplate(event.detail.data, {
+        autoUpdateStyles: event.detail.autoUpdateStyles,
+      })) as EventListener);
+    this.shadowRoot!.querySelector("docen-print-preview")?.addEventListener(
+      "print-preview:markup-change",
+      ((event: Event) => {
+        const customEvent = event as CustomEvent<{ markup: boolean }>;
+        if (!this.#stage) return;
+        void (async () => {
+          const shots = await this.#stage!.printSnapshots({ markup: customEvent.detail.markup });
+          const previewEl = this.shadowRoot?.querySelector("docen-print-preview") as
+            | (HTMLElement & {
+                seed(options: unknown): void;
+                updatePreview(): void;
+              })
+            | null;
+          const cursor = this.editor?.state.selection.from ?? 0;
+          const page = (this.#bridge?.pageOf(cursor) ?? 0) + 1;
+          previewEl?.seed({
+            snapshots: shots,
+            filename: this.getAttribute("filename") ?? "Document",
+            currentPage: page,
+            printMarkup: customEvent.detail.markup,
+          });
+          previewEl?.updatePreview();
+        })();
+      }) as EventListener,
+    );
     // Language dialog — commit the selection's proofing language (w:lang).
     this.shadowRoot!.querySelector("docen-language-dialog")?.addEventListener(
       "language:ok",
@@ -2685,6 +2721,7 @@ class DocenDocument extends AddinHost<Editor> {
       sectionBreakEvenPage: t("marks.sectionBreakEvenPage", this),
       sectionBreakOddPage: t("marks.sectionBreakOddPage", this),
     });
+    this.#stage.setFieldShading(this.#fieldShading);
     // A `zoom` attribute parsed before the stage existed only recorded the
     // level here — push it in before the first sync sizes the slots. The
     // `show-marks` and `view` attributes get the same once-over (idempotent
@@ -4559,6 +4596,9 @@ class DocenDocument extends AddinHost<Editor> {
       case "print":
         if (!this.#emitCancelable("docen:print")) void this.#print();
         break;
+      case "print-preview":
+        void this.openPrintPreview();
+        break;
       case "properties":
         // Word's File → Info: the document properties pane.
         this.showTaskpane("properties");
@@ -4597,6 +4637,8 @@ class DocenDocument extends AddinHost<Editor> {
                 ? Math.round((s.defaultTabStop / (1440 / 2.54)) * 100) / 100
                 : undefined,
             updateFields: s.updateFields === true,
+            updateFieldsBeforePrint: this.#updateFieldsBeforePrint,
+            fieldShading: this.#fieldShading,
             protection: (s.documentProtection as { edit?: string } | undefined)?.edit ?? "none",
             compatVersion: (s.compatibility as { version?: number } | undefined)?.version ?? 15,
           };
@@ -4703,6 +4745,8 @@ class DocenDocument extends AddinHost<Editor> {
         document?: {
           defaultTabStop?: number;
           updateFields?: boolean;
+          updateFieldsBeforePrint?: boolean;
+          fieldShading?: "never" | "always" | "whenSelected";
           protection?: string;
           compatVersion?: number;
         };
@@ -4787,21 +4831,31 @@ class DocenDocument extends AddinHost<Editor> {
   #applyDocumentSettings(d: {
     defaultTabStop?: number;
     updateFields?: boolean;
+    updateFieldsBeforePrint?: boolean;
+    fieldShading?: "never" | "always" | "whenSelected";
     protection?: string;
     compatVersion?: number;
   }): void {
     const editor = this.editor;
     if (!editor) return;
+    if (d.fieldShading) this.setFieldShading(d.fieldShading);
+    if (typeof d.updateFieldsBeforePrint === "boolean") {
+      this.setUpdateFieldsBeforePrint(d.updateFieldsBeforePrint);
+    }
     const prev = this.#documentSettings();
     const prevTab = typeof prev.defaultTabStop === "number" ? prev.defaultTabStop : undefined;
     const prevProtection = (prev.documentProtection as { edit?: string } | undefined)?.edit;
     const prevCompat = (prev.compatibility as { version?: number } | undefined)?.version;
+    const prevUpdateBeforePrint = prev.updateFieldsBeforePrint === true;
+    const prevFieldShading = prev.fieldShading;
     // Empty tab input = untouched (undefined survives the round-trip compare).
     const tabTwip =
       d.defaultTabStop != null ? convertMillimetersToTwip(d.defaultTabStop * 10) : prevTab;
     if (
       tabTwip !== prevTab ||
       d.updateFields !== (prev.updateFields === true) ||
+      d.updateFieldsBeforePrint !== prevUpdateBeforePrint ||
+      d.fieldShading !== prevFieldShading ||
       d.protection !== (prevProtection ?? "none") ||
       d.compatVersion !== (prevCompat ?? 15)
     ) {
@@ -4811,6 +4865,9 @@ class DocenDocument extends AddinHost<Editor> {
       if (tabTwip != null) settings.defaultTabStop = tabTwip;
       if (d.updateFields) settings.updateFields = true;
       else delete settings.updateFields;
+      if (d.updateFieldsBeforePrint) settings.updateFieldsBeforePrint = true;
+      else delete settings.updateFieldsBeforePrint;
+      if (d.fieldShading) settings.fieldShading = d.fieldShading;
       settings = withProtection(settings, d.protection ?? "none");
       settings.compatibility = {
         ...(prev.compatibility as object | undefined),
@@ -5283,7 +5340,96 @@ class DocenDocument extends AddinHost<Editor> {
     dialog?.setAttribute("findings", JSON.stringify(this.#inspectFindings()));
   };
 
+  #syncDocumentSettings(settings: Record<string, unknown>): void {
+    const fs = settings.fieldShading as "never" | "always" | "whenSelected" | undefined;
+    if (fs === "never" || fs === "always" || fs === "whenSelected") {
+      this.#fieldShading = fs;
+    }
+    this.#updateFieldsBeforePrint = settings.updateFieldsBeforePrint === true;
+    this.#stage?.setFieldShading(this.#fieldShading);
+  }
+
+  getFieldShading(): "never" | "always" | "whenSelected" {
+    return this.#fieldShading;
+  }
+
+  setFieldShading(mode: "never" | "always" | "whenSelected"): void {
+    this.#fieldShading = mode;
+    this.#stage?.setFieldShading(mode);
+  }
+
+  getUpdateFieldsBeforePrint(): boolean {
+    return this.#updateFieldsBeforePrint;
+  }
+
+  setUpdateFieldsBeforePrint(value: boolean): void {
+    this.#updateFieldsBeforePrint = value;
+  }
+
+  getPrintMarkup(): boolean {
+    return this.#printMarkup;
+  }
+
+  setPrintMarkup(value: boolean): void {
+    this.#printMarkup = value;
+  }
+
+  /**
+   * Attach an external .dotx (or .docx) template to this document, importing
+   * styles, numbering, docDefaults, and themes without replacing body content.
+   */
+  attachTemplate(
+    data: Uint8Array | ArrayBuffer,
+    options: { autoUpdateStyles?: boolean } = {},
+  ): DotxTemplatePackage | undefined {
+    if (!this.editor) return undefined;
+    const pkg = attachTemplate(this.editor, data, options);
+    if (pkg.theme) {
+      this.#applyDocumentTheme("theme", pkg.theme.id, false);
+    }
+    this.repaginate();
+    return pkg;
+  }
+
+  /**
+   * Open the Print Preview modal (<docen-print-preview>) with multi-page preview,
+   * zoom/navigation, page range, collation, booklet imposition, and markup toggle.
+   */
+  async openPrintPreview(options?: { markup?: boolean }): Promise<void> {
+    if (this.#updateFieldsBeforePrint) {
+      updateDynamicFieldsBeforePrint(this.#dialogs, this.editor?.commands, (pos) => {
+        const page = this.#bridge?.pageOf(pos);
+        return typeof page === "number" ? page + 1 : null;
+      });
+    }
+    const previewEl = this.shadowRoot?.querySelector("docen-print-preview") as
+      | (HTMLElement & {
+          seed(options: unknown): void;
+          show(): void;
+        })
+      | null;
+    if (!previewEl || !this.#stage) return;
+
+    const printMarkup = options?.markup ?? this.#printMarkup;
+    const shots = await this.#stage.printSnapshots({ markup: printMarkup });
+    const cursor = this.editor?.state.selection.from ?? 0;
+    const page = (this.#bridge?.pageOf(cursor) ?? 0) + 1;
+    previewEl.seed({
+      snapshots: shots,
+      filename: this.getAttribute("filename") ?? "Document",
+      currentPage: page,
+      printMarkup,
+    });
+    previewEl.show();
+  }
+
   async #print(): Promise<void> {
+    if (this.#updateFieldsBeforePrint) {
+      updateDynamicFieldsBeforePrint(this.#dialogs, this.editor?.commands, (pos) => {
+        const page = this.#bridge?.pageOf(pos);
+        return typeof page === "number" ? page + 1 : null;
+      });
+    }
     return this.#io.print();
   }
 

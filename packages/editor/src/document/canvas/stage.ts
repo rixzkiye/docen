@@ -508,6 +508,19 @@ export class CanvasStage {
     this.#repaintViewFlagStaleRest();
   }
 
+  /** Word field shading: "never" | "always" | "whenSelected". */
+  #fieldShading: "never" | "always" | "whenSelected" = "never";
+
+  getFieldShading(): "never" | "always" | "whenSelected" {
+    return this.#fieldShading;
+  }
+
+  setFieldShading(mode: "never" | "always" | "whenSelected"): void {
+    if (mode === this.#fieldShading) return;
+    this.#fieldShading = mode;
+    this.#repaintViewFlagStaleRest();
+  }
+
   /** The document view (Word's View tab): print = paginated pages with
    *  furniture; draft = paginated, body only (no headers/footers, white
    *  background); web/read = the section laid as ONE continuous page rendered
@@ -519,6 +532,7 @@ export class CanvasStage {
    *  background colors and images" ships off) — set only inside
    *  {@link printSnapshots}. */
   #suppressBackground = false;
+  #suppressBalloons = false;
 
   setViewMode(mode: "print" | "draft" | "web" | "read"): void {
     if (mode === this.#viewMode) return;
@@ -1253,16 +1267,23 @@ export class CanvasStage {
    *  scrolled-into-view ones), every slot repaints, then each canvas exports
    *  as PNG. `width`/`height` are the page's unzoomed CSS px (96 dpi) so the
    *  print view can lay the images out at true paper size. */
-  async printSnapshots(): Promise<{ width: number; height: number; url: string }[]> {
-    const urls = await this.#rasterizeAll();
-    return this.slots.flatMap((_, index) => {
-      const url = urls[index];
-      if (!url) return [];
-      const flow = this.sectionAt(index).flow;
-      return [
-        { width: this.pageCss(flow.pageWidthPx), height: this.pageCss(flow.pageHeightPx), url },
-      ];
-    });
+  async printSnapshots(options?: {
+    markup?: boolean;
+  }): Promise<{ width: number; height: number; url: string }[]> {
+    if (options?.markup === false) this.#suppressBalloons = true;
+    try {
+      const urls = await this.#rasterizeAll();
+      return this.slots.flatMap((_, index) => {
+        const url = urls[index];
+        if (!url) return [];
+        const flow = this.sectionAt(index).flow;
+        return [
+          { width: this.pageCss(flow.pageWidthPx), height: this.pageCss(flow.pageHeightPx), url },
+        ];
+      });
+    } finally {
+      this.#suppressBalloons = false;
+    }
   }
 
   /** Shared full-document raster pass: strip the page color for the export
@@ -1424,6 +1445,7 @@ export class CanvasStage {
       pageIndex: index,
       pageCount: this.pages.length,
       layer: "behind",
+      fieldShading: this.#fieldShading,
       showMarks: this.#showMarks,
       showGridlines: this.#showGridlines,
       marksLabels: this.ctx.marksLabels,
@@ -1746,7 +1768,8 @@ export class CanvasStage {
     paintEndnotes(layers.overlay, this.pages[ctx.pageIndex]?.endnotes, ctx);
     // Margin balloons repaint with the overlay (their geometry comes from the
     // page's packed stack) and register their click boxes + hover groups.
-    const painted = paintBalloons(layers.overlay, this.pages[ctx.pageIndex]?.balloons, ctx);
+    const balloons = this.#suppressBalloons ? undefined : this.pages[ctx.pageIndex]?.balloons;
+    const painted = paintBalloons(layers.overlay, balloons, ctx);
     this.balloonBoxes.set(ctx.pageIndex, painted.boxes);
     this.balloonGroups.set(ctx.pageIndex, painted.groups);
     this.#applyBalloonHover(ctx.pageIndex);

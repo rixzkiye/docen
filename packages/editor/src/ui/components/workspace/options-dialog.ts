@@ -25,6 +25,10 @@ export interface DocumentSettings {
   defaultTabStop?: number;
   /** Update fields when the document opens. */
   updateFields?: boolean;
+  /** Update fields before printing. */
+  updateFieldsBeforePrint?: boolean;
+  /** Field shading preference ("never" | "always" | "whenSelected"). */
+  fieldShading?: "never" | "always" | "whenSelected";
   /** office-open protection token ("none" = unrestricted). */
   protection?: string;
   /** Word compatibility mode version (15 = 2013+, 14 = 2010, 12 = 2007). */
@@ -209,6 +213,21 @@ const template = html<DocenOptionsDialog>`
           <fluent-checkbox ${ref("updateFieldsBox")}></fluent-checkbox>
           <span ${ref("updateFieldsLabelEl")}></span>
         </label>
+        <label class="check-field">
+          <fluent-checkbox ${ref("updateFieldsBeforePrintBox")}></fluent-checkbox>
+          <span ${ref("updateFieldsBeforePrintLabelEl")}></span>
+        </label>
+        <div class="opt-row">
+          <label ${ref("fieldShadingLabelEl")}></label>
+          <fluent-dropdown type="combobox" appearance="outline" ${ref("fieldShadingDropdown")}>
+            <fluent-listbox popover="manual" tabindex="-1" ${ref("fieldShadingListbox")}>
+              <fluent-option value="never"></fluent-option>
+              <fluent-option value="always"></fluent-option>
+              <fluent-option value="whenSelected"></fluent-option>
+            </fluent-listbox>
+            <input slot="control" role="combobox" aria-readonly="true" readonly />
+          </fluent-dropdown>
+        </div>
         <div class="opt-row">
           <label ${ref("protectionLabelEl")}></label>
           <fluent-dropdown type="combobox" appearance="outline" ${ref("protectionDropdown")}>
@@ -324,6 +343,11 @@ class DocenOptionsDialog extends FASTElement {
   @observable tabInput?: HTMLInputElement & { value: string };
   @observable updateFieldsBox?: HTMLElement & { checked?: boolean };
   @observable updateFieldsLabelEl?: HTMLElement;
+  @observable updateFieldsBeforePrintBox?: HTMLElement & { checked?: boolean };
+  @observable updateFieldsBeforePrintLabelEl?: HTMLElement;
+  @observable fieldShadingLabelEl?: HTMLElement;
+  @observable fieldShadingDropdown?: HTMLElement & { value: string };
+  @observable fieldShadingListbox?: HTMLElement;
   @observable protectionLabelEl?: HTMLElement;
   @observable protectionDropdown?: HTMLElement & { value: string };
   @observable protectionListbox?: HTMLElement;
@@ -386,6 +410,10 @@ class DocenOptionsDialog extends FASTElement {
     if (this.tabInput)
       this.tabInput.value = d?.defaultTabStop != null ? String(d.defaultTabStop) : "";
     if (this.updateFieldsBox) this.updateFieldsBox.checked = d?.updateFields === true;
+    if (this.updateFieldsBeforePrintBox)
+      this.updateFieldsBeforePrintBox.checked = d?.updateFieldsBeforePrint === true;
+    if (this.fieldShadingDropdown)
+      this.fieldShadingDropdown.value = d?.fieldShading ?? "whenSelected";
     if (this.protectionDropdown) this.protectionDropdown.value = d?.protection ?? "none";
     if (this.compatDropdown) this.compatDropdown.value = String(d?.compatVersion ?? 15);
     this.#syncCombobox(
@@ -423,6 +451,10 @@ class DocenOptionsDialog extends FASTElement {
           document: {
             defaultTabStop: Number.isFinite(tab) ? tab : undefined,
             updateFields: this.updateFieldsBox?.checked === true,
+            updateFieldsBeforePrint: this.updateFieldsBeforePrintBox?.checked === true,
+            fieldShading:
+              (this.fieldShadingDropdown?.value as "never" | "always" | "whenSelected") ??
+              "whenSelected",
             protection: this.protectionDropdown?.value ?? "none",
             compatVersion: Number(this.compatDropdown?.value ?? 15),
           } satisfies DocumentSettings,
@@ -470,6 +502,14 @@ class DocenOptionsDialog extends FASTElement {
     if (this.tabLabelEl) this.tabLabelEl.textContent = t("options.defaultTabStop", this);
     if (this.updateFieldsLabelEl)
       this.updateFieldsLabelEl.textContent = t("options.updateFields", this);
+    if (this.updateFieldsBeforePrintLabelEl)
+      this.updateFieldsBeforePrintLabelEl.textContent = t("options.updateFieldsBeforePrint", this);
+    if (this.fieldShadingLabelEl)
+      this.fieldShadingLabelEl.textContent = t("options.fieldShading", this);
+    this.fieldShadingListbox?.querySelectorAll("fluent-option").forEach((opt) => {
+      const v = opt.getAttribute("value");
+      if (v) opt.textContent = t(`options.fieldShading.${v}`, this);
+    });
     if (this.protectionLabelEl) this.protectionLabelEl.textContent = t("options.protection", this);
     if (this.compatLabelEl) this.compatLabelEl.textContent = t("options.compat", this);
     this.protectionListbox?.querySelectorAll("fluent-option").forEach((opt, i) => {

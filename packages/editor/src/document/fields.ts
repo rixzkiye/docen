@@ -248,7 +248,12 @@ export function parseFieldInstruction(instruction: string): ParsedFieldInstructi
     current += ch;
   }
   if (current) tokens.push(current);
-  const name = (tokens[0] ?? "").toUpperCase();
+  let name = (tokens[0] ?? "").toUpperCase();
+  if (name.startsWith("=") && name.length > 1) {
+    const exprRest = tokens[0]!.slice(1);
+    tokens.splice(0, 1, "=", exprRest);
+    name = "=";
+  }
   const args: string[] = [];
   const switches: Record<string, string> = {};
   for (let i = 1; i < tokens.length; i++) {
@@ -593,7 +598,255 @@ export const FIELD_EVALUATORS: Readonly<Record<string, FieldEvaluator>> = {
     }
     return entries.join("\n");
   },
+  "=": (field) => {
+    const expr =
+      field.args.join(" ") ||
+      field.raw
+        .replace(/^[=\s]+/, "")
+        .replace(/\\[#*@].*$/, "")
+        .trim();
+    return evaluateFormula(expr, field.switches["#"]);
+  },
+  FORMULA: (field) => {
+    const expr =
+      field.args.join(" ") ||
+      field.raw
+        .replace(/^FORMULA\s*/i, "")
+        .replace(/\\[#*@].*$/, "")
+        .trim();
+    return evaluateFormula(expr, field.switches["#"]);
+  },
 };
+
+/**
+ * Safe formula expression parser and evaluator for Word's = and FORMULA fields.
+ * Supports arithmetic (+, -, *, /, %, ^), grouping (parentheses), functions
+ * (SUM, AVERAGE, MIN, MAX, COUNT, ROUND, ABS, INT, PRODUCT, MOD), and numeric pictures (\#).
+ */
+export function evaluateFormula(expr: string, fmt?: string): string | null {
+  let cleanExpr = expr.trim();
+  if (!cleanExpr) return null;
+
+  if (!fmt) {
+    const switchMatch = cleanExpr.match(/\\#\s*(?:"([^"]*)"|'([^']*)'|(\S+))/);
+    if (switchMatch) {
+      fmt = switchMatch[1] ?? switchMatch[2] ?? switchMatch[3];
+      cleanExpr = cleanExpr.replace(/\\#\s*(?:"[^"]*"|'[^']*'|\S+)/, "").trim();
+    }
+  }
+
+  cleanExpr = cleanExpr.replace(/^[=\s]+/, "").trim();
+  if (!cleanExpr) return null;
+
+  type Token =
+    | { type: "num"; val: number }
+    | { type: "id"; val: string }
+    | { type: "op"; val: string };
+
+  let zeroDivide = false;
+  let syntaxError = false;
+
+  const tokens: Token[] = [];
+  let i = 0;
+  while (i < cleanExpr.length) {
+    const ch = cleanExpr[i]!;
+    if (/\s/.test(ch)) {
+      i++;
+      continue;
+    }
+    if (/[0-9.]/.test(ch)) {
+      let num = "";
+      while (i < cleanExpr.length && /[0-9.]/.test(cleanExpr[i]!)) {
+        num += cleanExpr[i++];
+      }
+      const val = parseFloat(num);
+      if (Number.isNaN(val)) {
+        syntaxError = true;
+        break;
+      }
+      tokens.push({ type: "num", val });
+    } else if (/[a-zA-Z_]/.test(ch)) {
+      let id = "";
+      while (i < cleanExpr.length && /[a-zA-Z0-9_]/.test(cleanExpr[i]!)) {
+        id += cleanExpr[i++];
+      }
+      tokens.push({ type: "id", val: id.toUpperCase() });
+    } else if ("+-*/^%(),".includes(ch)) {
+      tokens.push({ type: "op", val: ch });
+      i++;
+    } else {
+      syntaxError = true;
+      i++;
+    }
+  }
+
+  if (syntaxError) return "!SyntaxError";
+
+  let pos = 0;
+  function peek(): Token | undefined {
+    return tokens[pos];
+  }
+  function consume(val?: string): Token | null {
+    const t = tokens[pos];
+    if (!t) return null;
+    if (val && t.val !== val) return null;
+    pos++;
+    return t;
+  }
+
+  function parseExpr(): number | null {
+    let left = parseTerm();
+    if (left == null) return null;
+    while (peek() && (peek()!.val === "+" || peek()!.val === "-")) {
+      const op = consume()!.val;
+      const right = parseTerm();
+      if (right == null) return null;
+      left = op === "+" ? left + right : left - right;
+    }
+    return left;
+  }
+
+  function parseTerm(): number | null {
+    let left = parsePower();
+    if (left == null) return null;
+    while (peek() && (peek()!.val === "*" || peek()!.val === "/" || peek()!.val === "%")) {
+      const op = consume()!.val;
+      const right = parsePower();
+      if (right == null) return null;
+      if (op === "*") left = left * right;
+      else if (op === "/") {
+        if (right === 0) {
+          zeroDivide = true;
+          return null;
+        }
+        left = left / right;
+      } else if (op === "%") {
+        if (right === 0) {
+          zeroDivide = true;
+          return null;
+        }
+        left = left % right;
+      }
+    }
+    return left;
+  }
+
+  function parsePower(): number | null {
+    const left = parseUnary();
+    if (left == null) return null;
+    if (peek() && peek()!.val === "^") {
+      consume();
+      const right = parsePower();
+      if (right == null) return null;
+      return Math.pow(left, right);
+    }
+    return left;
+  }
+
+  function parseUnary(): number | null {
+    if (peek() && peek()!.val === "+") {
+      consume();
+      return parseUnary();
+    }
+    if (peek() && peek()!.val === "-") {
+      consume();
+      const v = parseUnary();
+      return v != null ? -v : null;
+    }
+    return parseFactor();
+  }
+
+  function parseFactor(): number | null {
+    const t = peek();
+    if (!t) return null;
+    if (t.type === "num") {
+      consume();
+      return t.val;
+    }
+    if (t.type === "op" && t.val === "(") {
+      consume("(");
+      const val = parseExpr();
+      if (!consume(")")) return null;
+      return val;
+    }
+    if (t.type === "id") {
+      const fn = consume()!.val;
+      if (!consume("(")) return null;
+      const args: number[] = [];
+      if (peek() && peek()!.val !== ")") {
+        const first = parseExpr();
+        if (first == null) return null;
+        args.push(first);
+        while (peek() && peek()!.val === ",") {
+          consume(",");
+          const next = parseExpr();
+          if (next == null) return null;
+          args.push(next);
+        }
+      }
+      if (!consume(")")) return null;
+      switch (fn) {
+        case "SUM":
+          return args.reduce((a, b) => a + b, 0);
+        case "AVERAGE":
+          return args.length > 0 ? args.reduce((a, b) => a + b, 0) / args.length : 0;
+        case "MIN":
+          return args.length > 0 ? Math.min(...args) : 0;
+        case "MAX":
+          return args.length > 0 ? Math.max(...args) : 0;
+        case "COUNT":
+          return args.length;
+        case "ROUND":
+          return args.length >= 2
+            ? Number((args[0] ?? 0).toFixed(args[1]))
+            : Math.round(args[0] ?? 0);
+        case "ABS":
+          return Math.abs(args[0] ?? 0);
+        case "INT":
+          return Math.floor(args[0] ?? 0);
+        case "PRODUCT":
+          return args.reduce((a, b) => a * b, 1);
+        case "MOD":
+          return (args[0] ?? 0) % (args[1] || 1);
+        default:
+          return null;
+      }
+    }
+    return null;
+  }
+
+  const result = parseExpr();
+  if (zeroDivide) return "!ZeroDivide";
+  if (result == null || pos !== tokens.length || Number.isNaN(result)) return "!SyntaxError";
+
+  if (fmt) {
+    if (fmt.includes("%")) {
+      const pMatch = fmt.match(/0+(\.0+)?/);
+      const dec = pMatch && pMatch[1] ? pMatch[1].length - 1 : 0;
+      return `${(result * 100).toFixed(dec)}%`;
+    }
+    const decMatch = fmt.match(/\.0+/);
+    if (decMatch) {
+      const dec = decMatch[0].length - 1;
+      let s = result.toFixed(dec);
+      if (fmt.includes(",")) {
+        const parts = s.split(".");
+        parts[0] = parts[0]!.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+        s = parts.join(".");
+      }
+      if (fmt.startsWith("$")) s = `$${s}`;
+      return s;
+    }
+    if (fmt.includes(",")) {
+      let s = Math.round(result)
+        .toString()
+        .replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+      if (fmt.startsWith("$")) s = `$${s}`;
+      return s;
+    }
+  }
+  return Number.isInteger(result) ? String(result) : String(Number(result.toFixed(6)));
+}
 
 /** Re-derive a field's value from the document state, or null when this
  *  context cannot provide it (no pagination for PAGE/NUMPAGES, no bookmark
@@ -618,8 +871,46 @@ export const defaultInstruction = (name: string): string =>
 
 /** The field name of an instruction — the listbox's selection when editing an
  *  existing field ("DATE \@ …" → DATE; unknown → the name still leads). */
-export const instructionName = (instruction: string): string =>
-  instruction
-    .trim()
-    .split(/[\s\\]/)[0]
-    ?.toUpperCase() ?? "";
+export const instructionName = (instruction: string): string => {
+  const trimmed = instruction.trim();
+  if (trimmed.startsWith("=")) return "=";
+  return trimmed.split(/[\s\\]/)[0]?.toUpperCase() ?? "";
+};
+
+/** Names of fields whose results are calculated / dynamic. */
+export const CALCULATED_FIELD_NAMES: ReadonlySet<string> = new Set([
+  "PAGE",
+  "NUMPAGES",
+  "PAGEOF",
+  "SECTION",
+  "SECTIONPAGES",
+  "DATE",
+  "TIME",
+  "CREATEDATE",
+  "SAVEDATE",
+  "PRINTDATE",
+  "AUTHOR",
+  "TITLE",
+  "SUBJECT",
+  "KEYWORDS",
+  "COMMENTS",
+  "FILENAME",
+  "REVNUM",
+  "NUMCHARS",
+  "NUMWORDS",
+  "DOCPROPERTY",
+  "SEQ",
+  "FORMULA",
+  "=",
+  "REF",
+  "PAGEREF",
+  "NOTEREF",
+  "CITATION",
+  "BIBLIOGRAPHY",
+]);
+
+/** Returns true if the field instruction represents a calculated field. */
+export function isCalculatedField(instruction: string): boolean {
+  const name = instructionName(instruction);
+  return CALCULATED_FIELD_NAMES.has(name);
+}
