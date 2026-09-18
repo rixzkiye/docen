@@ -28,8 +28,10 @@ export {
 // edits it as one — same rationale as SectionPropertiesOptions above. The
 // @office-open/docx barrel doesn't re-export the core chart value-domain
 // names, so they come straight from @office-open/core (already a dependency).
+import type { ChartType as OfficeChartType } from "@office-open/core";
+export type ChartType = OfficeChartType | "combo";
 export type { ChartOptions } from "@office-open/docx";
-export type { ChartType, ChartSeriesData, LegendPosition } from "@office-open/core";
+export type { ChartSeriesData, LegendPosition } from "@office-open/core";
 // Re-export the engine's section-geometry defaults (MS Office zh-CN "Normal":
 // A4 + top/bottom 1440tw, left/right 1800tw) so editor-side geometry fallbacks
 // — content-width for image capping, page measurement — reuse the SAME defaults
@@ -67,6 +69,13 @@ export {
   type DocxVariant,
   type RunPropMark,
 } from "./converters/docx";
+export { decodePassthroughData, encodePassthroughData } from "./extensions/passthrough";
+export {
+  type TocSwitches,
+  tokenizeTocInstruction,
+  parseTocSwitches,
+  generateTocInstruction,
+} from "./converters/toc-switches";
 
 // Converters: DOCX template patching (placeholder replacement via office-open patchDocument)
 export { patchDOCX, type DocxPatchOptions, type DocxPatchContent } from "./converters/patch";
@@ -114,7 +123,16 @@ export {
   mergeStyleChain,
   deepMergeInto,
   mergeTableStyleProps,
+  resolveTableLook,
+  resolveTableStyle,
+  resolveTableCellStyle,
+  activeConditionalTypes,
+  CONDITIONAL_FORMAT_PRIORITY,
   type StyleEntry,
+  type ResolvedTableLook,
+  type ResolvedTableStyle,
+  type TableCellPosition,
+  type EffectiveTableCellStyle,
 } from "./style-cascade";
 
 // Numbering (list) level index — the same reference → levels table the layout

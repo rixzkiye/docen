@@ -47,6 +47,8 @@ export interface DialogsOptionsHostView {
   runState(state: EditorState): FontDialogPatch;
   /** Open the Chart Data grid for the selected chart. */
   chartEditAtSelection(): void;
+  /** Open the Chart Type picker dialog for the selected chart. */
+  chartTypeAtSelection(): void;
   /** Open the phonetic-guide (拼音指南) dialog for the selection. */
   phoneticOpen(): void;
   /** Open the two-lines-in-one (中文版式) dialog for the selection. */
@@ -71,6 +73,7 @@ export class DialogsOptionsHostCommands implements HostCommandDomain {
     "font-dialog",
     "date-time",
     "chart-edit-data",
+    "chart-change-type",
     "phonetic-guide",
     "two-lines-in-one",
     "define-new-list",
@@ -189,6 +192,11 @@ export class DialogsOptionsHostCommands implements HostCommandDomain {
     // commit arrives via chart:ok → the chart-data-apply command.
     if (event === "chart-edit-data") {
       this.host.chartEditAtSelection();
+      return true;
+    }
+    // Chart Change Type dialog (Chart Design tab → Type group)
+    if (event === "chart-change-type") {
+      this.host.chartTypeAtSelection();
       return true;
     }
     // Phonetic guide (拼音指南, Home → Font): the per-character reading

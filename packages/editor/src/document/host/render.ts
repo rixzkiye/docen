@@ -52,7 +52,7 @@ export interface ProjectedFlowInputs {
   sections: (ProjectedSection & CanvasStageSection)[];
   background?: ProjectedPageBackground;
   flowSections: FlowSection[];
-  viewMode: "print" | "web" | "draft" | "read";
+  viewMode: "print" | "web" | "draft" | "read" | "outline";
   continuous: boolean;
 }
 
@@ -61,7 +61,7 @@ type RenderRun = {
   sectionOfPage: number[];
   sections: (ProjectedSection & CanvasStageSection)[];
   background?: ProjectedPageBackground;
-  viewMode?: "print" | "web" | "draft" | "read";
+  viewMode?: "print" | "web" | "draft" | "read" | "outline";
 };
 
 /** The render domain's view of the host — only what its bodies touch. */
@@ -75,7 +75,7 @@ export interface RenderHostView {
   armStage(projected: {
     sections: (ProjectedSection & CanvasStageSection)[];
     background?: ProjectedPageBackground;
-    viewMode: "print" | "web" | "draft" | "read";
+    viewMode: "print" | "web" | "draft" | "read" | "outline";
   }): CanvasStage;
   measurer(): TextMeasurer;
   a11yMirror(): A11yMirror;
@@ -132,7 +132,7 @@ export interface RenderHostView {
   updateStatus(): void;
   syncStatusLanguage(): void;
   syncActiveTabStops(): void;
-  viewMode(): "print" | "web" | "draft" | "read";
+  viewMode(): "print" | "web" | "draft" | "read" | "outline";
 }
 
 /**

@@ -499,4 +499,84 @@ describe("figure table with chapter-numbered captions", () => {
     expect(entries[0]!.page).toBe("9");
     editor.destroy();
   });
+
+  it("supports \\h switch to disable hyperlinks in TOC entries", () => {
+    const editor = build(docOf(heading(1, "Alpha"), heading(2, "Beta")));
+    editor.commands.setTextSelection(1);
+    expect(editor.commands.toc(undefined, undefined, { hyperlink: false })).toBe(true);
+
+    const entries = entriesOf(editor);
+    expect(entries).toHaveLength(2);
+    expect(entries[0]!.linkHref).toBeNull();
+    expect(entries[1]!.linkHref).toBeNull();
+    editor.destroy();
+  });
+
+  it("supports \\b bookmark scope switch to limit TOC entries to a bookmark", () => {
+    const seed = (data: object) => ({
+      type: "inlinePassthrough",
+      attrs: { data: JSON.stringify(data) },
+    });
+    const editor = build(
+      docOf(
+        heading(1, "Outside Before"),
+        {
+          type: "paragraph",
+          content: [
+            seed({ bookmarkStart: { id: 10, name: "SectionBookmark" } }),
+            { type: "text", text: "Scope Start" },
+          ],
+        },
+        heading(1, "Inside Bookmark 1"),
+        heading(2, "Inside Bookmark 2"),
+        {
+          type: "paragraph",
+          content: [{ type: "text", text: "Scope End" }, seed({ bookmarkEnd: { id: 10 } })],
+        },
+        heading(1, "Outside After"),
+      ),
+    );
+    editor.commands.setTextSelection(1);
+    expect(editor.commands.toc(undefined, undefined, { bookmark: "SectionBookmark" })).toBe(true);
+
+    const entries = entriesOf(editor);
+    expect(entries).toHaveLength(2);
+    expect(entries[0]!.text).toBe("Inside Bookmark 1");
+    expect(entries[1]!.text).toBe("Inside Bookmark 2");
+    editor.destroy();
+  });
+
+  it("supports \\u outlineLevel switch to include/exclude outline level paragraphs", () => {
+    const editorWithOutline = build(
+      docOf({
+        type: "paragraph",
+        attrs: { outlineLevel: 0 },
+        content: [{ type: "text", text: "Outline Level 1 Paragraph" }],
+      }),
+    );
+    editorWithOutline.commands.setTextSelection(1);
+    expect(
+      editorWithOutline.commands.toc(undefined, undefined, {
+        useAppliedParagraphOutlineLevel: true,
+      }),
+    ).toBe(true);
+    expect(entriesOf(editorWithOutline)).toHaveLength(1);
+    expect(entriesOf(editorWithOutline)[0]!.text).toBe("Outline Level 1 Paragraph");
+    editorWithOutline.destroy();
+
+    const editorWithoutOutline = build(
+      docOf({
+        type: "paragraph",
+        attrs: { outlineLevel: 0 },
+        content: [{ type: "text", text: "Outline Level 1 Paragraph" }],
+      }),
+    );
+    editorWithoutOutline.commands.setTextSelection(1);
+    expect(
+      editorWithoutOutline.commands.toc(undefined, undefined, {
+        useAppliedParagraphOutlineLevel: false,
+      }),
+    ).toBe(false);
+    editorWithoutOutline.destroy();
+  });
 });

@@ -5,6 +5,7 @@ import { search } from "prosemirror-search";
 import { type DocenAddin, type DocenHost } from "../ui";
 import { DocumentCommands } from "./extensions/commands";
 import { IndexCommands } from "./extensions/index-commands";
+import { DocenKeymap } from "./extensions/keymap";
 import { NotesCleanup } from "./extensions/notes";
 import { Outline, type OutlineAnchor } from "./extensions/outline";
 import { TocCommands } from "./extensions/toc";
@@ -82,6 +83,8 @@ export function createDocumentExtensions(opts: {
     // #onCommand routes event → editor.commands[event](value) with no mapping
     // layer. Includes editor.can() for precise ribbon greying.
     DocumentCommands,
+    // Canonical Word keyboard shortcuts extension for Tiptap editor instances
+    DocenKeymap,
   ];
 }
 

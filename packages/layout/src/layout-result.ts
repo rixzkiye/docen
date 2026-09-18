@@ -264,6 +264,8 @@ export interface LaidOutCell {
     right?: LayoutBorderEdge;
     bottom?: LayoutBorderEdge;
     left?: LayoutBorderEdge;
+    tl2br?: LayoutBorderEdge;
+    tr2bl?: LayoutBorderEdge;
   };
   /** Cell shading (hex RRGGBB), mirrored for the renderer. */
   fill?: string;

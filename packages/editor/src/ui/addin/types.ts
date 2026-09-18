@@ -40,6 +40,9 @@ export interface RibbonMenuItem {
   event?: string;
   checked?: boolean;
   disabled?: boolean;
+  /** Submenu items (Word context menu and ribbon dropdown submenus). */
+  children?: RibbonMenuItem[];
+  items?: RibbonMenuItem[];
 }
 
 /** Fields shared by every ribbon control. `event` is the kebab-case command

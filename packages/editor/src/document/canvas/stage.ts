@@ -48,6 +48,7 @@ import type { FlowPage, FontMetrics, LaidOutParagraph, LaidOutStackItem } from "
 import { createMeasurer, stackBlocks } from "@docen/layout";
 import { App, Debug, Group, Line, Rect, Text, type IGroup } from "leafer-ui";
 
+import { getArtBorderSvgDataUri } from "./art-borders";
 import { collectPageParas } from "./caret-map";
 import { diffFlowItems } from "./item-diff";
 import { computeLineNumbers } from "./line-numbers";
@@ -507,19 +508,33 @@ export class CanvasStage {
     this.#repaintViewFlagStaleRest();
   }
 
+  /** Word field shading: "never" | "always" | "whenSelected". */
+  #fieldShading: "never" | "always" | "whenSelected" = "never";
+
+  getFieldShading(): "never" | "always" | "whenSelected" {
+    return this.#fieldShading;
+  }
+
+  setFieldShading(mode: "never" | "always" | "whenSelected"): void {
+    if (mode === this.#fieldShading) return;
+    this.#fieldShading = mode;
+    this.#repaintViewFlagStaleRest();
+  }
+
   /** The document view (Word's View tab): print = paginated pages with
    *  furniture; draft = paginated, body only (no headers/footers, white
    *  background); web/read = the section laid as ONE continuous page rendered
    *  through a viewport window (see {@link WINDOW_PX}), read additionally
    *  read-only with the chrome trimmed by the host. */
-  #viewMode: "print" | "draft" | "web" | "read" = "print";
+  #viewMode: "print" | "draft" | "web" | "read" | "outline" = "print";
 
   /** Print snapshots repaint without the page color (Word's "Print
    *  background colors and images" ships off) — set only inside
    *  {@link printSnapshots}. */
   #suppressBackground = false;
+  #suppressBalloons = false;
 
-  setViewMode(mode: "print" | "draft" | "web" | "read"): void {
+  setViewMode(mode: "print" | "draft" | "web" | "read" | "outline"): void {
     if (mode === this.#viewMode) return;
     const wasContinuous = this.#viewMode === "web" || this.#viewMode === "read";
     this.#viewMode = mode;
@@ -527,7 +542,7 @@ export class CanvasStage {
     this.#repaintViewFlagStaleRest();
   }
 
-  get viewMode(): "print" | "draft" | "web" | "read" {
+  get viewMode(): "print" | "draft" | "web" | "read" | "outline" {
     return this.#viewMode;
   }
 
@@ -771,6 +786,16 @@ export class CanvasStage {
           `${CanvasStage.BORDER_STYLE[side.style] ?? "solid"} ` +
           `#${side.color && side.color !== "auto" ? side.color : "000000"}`
         : "none";
+    const artSide = b.top?.art
+      ? b.top
+      : b.right?.art
+        ? b.right
+        : b.bottom?.art
+          ? b.bottom
+          : b.left?.art
+            ? b.left
+            : undefined;
+
     const div = document.createElement("div");
     div.className = "page-borders";
     Object.assign(div.style, {
@@ -781,10 +806,32 @@ export class CanvasStage {
       // back is negative (still above the frame's own background fill).
       zIndex: b.behind ? "-1" : "2",
     } satisfies Partial<CSSStyleDeclaration>);
-    div.style.borderTop = cssSide(b.top);
-    div.style.borderRight = cssSide(b.right);
-    div.style.borderBottom = cssSide(b.bottom);
-    div.style.borderLeft = cssSide(b.left);
+
+    if (artSide?.art) {
+      const dataUri = getArtBorderSvgDataUri(artSide.art, artSide.color);
+      const artW = (side: ProjectedPageBorder | undefined): number =>
+        side
+          ? Math.max(
+              16,
+              Math.round((side.widthPx > 8 ? side.widthPx : side.widthPx * 6) * this.factor),
+            )
+          : 0;
+      const tW = artW(b.top);
+      const rW = artW(b.right);
+      const bW = artW(b.bottom);
+      const lW = artW(b.left);
+      div.style.borderStyle = "solid";
+      div.style.borderWidth = `${tW}px ${rW}px ${bW}px ${lW}px`;
+      div.style.borderImageSource = `url("${dataUri}")`;
+      div.style.borderImageSlice = "20";
+      div.style.borderImageRepeat = "repeat";
+      div.style.borderImageWidth = `${tW}px ${rW}px ${bW}px ${lW}px`;
+    } else {
+      div.style.borderTop = cssSide(b.top);
+      div.style.borderRight = cssSide(b.right);
+      div.style.borderBottom = cssSide(b.bottom);
+      div.style.borderLeft = cssSide(b.left);
+    }
     div.style.top = `${insetPt(b.top, margin.top)}px`;
     div.style.right = `${insetPt(b.right, margin.right)}px`;
     div.style.bottom = `${insetPt(b.bottom, margin.bottom)}px`;
@@ -1220,16 +1267,23 @@ export class CanvasStage {
    *  scrolled-into-view ones), every slot repaints, then each canvas exports
    *  as PNG. `width`/`height` are the page's unzoomed CSS px (96 dpi) so the
    *  print view can lay the images out at true paper size. */
-  async printSnapshots(): Promise<{ width: number; height: number; url: string }[]> {
-    const urls = await this.#rasterizeAll();
-    return this.slots.flatMap((_, index) => {
-      const url = urls[index];
-      if (!url) return [];
-      const flow = this.sectionAt(index).flow;
-      return [
-        { width: this.pageCss(flow.pageWidthPx), height: this.pageCss(flow.pageHeightPx), url },
-      ];
-    });
+  async printSnapshots(options?: {
+    markup?: boolean;
+  }): Promise<{ width: number; height: number; url: string }[]> {
+    if (options?.markup === false) this.#suppressBalloons = true;
+    try {
+      const urls = await this.#rasterizeAll();
+      return this.slots.flatMap((_, index) => {
+        const url = urls[index];
+        if (!url) return [];
+        const flow = this.sectionAt(index).flow;
+        return [
+          { width: this.pageCss(flow.pageWidthPx), height: this.pageCss(flow.pageHeightPx), url },
+        ];
+      });
+    } finally {
+      this.#suppressBalloons = false;
+    }
   }
 
   /** Shared full-document raster pass: strip the page color for the export
@@ -1391,6 +1445,7 @@ export class CanvasStage {
       pageIndex: index,
       pageCount: this.pages.length,
       layer: "behind",
+      fieldShading: this.#fieldShading,
       showMarks: this.#showMarks,
       showGridlines: this.#showGridlines,
       marksLabels: this.ctx.marksLabels,
@@ -1713,7 +1768,8 @@ export class CanvasStage {
     paintEndnotes(layers.overlay, this.pages[ctx.pageIndex]?.endnotes, ctx);
     // Margin balloons repaint with the overlay (their geometry comes from the
     // page's packed stack) and register their click boxes + hover groups.
-    const painted = paintBalloons(layers.overlay, this.pages[ctx.pageIndex]?.balloons, ctx);
+    const balloons = this.#suppressBalloons ? undefined : this.pages[ctx.pageIndex]?.balloons;
+    const painted = paintBalloons(layers.overlay, balloons, ctx);
     this.balloonBoxes.set(ctx.pageIndex, painted.boxes);
     this.balloonGroups.set(ctx.pageIndex, painted.groups);
     this.#applyBalloonHover(ctx.pageIndex);
@@ -1860,6 +1916,25 @@ export class CanvasStage {
       if (b) return b;
     }
     return null;
+  }
+
+  /** The section flow for a specific page. */
+  flowOf(page: number): ProjectedFlowBox {
+    return this.sectionAt(page).flow;
+  }
+
+  /** Drawing hit boxes on a specific page, optionally excluding a specific hit box. */
+  pageDrawingBoxes(page: number, excludeHit?: DrawingHitBox): DrawingHitBox[] {
+    return (this.hitBoxes.get(page) ?? []).filter(
+      (b) =>
+        !excludeHit ||
+        (b !== excludeHit &&
+          !(
+            b.para === excludeHit.para &&
+            b.index === excludeHit.index &&
+            sameChildPath(b.childPath, excludeHit.childPath)
+          )),
+    );
   }
 
   /** Every page's drawing boxes — the host's stale-hit fallback scans these

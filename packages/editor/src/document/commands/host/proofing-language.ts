@@ -12,8 +12,8 @@ export interface ProofingLanguageHostView {
   showWordCount(): void;
   /** Re-run the spelling check and rebuild the proofing pane. */
   spellingRun(): void;
-  /** Open/close a task pane (the proofing or thesaurus pane). */
-  setTaskpane(id: "proofing" | "thesaurus", open: boolean): void;
+  /** Open/close a task pane (the proofing or thesaurus or translate pane). */
+  setTaskpane(id: "proofing" | "thesaurus" | "translate", open: boolean): void;
   spellingIssues(): SpellingIssue[];
   spellingGoto(index: number): void;
   spellingReplace(replacement: string): void;
@@ -22,6 +22,8 @@ export interface ProofingLanguageHostView {
   openLanguageDialog(): void;
   /** Open the thesaurus pane with an optional initial word lookup. */
   openThesaurus(word?: string): void;
+  /** Open the translate pane with optional initial text. */
+  openTranslate?(text?: string): void;
   /** Toggle Read Aloud speech synthesis */
   readAloud?(): void;
 }

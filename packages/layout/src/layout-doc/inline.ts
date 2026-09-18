@@ -203,6 +203,8 @@ export type LayoutInline =
       /** Phonetic guide (w:ruby): the annotation paints above the base glyphs
        *  and the line's natural height reserves space for it. */
       ruby?: LayoutRuby;
+      /** Word field shading: atom carries a calculated field result. */
+      fieldShading?: boolean;
       /** Two-lines-in-one (w:eastAsianLayout): the atom packs its whole text
        *  into two half-size lines — an unbreakable box of the combined width. */
       combine?: LayoutCombine;

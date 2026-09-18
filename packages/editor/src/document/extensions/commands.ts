@@ -1,10 +1,13 @@
 import type { ChartOptions, ChartType, ImageAttrs, LegendPosition } from "@docen/docx";
 import {
   BULLET_GLYPHS,
+  encodePassthroughData,
   HIGHLIGHT_PALETTE_RGB,
   nextMultilevelReference,
   nextOrderedReference,
   ORDERED_FORMATS,
+  updateDocPr,
+  updateExtent,
 } from "@docen/docx";
 import { Extension } from "@docen/docx/core";
 import { EMU_PER_PX } from "@docen/layout";
@@ -22,8 +25,21 @@ import { NodeSelection, TextSelection } from "@tiptap/pm/state";
 import { DocAttrStep } from "@tiptap/pm/transform";
 
 import { freshChildEmu, memberEmuOf, unionBox, type Box } from "../../drawing";
+import { setUiDirection } from "../../ui/i18n/localize";
 import { autotextMatch, blocksOfDocAttrs, type BuildingBlock } from "../building-blocks";
 import { CellSelection, cellsInRect } from "../canvas/cell-selection";
+import { ExtendModeManager, MultiSelectionManager } from "../canvas/selection";
+import {
+  demoteHeadingAtCaret,
+  moveBlockDown,
+  moveBlockUp,
+  promoteHeadingAtCaret,
+} from "../commands/outline";
+import {
+  createBlankExcelWorkbookBytes,
+  getQuickTableBuildingBlocks,
+  getQuickTableJson,
+} from "../quick-tables";
 
 /**
  * Document editor commands (Office.js-style "add-in commands") as native
@@ -47,6 +63,46 @@ import { CellSelection, cellsInRect } from "../canvas/cell-selection";
  * their own engines and do not reuse it.
  */
 
+export interface InsertTableOptions {
+  /** Row count (1-50, default 3 — the first row is the header row). */
+  rows?: number;
+  /** Column count (1-10, default 3). */
+  cols?: number;
+  /** Column widths in dxa twips. */
+  columnWidths?: number[];
+}
+
+export interface DrawTableStrokeOptions {
+  page?: number;
+  widthPx?: number;
+  heightPx?: number;
+  dx?: number;
+  dy?: number;
+  inTable?: boolean;
+}
+
+export interface TableEraserClickOptions {
+  sides?: { pos: number; side: "top" | "bottom" | "left" | "right" }[];
+}
+
+export interface MoveRowOptions {
+  fromIndex: number;
+  toIndex: number;
+}
+
+export interface MoveColumnOptions {
+  fromIndex: number;
+  toIndex: number;
+}
+
+export interface InsertRowAtOptions {
+  index: number;
+}
+
+export interface InsertColumnAtOptions {
+  index: number;
+}
+
 // Type augmentation: register every command on `editor.commands` so callers
 // get autocomplete + `editor.can()` works. Each name is also the ribbon
 // `event` attribute, so #onCommand does editor.chain().focus()[event](value).
@@ -64,6 +120,11 @@ declare module "@tiptap/core" {
       highlight: (value?: string) => ReturnType;
       code: () => ReturnType;
       "clear-format": () => ReturnType;
+      "copy-format": () => ReturnType;
+      "paste-format": () => ReturnType;
+      "underline-words": () => ReturnType;
+      "underline-double": () => ReturnType;
+      "small-caps": () => ReturnType;
       "font-name": (font?: string) => ReturnType;
       "font-size": (size?: string) => ReturnType;
       "grow-font": () => ReturnType;
@@ -76,9 +137,21 @@ declare module "@tiptap/core" {
       "justify-distribute": () => ReturnType;
       "indent-increase": () => ReturnType;
       "indent-decrease": () => ReturnType;
+      "hanging-indent-increase": () => ReturnType;
+      "hanging-indent-decrease": () => ReturnType;
+      "clear-paragraph-format": () => ReturnType;
+      "promote-heading": () => ReturnType;
+      "demote-heading": () => ReturnType;
+      "move-block-up": () => ReturnType;
+      "move-block-down": () => ReturnType;
+      "font-dialog": () => ReturnType;
+      "show-marks": () => ReturnType;
+      "new-comment": () => ReturnType;
+      "insert-footnote": (type?: string) => ReturnType;
       "direction-ltr": () => ReturnType;
       "direction-rtl": () => ReturnType;
       "set-paragraph-direction": (direction: "ltr" | "rtl") => ReturnType;
+      "set-ui-direction": (direction?: "ltr" | "rtl" | "auto") => ReturnType;
       "line-spacing": (mult?: string) => ReturnType;
       "paragraph-dialog-apply": (patch?: ParagraphDialogPatch) => ReturnType;
       "paragraph-dialog-default": (patch?: ParagraphDialogPatch) => ReturnType;
@@ -102,19 +175,36 @@ declare module "@tiptap/core" {
       "section-break-next": () => ReturnType;
       "section-break-continuous": () => ReturnType;
       "insert-table": (options?: InsertTableOptions) => ReturnType;
+      "insert-quick-table": (presetId?: string) => ReturnType;
+      "insert-excel": () => ReturnType;
       chart: () => ReturnType;
       "delete-table": () => ReturnType;
       // Quick Parts (D2): insert a saved building block / the F3 AutoText
       // expansion (replace the typed block name with its content).
       "insert-building-block": (id?: string) => ReturnType;
       "autotext-f3": () => ReturnType;
+      "extend-selection": () => ReturnType;
+      "shrink-selection": () => ReturnType;
+      "cancel-selection": () => ReturnType;
       // Table context commands (the Table Design / Layout contextual tabs).
       "insert-row-above": () => ReturnType;
       "insert-row-below": () => ReturnType;
       "insert-column-left": () => ReturnType;
       "insert-column-right": () => ReturnType;
+      "move-row-up": () => ReturnType;
+      "move-row-down": () => ReturnType;
+      "move-row": (options: MoveRowOptions) => ReturnType;
+      "move-column": (options: MoveColumnOptions) => ReturnType;
+      "insert-row-at": (options: InsertRowAtOptions) => ReturnType;
+      "insert-column-at": (options: InsertColumnAtOptions) => ReturnType;
       "delete-row": () => ReturnType;
       "delete-column": () => ReturnType;
+      "delete-cell": () => ReturnType;
+      "delete-cells": () => ReturnType;
+      "insert-cell": () => ReturnType;
+      "insert-cells": () => ReturnType;
+      "table-formula": () => ReturnType;
+      formula: () => ReturnType;
       "select-table": () => ReturnType;
       "select-table-row": () => ReturnType;
       "select-table-cell": () => ReturnType;
@@ -132,9 +222,13 @@ declare module "@tiptap/core" {
       "merge-cells": () => ReturnType;
       "split-cell": () => ReturnType;
       "split-table": () => ReturnType;
-      "autofit-contents": () => ReturnType;
+      "autofit-contents": (value?: string | number) => ReturnType;
       "autofit-window": (value?: string) => ReturnType;
       "fixed-column-width": () => ReturnType;
+      "draw-table": () => ReturnType;
+      "table-eraser": () => ReturnType;
+      "draw-table-stroke": (options?: DrawTableStrokeOptions) => ReturnType;
+      "table-eraser-click": (options: TableEraserClickOptions) => ReturnType;
       "distribute-columns": () => ReturnType;
       "distribute-rows": () => ReturnType;
       "cell-margins": (value?: string) => ReturnType;
@@ -147,6 +241,8 @@ declare module "@tiptap/core" {
       "new-style": (def?: NewStyleDefinition) => ReturnType;
       "style-set": (value?: string) => ReturnType;
       "add-text": (value?: string) => ReturnType;
+      translate: (value?: string) => ReturnType;
+      "toggle-ribbon-minimized": () => ReturnType;
       // Editing
       "change-case": (mode?: string) => ReturnType;
       sort: () => ReturnType;
@@ -157,8 +253,9 @@ declare module "@tiptap/core" {
       "move-drawing": (value?: string) => ReturnType;
       "place-drawing": (value?: string) => ReturnType;
       "reanchor-drawing": (value?: string) => ReturnType;
-      "rotate-drawing": (value?: string) => ReturnType;
+      "rotate-drawing": (value?: string | number) => ReturnType;
       "drawing-properties-apply": (patch?: DrawingPropertiesPatch) => ReturnType;
+      "drawing-alt-text": (value?: string | { title?: string; descr?: string }) => ReturnType;
       "drawing-crop-apply": (patch?: DrawingCropPatch) => ReturnType;
       "drawing-crop-reset": () => ReturnType;
       // Word's Crop → Aspect Ratio presets — a "W:H" ratio string.
@@ -185,10 +282,12 @@ declare module "@tiptap/core" {
       "shape-outline": (value?: string) => ReturnType;
       "shape-effects": (value?: string) => ReturnType;
       "shape-text-direction": (value?: string) => ReturnType;
+      "shape-custom-geometry-apply": (value?: string | Record<string, unknown>) => ReturnType;
       // Chart Design tab — the type token (column/bar/line/area/pie/doughnut/
       // scatter), the legend placement ("none" or a LegendPosition), and the
       // Edit Data dialog's commit (JSON {title?, categories?, series?}).
       "chart-type": (value?: string) => ReturnType;
+      "chart-style": (value?: string) => ReturnType;
       "chart-legend": (value?: string) => ReturnType;
       "chart-data-apply": (value?: string) => ReturnType;
       // value is the series index to remove (the plot's sub-selected series).
@@ -204,7 +303,8 @@ declare module "@tiptap/core" {
       wrap: (value?: string) => ReturnType;
       rotate: (value?: string) => ReturnType;
       position: (value?: string) => ReturnType;
-      "align-objects": (value?: string) => ReturnType;
+      "align-objects": (value?: string, payload?: string) => ReturnType;
+      "drawing-position-mode": (mode?: string) => ReturnType;
       // Group/Ungroup/Distribute — the Arrange group's multi-selection
       // actions. payload is JSON {members: [{pos, box}]} with the member page
       // boxes in px (the multi-selection overlay's hit boxes); distribute's
@@ -230,6 +330,11 @@ export const WIRED_DISPATCH: ReadonlySet<string> = new Set([
   "highlight",
   "code",
   "clear-format",
+  "copy-format",
+  "paste-format",
+  "underline-words",
+  "underline-double",
+  "small-caps",
   "font-name",
   "font-size",
   "grow-font",
@@ -241,6 +346,17 @@ export const WIRED_DISPATCH: ReadonlySet<string> = new Set([
   "justify-distribute",
   "indent-increase",
   "indent-decrease",
+  "hanging-indent-increase",
+  "hanging-indent-decrease",
+  "clear-paragraph-format",
+  "promote-heading",
+  "demote-heading",
+  "move-block-up",
+  "move-block-down",
+  "font-dialog",
+  "show-marks",
+  "new-comment",
+  "insert-footnote",
   "direction-ltr",
   "direction-rtl",
   "set-paragraph-direction",
@@ -258,14 +374,31 @@ export const WIRED_DISPATCH: ReadonlySet<string> = new Set([
   "section-break-next",
   "section-break-continuous",
   "insert-table",
+  "insert-quick-table",
+  "insert-excel",
   "chart",
   "delete-table",
+  "extend-selection",
+  "shrink-selection",
+  "cancel-selection",
   "insert-row-above",
   "insert-row-below",
   "insert-column-left",
   "insert-column-right",
+  "move-row-up",
+  "move-row-down",
+  "move-row",
+  "move-column",
+  "insert-row-at",
+  "insert-column-at",
   "delete-row",
   "delete-column",
+  "delete-cell",
+  "delete-cells",
+  "insert-cell",
+  "insert-cells",
+  "table-formula",
+  "formula",
   "select-table",
   "select-table-row",
   "select-table-cell",
@@ -284,6 +417,10 @@ export const WIRED_DISPATCH: ReadonlySet<string> = new Set([
   "autofit-contents",
   "autofit-window",
   "fixed-column-width",
+  "draw-table",
+  "table-eraser",
+  "draw-table-stroke",
+  "table-eraser-click",
   "distribute-columns",
   "distribute-rows",
   "cell-margins",
@@ -309,6 +446,7 @@ export const WIRED_DISPATCH: ReadonlySet<string> = new Set([
   "reanchor-drawing",
   "rotate-drawing",
   "drawing-properties-apply",
+  "drawing-alt-text",
   "drawing-crop-apply",
   "drawing-crop-reset",
   "drawing-crop-aspect",
@@ -326,7 +464,9 @@ export const WIRED_DISPATCH: ReadonlySet<string> = new Set([
   "shape-outline",
   "shape-effects",
   "shape-text-direction",
+  "shape-custom-geometry-apply",
   "chart-type",
+  "chart-style",
   "chart-legend",
   "chart-data-apply",
   "chart-series-delete",
@@ -339,6 +479,7 @@ export const WIRED_DISPATCH: ReadonlySet<string> = new Set([
   "rotate",
   "position",
   "align-objects",
+  "drawing-position-mode",
   "drawing-group",
   "drawing-ungroup",
   "drawing-distribute",
@@ -346,8 +487,15 @@ export const WIRED_DISPATCH: ReadonlySet<string> = new Set([
   "track-changes",
   "accept-change",
   "reject-change",
+  "accept-move",
+  "reject-move",
   "previous-change",
   "next-change",
+  "toggle-ribbon-minimized",
+  "translate",
+  "paragraph-dialog-apply",
+  "paragraph-dialog-default",
+  "table-properties-apply",
 ]);
 
 /**
@@ -358,14 +506,6 @@ export const WIRED_DISPATCH: ReadonlySet<string> = new Set([
  * tokens. Stamped onto every selected paragraph by
  * {@link documentCommands.paragraph-dialog-apply}.
  */
-/** Options for the insert-table command (all fields fall back to Word's
- *  3×3 default preset; rows/cols are clamped to the schema-safe range). */
-export interface InsertTableOptions {
-  /** Row count (1-50, default 3 — the first row is the header row). */
-  rows?: number;
-  /** Column count (1-10, default 3). */
-  cols?: number;
-}
 
 /**
  * What the Modify Style dialog commits on OK — the style's chain pointers
@@ -570,9 +710,15 @@ export interface BorderSideState {
  *  or the paragraph fill (shading tab, null clears). */
 export interface BordersDialogPatch {
   tab: "border" | "page" | "shading";
-  sides?: Partial<Record<"top" | "bottom" | "left" | "right", BorderSideState | null>>;
+  sides?: Partial<
+    Record<"top" | "bottom" | "left" | "right" | "tl2br" | "tr2bl", BorderSideState | null>
+  >;
   /** Hex RRGGBB paragraph fill; null clears the shading. */
   fill?: string | null;
+  /** Art border token (stars, hearts, apples, etc.) for page borders. */
+  art?: string | null;
+  /** Target scope: paragraph vs cell vs table. */
+  applyTo?: "paragraph" | "cell" | "table";
 }
 
 // ── Pure helpers (take EditorState, return data; never touch the chain) ──
@@ -1106,7 +1252,7 @@ function stampRows(
 export type FloatingDrawing = {
   pos: number;
   attrs: Record<string, unknown>;
-  kind: "image" | "shape" | "group" | "chart";
+  kind: "image" | "shape" | "group" | "chart" | "model3d" | "ink";
 };
 
 export function floatingDrawingAt(state: EditorState): FloatingDrawing | null {
@@ -1136,20 +1282,43 @@ function drawingAtPos(doc: PMNode, pos: number): FloatingDrawing | null {
     const chart = attrs.chart as Record<string, unknown> | null;
     return chart?.floating ? { pos, attrs, kind: "chart" } : null;
   }
+  if (node.type.name === "model3d") {
+    const model = attrs.model3d as Record<string, unknown> | null;
+    const floating = (model?.floating ?? attrs.floating) as Record<string, unknown> | null;
+    return floating ? { pos, attrs, kind: "model3d" } : null;
+  }
+  if (node.type.name === "ink") {
+    const ink = attrs.ink as Record<string, unknown> | null;
+    const floating = (ink?.floating ?? attrs.floating) as Record<string, unknown> | null;
+    return floating ? { pos, attrs, kind: "ink" } : null;
+  }
   return null;
 }
 
 /** Where each non-image kind carries its Floating object (the chart's rides
  *  its own payload). */
-const FLOATING_CARRIER = { shape: "wpsShape", group: "wpgGroup", chart: "chart" } as const;
+const FLOATING_CARRIER = {
+  shape: "wpsShape",
+  group: "wpgGroup",
+  chart: "chart",
+  model3d: "model3d",
+  ink: "ink",
+} as const;
 
 /** The drawing's Floating object (image: a flat attr; shape/group/chart:
  *  inside their payload). */
 function floatingOf(target: FloatingDrawing): Record<string, unknown> {
-  const carrier =
-    target.kind === "image"
-      ? target.attrs.floating
-      : (target.attrs[FLOATING_CARRIER[target.kind]] as Record<string, unknown>).floating;
+  if (target.kind === "image") return target.attrs.floating as Record<string, unknown>;
+  if (target.kind === "model3d") {
+    const m = target.attrs.model3d as Record<string, unknown> | null;
+    return (m?.floating ?? target.attrs.floating) as Record<string, unknown>;
+  }
+  if (target.kind === "ink") {
+    const k = target.attrs.ink as Record<string, unknown> | null;
+    return (k?.floating ?? target.attrs.floating) as Record<string, unknown>;
+  }
+  const carrier = (target.attrs[FLOATING_CARRIER[target.kind]] as Record<string, unknown>)
+    ?.floating;
   return carrier as Record<string, unknown>;
 }
 
@@ -1176,6 +1345,16 @@ export function inlineDrawingAt(state: EditorState): FloatingDrawing | null {
     case "chart": {
       const chart = attrs.chart as Record<string, unknown> | null;
       return chart && !chart.floating ? { pos, attrs, kind: "chart" } : null;
+    }
+    case "model3d": {
+      const model = attrs.model3d as Record<string, unknown> | null;
+      const floating = (model?.floating ?? attrs.floating) as Record<string, unknown> | null;
+      return !floating ? { pos, attrs, kind: "model3d" } : null;
+    }
+    case "ink": {
+      const ink = attrs.ink as Record<string, unknown> | null;
+      const floating = (ink?.floating ?? attrs.floating) as Record<string, unknown> | null;
+      return !floating ? { pos, attrs, kind: "ink" } : null;
     }
     default:
       return null;
@@ -1207,6 +1386,16 @@ export function wrapMenuValueOf(state: EditorState): string | null {
   if (type === "topAndBottom") return "top-bottom";
   if (type != null && type !== "none") return type; // square / tight / through
   return f.behindDocument === true ? "behind" : "front";
+}
+
+/** The Position Mode for a selected floating drawing: "moveWithText" or "fixPosition". */
+export function drawingPositionModeOf(state: EditorState): "moveWithText" | "fixPosition" {
+  const floating = floatingDrawingAt(state);
+  if (!floating) return "moveWithText";
+  const f = floatingOf(floating);
+  const v = f.verticalPosition as Record<string, unknown> | undefined;
+  if (v?.relative === "page" || f.lockAnchor === true) return "fixPosition";
+  return "moveWithText";
 }
 
 /** The Position gallery's current cell (tl…br) — the margin-relative align
@@ -1352,7 +1541,15 @@ function shapeAt(
 
 /** The chart types whose series carry a grouping (w:bar/line/area families +
  *  stock's OHLC lanes) — the rest have none to hand down. */
-const GROUPING_CHART_TYPES: readonly ChartType[] = ["column", "bar", "line", "area", "stock"];
+const GROUPING_CHART_TYPES: readonly ChartType[] = [
+  "column",
+  "bar",
+  "line",
+  "area",
+  "stock",
+  "surface",
+  "combo",
+];
 
 /** The selected chart node — inline or floating alike: the type/legend/data
  *  edits write the chart payload wherever the chart sits. attrs.chart is a
@@ -1431,11 +1628,11 @@ function offsetFloating(
  *  has no standalone in-group carrier yet — null declines the grouping.
  *  Everything else (src/crop/fill/body) rides along untouched. */
 function memberInGroupAttrs(
-  kind: "image" | "shape" | "group" | "chart",
+  kind: "image" | "shape" | "group" | "chart" | "model3d" | "ink",
   attrs: Record<string, unknown>,
   child: { x: number; y: number; cx: number; cy: number },
 ): Record<string, unknown> | null {
-  if (kind === "chart") return null;
+  if (kind === "chart" || kind === "model3d" || kind === "ink") return null;
   if (kind === "image") {
     const next: Record<string, unknown> = { ...attrs, groupXfrm: child };
     delete next.floating;
@@ -1735,6 +1932,20 @@ function tradeCropExtent(
   if (sel.node.type.name === "image") {
     const attrs = { ...sel.node.attrs };
     attrs[axis] = px;
+    tr.setNodeMarkup(sel.from, undefined, attrs);
+    tr.setSelection(NodeSelection.create(tr.doc, sel.from) as never);
+    return true;
+  }
+  if (sel.node.type.name === "model3d" || sel.node.type.name === "ink") {
+    const attrs = { ...sel.node.attrs } as Record<string, unknown>;
+    attrs[axis] = px;
+    if (axis === "width") attrs.cx = emu;
+    if (axis === "height") attrs.cy = emu;
+    if (typeof attrs.rawXml === "string" && attrs.rawXml) {
+      const cx = (attrs.cx as number) ?? emu;
+      const cy = (attrs.cy as number) ?? emu;
+      attrs.rawXml = updateExtent(attrs.rawXml, cx, cy);
+    }
     tr.setNodeMarkup(sel.from, undefined, attrs);
     tr.setSelection(NodeSelection.create(tr.doc, sel.from) as never);
     return true;
@@ -2110,8 +2321,14 @@ function tableBordersStamp(
     borders.left = GRID_BORDER;
     borders.right = GRID_BORDER;
   }
-  if (value === "all") {
+  if (value === "all" || value === "inside") {
     borders.insideHorizontal = GRID_BORDER;
+    borders.insideVertical = GRID_BORDER;
+  }
+  if (value === "insideHorizontal" || value === "inside-horizontal") {
+    borders.insideHorizontal = GRID_BORDER;
+  }
+  if (value === "insideVertical" || value === "inside-vertical") {
     borders.insideVertical = GRID_BORDER;
   }
   if (value === "bottom" || value === "top" || value === "left" || value === "right") {
@@ -2126,7 +2343,10 @@ type BorderPen = { style: string; size: number; color: string };
 /** A crossed table edge from the canvas edge hit test — the cell position
  *  plus which of its sides the sweep touched (interior lines arrive twice,
  *  once per collapse half). */
-type BorderSweepSide = { pos: number; side: "top" | "bottom" | "left" | "right" };
+type BorderSweepSide = {
+  pos: number;
+  side: "top" | "bottom" | "left" | "right" | "tl2br" | "tr2bl";
+};
 
 type BorderSweep = { sides: BorderSweepSide[]; pen: BorderPen | undefined };
 
@@ -2147,7 +2367,9 @@ function parseBorderSweep(value: unknown, eraser: boolean): BorderSweep | undefi
       (side.side !== "top" &&
         side.side !== "bottom" &&
         side.side !== "left" &&
-        side.side !== "right")
+        side.side !== "right" &&
+        side.side !== "tl2br" &&
+        side.side !== "tr2bl")
     ) {
       return undefined;
     }
@@ -2197,6 +2419,52 @@ function applyBorderSweep(
   return true;
 }
 
+export function mergeCellsBetween(
+  state: EditorState,
+  dispatch: ((tr: Transaction) => void) | undefined,
+  $from: ResolvedPos,
+  $to: ResolvedPos,
+): boolean {
+  const fromA = ancestryAt($from);
+  const toA = ancestryAt($to);
+  if (!fromA || !toA || fromA.rowAt < 0 || toA.rowAt < 0) return false;
+  if ($from.before(fromA.tableAt) !== $to.before(toA.tableAt)) return false;
+  const tableNode = $from.node(fromA.tableAt);
+  const grid = (tableNode.attrs.columnWidths as number[] | null)?.length ?? 0;
+  const c1 = Math.min($from.index(fromA.rowAt), $to.index(toA.rowAt));
+  const c2 = Math.max($from.index(fromA.rowAt), $to.index(toA.rowAt));
+  const rowFrom = Math.min($from.index(fromA.tableAt), $to.index(toA.tableAt));
+  const rowTo = Math.max($from.index(fromA.tableAt), $to.index(toA.tableAt));
+  if (rowFrom === rowTo && c1 === c2) return false;
+  if (dispatch) {
+    const tablePos = $from.before(fromA.tableAt);
+    const tr = state.tr;
+    for (let r = rowTo; r >= rowFrom; r -= 1) {
+      const rowNode = tableNode.child(r);
+      if (grid > 0 && rowNode.childCount !== grid) continue;
+      let rowPos = tablePos + 1;
+      for (let i = 0; i < r; i += 1) rowPos += tableNode.child(i).nodeSize;
+      const last = Math.min(c2, rowNode.childCount - 1);
+      if (c1 > last) continue;
+      let basePos = rowPos + 1;
+      for (let c = 0; c < c1; c += 1) basePos += rowNode.child(c).nodeSize;
+      const base = rowNode.child(c1);
+      tr.setNodeMarkup(basePos, undefined, {
+        ...base.attrs,
+        columnSpan: last > c1 ? last - c1 + 1 : null,
+        verticalMerge: r > rowFrom ? "continue" : base.attrs.verticalMerge,
+      });
+      for (let c = last; c > c1; c -= 1) {
+        let cellPos = rowPos + 1;
+        for (let cc = 0; cc < c; cc += 1) cellPos += rowNode.child(cc).nodeSize;
+        tr.delete(cellPos, cellPos + rowNode.child(c).nodeSize);
+      }
+    }
+    dispatch(tr.scrollIntoView());
+  }
+  return true;
+}
+
 /** Delete the table at `pos` (size `size`) and park the caret where it stood
  *  — shared by delete-table and the collapse cases of delete-row/-column. */
 function deleteTableAt(
@@ -2237,6 +2505,17 @@ function stampTableBorders(
  *  (。！？) honoured alongside ASCII .!?. */
 function transformCase(text: string, mode?: string): string {
   switch (mode) {
+    case "cycle": {
+      const hasUpper = /\p{Lu}/u.test(text);
+      const hasLower = /\p{Ll}/u.test(text);
+      if (hasUpper && !hasLower) {
+        return text.toLowerCase();
+      }
+      if (!hasUpper && hasLower) {
+        return text.replace(/\p{L}[\p{L}'-]*/gu, (w) => w.charAt(0).toUpperCase() + w.slice(1));
+      }
+      return text.toUpperCase();
+    }
     case "lower":
       return text.toLowerCase();
     case "upper":
@@ -2270,10 +2549,25 @@ function blockSliceOf(schema: Schema, block: BuildingBlock): Slice | null {
   }
 }
 
+let copiedFormatting: {
+  marks: readonly Mark[];
+  paraAttrs?: Record<string, unknown>;
+} | null = null;
+
 export const DocumentCommands = Extension.create({
   name: "documentCommands",
   addCommands() {
     return {
+      "toggle-ribbon-minimized": () => () => {
+        return true;
+      },
+      "set-ui-direction": (direction?: "ltr" | "rtl" | "auto") => () => {
+        setUiDirection(direction ?? "auto");
+        return true;
+      },
+      translate: () => () => {
+        return true;
+      },
       // ── Font marks — wrap the built-in Tiptap toggles ──
       bold:
         () =>
@@ -2287,6 +2581,93 @@ export const DocumentCommands = Extension.create({
         () =>
         ({ commands }) =>
           commands.toggleMark("underline"),
+      "underline-words":
+        () =>
+        ({ state, commands }) => {
+          let currentStyle: string | undefined;
+          state.doc.nodesBetween(state.selection.from, state.selection.to, (node) => {
+            const m = node.marks.find((mk) => mk.type.name === "underline");
+            if (m) currentStyle = (m.attrs.style as string) || "single";
+            return currentStyle === undefined;
+          });
+          if (currentStyle === "words") {
+            return commands.unsetMark("underline");
+          }
+          return commands.setMark("underline", { style: "words" });
+        },
+      "underline-double":
+        () =>
+        ({ state, commands }) => {
+          let currentStyle: string | undefined;
+          state.doc.nodesBetween(state.selection.from, state.selection.to, (node) => {
+            const m = node.marks.find((mk) => mk.type.name === "underline");
+            if (m) currentStyle = (m.attrs.style as string) || "single";
+            return currentStyle === undefined;
+          });
+          if (currentStyle === "double") {
+            return commands.unsetMark("underline");
+          }
+          return commands.setMark("underline", { style: "double" });
+        },
+      "small-caps":
+        () =>
+        ({ state, commands }) => {
+          let current: boolean | undefined;
+          state.doc.nodesBetween(state.selection.from, state.selection.to, (node) => {
+            const m = node.marks.find((mk) => mk.type.name === "textStyle");
+            if (m?.attrs.smallCaps !== undefined) current = Boolean(m.attrs.smallCaps);
+            return current === undefined;
+          });
+          const next = !current;
+          return commands.setMark("textStyle", { smallCaps: next ? true : null });
+        },
+      "copy-format":
+        () =>
+        ({ state }) => {
+          const { from, empty } = state.selection;
+          const $pos = state.doc.resolve(empty ? from : from + 1);
+          const marks = $pos.marks();
+          const $from = state.selection.$from;
+          let paraAttrs: Record<string, unknown> | undefined;
+          if ($from.parent.type.name === "paragraph") {
+            paraAttrs = { ...($from.parent.attrs as Record<string, unknown>) };
+            delete paraAttrs.sectionProperties;
+            delete paraAttrs.sectionHeaders;
+            delete paraAttrs.sectionFooters;
+          }
+          copiedFormatting = { marks, paraAttrs };
+          return true;
+        },
+      "paste-format":
+        () =>
+        ({ state, tr }) => {
+          if (!copiedFormatting) return false;
+          const { marks, paraAttrs } = copiedFormatting;
+          const { from, to, empty } = state.selection;
+          if (empty) {
+            tr.setStoredMarks(marks as Mark[]);
+          } else {
+            tr.removeMark(from, to, null);
+            for (const m of marks) {
+              tr.addMark(from, to, m);
+            }
+          }
+          if (paraAttrs) {
+            for (const { pos, node } of selectedParagraphs(state)) {
+              const current = node.attrs as Record<string, unknown>;
+              tr.setNodeMarkup(pos, undefined, {
+                ...current,
+                alignment: paraAttrs.alignment ?? current.alignment,
+                indent: paraAttrs.indent ? { ...(paraAttrs.indent as object) } : current.indent,
+                spacing: paraAttrs.spacing ? { ...(paraAttrs.spacing as object) } : current.spacing,
+                bullet: paraAttrs.bullet !== undefined ? paraAttrs.bullet : current.bullet,
+                numbering:
+                  paraAttrs.numbering !== undefined ? paraAttrs.numbering : current.numbering,
+              });
+            }
+          }
+          return true;
+        },
       // The underline split's style pick: "none" clears, a token applies the
       // pattern — merging over the current mark so the color survives. The
       // current mark comes from any run in the selection ($from.marks() is
@@ -2426,6 +2807,155 @@ export const DocumentCommands = Extension.create({
           }
           return touched;
         },
+      "hanging-indent-increase":
+        () =>
+        ({ state, tr }) => {
+          let touched = false;
+          for (const { pos, node } of selectedParagraphs(state)) {
+            const attrs = node.attrs as Record<string, unknown>;
+            const current = (attrs.indent ?? {}) as {
+              left?: number;
+              hanging?: number;
+              firstLine?: number;
+            };
+            const left = (current.left ?? 0) + INDENT_STEP_TWIPS;
+            const hanging = (current.hanging ?? 0) + INDENT_STEP_TWIPS;
+            tr.setNodeMarkup(pos, undefined, {
+              ...attrs,
+              indent: { ...current, left, hanging, firstLine: undefined },
+            });
+            touched = true;
+          }
+          return touched;
+        },
+      "hanging-indent-decrease":
+        () =>
+        ({ state, tr }) => {
+          let touched = false;
+          for (const { pos, node } of selectedParagraphs(state)) {
+            const attrs = node.attrs as Record<string, unknown>;
+            const current = (attrs.indent ?? {}) as {
+              left?: number;
+              hanging?: number;
+              firstLine?: number;
+            };
+            const left = Math.max(0, (current.left ?? 0) - INDENT_STEP_TWIPS);
+            const rawHanging = (current.hanging ?? 0) - INDENT_STEP_TWIPS;
+            const hanging = rawHanging > 0 ? rawHanging : undefined;
+            tr.setNodeMarkup(pos, undefined, {
+              ...attrs,
+              indent: { ...current, left, hanging, firstLine: undefined },
+            });
+            touched = true;
+          }
+          return touched;
+        },
+      "clear-paragraph-format":
+        () =>
+        ({ state, tr }) => {
+          const blocks = selectedParagraphs(state);
+          if (!blocks.length) return false;
+          for (const { pos, node } of blocks) {
+            const attrs = node.attrs as Record<string, unknown>;
+            tr.setNodeMarkup(pos, undefined, {
+              ...attrs,
+              alignment: null,
+              indent: null,
+              spacing: null,
+              shading: null,
+              border: null,
+            });
+          }
+          return true;
+        },
+      "promote-heading":
+        () =>
+        ({ editor, tr }) =>
+          promoteHeadingAtCaret(editor, tr),
+      "demote-heading":
+        () =>
+        ({ editor, tr }) =>
+          demoteHeadingAtCaret(editor, tr),
+      "move-block-up":
+        () =>
+        ({ editor, tr }) =>
+          moveBlockUp(editor, tr),
+      "move-block-down":
+        () =>
+        ({ editor, tr }) =>
+          moveBlockDown(editor, tr),
+      "font-dialog":
+        () =>
+        ({ editor }) => {
+          const hostEl =
+            (editor.options.element as HTMLElement | null)?.closest?.("docen-document") ??
+            (typeof document !== "undefined" ? document.querySelector("docen-document") : null);
+          if (hostEl) {
+            hostEl.dispatchEvent(
+              new CustomEvent("command", {
+                bubbles: true,
+                composed: true,
+                detail: { event: "font-dialog" },
+              }),
+            );
+            return true;
+          }
+          return false;
+        },
+      "show-marks":
+        () =>
+        ({ editor }) => {
+          const hostEl =
+            (editor.options.element as HTMLElement | null)?.closest?.("docen-document") ??
+            (typeof document !== "undefined" ? document.querySelector("docen-document") : null);
+          if (hostEl) {
+            hostEl.dispatchEvent(
+              new CustomEvent("command", {
+                bubbles: true,
+                composed: true,
+                detail: { event: "show-marks" },
+              }),
+            );
+            return true;
+          }
+          return false;
+        },
+      "new-comment":
+        () =>
+        ({ editor }) => {
+          const hostEl =
+            (editor.options.element as HTMLElement | null)?.closest?.("docen-document") ??
+            (typeof document !== "undefined" ? document.querySelector("docen-document") : null);
+          if (hostEl) {
+            hostEl.dispatchEvent(
+              new CustomEvent("command", {
+                bubbles: true,
+                composed: true,
+                detail: { event: "new-comment" },
+              }),
+            );
+            return true;
+          }
+          return false;
+        },
+      "insert-footnote":
+        (type) =>
+        ({ editor }) => {
+          const hostEl =
+            (editor.options.element as HTMLElement | null)?.closest?.("docen-document") ??
+            (typeof document !== "undefined" ? document.querySelector("docen-document") : null);
+          if (hostEl) {
+            hostEl.dispatchEvent(
+              new CustomEvent("command", {
+                bubbles: true,
+                composed: true,
+                detail: { event: "insert-footnote", value: type },
+              }),
+            );
+            return true;
+          }
+          return false;
+        },
       "direction-ltr":
         () =>
         ({ state, tr }) =>
@@ -2448,6 +2978,18 @@ export const DocumentCommands = Extension.create({
         ({ state, tr }) => {
           const blocks = selectedParagraphs(state);
           if (!blocks.length) return false;
+          if (mult === "toggle-before") {
+            for (const { pos, node } of blocks) {
+              const attrs = node.attrs as Record<string, unknown>;
+              const current = (attrs.spacing ?? {}) as Record<string, unknown>;
+              const hasBefore = Boolean(current.before && Number(current.before) > 0);
+              tr.setNodeMarkup(pos, undefined, {
+                ...attrs,
+                spacing: { ...current, before: hasBefore ? null : 240 },
+              });
+            }
+            return true;
+          }
           if (mult === "add-before" || mult === "add-after") {
             const key = mult === "add-before" ? "before" : "after";
             for (const { pos, node } of blocks) {
@@ -2620,12 +3162,43 @@ export const DocumentCommands = Extension.create({
           return true;
         },
       // The Borders and Shading dialog's OK (border tab) — replaces each
-      // selected paragraph's w:pBdr wholesale with the staged sides (a null
-      // edge clears that side; every edge null drops the border).
+      // selected paragraph's w:pBdr or table cell's w:tcBorders with the staged sides
+      // (a null edge clears that side; every edge null drops the border).
       "borders-apply":
         (patch) =>
         ({ state, tr }) => {
           if (!patch?.sides) return false;
+          const targets = tableTargets(state);
+          if (
+            targets?.cells.length &&
+            (patch.applyTo === "cell" ||
+              patch.sides.tl2br !== undefined ||
+              patch.sides.tr2bl !== undefined)
+          ) {
+            const allSides = ["top", "bottom", "left", "right", "tl2br", "tr2bl"] as const;
+            for (const { pos, node } of targets.cells) {
+              const attrs = node.attrs as Record<string, unknown>;
+              const current = { ...((attrs.borders ?? {}) as Record<string, unknown>) };
+              for (const side of allSides) {
+                if (patch.sides[side] === undefined) continue;
+                const edge = patch.sides[side];
+                if (!edge) {
+                  delete current[side];
+                  if (side === "tl2br") delete current.topLeftToBottomRight;
+                  if (side === "tr2bl") delete current.topRightToBottomLeft;
+                } else {
+                  current[side] = {
+                    style: edge.style,
+                    size: Math.max(2, Math.round(edge.size)),
+                    color: edge.color ?? "auto",
+                  };
+                }
+              }
+              const borders = Object.keys(current).length ? current : null;
+              tr.setNodeMarkup(pos, undefined, { ...attrs, borders });
+            }
+            return true;
+          }
           const blocks = selectedParagraphs(state);
           if (!blocks.length) return false;
           for (const { pos, node } of blocks) {
@@ -2722,8 +3295,8 @@ export const DocumentCommands = Extension.create({
       // of a point, 4 = 0.5pt) — so the table is visible without a TableGrid
       // style in the document's styles.xml.
       "insert-table":
-        (options) =>
-        ({ state, dispatch }) => {
+        (options?: InsertTableOptions) =>
+        ({ state, dispatch }: { state: EditorState; dispatch?: (tr: Transaction) => void }) => {
           const rows = Math.max(1, Math.min(50, Math.trunc(options?.rows ?? 3)));
           const cols = Math.max(1, Math.min(10, Math.trunc(options?.cols ?? 3)));
           const { table, tableRow, tableCell, paragraph } = state.schema.nodes;
@@ -2736,6 +3309,7 @@ export const DocumentCommands = Extension.create({
           const dataRow = tableRow.createAndFill(null, Array(cols).fill(cell))!;
           const node = table.createAndFill(
             {
+              columnWidths: options?.columnWidths,
               borders: {
                 top: GRID_BORDER,
                 bottom: GRID_BORDER,
@@ -2745,7 +3319,7 @@ export const DocumentCommands = Extension.create({
                 insideVertical: GRID_BORDER,
               },
             },
-            [headerRow, ...Array(rows - 1).fill(dataRow)],
+            rows === 1 ? [dataRow] : [headerRow, ...Array(rows - 1).fill(dataRow)],
           );
           if (!node) return false;
           if (dispatch) {
@@ -2754,6 +3328,54 @@ export const DocumentCommands = Extension.create({
             // Caret lands in the first cell, ready to type (Word behavior).
             tr.setSelection(TextSelection.near(tr.doc.resolve(pos + 2)));
             dispatch(tr.scrollIntoView());
+          }
+          return true;
+        },
+      // Quick Tables gallery — insert a built-in pre-structured table
+      // (calendar, matrix, tabular list, double table, subheadings) as one
+      // transaction at the caret.
+      "insert-quick-table":
+        (presetId?: string) =>
+        ({ state, dispatch }: { state: EditorState; dispatch?: (tr: Transaction) => void }) => {
+          const json = getQuickTableJson(presetId ?? "calendar1");
+          if (!json) return false;
+          let node: PMNode;
+          try {
+            node = state.schema.nodeFromJSON(json);
+          } catch {
+            return false;
+          }
+          if (dispatch) {
+            const pos = state.selection.from;
+            const tr = state.tr.replaceSelectionWith(node);
+            tr.setSelection(TextSelection.near(tr.doc.resolve(pos + 2)));
+            dispatch(tr.scrollIntoView());
+          }
+          return true;
+        },
+      // Insert Excel spreadsheet — embeds a minimal valid OOXML .xlsx workbook
+      // as an inline OLE object (w:object), rendered as a frame with preview.
+      "insert-excel":
+        () =>
+        ({ state, dispatch }: { state: EditorState; dispatch?: (tr: Transaction) => void }) => {
+          const bytes = createBlankExcelWorkbookBytes();
+          const node = state.schema.nodes.inlinePassthrough?.create({
+            data: encodePassthroughData({
+              object: {
+                width: "360px",
+                height: "180px",
+                embed: {
+                  data: bytes,
+                  progId: "Excel.Sheet.12",
+                  fileName: "Microsoft_Excel_Worksheet1.xlsx",
+                  relationshipType: "oleObject",
+                },
+              },
+            }),
+          });
+          if (!node) return false;
+          if (dispatch) {
+            dispatch(state.tr.replaceSelectionWith(node).scrollIntoView());
           }
           return true;
         },
@@ -2899,6 +3521,271 @@ export const DocumentCommands = Extension.create({
           }
           return true;
         },
+      "move-row-up":
+        () =>
+        ({ state, dispatch }: { state: EditorState; dispatch?: (tr: Transaction) => void }) => {
+          const anchor = tableAncestry(state);
+          if (anchor && anchor.rowAt >= 0) {
+            const { $from } = state.selection;
+            const tableNode = $from.node(anchor.tableAt);
+            const tablePos = $from.before(anchor.tableAt);
+            const rowIndex = $from.index(anchor.tableAt);
+            if (rowIndex <= 0) return false;
+            if (dispatch) {
+              const rows: PMNode[] = [];
+              for (let i = 0; i < tableNode.childCount; i++) {
+                rows.push(tableNode.child(i));
+              }
+              const [moved] = rows.splice(rowIndex, 1);
+              rows.splice(rowIndex - 1, 0, moved!);
+              const newTable = tableNode.type.create(tableNode.attrs, rows);
+              const tr = state.tr.replaceWith(tablePos, tablePos + tableNode.nodeSize, newTable);
+              let targetPos = tablePos + 1;
+              for (let i = 0; i < rowIndex - 1; i++) {
+                targetPos += rows[i]!.nodeSize;
+              }
+              const cellIndex = $from.index(anchor.rowAt);
+              const movedRow = rows[rowIndex - 1]!;
+              const targetCol = Math.min(cellIndex, movedRow.childCount - 1);
+              let targetCellPos = targetPos + 1;
+              for (let c = 0; c < targetCol; c++) {
+                targetCellPos += movedRow.child(c).nodeSize;
+              }
+              tr.setSelection(TextSelection.near(tr.doc.resolve(targetCellPos + 1)));
+              dispatch(tr.scrollIntoView());
+            }
+            return true;
+          }
+          const { $from } = state.selection;
+          if ($from.depth >= 1) {
+            const blockIndex = $from.index(0);
+            if (blockIndex <= 0) return false;
+            const doc = state.doc;
+            if (dispatch) {
+              const blocks: PMNode[] = [];
+              for (let i = 0; i < doc.childCount; i++) blocks.push(doc.child(i));
+              const [moved] = blocks.splice(blockIndex, 1);
+              blocks.splice(blockIndex - 1, 0, moved!);
+              const tr = state.tr.replaceWith(0, doc.content.size, Fragment.fromArray(blocks));
+              let targetPos = 0;
+              for (let i = 0; i < blockIndex - 1; i++) targetPos += blocks[i]!.nodeSize;
+              tr.setSelection(TextSelection.near(tr.doc.resolve(targetPos + 1)));
+              dispatch(tr.scrollIntoView());
+            }
+            return true;
+          }
+          return false;
+        },
+      "move-row-down":
+        () =>
+        ({ state, dispatch }: { state: EditorState; dispatch?: (tr: Transaction) => void }) => {
+          const anchor = tableAncestry(state);
+          if (anchor && anchor.rowAt >= 0) {
+            const { $from } = state.selection;
+            const tableNode = $from.node(anchor.tableAt);
+            const tablePos = $from.before(anchor.tableAt);
+            const rowIndex = $from.index(anchor.tableAt);
+            if (rowIndex < 0 || rowIndex >= tableNode.childCount - 1) return false;
+            if (dispatch) {
+              const rows: PMNode[] = [];
+              for (let i = 0; i < tableNode.childCount; i++) {
+                rows.push(tableNode.child(i));
+              }
+              const [moved] = rows.splice(rowIndex, 1);
+              rows.splice(rowIndex + 1, 0, moved!);
+              const newTable = tableNode.type.create(tableNode.attrs, rows);
+              const tr = state.tr.replaceWith(tablePos, tablePos + tableNode.nodeSize, newTable);
+              let targetPos = tablePos + 1;
+              for (let i = 0; i < rowIndex + 1; i++) {
+                targetPos += rows[i]!.nodeSize;
+              }
+              const cellIndex = $from.index(anchor.rowAt);
+              const movedRow = rows[rowIndex + 1]!;
+              const targetCol = Math.min(cellIndex, movedRow.childCount - 1);
+              let targetCellPos = targetPos + 1;
+              for (let c = 0; c < targetCol; c++) {
+                targetCellPos += movedRow.child(c).nodeSize;
+              }
+              tr.setSelection(TextSelection.near(tr.doc.resolve(targetCellPos + 1)));
+              dispatch(tr.scrollIntoView());
+            }
+            return true;
+          }
+          const { $from } = state.selection;
+          if ($from.depth >= 1) {
+            const blockIndex = $from.index(0);
+            const doc = state.doc;
+            if (blockIndex < 0 || blockIndex >= doc.childCount - 1) return false;
+            if (dispatch) {
+              const blocks: PMNode[] = [];
+              for (let i = 0; i < doc.childCount; i++) blocks.push(doc.child(i));
+              const [moved] = blocks.splice(blockIndex, 1);
+              blocks.splice(blockIndex + 1, 0, moved!);
+              const tr = state.tr.replaceWith(0, doc.content.size, Fragment.fromArray(blocks));
+              let targetPos = 0;
+              for (let i = 0; i < blockIndex + 1; i++) targetPos += blocks[i]!.nodeSize;
+              tr.setSelection(TextSelection.near(tr.doc.resolve(targetPos + 1)));
+              dispatch(tr.scrollIntoView());
+            }
+            return true;
+          }
+          return false;
+        },
+      "move-row":
+        (options: MoveRowOptions) =>
+        ({ state, dispatch }: { state: EditorState; dispatch?: (tr: Transaction) => void }) => {
+          const anchor = tableAncestry(state);
+          if (!anchor || anchor.rowAt < 0) return false;
+          const { $from } = state.selection;
+          const tableNode = $from.node(anchor.tableAt);
+          const tablePos = $from.before(anchor.tableAt);
+          const { fromIndex, toIndex } = options;
+          if (
+            fromIndex < 0 ||
+            fromIndex >= tableNode.childCount ||
+            toIndex < 0 ||
+            toIndex > tableNode.childCount ||
+            toIndex === fromIndex ||
+            toIndex === fromIndex + 1
+          ) {
+            return false;
+          }
+          if (dispatch) {
+            const rows: PMNode[] = [];
+            for (let i = 0; i < tableNode.childCount; i++) {
+              rows.push(tableNode.child(i));
+            }
+            const [moved] = rows.splice(fromIndex, 1);
+            const insertIdx = toIndex > fromIndex ? toIndex - 1 : toIndex;
+            rows.splice(insertIdx, 0, moved!);
+            const newTable = tableNode.type.create(tableNode.attrs, rows);
+            const tr = state.tr.replaceWith(tablePos, tablePos + tableNode.nodeSize, newTable);
+            let targetPos = tablePos + 1;
+            for (let i = 0; i < insertIdx; i++) {
+              targetPos += rows[i]!.nodeSize;
+            }
+            tr.setSelection(TextSelection.near(tr.doc.resolve(targetPos + 2)));
+            dispatch(tr.scrollIntoView());
+          }
+          return true;
+        },
+      "move-column":
+        (options: MoveColumnOptions) =>
+        ({ state, dispatch }: { state: EditorState; dispatch?: (tr: Transaction) => void }) => {
+          const anchor = tableAncestry(state);
+          if (!anchor || anchor.rowAt < 0) return false;
+          const { $from } = state.selection;
+          const tableNode = $from.node(anchor.tableAt);
+          const tablePos = $from.before(anchor.tableAt);
+          const { fromIndex, toIndex } = options;
+          if (fromIndex < 0 || toIndex < 0 || toIndex === fromIndex || toIndex === fromIndex + 1) {
+            return false;
+          }
+          if (dispatch) {
+            const colWidths = Array.isArray(tableNode.attrs.columnWidths)
+              ? [...tableNode.attrs.columnWidths]
+              : [];
+            if (colWidths.length > fromIndex && toIndex <= colWidths.length) {
+              const [w] = colWidths.splice(fromIndex, 1);
+              const insertIdx = toIndex > fromIndex ? toIndex - 1 : toIndex;
+              colWidths.splice(insertIdx, 0, w!);
+            }
+            const newRows: PMNode[] = [];
+            for (let r = 0; r < tableNode.childCount; r++) {
+              const rowNode = tableNode.child(r);
+              const cells: PMNode[] = [];
+              for (let c = 0; c < rowNode.childCount; c++) {
+                cells.push(rowNode.child(c));
+              }
+              if (fromIndex < cells.length && toIndex <= cells.length) {
+                const [moved] = cells.splice(fromIndex, 1);
+                const insertIdx = toIndex > fromIndex ? toIndex - 1 : toIndex;
+                cells.splice(insertIdx, 0, moved!);
+              }
+              newRows.push(rowNode.type.create(rowNode.attrs, cells));
+            }
+            const newTable = tableNode.type.create(
+              {
+                ...tableNode.attrs,
+                columnWidths: colWidths.length ? colWidths : undefined,
+              },
+              newRows,
+            );
+            const tr = state.tr.replaceWith(tablePos, tablePos + tableNode.nodeSize, newTable);
+            dispatch(tr.scrollIntoView());
+          }
+          return true;
+        },
+      "insert-row-at":
+        (options: InsertRowAtOptions) =>
+        ({ state, dispatch }: { state: EditorState; dispatch?: (tr: Transaction) => void }) => {
+          const anchor = tableAncestry(state);
+          if (!anchor || anchor.rowAt < 0) return false;
+          const { $from } = state.selection;
+          const tableNode = $from.node(anchor.tableAt);
+          const tablePos = $from.before(anchor.tableAt);
+          const idx = Math.max(0, Math.min(tableNode.childCount, options.index));
+          if (dispatch) {
+            const refRow = tableNode.child(Math.min(idx, tableNode.childCount - 1));
+            const emptyCells: PMNode[] = [];
+            refRow.forEach((cell) => {
+              const para = state.schema.nodes.paragraph.create();
+              emptyCells.push(cell.type.createAndFill(cell.attrs, [para])!);
+            });
+            const newRow = refRow.type.create(null, emptyCells);
+            let insertPos = tablePos + 1;
+            for (let i = 0; i < idx; i++) {
+              insertPos += tableNode.child(i).nodeSize;
+            }
+            const tr = state.tr.insert(insertPos, newRow);
+            tr.setSelection(TextSelection.near(tr.doc.resolve(insertPos + 2)));
+            dispatch(tr.scrollIntoView());
+          }
+          return true;
+        },
+      "insert-column-at":
+        (options: InsertColumnAtOptions) =>
+        ({ state, dispatch }: { state: EditorState; dispatch?: (tr: Transaction) => void }) => {
+          const anchor = tableAncestry(state);
+          if (!anchor || anchor.rowAt < 0) return false;
+          const { $from } = state.selection;
+          const tableNode = $from.node(anchor.tableAt);
+          const tablePos = $from.before(anchor.tableAt);
+          const idx = Math.max(0, options.index);
+          if (dispatch) {
+            const tr = state.tr;
+            let targetCellPos = -1;
+            for (let r = tableNode.childCount - 1; r >= 0; r -= 1) {
+              const rowNode = tableNode.child(r);
+              let rowPos = tablePos + 1;
+              for (let i = 0; i < r; i += 1) rowPos += tableNode.child(i).nodeSize;
+              const colIdx = Math.min(idx, rowNode.childCount);
+              let cellPos = rowPos + 1;
+              for (let c = 0; c < colIdx; c += 1) cellPos += rowNode.child(c).nodeSize;
+              const template = rowNode.child(Math.min(colIdx, rowNode.childCount - 1));
+              const para = state.schema.nodes.paragraph.create();
+              const emptyCell = template.type.createAndFill(template.attrs, [para])!;
+              tr.insert(cellPos, emptyCell);
+              if (r === 0) targetCellPos = cellPos;
+            }
+            const colWidths = Array.isArray(tableNode.attrs.columnWidths)
+              ? [...tableNode.attrs.columnWidths]
+              : [];
+            if (colWidths.length > 0) {
+              const avg = Math.round(colWidths.reduce((a, b) => a + b, 0) / colWidths.length);
+              colWidths.splice(Math.min(idx, colWidths.length), 0, avg);
+              tr.setNodeMarkup(tablePos, undefined, {
+                ...tableNode.attrs,
+                columnWidths: colWidths,
+              });
+            }
+            if (targetCellPos > 0) {
+              tr.setSelection(TextSelection.near(tr.doc.resolve(targetCellPos + 1)));
+            }
+            dispatch(tr.scrollIntoView());
+          }
+          return true;
+        },
       // Deleting the last row/column deletes the whole table (Word behavior).
       "delete-row":
         () =>
@@ -2950,6 +3837,111 @@ export const DocumentCommands = Extension.create({
           }
           return true;
         },
+      "delete-cell":
+        () =>
+        ({ state, dispatch }) => {
+          const anchor = tableAncestry(state);
+          if (!anchor || anchor.cellAt < 0) return false;
+          const { $from } = state.selection;
+          const rowNode = $from.node(anchor.rowAt);
+          if (rowNode.childCount === 1) {
+            const tableNode = $from.node(anchor.tableAt);
+            if (tableNode.childCount === 1) {
+              return deleteTableAt(
+                state,
+                dispatch,
+                $from.before(anchor.tableAt),
+                tableNode.nodeSize,
+              );
+            }
+            if (dispatch) {
+              const rowPos = $from.before(anchor.rowAt);
+              dispatch(state.tr.delete(rowPos, rowPos + rowNode.nodeSize).scrollIntoView());
+            }
+            return true;
+          }
+          if (dispatch) {
+            const cellPos = $from.before(anchor.cellAt);
+            const cell = $from.node(anchor.cellAt);
+            dispatch(state.tr.delete(cellPos, cellPos + cell.nodeSize).scrollIntoView());
+          }
+          return true;
+        },
+      "delete-cells":
+        () =>
+        ({ commands }) =>
+          commands["delete-cell"](),
+      "insert-cell":
+        () =>
+        ({ state, dispatch }) => {
+          const anchor = tableAncestry(state);
+          if (!anchor || anchor.cellAt < 0) return false;
+          if (dispatch) {
+            const { $from } = state.selection;
+            const cellPos = $from.after(anchor.cellAt);
+            const emptyCell = state.schema.nodes.tableCell?.create(
+              null,
+              state.schema.nodes.paragraph ? state.schema.nodes.paragraph.create() : undefined,
+            );
+            if (emptyCell) {
+              dispatch(state.tr.insert(cellPos, emptyCell).scrollIntoView());
+            }
+          }
+          return true;
+        },
+      "insert-cells":
+        () =>
+        ({ commands }) =>
+          commands["insert-cell"](),
+      "table-formula":
+        () =>
+        ({ state, dispatch }) => {
+          const anchor = tableAncestry(state);
+          if (!anchor || anchor.cellAt < 0) return false;
+          const { $from } = state.selection;
+          const tableNode = $from.node(anchor.tableAt);
+          const currentRow = $from.index(anchor.tableAt);
+          const currentCol = $from.index(anchor.rowAt);
+          let sum = 0;
+          let count = 0;
+          for (let r = 0; r < currentRow; r += 1) {
+            const row = tableNode.child(r);
+            if (currentCol < row.childCount) {
+              const cellText = row.child(currentCol).textContent.trim();
+              const num = Number.parseFloat(cellText.replace(/[^0-9.-]+/g, ""));
+              if (!Number.isNaN(num)) {
+                sum += num;
+                count += 1;
+              }
+            }
+          }
+          if (count === 0) {
+            const row = tableNode.child(currentRow);
+            for (let c = 0; c < currentCol; c += 1) {
+              const cellText = row.child(c).textContent.trim();
+              const num = Number.parseFloat(cellText.replace(/[^0-9.-]+/g, ""));
+              if (!Number.isNaN(num)) {
+                sum += num;
+                count += 1;
+              }
+            }
+          }
+          const resultStr = count > 0 ? String(sum) : "=SUM(ABOVE)";
+          if (dispatch) {
+            const cellPos = $from.before(anchor.cellAt);
+            const cell = $from.node(anchor.cellAt);
+            const p = state.schema.nodes.paragraph.create(null, state.schema.text(resultStr));
+            const newCell = state.schema.nodes.tableCell.create(cell.attrs, p);
+            dispatch(
+              state.tr.replaceWith(cellPos, cellPos + cell.nodeSize, newCell).scrollIntoView(),
+            );
+          }
+          return true;
+        },
+      formula:
+        () =>
+        ({ commands }) =>
+          commands["table-formula"](),
       "select-table":
         () =>
         ({ state, dispatch }) => {
@@ -3124,6 +4116,7 @@ export const DocumentCommands = Extension.create({
             const tableNode = $from.node(anchor.tableAt);
             const tr = state.tr.setNodeMarkup(tablePos, undefined, {
               ...tableNode.attrs,
+              style: value,
               borders: preset.borders,
             });
             for (let r = 0; r < tableNode.childCount; r += 1) {
@@ -3163,12 +4156,42 @@ export const DocumentCommands = Extension.create({
             const look = {
               ...((table.attrs.tableLook ?? {}) as Record<string, boolean>),
             };
-            look[value] = !look[value];
-            dispatch(
-              state.tr
-                .setNodeMarkup(tablePos, undefined, { ...table.attrs, tableLook: look })
-                .scrollIntoView(),
-            );
+            const currentVal = look[value];
+            look[value] = currentVal !== undefined ? !currentVal : true;
+            const tr = state.tr.setNodeMarkup(tablePos, undefined, {
+              ...table.attrs,
+              tableLook: look,
+            });
+
+            // If table uses a preset style, update cell fills accordingly so editor reflects toggle
+            const styleId = typeof table.attrs.style === "string" ? table.attrs.style : undefined;
+            const preset = styleId ? TABLE_STYLE_PRESETS[styleId] : undefined;
+            if (preset) {
+              const isHeaderOn = look.firstRow !== false;
+              const isBandOn = look.bandRow !== false;
+              for (let r = 0; r < table.childCount; r += 1) {
+                const rowNode = table.child(r);
+                let rowPos = tablePos + 1;
+                for (let i = 0; i < r; i += 1) rowPos += table.child(i).nodeSize;
+                const isHeader = !!rowNode.attrs.tableHeader;
+                const isBand = !isHeader && preset.bandFill != null && r >= 2 && r % 2 === 0;
+                const fill =
+                  isHeader && isHeaderOn
+                    ? preset.headerFill
+                    : isBand && isBandOn
+                      ? preset.bandFill
+                      : undefined;
+                rowNode.forEach((cell: PMNode, offset: number) => {
+                  const cellPos = rowPos + 1 + offset;
+                  tr.setNodeMarkup(cellPos, undefined, {
+                    ...cell.attrs,
+                    shading: fill ? { fill, type: "clear" } : null,
+                  });
+                });
+              }
+            }
+
+            dispatch(tr.scrollIntoView());
           }
           return true;
         },
@@ -3180,6 +4203,60 @@ export const DocumentCommands = Extension.create({
           if (typeof value !== "string") return false;
           const anchor = tableAncestry(state);
           if (!anchor) return false;
+          if (value === "diagonalDown" || value === "diagonal-down" || value === "tl2br") {
+            const targets = tableTargets(state);
+            if (!targets?.cells.length) return false;
+            if (dispatch) {
+              const tr = state.tr;
+              for (const { pos, node: cell } of targets.cells) {
+                const cur = { ...((cell.attrs.borders ?? {}) as Record<string, unknown>) };
+                const existing = cur.tl2br ?? cur.topLeftToBottomRight;
+                const on =
+                  existing &&
+                  (existing as { style?: string }).style !== "none" &&
+                  (existing as { style?: string }).style !== "nil";
+                if (on) {
+                  delete cur.tl2br;
+                  delete cur.topLeftToBottomRight;
+                } else {
+                  cur.tl2br = { ...GRID_BORDER };
+                }
+                tr.setNodeMarkup(pos, undefined, {
+                  ...cell.attrs,
+                  borders: Object.keys(cur).length ? cur : null,
+                });
+              }
+              dispatch(tr.scrollIntoView());
+            }
+            return true;
+          }
+          if (value === "diagonalUp" || value === "diagonal-up" || value === "tr2bl") {
+            const targets = tableTargets(state);
+            if (!targets?.cells.length) return false;
+            if (dispatch) {
+              const tr = state.tr;
+              for (const { pos, node: cell } of targets.cells) {
+                const cur = { ...((cell.attrs.borders ?? {}) as Record<string, unknown>) };
+                const existing = cur.tr2bl ?? cur.topRightToBottomLeft;
+                const on =
+                  existing &&
+                  (existing as { style?: string }).style !== "none" &&
+                  (existing as { style?: string }).style !== "nil";
+                if (on) {
+                  delete cur.tr2bl;
+                  delete cur.topRightToBottomLeft;
+                } else {
+                  cur.tr2bl = { ...GRID_BORDER };
+                }
+                tr.setNodeMarkup(pos, undefined, {
+                  ...cell.attrs,
+                  borders: Object.keys(cur).length ? cur : null,
+                });
+              }
+              dispatch(tr.scrollIntoView());
+            }
+            return true;
+          }
           const current = (state.selection.$from.node(anchor.tableAt).attrs.borders ??
             null) as TableBordersLike | null;
           return stampTableBorders(state, dispatch, tableBordersStamp(value, current));
@@ -3254,12 +4331,7 @@ export const DocumentCommands = Extension.create({
           }
           return true;
         },
-      // Word's Merge Cells over the selection's bounding rectangle. Each
-      // spanned row folds its cells into one: the row's first cell takes
-      // columnSpan = width, rows below the first take verticalMerge
-      // "continue" (their content stays put — the layout folds continue
-      // cells into the restart cell, so nothing is lost). Grid math is
-      // cellIndex-approximate, so a span-mismatched row is left untouched.
+      // Word's Merge Cells over the selection's bounding rectangle.
       "merge-cells":
         () =>
         ({ state, dispatch }) => {
@@ -3272,49 +4344,45 @@ export const DocumentCommands = Extension.create({
             $from = $a.pos <= $h.pos ? $a : $h;
             $to = $a.pos <= $h.pos ? $h : $a;
           }
-          const fromA = ancestryAt($from);
-          const toA = ancestryAt($to);
-          if (!fromA || !toA || fromA.rowAt < 0 || toA.rowAt < 0) return false;
-          if ($from.before(fromA.tableAt) !== $to.before(toA.tableAt)) return false;
-          const tableNode = $from.node(fromA.tableAt);
-          const grid = (tableNode.attrs.columnWidths as number[] | null)?.length ?? 0;
-          const c1 = Math.min($from.index(fromA.rowAt), $to.index(toA.rowAt));
-          const c2 = Math.max($from.index(fromA.rowAt), $to.index(toA.rowAt));
-          const rowFrom = Math.min($from.index(fromA.tableAt), $to.index(toA.tableAt));
-          const rowTo = Math.max($from.index(fromA.tableAt), $to.index(toA.tableAt));
-          if (rowFrom === rowTo && c1 === c2) return false;
-          if (dispatch) {
-            const tablePos = $from.before(fromA.tableAt);
-            // Row indices into the table's children — the ancestry depths are
-            // not indexes (a depth-2 rowAt would address the last row).
-            const tr = state.tr;
-            for (let r = rowTo; r >= rowFrom; r -= 1) {
-              const rowNode = tableNode.child(r);
-              // Bottom-up keeps positions valid as earlier deletions shift
-              // later ones; a row that doesn't match the grid exactly (a
-              // previously merged one) is skipped rather than corrupted.
-              if (grid > 0 && rowNode.childCount !== grid) continue;
-              let rowPos = tablePos + 1;
-              for (let i = 0; i < r; i += 1) rowPos += tableNode.child(i).nodeSize;
-              const last = Math.min(c2, rowNode.childCount - 1);
-              if (c1 > last) continue;
-              let basePos = rowPos + 1;
-              for (let c = 0; c < c1; c += 1) basePos += rowNode.child(c).nodeSize;
-              const base = rowNode.child(c1);
-              tr.setNodeMarkup(basePos, undefined, {
-                ...base.attrs,
-                columnSpan: last > c1 ? last - c1 + 1 : null,
-                verticalMerge: r > rowFrom ? "continue" : base.attrs.verticalMerge,
-              });
-              for (let c = last; c > c1; c -= 1) {
-                let cellPos = rowPos + 1;
-                for (let cc = 0; cc < c; cc += 1) cellPos += rowNode.child(cc).nodeSize;
-                tr.delete(cellPos, cellPos + rowNode.child(c).nodeSize);
-              }
+          return mergeCellsBetween(state, dispatch, $from, $to);
+        },
+      "draw-table": () => () => true,
+      "table-eraser": () => () => true,
+      "draw-table-stroke":
+        (options?: DrawTableStrokeOptions) =>
+        ({ state, commands }: { state: EditorState; commands: any }) => {
+          const inTable = options?.inTable ?? tableAncestry(state) != null;
+          if (inTable) {
+            const dx = Math.abs(options?.dx ?? 0);
+            const dy = Math.abs(options?.dy ?? 0);
+            if (dx > 2 * dy && dx > 15) {
+              return commands["insert-row-below"]();
             }
-            dispatch(tr.scrollIntoView());
+            return commands["insert-column-right"]();
           }
-          return true;
+          const w = options?.widthPx ?? 180;
+          const h = options?.heightPx ?? 80;
+          const cols = Math.max(1, Math.min(10, Math.floor(w / 120)));
+          const rows = Math.max(1, Math.min(20, Math.floor(h / 60)));
+          const widthTwip = Math.max(1440, Math.round(w * 15));
+          const colWidth = Math.round(widthTwip / cols);
+          const columnWidths = Array(cols).fill(colWidth);
+          return commands["insert-table"]({ rows, cols, columnWidths });
+        },
+      "table-eraser-click":
+        (options: TableEraserClickOptions) =>
+        ({ state, dispatch }: { state: EditorState; dispatch?: (tr: Transaction) => void }) => {
+          const { sides } = options;
+          if (!sides || sides.length === 0) return false;
+          if (sides.length >= 2) {
+            const posA = Math.min(sides[0]!.pos, sides[1]!.pos);
+            const posB = Math.max(sides[0]!.pos, sides[1]!.pos);
+            const $from = state.doc.resolve(posA + 2);
+            const $to = state.doc.resolve(posB + 2);
+            return mergeCellsBetween(state, dispatch, $from, $to);
+          }
+          const { pos, side } = sides[0]!;
+          return applyBorderSweep(state, dispatch, [{ pos, side }], undefined);
         },
       // Word's Split Cells without the dialog: a merged cell (columnSpan or
       // verticalMerge) returns to its own single grid cell, empty twins
@@ -3383,7 +4451,7 @@ export const DocumentCommands = Extension.create({
       // content (a character-count heuristic — see measureTextTwip) without
       // growing past the current grid. Span-free tables only.
       "autofit-contents":
-        () =>
+        (targetCol?: string | number) =>
         ({ state, dispatch }) => {
           const anchor = tableAncestry(state);
           if (!anchor) return false;
@@ -3401,22 +4469,35 @@ export const DocumentCommands = Extension.create({
             }
           }
           if (dispatch) {
+            const onlyCol = targetCol != null && targetCol !== "" ? Number(targetCol) : null;
             const next = widths.map((w, c) => {
+              if (onlyCol != null && !Number.isNaN(onlyCol) && onlyCol !== c) return w;
               let widest = 0;
               for (let r = 0; r < tableNode.childCount; r += 1) {
                 widest = Math.max(widest, measureTextTwip(tableNode.child(r).child(c).textContent));
               }
               return Math.max(MIN_COL_TWIP, Math.min(w, widest));
             });
-            dispatch(
-              state.tr
-                .setNodeMarkup($from.before(anchor.tableAt), undefined, {
-                  ...tableNode.attrs,
-                  columnWidths: next,
-                  layout: null,
-                })
-                .scrollIntoView(),
-            );
+            const tr = state.tr.setNodeMarkup($from.before(anchor.tableAt), undefined, {
+              ...tableNode.attrs,
+              columnWidths: next,
+              layout: null,
+            });
+            let curRowPos = $from.before(anchor.tableAt) + 1;
+            for (let r = 0; r < tableNode.childCount; r += 1) {
+              const row = tableNode.child(r);
+              let curCellPos = curRowPos + 1;
+              for (let c = 0; c < row.childCount; c += 1) {
+                const cell = row.child(c);
+                tr.setNodeMarkup(curCellPos, undefined, {
+                  ...cell.attrs,
+                  width: { value: next[c], type: "dxa" },
+                });
+                curCellPos += cell.nodeSize;
+              }
+              curRowPos += row.nodeSize;
+            }
+            dispatch(tr.scrollIntoView());
           }
           return true;
         },
@@ -3443,15 +4524,26 @@ export const DocumentCommands = Extension.create({
                 ? Math.max(1, Math.round((widths[c]! / sum) * total))
                 : Math.round(total / cols),
             );
-            dispatch(
-              state.tr
-                .setNodeMarkup($from.before(anchor.tableAt), undefined, {
-                  ...tableNode.attrs,
-                  columnWidths: next,
-                  layout: null,
-                })
-                .scrollIntoView(),
-            );
+            const tr = state.tr.setNodeMarkup($from.before(anchor.tableAt), undefined, {
+              ...tableNode.attrs,
+              columnWidths: next,
+              layout: null,
+            });
+            let curRowPos = $from.before(anchor.tableAt) + 1;
+            for (let r = 0; r < tableNode.childCount; r += 1) {
+              const row = tableNode.child(r);
+              let curCellPos = curRowPos + 1;
+              for (let c = 0; c < row.childCount; c += 1) {
+                const cell = row.child(c);
+                tr.setNodeMarkup(curCellPos, undefined, {
+                  ...cell.attrs,
+                  width: { value: next[c], type: "dxa" },
+                });
+                curCellPos += cell.nodeSize;
+              }
+              curRowPos += row.nodeSize;
+            }
+            dispatch(tr.scrollIntoView());
           }
           return true;
         },
@@ -3830,18 +4922,33 @@ export const DocumentCommands = Extension.create({
       "change-case":
         (mode) =>
         ({ state, chain }) => {
-          const { from, to, empty } = state.selection;
-          if (empty) return false;
+          let { from, to, empty } = state.selection;
+          if (empty) {
+            const $from = state.selection.$from;
+            const textBefore = $from.parent.textBetween(0, $from.parentOffset);
+            const textAfter = $from.parent.textBetween(
+              $from.parentOffset,
+              $from.parent.content.size,
+            );
+            const matchBefore = /[\p{L}\p{N}'-]+$/u.exec(textBefore);
+            const matchAfter = /^[\p{L}\p{N}'-]+/u.exec(textAfter);
+            if (!matchBefore && !matchAfter) return false;
+            const wordStart = from - (matchBefore ? matchBefore[0].length : 0);
+            const wordEnd = to + (matchAfter ? matchAfter[0].length : 0);
+            from = wordStart;
+            to = wordEnd;
+          }
           const text = state.doc.textBetween(from, to, "");
           if (!text) return false;
           const out = transformCase(text, mode);
           if (out === text) return false;
-          const marks = state.selection.$from.marks();
+          const marks = state.doc.resolve(from).marks();
           return chain()
             .command(({ tr }) => {
               tr.replaceWith(from, to, state.schema.text(out, marks));
               return true;
             })
+            .setTextSelection({ from, to: from + out.length })
             .run();
         },
       // Sort the sibling blocks covered by the selection in ascending text
@@ -4172,6 +5279,37 @@ export const DocumentCommands = Extension.create({
               floating: applyFloatingExtras(floatingOf(target), patch, offsetHCm, offsetVCm),
             });
           }
+          if (target.kind === "model3d" || target.kind === "ink") {
+            const attrs = { ...target.attrs };
+            if (widthCm != null) {
+              attrs.width = cmTo(widthCm, PX_PER_CM);
+              attrs.cx = cmTo(widthCm, EMU_PER_CM);
+            }
+            if (heightCm != null) {
+              attrs.height = cmTo(heightCm, PX_PER_CM);
+              attrs.cy = cmTo(heightCm, EMU_PER_CM);
+            }
+            if (rotationDeg != null) attrs.rotation = rotationDeg;
+            if (typeof patch.altText === "string") {
+              attrs.descr = patch.altText;
+              if (typeof attrs.rawXml === "string" && attrs.rawXml) {
+                attrs.rawXml = updateDocPr(attrs.rawXml, { descr: patch.altText });
+              }
+            }
+            if (
+              typeof attrs.rawXml === "string" &&
+              attrs.rawXml &&
+              (widthCm != null || heightCm != null)
+            ) {
+              const cx = (attrs.cx as number) ?? (attrs.width as number) * 9525;
+              const cy = (attrs.cy as number) ?? (attrs.height as number) * 9525;
+              attrs.rawXml = updateExtent(attrs.rawXml, cx, cy);
+            }
+            return stampAttrs(tr, target, {
+              ...attrs,
+              floating: applyFloatingExtras(floatingOf(target), patch, offsetHCm, offsetVCm),
+            });
+          }
           const key = FLOATING_CARRIER[target.kind];
           const payload = { ...(target.attrs[key] as Record<string, unknown>) };
           const t = { ...((payload.transformation ?? {}) as Record<string, unknown>) };
@@ -4183,6 +5321,47 @@ export const DocumentCommands = Extension.create({
           // image's.
           payload.floating = applyFloatingExtras(floatingOf(target), patch, offsetHCm, offsetVCm);
           return stampAttrs(tr, target, { ...target.attrs, [key]: payload });
+        },
+      "drawing-alt-text":
+        (value?) =>
+        ({ state, tr }) => {
+          const target = floatingDrawingAt(state) ?? inlineDrawingAt(state);
+          if (!target) return false;
+          let title: string | undefined;
+          let descr: string | undefined;
+          if (typeof value === "string") {
+            descr = value;
+          } else if (value && typeof value === "object") {
+            title = value.title;
+            descr = value.descr;
+          } else {
+            return false;
+          }
+          const attrs = { ...target.attrs };
+          if (target.kind === "image") {
+            if (title !== undefined) attrs.name = title;
+            if (descr !== undefined) attrs.title = descr;
+            return stampAttrs(tr, target, attrs);
+          }
+          if (target.kind === "model3d" || target.kind === "ink") {
+            if (title !== undefined) attrs.title = title;
+            if (descr !== undefined) attrs.descr = descr;
+            if (typeof attrs.rawXml === "string" && attrs.rawXml) {
+              attrs.rawXml = updateDocPr(attrs.rawXml, {
+                title: title !== undefined ? title : (attrs.title as string | undefined),
+                descr: descr !== undefined ? descr : (attrs.descr as string | undefined),
+              });
+            }
+            return stampAttrs(tr, target, attrs);
+          }
+          if (target.kind === "shape" || target.kind === "group" || target.kind === "chart") {
+            const key = FLOATING_CARRIER[target.kind];
+            const payload = { ...(attrs[key] as Record<string, unknown>) };
+            if (title !== undefined) payload.title = title;
+            if (descr !== undefined) payload.descr = descr;
+            return stampAttrs(tr, target, { ...attrs, [key]: payload });
+          }
+          return false;
         },
       // The crop overlay's commit: the selected image's new a:srcRect insets
       // as source fractions, stored as the raw ST_Percentage ints the attrs
@@ -4469,6 +5648,27 @@ export const DocumentCommands = Extension.create({
           else shape.bodyProperties = body;
           return stampAttrs(tr, target, { ...target.attrs, wpsShape: shape });
         },
+      "shape-custom-geometry-apply":
+        (value) =>
+        ({ state, tr }) => {
+          const target = shapeAt(state);
+          if (!target || !value) return false;
+          let parsed: Record<string, unknown>;
+          try {
+            parsed =
+              typeof value === "string" ? JSON.parse(value) : (value as Record<string, unknown>);
+          } catch {
+            return false;
+          }
+          if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return false;
+          const shape: Record<string, unknown> = {
+            ...(target.attrs.wpsShape as Record<string, unknown>),
+          };
+          shape.customGeometry = parsed;
+          delete shape.presetGeometry;
+          delete shape.geometry;
+          return stampAttrs(tr, target, { ...target.attrs, wpsShape: shape });
+        },
       // ── Chart Design — type / legend / data (the contextual tab) ────────
       // Chart Type: value is the ChartType token the renderer draws (the
       // unmodeled types grey out at the menu). Pie/doughnut/scatter/bubble/
@@ -4482,6 +5682,16 @@ export const DocumentCommands = Extension.create({
           const type = value as ChartType;
           const chart = { ...target.chart, type };
           if (!GROUPING_CHART_TYPES.includes(chart.type)) delete chart.grouping;
+          return stampChart(tr, target, chart as ChartOptions);
+        },
+      // Chart Style gallery commit: value is the style index integer.
+      "chart-style":
+        (value) =>
+        ({ state, tr }) => {
+          const target = chartAt(state);
+          if (!target || !value) return false;
+          const style = parseInt(value, 10) || 1;
+          const chart = { ...target.chart, style };
           return stampChart(tr, target, chart);
         },
       // Legend: "none" hides it (showLegend false — the painter's presence
@@ -4714,7 +5924,7 @@ export const DocumentCommands = Extension.create({
               // Word's Square conversion distances: 0.125" left/right, none
               // above/below (Top-and-Bottom carries no side distances).
               floating.margins = { left: 114300, right: 114300 };
-            } else if (value === "top-bottom") {
+            } else if (value === "top-bottom" || value === "topBottom") {
               floating.wrap = { type: "topAndBottom" };
             } else {
               return false;
@@ -4738,7 +5948,7 @@ export const DocumentCommands = Extension.create({
           } else if (value === "square" || value === "tight" || value === "through") {
             floating.wrap = { type: value };
             floating.behindDocument = false;
-          } else if (value === "top-bottom") {
+          } else if (value === "top-bottom" || value === "topBottom") {
             floating.wrap = { type: "topAndBottom" };
             floating.behindDocument = false;
           } else {
@@ -4813,8 +6023,53 @@ export const DocumentCommands = Extension.create({
       // stamping its own axis and leaving the other untouched. The two
       // distributes need multi-selection and stay greyed at the menu layer.
       "align-objects":
-        (value) =>
-        ({ state, tr }) => {
+        (value?: string, payload?: string) =>
+        ({ state, tr }: { state: EditorState; tr: Transaction }) => {
+          const members = multiMembersOf(state, payload);
+          if (members && members.length >= 2) {
+            let changed = false;
+            let targetX: ((b: Box) => number) | null = null;
+            let targetY: ((b: Box) => number) | null = null;
+            if (value === "left") {
+              const minX = Math.min(...members.map((m) => m.box.x));
+              targetX = () => minX;
+            } else if (value === "right") {
+              const maxX = Math.max(...members.map((m) => m.box.x + m.box.width));
+              targetX = (b) => maxX - b.width;
+            } else if (value === "center") {
+              const minX = Math.min(...members.map((m) => m.box.x));
+              const maxX = Math.max(...members.map((m) => m.box.x + m.box.width));
+              const midX = (minX + maxX) / 2;
+              targetX = (b) => midX - b.width / 2;
+            } else if (value === "top") {
+              const minY = Math.min(...members.map((m) => m.box.y));
+              targetY = () => minY;
+            } else if (value === "bottom") {
+              const maxY = Math.max(...members.map((m) => m.box.y + m.box.height));
+              targetY = (b) => maxY - b.height;
+            } else if (value === "middle") {
+              const minY = Math.min(...members.map((m) => m.box.y));
+              const maxY = Math.max(...members.map((m) => m.box.y + m.box.height));
+              const midY = (minY + maxY) / 2;
+              targetY = (b) => midY - b.height / 2;
+            } else {
+              return false;
+            }
+            for (const { target, box } of members) {
+              const deltaX = targetX ? Math.round((targetX(box) - box.x) * EMU_PER_PX) : 0;
+              const deltaY = targetY ? Math.round((targetY(box) - box.y) * EMU_PER_PX) : 0;
+              if (deltaX !== 0 || deltaY !== 0) {
+                const floating = floatingOf(target);
+                const h = floating.horizontalPosition as Record<string, unknown> | undefined;
+                const v = floating.verticalPosition as Record<string, unknown> | undefined;
+                if (typeof h?.offset !== "number" || typeof v?.offset !== "number") return false;
+                stampFloating(tr, target, offsetFloating(floating, deltaX, deltaY));
+                changed = true;
+              }
+            }
+            tr.setSelection(NodeSelection.create(tr.doc, members[0]!.target.pos));
+            return changed;
+          }
           const h =
             value === "center" || value === "right"
               ? value
@@ -4837,6 +6092,28 @@ export const DocumentCommands = Extension.create({
             ...(h != null ? { horizontalPosition: { relative: "margin", align: h } } : {}),
             ...(v != null ? { verticalPosition: { relative: "margin", align: v } } : {}),
           });
+        },
+      // Move with text vs Fix position on page
+      "drawing-position-mode":
+        (mode?: string) =>
+        ({ state, tr }: { state: EditorState; tr: Transaction }) => {
+          const target = floatingDrawingAt(state);
+          if (!target) return false;
+          const floating = { ...floatingOf(target) };
+          const hPos = { ...(floating.horizontalPosition as Record<string, unknown> | undefined) };
+          const vPos = { ...(floating.verticalPosition as Record<string, unknown> | undefined) };
+          if (mode === "fixPosition") {
+            hPos.relative = "page";
+            vPos.relative = "page";
+            floating.lockAnchor = true;
+          } else {
+            hPos.relative = "column";
+            vPos.relative = "paragraph";
+            floating.lockAnchor = false;
+          }
+          floating.horizontalPosition = hPos;
+          floating.verticalPosition = vPos;
+          return stampFloating(tr, target, floating);
         },
       // Word's Group on a multi-selection: one wpgGroup node replaces the
       // members (at the document-first member's position — the anchor that
@@ -5012,7 +6289,9 @@ export const DocumentCommands = Extension.create({
         (id) =>
         ({ state, dispatch }) => {
           if (typeof id !== "string" || id === "") return false;
-          const block = blocksOfDocAttrs(state.doc.attrs).find((b) => b.id === id);
+          const block =
+            blocksOfDocAttrs(state.doc.attrs).find((b) => b.id === id) ??
+            getQuickTableBuildingBlocks().find((b) => b.id === id);
           const slice = block ? blockSliceOf(state.schema, block) : null;
           if (!slice) return false;
           let tr: Transaction;
@@ -5050,6 +6329,44 @@ export const DocumentCommands = Extension.create({
           }
           if (dispatch) dispatch(tr.scrollIntoView());
           return true;
+        },
+      "extend-selection":
+        () =>
+        ({ editor }) => {
+          const storage = editor.storage as unknown as Record<string, unknown>;
+          const mgr =
+            (storage.extendMode as ExtendModeManager | undefined) ??
+            ((storage.extendMode = new ExtendModeManager()) as ExtendModeManager);
+          mgr.step(editor);
+          return true;
+        },
+      "shrink-selection":
+        () =>
+        ({ editor }) => {
+          const storage = editor.storage as unknown as Record<string, unknown>;
+          const mgr = storage.extendMode as ExtendModeManager | undefined;
+          if (mgr?.isActive) {
+            mgr.shrink(editor);
+            return true;
+          }
+          return false;
+        },
+      "cancel-selection":
+        () =>
+        ({ editor }) => {
+          let handled = false;
+          const storage = editor.storage as unknown as Record<string, unknown>;
+          const mgr = storage.extendMode as ExtendModeManager | undefined;
+          if (mgr?.isActive) {
+            mgr.cancel();
+            handled = true;
+          }
+          const multi = storage.multiSelection as MultiSelectionManager | undefined;
+          if (multi?.hasRanges()) {
+            multi.clear();
+            handled = true;
+          }
+          return handled;
         },
     };
   },

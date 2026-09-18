@@ -56,7 +56,7 @@ export interface IOHostView {
   /** Host-registered font bytes by lowercased family — used by PDF/DOCX
    *  export embedding (registration lives on the element's `registerFont`). */
   fonts(): ReadonlyMap<string, { family: string; fontData: Uint8Array }>;
-  viewMode(): "print" | "web" | "draft" | "read";
+  viewMode(): "print" | "web" | "draft" | "read" | "outline";
   lang(): string;
   docxVariant(): DocxVariant;
   setDocxVariant(variant: DocxVariant): void;
@@ -79,6 +79,7 @@ export interface IOHostView {
   applyDocumentTheme(kind: string, value?: string, persist?: boolean): void;
   snapshotStyles(): void;
   syncEditable(): void;
+  syncDocumentSettings?(settings: Record<string, unknown>): void;
 }
 
 /**
@@ -658,6 +659,7 @@ export class IODomain {
     // re-derive editability. Word also forces revision tracking on when a
     // document opens under a tracked-changes restriction.
     const settings = this.documentSettings();
+    this.host.syncDocumentSettings?.(settings);
     const docProtection = settings.documentProtection as
       | {
           edit?: string;

@@ -8,7 +8,27 @@ import {
   ref,
 } from "@microsoft/fast-element";
 
-import { observeLang, t } from "../../i18n/localize";
+import { observeLang, resolveDir, t } from "../../i18n/localize";
+
+export interface StatusBarWidgetsConfig {
+  pageNumber: boolean;
+  wordCount: boolean;
+  language: boolean;
+  extendSelection: boolean;
+  capsLock: boolean;
+  zoom: boolean;
+}
+
+export const STATUS_BAR_STORAGE_KEY = "docen:status-bar-widgets";
+
+export const DEFAULT_STATUS_BAR_CONFIG: StatusBarWidgetsConfig = {
+  pageNumber: true,
+  wordCount: true,
+  language: true,
+  extendSelection: true,
+  capsLock: true,
+  zoom: true,
+};
 
 const styles = css`
   :host {
@@ -17,6 +37,17 @@ const styles = css`
     align-items: center;
     gap: 8px;
     width: 100%;
+  }
+  :host([dir="rtl"]),
+  :host([data-dir="rtl"]),
+  :host-context([dir="rtl"]) {
+    flex-direction: row-reverse;
+    direction: rtl;
+  }
+  :host([dir="rtl"]) .pct,
+  :host([data-dir="rtl"]) .pct,
+  :host-context([dir="rtl"]) .pct {
+    text-align: left;
   }
   .left {
     display: flex;
@@ -160,6 +191,57 @@ const styles = css`
   .words {
     cursor: pointer;
   }
+  .extend-selection,
+  .caps-lock {
+    padding-inline: 4px;
+    font-size: 11px;
+    cursor: pointer;
+    border-radius: 2px;
+  }
+  .extend-selection:hover,
+  .caps-lock:hover {
+    background: var(--docen-color-subtle-background-hover, #f5f5f5);
+  }
+  .status-context-menu {
+    position: fixed;
+    margin: 0;
+    padding: 4px 0;
+    border: 1px solid var(--docen-color-stroke-1, #c7c7c7);
+    border-radius: 4px;
+    background: var(--docen-color-bg, #ffffff);
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.18);
+    font-family: inherit;
+    font-size: 12px;
+    color: var(--docen-color-text-1, #242424);
+    min-width: 180px;
+    z-index: 10005;
+  }
+  .status-menu-header {
+    padding: 6px 12px 4px;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--docen-color-secondary, #595959);
+    border-bottom: 1px solid var(--docen-color-divider, #e1e1e1);
+    margin-bottom: 2px;
+  }
+  .status-menu-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 5px 12px;
+    cursor: pointer;
+    user-select: none;
+    -webkit-user-select: none;
+  }
+  .status-menu-item:hover {
+    background: var(--docen-color-subtle-background-hover, #f0f0f0);
+  }
+  .status-menu-check {
+    width: 14px;
+    font-size: 12px;
+    font-weight: bold;
+    color: var(--docen-color-accent, #0f6cbd);
+  }
   /* Narrow viewports: drop the less essential items progressively and shrink
      the zoom slider, so the bar fits a phone width without overflowing. */
   @media (max-width: 720px) {
@@ -170,9 +252,15 @@ const styles = css`
       width: 48px;
     }
   }
+  .extend-mode {
+    font-weight: 600;
+    padding: 0 4px;
+    color: var(--docen-color-accent, #0f6cbd);
+  }
   @media (max-width: 560px) {
     .views,
-    .lang-text {
+    .lang-text,
+    .extend-mode {
       display: none;
     }
   }
@@ -209,8 +297,11 @@ const template = html<DocenStatusBar>`
       </svg>
     </button>
     <span class="lang-text" ${ref("langBtn")}></span>
+    <span class="extend-mode" ${ref("extendModeEl")}></span>
+    <span class="extend-selection" ${ref("extendSelEl")}></span>
+    <span class="caps-lock" ${ref("capsLockEl")}></span>
   </span>
-  <span class="zoom">
+  <span class="zoom" ${ref("zoomEl")}>
     <span class="views" ${ref("viewsEl")}>
       <button type="button" class="view-btn" data-view="reading">
         <svg
@@ -274,6 +365,7 @@ const template = html<DocenStatusBar>`
     <button type="button" class="step" ${ref("inBtn")} aria-label="Zoom in">+</button>
     <span class="pct" ${ref("pctEl")}></span>
   </span>
+  <div popover="auto" class="status-context-menu" ${ref("contextMenuEl")}></div>
 `;
 
 /**
@@ -306,6 +398,29 @@ class DocenStatusBar extends FASTElement {
   /** The caret's proofing-language display name (Word shows the selection's
    *  w:lang in the status bar); a click opens the language dialog. */
   @attr language?: string;
+  /** Extend selection mode ("EXT" Word status indicator). */
+  @attr extend?: string;
+  @attr dir: "ltr" | "rtl" = "ltr";
+
+  get isRtl(): boolean {
+    return this.dir === "rtl" || this.getAttribute("dir") === "rtl" || resolveDir(this) === "rtl";
+  }
+
+  dirChanged(): void {
+    this.#syncDir();
+  }
+
+  #syncDir(): void {
+    const isRtl = (this.dir ?? resolveDir(this)) === "rtl";
+    this.toggleAttribute("data-dir", isRtl);
+    if (isRtl) {
+      this.setAttribute("dir", "rtl");
+    } else if (this.getAttribute("dir") === "rtl" && !this.getAttribute("data-dir")) {
+      // keep explicit attr
+    } else {
+      this.removeAttribute("dir");
+    }
+  }
 
   @observable sectionEl?: HTMLElement;
   @observable pagesEl?: HTMLElement;
@@ -316,8 +431,119 @@ class DocenStatusBar extends FASTElement {
   @observable outBtn?: HTMLButtonElement;
   @observable inBtn?: HTMLButtonElement;
   @observable langBtn?: HTMLElement;
+  @observable extendModeEl?: HTMLElement;
   @observable spellBtn?: HTMLButtonElement;
+  @observable extendSelEl?: HTMLElement;
+  @observable capsLockEl?: HTMLElement;
+  @observable zoomEl?: HTMLElement;
+  @observable contextMenuEl?: HTMLElement;
   #unsubscribe?: () => void;
+  #widgetConfig: StatusBarWidgetsConfig = DEFAULT_STATUS_BAR_CONFIG;
+  #onWindowKey?: (e: KeyboardEvent) => void;
+
+  get widgetConfig(): StatusBarWidgetsConfig {
+    return { ...this.#widgetConfig };
+  }
+
+  get widgetsConfig(): StatusBarWidgetsConfig {
+    return { ...this.#widgetConfig };
+  }
+
+  setWidgetVisible(widget: keyof StatusBarWidgetsConfig, visible: boolean): void {
+    this.#widgetConfig[widget] = visible;
+    this.#saveWidgetConfig();
+    this.#applyWidgetConfig();
+  }
+
+  setWidgetVisibility(widget: keyof StatusBarWidgetsConfig, visible: boolean): void {
+    this.setWidgetVisible(widget, visible);
+  }
+
+  #loadWidgetConfig(): StatusBarWidgetsConfig {
+    try {
+      const raw = localStorage.getItem(STATUS_BAR_STORAGE_KEY);
+      if (raw) return { ...DEFAULT_STATUS_BAR_CONFIG, ...JSON.parse(raw) };
+    } catch {}
+    return { ...DEFAULT_STATUS_BAR_CONFIG };
+  }
+
+  #saveWidgetConfig(): void {
+    try {
+      localStorage.setItem(STATUS_BAR_STORAGE_KEY, JSON.stringify(this.#widgetConfig));
+    } catch {}
+  }
+
+  #applyWidgetConfig(): void {
+    if (this.pagesEl) this.pagesEl.style.display = this.#widgetConfig.pageNumber ? "" : "none";
+    if (this.wordsEl) this.wordsEl.style.display = this.#widgetConfig.wordCount ? "" : "none";
+    if (this.langBtn) this.langBtn.style.display = this.#widgetConfig.language ? "" : "none";
+    if (this.extendSelEl)
+      this.extendSelEl.style.display = this.#widgetConfig.extendSelection ? "" : "none";
+    const capsEl = this.capsLockEl ?? this.shadowRoot?.querySelector<HTMLElement>(".caps-lock");
+    if (capsEl) capsEl.style.display = "none";
+    if (this.zoomEl) this.zoomEl.style.display = this.#widgetConfig.zoom ? "" : "none";
+  }
+
+  #openContextMenu(clientX: number, clientY: number): void {
+    const menu =
+      this.contextMenuEl ?? this.shadowRoot?.querySelector<HTMLElement>(".status-context-menu");
+    if (!menu) return;
+    menu.replaceChildren();
+
+    const header = document.createElement("div");
+    header.className = "status-menu-header";
+    header.textContent = "Customize Status Bar";
+    menu.append(header);
+
+    const WIDGETS: Array<{ key: keyof StatusBarWidgetsConfig; label: string }> = [
+      { key: "pageNumber", label: "Page Number" },
+      { key: "wordCount", label: "Word Count" },
+      { key: "language", label: "Language" },
+      { key: "extendSelection", label: "Extend Selection" },
+      { key: "capsLock", label: "Caps Lock" },
+      { key: "zoom", label: "Zoom" },
+    ];
+
+    for (const w of WIDGETS) {
+      const row = document.createElement("div");
+      row.className = "status-menu-item";
+      row.dataset.widget = w.key;
+
+      const check = document.createElement("span");
+      check.className = "status-menu-check";
+      check.textContent = this.#widgetConfig[w.key] ? "✓" : "";
+
+      const label = document.createElement("span");
+      label.textContent = w.label;
+
+      row.append(check, label);
+      row.addEventListener("click", (e) => {
+        e.stopPropagation();
+        this.setWidgetVisible(w.key, !this.#widgetConfig[w.key]);
+        check.textContent = this.#widgetConfig[w.key] ? "✓" : "";
+      });
+      menu.append(row);
+    }
+
+    const menuHeight = 220;
+    const menuWidth = 190;
+    let top = clientY - menuHeight;
+    if (top < 10) top = clientY + 10;
+    let left = clientX;
+    if (typeof window !== "undefined" && left + menuWidth > window.innerWidth) {
+      left = window.innerWidth - menuWidth - 10;
+    }
+
+    menu.style.left = `${Math.round(left)}px`;
+    menu.style.top = `${Math.round(top)}px`;
+    menu.style.display = "block";
+
+    (menu as unknown as { showPopover?: () => void }).showPopover?.();
+  }
+
+  extendChanged(): void {
+    this.#renderExtend();
+  }
 
   sectionChanged(): void {
     this.#renderSection();
@@ -350,7 +576,25 @@ class DocenStatusBar extends FASTElement {
 
   connectedCallback(): void {
     super.connectedCallback();
+    this.#syncDir();
+    this.#widgetConfig = this.#loadWidgetConfig();
     this.#renderAll();
+    this.#applyWidgetConfig();
+    this.addEventListener("contextmenu", this.#onContextMenu);
+    this.#onWindowKey = (e: KeyboardEvent): void => {
+      if (!this.isConnected) return;
+      const caps = Boolean(e.getModifierState?.("CapsLock"));
+      const el = this.capsLockEl ?? this.shadowRoot?.querySelector<HTMLElement>(".caps-lock");
+      if (el) {
+        el.textContent = caps ? "Caps Lock" : "";
+        el.style.display = caps && this.#widgetConfig.capsLock ? "inline-flex" : "none";
+      }
+    };
+    window.addEventListener("keydown", this.#onWindowKey);
+    window.addEventListener("keyup", this.#onWindowKey);
+    if (this.extendSelEl) {
+      this.extendSelEl.textContent = "Extend Selection";
+    }
     // Slider drags live; the minus / plus buttons step by 10% (Word behavior).
     this.slider?.addEventListener("input", () => this.#emit(Number(this.slider?.value ?? 100)));
     this.outBtn?.addEventListener("click", () => this.#emit(Number(this.zoom ?? 100) - 10));
@@ -377,6 +621,7 @@ class DocenStatusBar extends FASTElement {
       );
     }
     this.#unsubscribe = observeLang(() => {
+      this.#syncDir();
       this.#renderAll();
       this.#renderViewTitles();
     });
@@ -455,7 +700,19 @@ class DocenStatusBar extends FASTElement {
     this.spellBtn.title = t("status.spelling", this);
   }
 
+  readonly #onContextMenu = (e: MouseEvent): void => {
+    e.preventDefault();
+    e.stopPropagation();
+    this.#openContextMenu(e.clientX, e.clientY);
+  };
+
   disconnectedCallback(): void {
+    this.removeEventListener("contextmenu", this.#onContextMenu);
+    if (this.#onWindowKey) {
+      window.removeEventListener("keydown", this.#onWindowKey);
+      window.removeEventListener("keyup", this.#onWindowKey);
+      this.#onWindowKey = undefined;
+    }
     this.#unsubscribe?.();
     super.disconnectedCallback();
   }
@@ -475,6 +732,13 @@ class DocenStatusBar extends FASTElement {
     this.#renderPages();
     this.#renderWords();
     this.#renderZoom();
+    this.#renderExtend();
+  }
+
+  #renderExtend(): void {
+    if (!this.extendModeEl) return;
+    this.extendModeEl.textContent = this.extend ? "EXT" : "";
+    this.extendModeEl.style.display = this.extend ? "inline-block" : "none";
   }
 
   #renderSection(): void {
@@ -529,4 +793,9 @@ class DocenStatusBar extends FASTElement {
   }
 }
 
+if (!customElements.get("docen-status-bar")) {
+  customElements.define("docen-status-bar", DocenStatusBar);
+}
+
+export { DocenStatusBar };
 export default DocenStatusBar;

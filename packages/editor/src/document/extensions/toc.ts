@@ -115,6 +115,42 @@ export interface HeadingBookmarkInfo {
   needsInsert: boolean;
 }
 
+/** Find the [start, end] positions of a bookmark by name. */
+export function findBookmarkRange(
+  doc: PMNode,
+  bookmarkName: string,
+): { from: number; to: number } | null {
+  let bookmarkId: number | null = null;
+  let from: number | null = null;
+  let to: number | null = null;
+
+  doc.descendants((node, pos) => {
+    if (node.type.name === "inlinePassthrough" || node.type.name === "passthrough") {
+      try {
+        const data = JSON.parse(String(node.attrs?.data ?? "{}")) as {
+          bookmarkStart?: { id?: number; name?: string };
+          bookmarkEnd?: { id?: number };
+        };
+        if (data.bookmarkStart && data.bookmarkStart.name === bookmarkName) {
+          bookmarkId = data.bookmarkStart.id ?? -1;
+          from = pos;
+        }
+        if (bookmarkId != null && data.bookmarkEnd && data.bookmarkEnd.id === bookmarkId) {
+          to = pos + node.nodeSize;
+        }
+      } catch {
+        /* skip */
+      }
+    }
+    return true;
+  });
+
+  if (from != null && to != null) {
+    return { from, to };
+  }
+  return null;
+}
+
 /** Entry paragraphs for the headings the TOC's level window covers. */
 function buildTocEntries(
   doc: PMNode,
@@ -127,6 +163,11 @@ function buildTocEntries(
     alignPageNumbers?: boolean;
     styles?: string;
     customStyles?: Record<string, number> | string;
+    hyperlink?: boolean;
+    hyperlinks?: boolean;
+    bookmark?: string;
+    useAppliedParagraphOutlineLevel?: boolean;
+    outlineLevel?: boolean;
   } = {},
 ): {
   entries: { type: string; attrs?: Record<string, unknown>; content: unknown[] }[];
@@ -134,13 +175,23 @@ function buildTocEntries(
 } {
   const styles = (doc.attrs as { styles?: StylesOptions }).styles;
   const { leader = "dot", showPageNumbers = true, alignPageNumbers = true } = opts;
+  const useHyperlinks = opts.hyperlink !== false && opts.hyperlinks !== false;
+  const useOutline = opts.outlineLevel ?? opts.useAppliedParagraphOutlineLevel ?? true;
   const customStyles = parseCustomStyles(opts.styles ?? opts.customStyles);
   const out: { type: string; attrs?: Record<string, unknown>; content: unknown[] }[] = [];
   const headingBookmarks: HeadingBookmarkInfo[] = [];
   let nextBookmarkId = maxBookmarkIdOf(doc);
 
+  let allowedRange: { from: number; to: number } | null = null;
+  if (opts.bookmark) {
+    allowedRange = findBookmarkRange(doc, opts.bookmark);
+    if (!allowedRange) return { entries: [], headingBookmarks: [] };
+  }
+
   doc.descendants((node, pos) => {
     if (node.type.name !== "paragraph") return true;
+    if (allowedRange && (pos < allowedRange.from || pos > allowedRange.to)) return true;
+
     const customLevel = customStyles.get((node.attrs.style as string)?.toLowerCase());
     const level =
       customLevel ??
@@ -148,7 +199,7 @@ function buildTocEntries(
         {
           heading: (node.attrs.heading as string) || undefined,
           style: (node.attrs.style as string) || undefined,
-          outlineLevel: node.attrs.outlineLevel as number | undefined,
+          outlineLevel: useOutline ? (node.attrs.outlineLevel as number | undefined) : undefined,
         },
         styles,
       );
@@ -167,7 +218,9 @@ function buildTocEntries(
       bookmarkName = `_Toc${out.length + 1}`;
       needsInsert = true;
     }
-    headingBookmarks.push({ pos, node, bookmarkId, bookmarkName, needsInsert });
+    if (useHyperlinks) {
+      headingBookmarks.push({ pos, node, bookmarkId, bookmarkName, needsInsert });
+    }
 
     const page = showPageNumbers ? pageOf?.(pos + 1) : undefined;
     // Unaligned numbers trail the text after a space (Word's "Right align
@@ -178,6 +231,11 @@ function buildTocEntries(
           ? [{ type: "tab" }, { type: "text", text: String(page) }]
           : [{ type: "text", text: ` ${page}` }]
         : [];
+
+    const marks = useHyperlinks
+      ? [{ type: "link", attrs: { href: `#${bookmarkName}` } }]
+      : undefined;
+
     out.push({
       type: "paragraph",
       attrs: {
@@ -191,7 +249,7 @@ function buildTocEntries(
         {
           type: "text",
           text: node.textContent,
-          marks: [{ type: "link", attrs: { href: `#${bookmarkName}` } }],
+          ...(marks ? { marks } : {}),
         },
         // A blank page (unmapped heading) omits the number run — an empty
         // text node is illegal in PM.
@@ -327,6 +385,9 @@ export const TocCommands = Extension.create({
             alignPageNumbers?: boolean;
             styles?: string;
             customStyles?: Record<string, number> | string;
+            hyperlink?: boolean;
+            bookmark?: string;
+            useAppliedParagraphOutlineLevel?: boolean;
           },
         ) =>
         ({ state, tr, dispatch }) => {
@@ -344,8 +405,12 @@ export const TocCommands = Extension.create({
             attrs: {
               options: {
                 headingStyleRange: insert?.headingRange ?? "1-3",
-                hyperlink: true,
+                hyperlink: insert?.hyperlink !== false,
                 ...(insert?.styles ? { styles: insert.styles } : {}),
+                ...(insert?.bookmark ? { bookmark: insert.bookmark } : {}),
+                ...(insert?.useAppliedParagraphOutlineLevel !== undefined
+                  ? { useAppliedParagraphOutlineLevel: insert.useAppliedParagraphOutlineLevel }
+                  : {}),
               },
             },
             content: entries,
@@ -386,6 +451,9 @@ export const TocCommands = Extension.create({
             leader?: string;
             showPageNumbers?: boolean;
             alignPageNumbers?: boolean;
+            hyperlink?: boolean;
+            bookmark?: string;
+            useAppliedParagraphOutlineLevel?: boolean;
           } | null;
           const levels = headingRangeOf(opts?.headingStyleRange);
           const { entries, headingBookmarks } = buildTocEntries(
@@ -399,6 +467,9 @@ export const TocCommands = Extension.create({
               customStyles: opts?.customStyles as Record<string, number> | string | undefined,
               showPageNumbers: opts?.showPageNumbers,
               alignPageNumbers: opts?.alignPageNumbers,
+              hyperlink: opts?.hyperlink,
+              bookmark: opts?.bookmark,
+              useAppliedParagraphOutlineLevel: opts?.useAppliedParagraphOutlineLevel,
             },
           );
           if (entries.length === 0) return false;
@@ -438,14 +509,22 @@ export const TocCommands = Extension.create({
             headingStyleRange?: string;
             styles?: string;
             customStyles?: unknown;
+            bookmark?: string;
+            useAppliedParagraphOutlineLevel?: boolean;
           } | null;
           const levels = headingRangeOf(opts?.headingStyleRange);
           const customStyles = parseCustomStyles(opts?.styles ?? opts?.customStyles);
           const styles = (state.doc.attrs as { styles?: StylesOptions }).styles;
+          let allowedRange: { from: number; to: number } | null = null;
+          if (opts?.bookmark) {
+            allowedRange = findBookmarkRange(state.doc, opts.bookmark);
+          }
+          const useOutline = opts?.useAppliedParagraphOutlineLevel ?? true;
           const bookmarkPages = new Map<string, number>();
           const textPages = new Map<string, number>();
           state.doc.descendants((node, pos) => {
             if (node.type.name !== "paragraph") return true;
+            if (allowedRange && (pos < allowedRange.from || pos > allowedRange.to)) return true;
             const customLevel = customStyles.get((node.attrs.style as string)?.toLowerCase());
             const level =
               customLevel ??
@@ -453,7 +532,9 @@ export const TocCommands = Extension.create({
                 {
                   heading: (node.attrs.heading as string) || undefined,
                   style: (node.attrs.style as string) || undefined,
-                  outlineLevel: node.attrs.outlineLevel as number | undefined,
+                  outlineLevel: useOutline
+                    ? (node.attrs.outlineLevel as number | undefined)
+                    : undefined,
                 },
                 styles,
               );
@@ -593,6 +674,9 @@ declare module "@tiptap/core" {
           alignPageNumbers?: boolean;
           styles?: string;
           customStyles?: Record<string, number> | string;
+          hyperlink?: boolean;
+          bookmark?: string;
+          useAppliedParagraphOutlineLevel?: boolean;
         },
       ) => ReturnType;
       "update-toc": (pageOf?: PageOf, tabPositionTw?: number) => ReturnType;

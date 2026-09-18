@@ -232,6 +232,9 @@ export const documentTemplate = html`
     <docen-task-pane slot="task-pane-end" position="end" part="thesaurus-pane" title="Thesaurus">
       <docen-thesaurus-pane></docen-thesaurus-pane>
     </docen-task-pane>
+    <docen-task-pane slot="task-pane-end" position="end" part="translate-pane" title="Translate">
+      <docen-translate-pane></docen-translate-pane>
+    </docen-task-pane>
     <docen-task-pane slot="task-pane-end" position="end" part="styles-pane" title="Styles">
       <docen-styles-pane></docen-styles-pane>
     </docen-task-pane>
@@ -259,6 +262,9 @@ export const documentTemplate = html`
     >
       <docen-a11y-checker-pane></docen-a11y-checker-pane>
     </docen-task-pane>
+    <docen-task-pane slot="task-pane-end" position="end" part="alt-text-pane" title="Alt Text">
+      <docen-alt-text-pane></docen-alt-text-pane>
+    </docen-task-pane>
     <docen-status-bar slot="status" part="status"></docen-status-bar>
   </docen-workspace>
   <!-- The edit bridge's textarea lives here, at the shadow root: inside the
@@ -266,6 +272,8 @@ export const documentTemplate = html`
        treats Space/Enter as menu keys and preventDefaults them — killing the
        textarea's beforeinput (spaces and Enter silently dropped). -->
   <div class="input-layer" part="input-layer"></div>
+  <docen-mini-toolbar part="mini-toolbar"></docen-mini-toolbar>
+  <docen-key-tips part="key-tips"></docen-key-tips>
   <docen-options-dialog part="options"></docen-options-dialog>
   <docen-autocorrect-dialog part="autocorrect"></docen-autocorrect-dialog>
   <docen-quick-part-dialog part="quick-part"></docen-quick-part-dialog>
@@ -293,6 +301,7 @@ export const documentTemplate = html`
   <docen-page-number-format-dialog part="page-number-format"></docen-page-number-format-dialog>
   <docen-field-dialog part="field"></docen-field-dialog>
   <docen-chart-data-dialog part="chart-data"></docen-chart-data-dialog>
+  <docen-chart-type-dialog part="chart-type"></docen-chart-type-dialog>
   <docen-compress-pictures-dialog part="compress-pictures"></docen-compress-pictures-dialog>
   <docen-cross-reference-dialog part="cross-reference"></docen-cross-reference-dialog>
   <docen-sources-dialog part="sources"></docen-sources-dialog>
@@ -300,11 +309,13 @@ export const documentTemplate = html`
   <docen-merge-field-dialog part="merge-field"></docen-merge-field-dialog>
   <docen-table-properties-dialog part="table-properties"></docen-table-properties-dialog>
   <docen-drawing-properties-dialog part="drawing-properties"></docen-drawing-properties-dialog>
+  <docen-distribute-dialog part="distribute-dialog"></docen-distribute-dialog>
   <docen-borders-shading-dialog part="borders-shading"></docen-borders-shading-dialog>
   <docen-watermark-dialog part="watermark-dialog"></docen-watermark-dialog>
   <docen-fill-effects-dialog part="fill-effects"></docen-fill-effects-dialog>
   <docen-inspect-dialog part="inspect"></docen-inspect-dialog>
   <docen-template-dialog part="template"></docen-template-dialog>
+  <docen-print-preview part="print-preview"></docen-print-preview>
   <docen-modify-style-dialog part="modify-style"></docen-modify-style-dialog>
   <docen-new-style-dialog part="new-style"></docen-new-style-dialog>
   <docen-hyphenation-dialog part="hyphenation"></docen-hyphenation-dialog>

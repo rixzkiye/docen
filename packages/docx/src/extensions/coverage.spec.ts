@@ -267,15 +267,29 @@ const INLINE_FIXTURES: Record<keyof typeof PARAGRAPH_CHILD_DISPOSITIONS, () => P
   moveToRangeStart: () => ({ moveToRangeStart: { id: 1, name: "mv" } }),
   moveToRangeEnd: () => ({ moveToRangeEnd: { id: 1 } }),
   movedFrom: () => ({
-    movedFrom: { id: 1, author: "a", date: "2024-01-01T00:00:00Z", children: [] },
+    movedFrom: { id: 1, author: "a", date: "2024-01-01T00:00:00Z", children: [{ text: "mf" }] },
   }),
   movedTo: () => ({
-    movedTo: { id: 1, author: "a", date: "2024-01-01T00:00:00Z", children: [] },
+    movedTo: { id: 1, author: "a", date: "2024-01-01T00:00:00Z", children: [{ text: "mt" }] },
   }),
   moveFrom: () => ({
-    moveFrom: { author: "a", date: "2024-01-01T00:00:00Z", name: "mv" },
+    moveFrom: {
+      id: 1,
+      author: "a",
+      date: "2024-01-01T00:00:00Z",
+      name: "mv",
+      children: [{ text: "mf" }],
+    },
   }),
-  moveTo: () => ({ moveTo: { author: "a", date: "2024-01-01T00:00:00Z", name: "mv" } }),
+  moveTo: () => ({
+    moveTo: {
+      id: 1,
+      author: "a",
+      date: "2024-01-01T00:00:00Z",
+      name: "mv",
+      children: [{ text: "mt" }],
+    },
+  }),
   customXmlInsRangeStart: () => ({ customXmlInsRangeStart: { id: 1 } }),
   customXmlInsRangeEnd: () => ({ customXmlInsRangeEnd: 1 }),
   customXmlDelRangeStart: () => ({ customXmlDelRangeStart: { id: 1 } }),
@@ -421,6 +435,98 @@ const INLINE_EDITABLE: InlineEditable = {
     probe: (out) => {
       // The MathInput rides the node verbatim through resolve → compile.
       expect(out).toEqual({ math: { display: true } });
+    },
+  },
+  permStart: {
+    marker: "permStart",
+    probe: (out) => {
+      const ps = (out as { permStart: { id: number } }).permStart;
+      expect(ps.id).toBe(1);
+    },
+  },
+  permEnd: {
+    marker: "permEnd",
+    probe: (out) => {
+      expect((out as { permEnd: number }).permEnd).toBe(1);
+    },
+  },
+  formField: {
+    marker: "formField",
+    probe: (out) => {
+      const ff = (out as { formField: { name?: string } }).formField;
+      expect(ff.name).toBe("ff1");
+    },
+  },
+  dir: {
+    marker: "dir",
+    probe: (out) => {
+      const dir = (out as { dir: { val?: string; children?: unknown[] } }).dir;
+      expect(dir.val).toBe("ltr");
+    },
+  },
+  bdo: {
+    marker: "bdo",
+    probe: (out) => {
+      const bdo = (out as { bdo: { val?: string; children?: unknown[] } }).bdo;
+      expect(bdo.val).toBe("rtl");
+    },
+  },
+  moveFromRangeStart: {
+    marker: "moveFromRangeStart",
+    probe: (out) => {
+      const m = (out as { moveFromRangeStart: { id: number } }).moveFromRangeStart;
+      expect(m.id).toBe(1);
+    },
+  },
+  moveFromRangeEnd: {
+    marker: "moveFromRangeEnd",
+    probe: (out) => {
+      const m = (out as { moveFromRangeEnd: { id: number } }).moveFromRangeEnd;
+      expect(m.id).toBe(1);
+    },
+  },
+  moveToRangeStart: {
+    marker: "moveToRangeStart",
+    probe: (out) => {
+      const m = (out as { moveToRangeStart: { id: number } }).moveToRangeStart;
+      expect(m.id).toBe(1);
+    },
+  },
+  moveToRangeEnd: {
+    marker: "moveToRangeEnd",
+    probe: (out) => {
+      const m = (out as { moveToRangeEnd: { id: number } }).moveToRangeEnd;
+      expect(m.id).toBe(1);
+    },
+  },
+  movedFrom: {
+    marker: "moveFrom",
+    probe: (out) => {
+      const m = (out as { movedFrom: { id?: number; author?: string } }).movedFrom;
+      expect(m.id).toBe(1);
+      expect(m.author).toBe("a");
+    },
+  },
+  movedTo: {
+    marker: "moveTo",
+    probe: (out) => {
+      const m = (out as { movedTo: { id?: number; author?: string } }).movedTo;
+      expect(m.id).toBe(1);
+      expect(m.author).toBe("a");
+    },
+  },
+  moveFrom: {
+    marker: "moveFrom",
+    probe: (out) => {
+      const m = out as { movedFrom?: { id?: number }; moveFrom?: { id?: number } };
+      expect((m.movedFrom ?? m.moveFrom)?.id).toBe(1);
+    },
+  },
+  moveTo: {
+    marker: "moveTo",
+    probe: (out) => {
+      const m = out as { movedTo?: { id?: number }; moveTo?: { id?: number } };
+      expect((m.movedTo ?? m.moveTo)?.id).toBe(1);
     },
   },
 };
@@ -634,5 +740,111 @@ describe("real-XML round-trip (generateDocument → parseDocument)", { timeout: 
     };
     expect(insertion.insertion.author).toBe("a");
     expect(insertion.insertion.children?.[0]?.text).toBe("ins");
+  });
+
+  it("hyphens (softHyphen and noBreakHyphen) survive real XML with editable routes", () => {
+    const compiled = throughXml([
+      {
+        paragraph: {
+          children: [
+            {
+              children: [
+                "word",
+                { softHyphen: true } as any,
+                "break",
+                { noBreakHyphen: true } as any,
+                "hyphen",
+              ],
+            },
+          ],
+        },
+      },
+    ]);
+    const para = (compiled[0] as { paragraph: { children?: ParagraphChild[] } }).paragraph;
+    const run = para.children?.[0] as { children?: unknown[] };
+    expect(JSON.stringify(run)).toContain("softHyphen");
+    expect(JSON.stringify(run)).toContain("noBreakHyphen");
+  });
+
+  it("carriageReturn survives real XML as hardBreak variant", () => {
+    const compiled = throughXml([
+      {
+        paragraph: {
+          children: [
+            { text: "hello" },
+            { children: [{ carriageReturn: true } as any] },
+            { text: "world" },
+          ],
+        },
+      },
+    ]);
+    const json = resolveDocument({ sections: [{ children: compiled }] }, docxExtensions);
+    const hardBreak = (json.content?.[0] as any)?.content?.find((c: any) => c.type === "hardBreak");
+    expect(hardBreak?.attrs?.variant).toBe("carriageReturn");
+
+    const recompiled = compileDocument(json, docxExtensions).sections[0].children;
+    expect(JSON.stringify(recompiled)).toContain("carriageReturn");
+  });
+
+  it("bidi marks (dir and bdo) survive real XML", () => {
+    const compiled = throughXml([
+      {
+        paragraph: {
+          children: [
+            { dir: { val: "rtl", children: [{ text: "عربي" }] } } as any,
+            { bdo: { val: "ltr", children: [{ text: "english" }] } } as any,
+          ],
+        },
+      },
+    ]);
+    const json = resolveDocument({ sections: [{ children: compiled }] }, docxExtensions);
+    const runs = (json.content?.[0] as any)?.content;
+    const dirRun = runs?.find((c: any) => c.marks?.some((m: any) => m.type === "dir"));
+    const bdoRun = runs?.find((c: any) => c.marks?.some((m: any) => m.type === "bdo"));
+    expect(dirRun?.marks?.find((m: any) => m.type === "dir")?.attrs?.val).toBe("rtl");
+    expect(bdoRun?.marks?.find((m: any) => m.type === "bdo")?.attrs?.val).toBe("ltr");
+  });
+
+  it("permission ranges (permStart and permEnd) survive real XML", () => {
+    const compiled = throughXml([
+      {
+        paragraph: {
+          children: [
+            { permStart: { id: 42, editGroup: "everyone" } } as any,
+            { text: "editable region" },
+            { permEnd: 42 } as any,
+          ],
+        },
+      },
+    ]);
+    const json = resolveDocument({ sections: [{ children: compiled }] }, docxExtensions);
+    const content = (json.content?.[0] as any)?.content;
+    const pStart = content?.find((c: any) => c.type === "permStart");
+    const pEnd = content?.find((c: any) => c.type === "permEnd");
+    expect(pStart?.attrs?.id).toBe(42);
+    expect(pStart?.attrs?.editGroup).toBe("everyone");
+    expect(pEnd?.attrs?.id).toBe(42);
+  });
+
+  it("formField survives real XML and syncs values", () => {
+    const compiled = throughXml([
+      {
+        paragraph: {
+          children: [
+            {
+              formField: {
+                name: "field_cb",
+                checkBox: { checked: true },
+              },
+            } as any,
+          ],
+        },
+      },
+    ]);
+    const json = resolveDocument({ sections: [{ children: compiled }] }, docxExtensions);
+    const ffNode = (json.content?.[0] as any)?.content?.find((c: any) => c.type === "formField");
+    expect(ffNode).toBeDefined();
+    expect(ffNode?.attrs?.formField?.name).toBe("field_cb");
+    expect(ffNode?.attrs?.formField?.checkBox?.checked).toBe(true);
   });
 });

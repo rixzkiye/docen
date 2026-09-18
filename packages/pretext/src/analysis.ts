@@ -495,7 +495,7 @@ function classifySegmentBreakChar(
     if (whiteSpaceProfile.preserveHardBreaks && ch === "\n") return "hard-break";
   }
   if (ch === " ") return "space";
-  if (ch === "\u00A0" || ch === "\u202F" || ch === "\u2060" || ch === "\uFEFF") {
+  if (ch === "\u00A0" || ch === "\u202F" || ch === "\u2060" || ch === "\uFEFF" || ch === "\u2011") {
     return "glue";
   }
   if (ch === "\u200B") return "zero-width-break";
@@ -504,7 +504,7 @@ function classifySegmentBreakChar(
 }
 
 // All characters that classifySegmentBreakChar maps to a non-'text' kind.
-const breakCharRe = /[\x20\t\n\xA0\xAD\u200B\u202F\u2060\uFEFF]/;
+const breakCharRe = /[\x20\t\n\xA0\xAD\u200B\u2011\u202F\u2060\uFEFF]/;
 
 function joinTextParts(parts: string[]): string {
   return parts.length === 1 ? parts[0]! : parts.join("");

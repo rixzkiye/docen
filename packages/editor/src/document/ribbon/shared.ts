@@ -112,6 +112,10 @@ export const borderItems = (): string =>
     { text: opt("right"), value: "right" },
     { text: opt("all"), value: "all" },
     { text: opt("outside"), value: "outside" },
+    { text: opt("inside-horizontal"), value: "insideHorizontal" },
+    { text: opt("inside-vertical"), value: "insideVertical" },
+    { text: opt("diagonal-down"), value: "diagonalDown" },
+    { text: opt("diagonal-up"), value: "diagonalUp" },
     { text: opt("borders-shading"), value: "borders-shading" },
   ]);
 

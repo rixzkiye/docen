@@ -530,23 +530,25 @@ export class SectionCommands {
     }
     // Page tab — every edge null removes the pgBorders (Word's "none").
     const sides = patch.sides ?? {};
+    const art = patch.art;
     const edge = (s: BorderSideState | null | undefined): BorderOptions | undefined =>
       s
         ? {
-            style: s.style as BorderOptions["style"],
+            style: (art || s.style) as BorderOptions["style"],
             size: Math.max(2, Math.round(s.size)),
             color: s.color ?? "auto",
             space: 0,
           }
         : undefined;
+    const defaultSide = art ? { style: art, size: 24, color: null } : undefined;
     const borders: PageBordersOptions | undefined =
-      sides.top || sides.bottom || sides.left || sides.right
+      sides.top || sides.bottom || sides.left || sides.right || art
         ? {
             offsetFrom: "text",
-            top: edge(sides.top),
-            left: edge(sides.left),
-            bottom: edge(sides.bottom),
-            right: edge(sides.right),
+            top: edge(sides.top ?? defaultSide),
+            left: edge(sides.left ?? defaultSide),
+            bottom: edge(sides.bottom ?? defaultSide),
+            right: edge(sides.right ?? defaultSide),
           }
         : undefined;
     this.updateSectionGeometry({ pageBorders: borders });

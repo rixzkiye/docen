@@ -1,5 +1,6 @@
 import type { Editor } from "@docen/docx/core";
 
+import { setUiDirection } from "../../../ui/i18n/localize";
 import { demoteHeadingAtCaret, promoteHeadingAtCaret, selectSimilarFormatting } from "../outline";
 import type { HostCommandDomain } from "./registry";
 
@@ -34,6 +35,7 @@ export interface NavigationViewsHostView {
   setShowGridlines(on: boolean): void;
   /** Select a document view (Word's View tab buttons). */
   setView(view: string): void;
+  setUiDirection?(dir: "ltr" | "rtl" | "auto"): void;
   openGoToDialog?(kind?: string): void;
   openPropertiesDialog?(): void;
   toggleSplitWindow?(): void;
@@ -65,6 +67,7 @@ export class NavigationViewsHostCommands implements HostCommandDomain {
     "check-accessibility",
     "split-window",
     "focus-mode",
+    "set-ui-direction",
   ];
 
   readonly editor: readonly string[] = [
@@ -107,10 +110,9 @@ export class NavigationViewsHostCommands implements HostCommandDomain {
       this.host.toggleFocusMode?.();
       return true;
     }
-    // View → Outline: Word's outline view maps to the document-structure
-    // pane here (the same tree the navigation pane shows).
+    // View → Outline: Word's outline view mode
     if (event === "outline") {
-      this.host.togglePane("navigation");
+      this.host.setView("outline");
       return true;
     }
     // Find (ribbon Home → Editing → Find, or Ctrl+F) → open the nav-pane search.
@@ -155,6 +157,15 @@ export class NavigationViewsHostCommands implements HostCommandDomain {
       else this.host.setZoom(100);
       return true;
     }
+    if (event === "set-ui-direction") {
+      const dir = value === "rtl" || value === "ltr" || value === "auto" ? value : "auto";
+      if (this.host.setUiDirection) {
+        this.host.setUiDirection(dir);
+      } else {
+        setUiDirection(dir);
+      }
+      return true;
+    }
     const editor = this.host.editor();
     if (!editor) return false;
     // Edit / View mode — toggle the editor's editable state (tab-row "Editing"
@@ -187,6 +198,7 @@ export class NavigationViewsHostCommands implements HostCommandDomain {
       "print-layout": "print",
       "web-layout": "web",
       "read-mode": "read",
+      outline: "outline",
       draft: "draft",
     };
     if (viewOf[event]) {

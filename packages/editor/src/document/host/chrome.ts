@@ -5,7 +5,7 @@
  * thin delegating members so its call sites stay unchanged.
  */
 
-import type { JSONContent } from "@docen/docx";
+import { resolveTableLook, type JSONContent } from "@docen/docx";
 import type { Editor } from "@docen/docx/core";
 import { redoDepth, undoDepth } from "@tiptap/pm/history";
 import { NodeSelection } from "@tiptap/pm/state";
@@ -455,6 +455,7 @@ export class ChromeDomain {
       ["clipboard-pane", "pane.clipboard"],
       ["proofing-pane", "pane.proofing"],
       ["thesaurus-pane", "pane.thesaurus"],
+      ["translate-pane", "pane.translate"],
       ["styles-pane", "pane.styles"],
     ] as const) {
       root
@@ -1101,7 +1102,27 @@ export class ChromeDomain {
     if (firstNew) tablist.setAttribute("activeid", firstNew);
     present.clear();
     for (const id of want.keys()) present.add(id);
+    if (want.has("table-design")) this.syncTableLookCheckboxes();
     this.applyRibbonGreying();
+  }
+
+  /** Sync Table Style Options checkboxes (w:tblLook) with the active table. */
+  syncTableLookCheckboxes(): void {
+    const state = this.host.editor()?.state;
+    if (!state) return;
+    const anchor = tableAncestry(state);
+    if (!anchor) return;
+    const table = state.selection.$from.node(anchor.tableAt);
+    const look = resolveTableLook(table.attrs.tableLook);
+    const root = this.host.root();
+    if (!root) return;
+    const flags = ["firstRow", "lastRow", "bandRow", "firstCol", "lastCol", "bandCol"] as const;
+    for (const flag of flags) {
+      const cb = root.querySelector<HTMLElement>(
+        `docen-ribbon-checkbox[event="toggle-table-look"][value="${flag}"]`,
+      );
+      cb?.toggleAttribute("checked", !!look[flag]);
+    }
   }
 
   /** The full set of wired command names (Tiptap dispatch + locally handled +

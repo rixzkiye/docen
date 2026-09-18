@@ -17,3 +17,5 @@ export {
   SECTION_ATTR_KEYS,
 } from "./utils";
 export { renderDocx as renderParagraphDocx, parseDocx as parseParagraphDocx } from "./paragraph";
+export * from "./vml-promotion";
+export * from "./drawing-3d-ink";

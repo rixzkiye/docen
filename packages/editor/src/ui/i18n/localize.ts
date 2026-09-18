@@ -142,7 +142,24 @@ const translations = new Map<string, Record<string, string>>([
 const metadata = new Map<string, { readonly $name?: string; readonly $dir?: "ltr" | "rtl" }>([
   ["en", { $name: "English", $dir: "ltr" }],
   ["zh-CN", { $name: "中文（简体）", $dir: "ltr" }],
+  ["ar", { $name: "العربية", $dir: "rtl" }],
+  ["he", { $name: "עברית", $dir: "rtl" }],
+  ["fa", { $name: "فارسی", $dir: "rtl" }],
+  ["ur", { $name: "اردو", $dir: "rtl" }],
 ]);
+const RTL_LANGUAGES = new Set(["ar", "he", "fa", "ur", "ps", "sd", "ug", "yi", "syr"]);
+let uiDirection: "ltr" | "rtl" | "auto" = "auto";
+
+/** Toggle or set UI direction dynamically ("ltr" | "rtl" | "auto"). */
+export function setUiDirection(direction: "ltr" | "rtl" | "auto"): void {
+  uiDirection = direction;
+  notifyLocaleChange();
+}
+
+/** Get the currently set UI direction mode. */
+export function getUiDirection(): "ltr" | "rtl" | "auto" {
+  return uiDirection;
+}
 /** The fallback locale (localeChain's terminal link). The built-in default is
  *  "en"; `registerLocalization` updates it from `LocalizationInfo.defaultLanguageTag`. */
 let defaultLanguageTag = "en";
@@ -237,12 +254,46 @@ export function resolveLang(el: Element | null = document.documentElement): stri
   return document.documentElement.lang || defaultLanguageTag;
 }
 
+function findDirAttribute(el: Element | null): "ltr" | "rtl" | null {
+  let cur: Element | null = el;
+  while (cur) {
+    const dir = cur.getAttribute?.("dir");
+    if (dir === "rtl" || dir === "ltr") return dir;
+    if (cur.parentElement) {
+      cur = cur.parentElement;
+    } else {
+      const root = cur.getRootNode?.();
+      if (root instanceof ShadowRoot && root.host) {
+        cur = root.host;
+      } else {
+        break;
+      }
+    }
+  }
+  const htmlDir =
+    typeof document !== "undefined"
+      ? document.documentElement?.getAttribute("dir") || document.body?.getAttribute("dir")
+      : null;
+  if (htmlDir === "rtl" || htmlDir === "ltr") return htmlDir;
+  return null;
+}
+
 /** Resolve text direction for an element's locale ("ltr" by default). */
-export function resolveDir(el: Element | null = document.documentElement): "ltr" | "rtl" {
+export function resolveDir(
+  el: Element | null = typeof document !== "undefined" ? document.documentElement : null,
+): "ltr" | "rtl" {
+  if (uiDirection === "rtl") return "rtl";
+  if (uiDirection === "ltr") return "ltr";
+
+  const explicitDir = findDirAttribute(el);
+  if (explicitDir) return explicitDir;
+
   const lang = resolveLang(el);
   for (const code of localeChain(lang)) {
     const dir = metadata.get(code)?.$dir;
     if (dir) return dir;
+    const base = code.split("-")[0]?.toLowerCase();
+    if (base && RTL_LANGUAGES.has(base)) return "rtl";
   }
   return "ltr";
 }
@@ -290,7 +341,7 @@ function ensureHtmlObserver(): void {
   htmlObserver = new MutationObserver(notifyLocaleChange);
   htmlObserver.observe(document.documentElement, {
     attributes: true,
-    attributeFilter: ["lang"],
+    attributeFilter: ["lang", "dir"],
   });
 }
 

@@ -35,13 +35,15 @@ export interface StatusHostView {
   /** The first section's flow box (page-size presets read its geometry). */
   flow(): ProjectedFlowBox | undefined;
   /** The active view, normalized. */
-  viewMode(): "print" | "web" | "draft" | "read";
+  viewMode(): "print" | "web" | "draft" | "read" | "outline";
   /** The caret's proofing language. */
   caretLanguage(): { value: string; noProof: boolean };
   /** Whether the given task pane is currently open. */
-  taskpaneOpen(id: "navigation" | "reveal"): boolean;
+  taskpaneOpen(id: "navigation" | "reveal" | "altText"): boolean;
   /** Refresh the Reveal Formatting pane from the caret. */
   updateReveal(): void;
+  /** Refresh the Alt Text pane from the selection. */
+  updateAltText?(): void;
   /** Write the `view` attribute (status-bar view buttons). */
   setView(view: string): void;
   /** Emit `docen:zoom-change` after a real zoom change. */
@@ -233,6 +235,9 @@ export class StatusDomain {
     if (this.host.taskpaneOpen("navigation")) this.#scheduleNavThumbnails();
     if (this.host.taskpaneOpen("reveal")) {
       this.host.updateReveal();
+    }
+    if (this.host.taskpaneOpen("altText")) {
+      this.host.updateAltText?.();
     }
   }
 

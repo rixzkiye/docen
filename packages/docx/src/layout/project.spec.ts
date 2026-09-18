@@ -614,6 +614,66 @@ describe("projectDocumentOptions blocks", () => {
     });
   });
 
+  it("projects diagonal cell borders (tl2br and tr2bl)", () => {
+    const { blocks } = oneSection({
+      styles,
+      sections: [
+        {
+          children: [
+            {
+              table: {
+                rows: [
+                  {
+                    cells: [
+                      {
+                        borders: {
+                          tl2br: { style: "single", color: "FF0000", size: 8 },
+                          tr2bl: { style: "dashed", color: "0000FF", size: 4 },
+                        },
+                        children: [{ paragraph: { children: ["diagonal"] } }],
+                      },
+                      {
+                        borders: {
+                          topLeftToBottomRight: { style: "single", color: "00FF00", size: 8 },
+                          topRightToBottomLeft: { style: "dotted", color: "FFFF00", size: 4 },
+                        } as any,
+                        children: [{ paragraph: { children: ["diagonal-native"] } }],
+                      },
+                    ],
+                  },
+                ],
+              },
+            },
+          ],
+        },
+      ],
+    });
+    const table = blocks[0];
+    if (table?.kind !== "table") throw new Error("expected table");
+    const cell1 = table.rows[0].cells[0];
+    expect(cell1.borders?.tl2br).toEqual({
+      style: "single",
+      px: (8 / 8) * (4 / 3),
+      color: "FF0000",
+    });
+    expect(cell1.borders?.tr2bl).toEqual({
+      style: "dashed",
+      px: (4 / 8) * (4 / 3),
+      color: "0000FF",
+    });
+    const cell2 = table.rows[0].cells[1];
+    expect(cell2.borders?.tl2br).toEqual({
+      style: "single",
+      px: (8 / 8) * (4 / 3),
+      color: "00FF00",
+    });
+    expect(cell2.borders?.tr2bl).toEqual({
+      style: "dotted",
+      px: (4 / 8) * (4 / 3),
+      color: "FFFF00",
+    });
+  });
+
   it("projects table alignment from direct attributes and table styles", () => {
     const { blocks } = oneSection({
       styles: {
@@ -820,6 +880,27 @@ describe("projectDocumentOptions fields and furniture", () => {
     // A nil side paints nothing and stays absent.
     expect(pageBorders?.bottom).toBeUndefined();
     expect(pageBorders?.left).toBeUndefined();
+  });
+
+  it("projects page borders with art presets", () => {
+    const { pageBorders } = oneSection({
+      styles,
+      sections: [
+        {
+          children: [],
+          properties: {
+            pageBorders: {
+              top: { art: "apples", size: 24 } as any,
+              bottom: { style: "stars" as any, size: 16, color: "FF0000" },
+            },
+          },
+        },
+      ],
+    });
+    expect(pageBorders).toMatchObject({
+      top: { art: "apples", style: "art", widthPx: (24 / 8) * (96 / 72) },
+      bottom: { art: "stars", style: "stars", widthPx: (16 / 8) * (96 / 72), color: "FF0000" },
+    });
   });
 
   it("omits pageBorders when the section carries none or only nil sides", () => {
@@ -2300,6 +2381,76 @@ describe("projectDocumentOptions theme fonts", () => {
     expect(family == null || (typeof family === "object" && Object.keys(family).length === 0)).toBe(
       true,
     );
+  });
+});
+describe("projectDocumentOptions embedded OLE object", () => {
+  it("projects embedded Excel object into inline picture with vector preview", () => {
+    const res = projectDocumentOptions({
+      sections: [
+        {
+          children: [
+            {
+              paragraph: {
+                children: [
+                  {
+                    object: {
+                      width: 400,
+                      height: 200,
+                      embed: { progId: "Excel.Sheet.12", fileName: "Worksheet.xlsx" },
+                    },
+                  } as any,
+                ],
+              },
+            },
+          ],
+        },
+      ],
+    });
+    const block = res.sections[0]!.blocks[0];
+    expect(block.kind).toBe("paragraph");
+    if (block.kind !== "paragraph") return;
+    const inline = block.inline[0];
+    expect(inline?.kind).toBe("picture");
+    if (inline?.kind !== "picture") return;
+    expect(inline.widthPx).toBe(400);
+    expect(inline.heightPx).toBe(200);
+    expect(inline.src).toContain("data:image/svg+xml");
+    expect(inline.src).toContain("Sheet1");
+    expect(inline.line?.color).toBe("107C41");
+  });
+
+  it("projects generic OLE object with fallback preview", () => {
+    const res = projectDocumentOptions({
+      sections: [
+        {
+          children: [
+            {
+              paragraph: {
+                children: [
+                  {
+                    object: {
+                      width: 300,
+                      height: 150,
+                      embed: { progId: "Acrobat.Document.DC" },
+                    },
+                  } as any,
+                ],
+              },
+            },
+          ],
+        },
+      ],
+    });
+    const block = res.sections[0]!.blocks[0];
+    expect(block.kind).toBe("paragraph");
+    if (block.kind !== "paragraph") return;
+    const inline = block.inline[0];
+    expect(inline?.kind).toBe("picture");
+    if (inline?.kind !== "picture") return;
+    expect(inline.widthPx).toBe(300);
+    expect(inline.heightPx).toBe(150);
+    expect(inline.src).toContain("data:image/svg+xml");
+    expect(inline.line?.color).toBe("808080");
   });
 });
 
