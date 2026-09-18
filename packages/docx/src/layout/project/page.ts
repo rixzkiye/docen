@@ -16,6 +16,7 @@ import {
 } from "@docen/layout";
 import type { DocumentOptions, SectionChild, SectionOptions } from "@office-open/docx";
 
+import { DOCEN_DEFAULT_PAGE_MARGIN } from "../../converters/section-defaults";
 import { resolvePageSize } from "../../extensions/utils";
 import { indexCharacterStyles } from "../../style-cascade";
 import type { ProjectContext } from "./context";
@@ -154,10 +155,10 @@ export function projectFlowBox(properties: unknown): ProjectedFlowBox {
   const { width, height } = resolvePageSize(sp.pageSize);
   const m: Rec = isRecord(sp.pageMargin) ? sp.pageMargin : {};
   const side = (v: unknown, d: number): number => twipToPx(measureTwip(v) ?? d);
-  const top = side(m.top, 1440);
-  const bottom = side(m.bottom, 1440);
-  const left = side(m.left, 1800);
-  const right = side(m.right, 1800);
+  const top = side(m.top, DOCEN_DEFAULT_PAGE_MARGIN.TOP);
+  const bottom = side(m.bottom, DOCEN_DEFAULT_PAGE_MARGIN.BOTTOM);
+  const left = side(m.left, DOCEN_DEFAULT_PAGE_MARGIN.LEFT);
+  const right = side(m.right, DOCEN_DEFAULT_PAGE_MARGIN.RIGHT);
   // The binding gutter always rides the left edge here — Word flips it for
   // mirror margins / RTL gutters, neither of which the projection models.
   const gutter = side(m.gutter, 0);
@@ -354,12 +355,42 @@ export function projectPageBackground(doc: DocumentOptions): ProjectedPageBackgr
   };
 }
 
+const STANDARD_LINE_STYLES = new Set([
+  "single",
+  "double",
+  "triple",
+  "thinThickSmallGap",
+  "thickThinSmallGap",
+  "thinThickThinSmallGap",
+  "thinThickMediumGap",
+  "thickThinMediumGap",
+  "thinThickThinMediumGap",
+  "thinThickLargeGap",
+  "thickThinLargeGap",
+  "thinThickThinLargeGap",
+  "wave",
+  "doubleWave",
+  "dashSmallGap",
+  "dashDotStroked",
+  "threeDEmboss",
+  "threeDEngrave",
+  "outset",
+  "inset",
+  "dashed",
+  "dotted",
+  "dashDot",
+  "dashDotDot",
+]);
+
 /** One side of the projected w:pgBorders (see {@link ProjectedPageBorders}). */
 function projectPageBorderSide(v: unknown): ProjectedPageBorder | undefined {
   if (!isRecord(v)) return undefined;
-  const style = str(v.style);
+  const rawStyle = str(v.style);
+  const rawArt = str(v.art);
   // nil/none explicitly paint nothing; an absent side is simply not rendered.
-  if (!style || style === "nil" || style === "none") return undefined;
+  if ((!rawStyle && !rawArt) || rawStyle === "nil" || rawStyle === "none") return undefined;
+  const art = rawArt ?? (rawStyle && !STANDARD_LINE_STYLES.has(rawStyle) ? rawStyle : undefined);
+  const style = rawStyle ?? (art ? "art" : "single");
   const size = num(v.size);
   return {
     style,
@@ -367,6 +398,7 @@ function projectPageBorderSide(v: unknown): ProjectedPageBorder | undefined {
     widthPx: size != null ? eighthPtToPx(size) : eighthPtToPx(4),
     color: str(v.color),
     spacePt: num(v.space),
+    art,
   };
 }
 

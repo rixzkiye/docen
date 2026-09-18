@@ -1,0 +1,56 @@
+{
+  "name": "@docen/shaping",
+  "version": "0.1.0",
+  "description": "Deterministic WebAssembly text shaping & fontations engine for docen",
+  "keywords": [
+    "docen",
+    "font",
+    "fontations",
+    "harfbuzz",
+    "opentype",
+    "rustybuzz",
+    "shaping",
+    "text",
+    "typography"
+  ],
+  "homepage": "https://github.com/DemoMacro/docen#readme",
+  "bugs": {
+    "url": "https://github.com/DemoMacro/docen/issues"
+  },
+  "license": "MIT",
+  "author": {
+    "name": "Demo Macro",
+    "email": "abc@imst.xyz",
+    "url": "https://www.demomacro.com/"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/DemoMacro/docen.git"
+  },
+  "files": [
+    "dist",
+    "wasm"
+  ],
+  "type": "module",
+  "main": "dist/index.mjs",
+  "types": "dist/index.d.mts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.mts",
+      "import": "./dist/index.mjs"
+    },
+    "./subsetter": {
+      "types": "./dist/subsetter.d.mts",
+      "import": "./dist/subsetter.mjs"
+    },
+    "./wasm/*": "./wasm/*"
+  },
+  "scripts": {
+    "build": "vp pack",
+    "build:wasm": "./scripts/build-wasm.sh",
+    "check:wasm": "./scripts/build-wasm.sh --check"
+  },
+  "devDependencies": {
+    "harfbuzzjs": "^1.6.1"
+  }
+}

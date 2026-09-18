@@ -15,12 +15,23 @@ import {
   type LayoutTextStyle,
 } from "@docen/layout";
 
+import {
+  is3DModelXml,
+  isInkXml,
+  parse3DModelFromXml,
+  parseInkFromXml,
+} from "../../extensions/drawing-3d-ink";
 import { mergeStyleChain } from "../../style-cascade";
 import type { MarkupDisplay, ProjectContext } from "./context";
 import { markStateful } from "./context";
 import { cropOf, outlineOf, pictureAdjustOf } from "./drawing";
 import { isRecord, measureEmu, num, str, unescapeXml, type Rec } from "./guards";
-import { metafileMembers, pictureSrc } from "./media";
+import {
+  excelPreviewSvgDataUri,
+  metafileMembers,
+  objectPreviewSvgDataUri,
+  pictureSrc,
+} from "./media";
 import { formatNumber } from "./numbering";
 import { fontAttr, normalizeScalePct, toFamily, runStyleOf } from "./styles";
 
@@ -330,6 +341,8 @@ export function projectRuns(
     const imprint = own.imprint ?? defRun.imprint;
     const glow = own.glow ?? defRun.glow;
     const reflection = own.reflection ?? defRun.reflection;
+    const bevel = own.bevel ?? defRun.bevel;
+    const rotation3d = own.rotation3d ?? defRun.rotation3d;
     return {
       family: toFamily(own.font, fontAttr(chainRPr.font) ?? fontAttr(docRPr.font)) ?? defRun.family,
       sizePx: ptToPx(effectiveSizePt),
@@ -349,6 +362,7 @@ export function projectRuns(
       letterSpacingPx:
         own.characterSpacingTw != null ? twipToPx(own.characterSpacingTw) : defRun.letterSpacingPx,
       verticalAlign: own.verticalAlign ?? defRun.verticalAlign,
+      direction: own.rtl === true ? "rtl" : own.rtl === false ? "ltr" : defRun.direction,
       caps,
       ...(scalePct != null ? { scalePct } : {}),
       ...(baselineShiftPx != null ? { baselineShiftPx } : {}),
@@ -362,6 +376,27 @@ export function projectRuns(
       ...(imprint ? { imprint: true } : {}),
       ...(glow ? { glow } : {}),
       ...(reflection ? { reflection } : {}),
+      ...(bevel ? { bevel } : {}),
+      ...(rotation3d ? { rotation3d } : {}),
+      ...((own.ligatures ?? defRun.ligatures)
+        ? { ligatures: own.ligatures ?? defRun.ligatures }
+        : {}),
+      ...((own.numForm ?? defRun.numForm) ? { numForm: own.numForm ?? defRun.numForm } : {}),
+      ...((own.numSpacing ?? defRun.numSpacing)
+        ? { numSpacing: own.numSpacing ?? defRun.numSpacing }
+        : {}),
+      ...((own.stylisticSet ?? defRun.stylisticSet)
+        ? { stylisticSet: own.stylisticSet ?? defRun.stylisticSet }
+        : {}),
+      ...((own.fontFeatures ?? defRun.fontFeatures)
+        ? { fontFeatures: own.fontFeatures ?? defRun.fontFeatures }
+        : {}),
+      ...((own.fontVariations ?? defRun.fontVariations)
+        ? { fontVariations: own.fontVariations ?? defRun.fontVariations }
+        : {}),
+      ...((own.fontWeight ?? defRun.fontWeight)
+        ? { fontWeight: own.fontWeight ?? defRun.fontWeight }
+        : {}),
     };
   };
   const pushText = (text: string, rPr: Rec): void => {
@@ -584,6 +619,37 @@ export function projectRuns(
         openComments.delete(num(child.commentRangeEnd.id)!);
       }
       const rPr: Rec = { ...preset, ...child };
+      if (child.movedFrom || child.moveFrom) {
+        const moveFrom = (child.movedFrom ?? child.moveFrom) as Rec;
+        if (isRecord(moveFrom) && !Array.isArray(moveFrom.children)) {
+          const eff = effectiveView(ctx.markup, moveFrom);
+          if (eff === "none") continue;
+          if (eff === "all") {
+            rPr.strike = true;
+            rPr.color = "008000";
+            if (wantsDeletions) {
+              const color = revisionColor(ctx, moveFrom);
+              revisionBalloon(
+                moveFrom,
+                out.length,
+                color,
+                typeof child.text === "string" ? child.text : undefined,
+              );
+            }
+          }
+        }
+      }
+      if (child.movedTo || child.moveTo) {
+        const moveTo = (child.movedTo ?? child.moveTo) as Rec;
+        if (isRecord(moveTo) && !Array.isArray(moveTo.children)) {
+          const eff = effectiveView(ctx.markup, moveTo);
+          if (eff === "original") continue;
+          if (eff === "all") {
+            rPr.underline = { type: "double", color: "008000" };
+            rPr.color = "008000";
+          }
+        }
+      }
       // A footnote/endnote reference is a superscript ordinal (Word's
       // FootnoteReference/EndnoteReference style look) — numbered by
       // first-reference order, the same id twice showing the same number;
@@ -632,7 +698,35 @@ export function projectRuns(
       // atom's own text (the guide rides as paint metadata); consumed here so
       // the children walk below does not re-emit the base runs verbatim.
       if (isRecord(child.ruby)) pushRuby(child.ruby, rPr);
-      if (child.break != null) out.push({ kind: "break" });
+      if (child.break != null || child.carriageReturn != null) out.push({ kind: "break" });
+      if (child.noBreakHyphen === true) pushText("\u2011", rPr);
+      if (child.softHyphen === true) pushText("\u00AD", rPr);
+      if (child.permStart != null || child.permEnd != null) continue;
+      if (isRecord(child.dir) && Array.isArray(child.dir.children)) {
+        pushRuns(child.dir.children, preset);
+      }
+      if (isRecord(child.bdo) && Array.isArray(child.bdo.children)) {
+        pushRuns(child.bdo.children, preset);
+      }
+      if (isRecord(child.formField)) {
+        const ff = child.formField as Record<string, unknown>;
+        let ffText = "";
+        if (isRecord(ff.checkBox)) {
+          ffText = ff.checkBox.checked ? "☒" : "☐";
+        } else if (isRecord(ff.dropDownList)) {
+          const ddl = ff.dropDownList as {
+            entries?: string[];
+            result?: number;
+            default?: number;
+          };
+          const idx = ddl.result ?? ddl.default ?? 0;
+          ffText = Array.isArray(ddl.entries) && ddl.entries[idx] ? ddl.entries[idx]! : "";
+        } else if (isRecord(ff.textInput)) {
+          const ti = ff.textInput as { value?: string; default?: string };
+          ffText = ti.value ?? ti.default ?? "";
+        }
+        if (ffText) pushText(ffText, rPr);
+      }
       if (child.tab != null) out.push({ kind: "tab" });
       if (isRecord(child.math)) {
         const style = { ...textStyleOf(rPr), italic: true, color: "#808080" };
@@ -670,6 +764,110 @@ export function projectRuns(
               : {}),
           });
         }
+      }
+      if (
+        isRecord(child.model3d) ||
+        (typeof child.rawXml === "string" && is3DModelXml(child.rawXml))
+      ) {
+        const m = isRecord(child.model3d)
+          ? (child.model3d as Rec)
+          : (parse3DModelFromXml(child.rawXml as string) as unknown as Rec);
+        if (!isRecord(m.floating)) {
+          const cx = num(m.cx);
+          const cy = num(m.cy);
+          const widthPx = num(m.width) ?? (cx ? emuToPx(cx) : 200);
+          const heightPx = num(m.height) ?? (cy ? emuToPx(cy) : 200);
+          const title = str(m.title) ?? "";
+          const descr = str(m.descr) ?? "";
+          out.push({
+            kind: "picture",
+            widthPx,
+            heightPx,
+            members: [
+              {
+                kind: "model3d",
+                x: 0,
+                y: 0,
+                width: widthPx,
+                height: heightPx,
+                model3d: m,
+                title,
+                descr,
+                altText: title || descr,
+                ...(typeof m.rotation === "number" ? { rotation: m.rotation } : {}),
+                camera: m.camera,
+              },
+            ],
+            ...(typeof m.rotation === "number" && m.rotation !== 0 ? { rotation: m.rotation } : {}),
+          });
+        }
+      }
+      if (isRecord(child.ink) || (typeof child.rawXml === "string" && isInkXml(child.rawXml))) {
+        const k = isRecord(child.ink)
+          ? (child.ink as Rec)
+          : (parseInkFromXml(child.rawXml as string) as unknown as Rec);
+        if (!isRecord(k.floating)) {
+          const cx = num(k.cx);
+          const cy = num(k.cy);
+          const widthPx = num(k.width) ?? (cx ? emuToPx(cx) : 160);
+          const heightPx = num(k.height) ?? (cy ? emuToPx(cy) : 80);
+          const title = str(k.title) ?? "";
+          const descr = str(k.descr) ?? "";
+          out.push({
+            kind: "picture",
+            widthPx,
+            heightPx,
+            members: [
+              {
+                kind: "ink",
+                x: 0,
+                y: 0,
+                width: widthPx,
+                height: heightPx,
+                ink: k,
+                title,
+                descr,
+                altText: title || descr,
+                ...(typeof k.rotation === "number" ? { rotation: k.rotation } : {}),
+              },
+            ],
+            ...(typeof k.rotation === "number" && k.rotation !== 0 ? { rotation: k.rotation } : {}),
+          });
+        }
+      }
+      if (isRecord(child.object)) {
+        // An embedded OLE object (w:object, e.g. Excel spreadsheet) paints
+        // as an inline framed picture with its vector preview.
+        const obj = child.object as Rec;
+        const parseDimPx = (val: unknown, fallback: number): number => {
+          if (typeof val === "number") {
+            return val > 20000 ? emuToPx(val) : val;
+          }
+          if (typeof val === "string") {
+            const emu = measureEmu(val);
+            if (emu != null) return emuToPx(emu);
+          }
+          return fallback;
+        };
+        const widthPx = parseDimPx(obj.width, 360);
+        const heightPx = parseDimPx(obj.height, 180);
+        const embed = isRecord(obj.embed) ? (obj.embed as Rec) : undefined;
+        const progId = str(embed?.progId) ?? str(obj.progId) ?? "";
+        const fileName = str(embed?.fileName) ?? "";
+        const isExcel =
+          progId.toLowerCase().includes("excel") ||
+          fileName.toLowerCase().endsWith(".xlsx") ||
+          fileName.toLowerCase().endsWith(".xls");
+        const src = isExcel
+          ? excelPreviewSvgDataUri(widthPx, heightPx)
+          : objectPreviewSvgDataUri(widthPx, heightPx, progId || undefined);
+        out.push({
+          kind: "picture",
+          widthPx,
+          heightPx,
+          src,
+          line: { color: isExcel ? "107C41" : "808080", px: 1 },
+        });
       }
       if (isRecord(child.complexField)) pushField(child.complexField, rPr);
       if (isRecord(child.simpleField)) pushField(child.simpleField, rPr);
@@ -712,6 +910,46 @@ export function projectRuns(
           }
           pushRuns(child.deletion.children, { ...preset, strike: true, color });
         } else if (eff === "original") pushRuns(child.deletion.children, preset);
+      }
+      const rawMoveFrom =
+        (isRecord(child.movedFrom) && Array.isArray(child.movedFrom.children)
+          ? child.movedFrom
+          : null) ??
+        (isRecord(child.moveFrom) && Array.isArray(child.moveFrom.children)
+          ? child.moveFrom
+          : null);
+      const moveFrom = rawMoveFrom as (Rec & { children: readonly unknown[] }) | null;
+      if (moveFrom) {
+        const color = revisionColor(ctx, moveFrom);
+        const eff = effectiveView(ctx.markup, moveFrom);
+        if (eff === "all") {
+          if (wantsDeletions) {
+            revisionBalloon(
+              moveFrom,
+              out.length,
+              color,
+              containerText(moveFrom.children) || undefined,
+            );
+          }
+          pushRuns(moveFrom.children, { ...preset, strike: true, color: "008000" });
+        } else if (eff === "original") {
+          pushRuns(moveFrom.children, preset);
+        }
+      }
+      const rawMoveTo =
+        (isRecord(child.movedTo) && Array.isArray(child.movedTo.children) ? child.movedTo : null) ??
+        (isRecord(child.moveTo) && Array.isArray(child.moveTo.children) ? child.moveTo : null);
+      const moveTo = rawMoveTo as (Rec & { children: readonly unknown[] }) | null;
+      if (moveTo) {
+        const eff = effectiveView(ctx.markup, moveTo);
+        if (eff !== "original") {
+          pushRuns(
+            moveTo.children,
+            eff === "all"
+              ? { ...preset, underline: { type: "double", color: "008000" }, color: "008000" }
+              : preset,
+          );
+        }
       }
       if (Array.isArray(child.children)) pushRuns(child.children, preset);
     }

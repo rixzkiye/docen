@@ -199,3 +199,63 @@ export const Strike = Mark.create({
   renderDocx: () => ({ strike: true }),
   parseDocx: (opts: RunOptions): Record<string, unknown> | null => (opts.strike ? {} : null),
 });
+
+export const SoftHyphen = Mark.create({
+  name: "softHyphen",
+  parseHTML() {
+    return [{ tag: "span[data-soft-hyphen]" }, { tag: "wbr" }];
+  },
+  renderHTML() {
+    return ["span", { class: "docx-soft-hyphen", "data-soft-hyphen": "true" }, 0];
+  },
+  renderDocx: () => ({}),
+  parseDocx: () => null,
+});
+
+export const Dir = Mark.create({
+  name: "dir",
+  addAttributes() {
+    return {
+      val: { default: "ltr" },
+    };
+  },
+  parseHTML() {
+    return [
+      {
+        tag: "span[dir]",
+        getAttrs: (el) => ({ val: (el as HTMLElement).getAttribute("dir") ?? "ltr" }),
+      },
+      {
+        tag: "bdi[dir]",
+        getAttrs: (el) => ({ val: (el as HTMLElement).getAttribute("dir") ?? "ltr" }),
+      },
+    ];
+  },
+  renderHTML({ HTMLAttributes }) {
+    return ["span", { dir: HTMLAttributes.val, class: "docx-dir" }, 0];
+  },
+  renderDocx: () => ({}),
+  parseDocx: () => null,
+});
+
+export const Bdo = Mark.create({
+  name: "bdo",
+  addAttributes() {
+    return {
+      val: { default: "ltr" },
+    };
+  },
+  parseHTML() {
+    return [
+      {
+        tag: "bdo[dir]",
+        getAttrs: (el) => ({ val: (el as HTMLElement).getAttribute("dir") ?? "ltr" }),
+      },
+    ];
+  },
+  renderHTML({ HTMLAttributes }) {
+    return ["bdo", { dir: HTMLAttributes.val }, 0];
+  },
+  renderDocx: () => ({}),
+  parseDocx: () => null,
+});

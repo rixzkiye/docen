@@ -57,6 +57,20 @@ interface ChartModel {
   bubbleScale: number;
   /** What bubbleSize maps to: "area" (sqrt) or "width" (linear). */
   sizeRepresents: string;
+  /** Of-Pie secondary type: "pie" | "bar". */
+  ofPieType: string;
+  /** Split type for ofPie: "position" | "value" | "percent" | "custom". */
+  splitType: string;
+  /** Split position (number of slices moved to secondary chart). */
+  splitPosition: number;
+  /** Stock style: "candlestick" | "standard". */
+  stockStyle: string;
+  dataLabels?: Rec;
+  valueAxis?: Rec;
+  categoryAxis?: Rec;
+  secondaryValueAxis?: Rec;
+  style?: number;
+  wireframe?: boolean;
 }
 
 function readModel(chart: Rec): ChartModel | undefined {
@@ -70,6 +84,20 @@ function readModel(chart: Rec): ChartModel | undefined {
   // distinguish (Word's c:autoTitleDeleted-style default; c:legend's absence
   // means the app default, not "off").
   const legend = chart.showLegend === true || (chart.showLegend === undefined && series.length > 1);
+
+  const axes = Array.isArray(chart.axes) ? chart.axes.filter(isRecord) : [];
+  const valAxes = axes.filter((a) => a.kind === "value" || (!a.kind && str(a.type) === "val"));
+  const catAxes = axes.filter((a) => a.kind === "category" || (!a.kind && str(a.type) === "cat"));
+  const valueAxis = isRecord(chart.valueAxis)
+    ? chart.valueAxis
+    : (valAxes[0] ?? (isRecord(chart.valAx) ? chart.valAx : undefined));
+  const secondaryValueAxis = isRecord(chart.secondaryValueAxis)
+    ? chart.secondaryValueAxis
+    : (valAxes[1] ?? undefined);
+  const categoryAxis = isRecord(chart.categoryAxis)
+    ? chart.categoryAxis
+    : (catAxes[0] ?? (isRecord(chart.catAx) ? chart.catAx : undefined));
+
   return {
     type,
     categories,
@@ -88,6 +116,16 @@ function readModel(chart: Rec): ChartModel | undefined {
     radarStyle: str(chart.radarStyle) ?? "standard",
     bubbleScale: num(chart.bubbleScale) ?? 100,
     sizeRepresents: str(chart.sizeRepresents) ?? "area",
+    ofPieType: str(chart.ofPieType) ?? "pie",
+    splitType: str(chart.splitType) ?? "position",
+    splitPosition: num(chart.splitPosition) ?? num(chart.splitPos) ?? 2,
+    stockStyle: str(chart.stockStyle) ?? "candlestick",
+    dataLabels: isRecord(chart.dataLabels) ? chart.dataLabels : undefined,
+    valueAxis,
+    categoryAxis,
+    secondaryValueAxis,
+    style: num(chart.style) ?? num(chart.chartStyle),
+    wireframe: chart.wireframe === true,
   };
 }
 
@@ -102,24 +140,246 @@ function valuesOf(series: Rec): number[] {
   return raw.filter((v): v is number => typeof v === "number");
 }
 
+interface AxisConfig {
+  min?: number;
+  max?: number;
+  majorUnit?: number;
+  logBase?: number;
+  numberFormat?: string;
+}
+
+function resolveAxisConfig(axis: Rec | undefined): AxisConfig | undefined {
+  if (!axis) return undefined;
+  const scaling = isRecord(axis.scaling) ? axis.scaling : undefined;
+  const min = num(scaling?.min) ?? num(axis.min);
+  const max = num(scaling?.max) ?? num(axis.max);
+  const logBase = num(scaling?.logBase);
+  const majorUnit = num(axis.majorUnit);
+  const numFmt =
+    str(axis.numberFormat) ??
+    (isRecord(axis.numberFormat) ? str(axis.numberFormat.formatCode) : undefined);
+  return { min, max, majorUnit, logBase, numberFormat: numFmt };
+}
+
 /** Nice axis bounds: a 1/2/5×10^k step covering [min, max], zero-based unless
  *  the data is entirely off zero (Word keeps a zero baseline when it can). */
-function niceBounds(min: number, max: number): { min: number; max: number; step: number } {
-  if (!Number.isFinite(min) || !Number.isFinite(max) || min === max) {
-    return { min: min === max ? min - 1 : min, max: max === min ? max + 1 : max, step: 1 };
+function niceBounds(
+  min: number,
+  max: number,
+  axisCfg?: AxisConfig,
+): { min: number; max: number; step: number; logBase?: number } {
+  if (axisCfg?.logBase) {
+    const lo =
+      axisCfg.min != null && axisCfg.min > 0 ? axisCfg.min : Math.max(1, min > 0 ? min : 1);
+    const hi = axisCfg.max != null && axisCfg.max > lo ? axisCfg.max : Math.max(10, max);
+    return { min: lo, max: hi, step: axisCfg.logBase, logBase: axisCfg.logBase };
   }
-  const raw = (max - min) / 5;
-  const mag = Math.pow(10, Math.floor(Math.log10(raw)));
-  const step = ([1, 2, 5, 10] as const).map((m) => m * mag).find((s) => s >= raw) ?? 10 * mag;
-  let lo = Math.floor(min / step) * step;
-  let hi = Math.ceil(max / step) * step;
-  if (min >= 0 && lo > 0) lo = 0;
-  if (max <= 0 && hi < 0) hi = 0;
-  return { min: lo, max: hi, step };
+  let lo = axisCfg?.min != null ? axisCfg.min : min;
+  let hi = axisCfg?.max != null ? axisCfg.max : max;
+  let step = axisCfg?.majorUnit != null ? axisCfg.majorUnit : undefined;
+
+  if (!Number.isFinite(lo) || !Number.isFinite(hi) || lo === hi) {
+    return { min: lo === hi ? lo - 1 : lo, max: hi === lo ? hi + 1 : hi, step: step ?? 1 };
+  }
+  if (step == null) {
+    const raw = (hi - lo) / 5;
+    const mag = Math.pow(10, Math.floor(Math.log10(raw || 1)));
+    step = ([1, 2, 5, 10] as const).map((m) => m * mag).find((s) => s >= raw) ?? 10 * mag;
+    if (axisCfg?.min == null) {
+      lo = Math.floor(lo / step) * step;
+      if (min >= 0 && lo > 0) lo = 0;
+    }
+    if (axisCfg?.max == null) {
+      hi = Math.ceil(hi / step) * step;
+      if (max <= 0 && hi < 0) hi = 0;
+    }
+  }
+  return { min: lo, max: hi, step: Math.max(step, 0.0001) };
 }
 
 const fmtTick = (v: number): string =>
   Math.abs(v) >= 1000 ? `${Math.round(v / 100) / 10}k` : `${Math.round(v * 100) / 100}`;
+
+function formatValue(v: number, numberFormat?: string): string {
+  if (!numberFormat) return fmtTick(v);
+  if (numberFormat.includes("%")) {
+    const decimals = (numberFormat.split(".")[1] || "").replace(/[^0#]/g, "").length;
+    return `${(v * 100).toFixed(decimals)}%`;
+  }
+  if (numberFormat.includes("$") || numberFormat.includes("¥") || numberFormat.includes("€")) {
+    const symbol = numberFormat.includes("$") ? "$" : numberFormat.includes("¥") ? "¥" : "€";
+    return `${symbol}${Math.round(v * 100) / 100}`;
+  }
+  if (numberFormat.includes("0.0")) {
+    const decimals = (numberFormat.split(".")[1] || "").replace(/[^0#]/g, "").length;
+    return v.toFixed(decimals);
+  }
+  return fmtTick(v);
+}
+
+function dataLabelTextOf(
+  series: Rec,
+  val: number,
+  catIndex: number,
+  categories: string[],
+  totalVal?: number,
+  customDl?: Rec,
+): string | undefined {
+  const dl = customDl ?? (isRecord(series.dataLabels) ? series.dataLabels : undefined);
+  if (!dl || dl.delete === true) return undefined;
+  const numFmt = str(dl.numberFormat);
+  const parts: string[] = [];
+  if (dl.showSerName && typeof series.name === "string") parts.push(series.name);
+  if (dl.showCatName && categories[catIndex]) parts.push(categories[catIndex]!);
+  if (dl.showVal !== false && !dl.showPercent) parts.push(formatValue(val, numFmt));
+  else if (dl.showVal === true) parts.push(formatValue(val, numFmt));
+  if (dl.showPercent && totalVal && totalVal > 0)
+    parts.push(`${Math.round((val / totalVal) * 100)}%`);
+  if (parts.length === 0) parts.push(formatValue(val, numFmt));
+  const separator = str(dl.separator) ?? " ";
+  return parts.join(separator);
+}
+
+function dataLabelPos(series: Rec, model: ChartModel, fallback: string): string {
+  const sDl = isRecord(series.dataLabels) ? series.dataLabels : undefined;
+  const mDl = isRecord(model.dataLabels) ? model.dataLabels : undefined;
+  return str(sDl?.position) ?? str(mDl?.position) ?? fallback;
+}
+
+function paintDataLabel(
+  tree: IGroup,
+  text: string,
+  x: number,
+  y: number,
+  align: "center" | "left" | "right" = "center",
+): void {
+  if (!text) return;
+  label(tree, text, x, y, LABEL_PX - 2, align);
+}
+
+function paintTrendlines(
+  tree: IGroup,
+  series: Rec,
+  pts: { x: number; y: number }[],
+  _plot: PlotBox,
+): void {
+  const trendlines = Array.isArray(series.trendlines) ? series.trendlines.filter(isRecord) : [];
+  if (trendlines.length === 0 || pts.length < 2) return;
+
+  for (const tl of trendlines) {
+    const type = str(tl.type) ?? "linear";
+    const n = pts.length;
+    if (type === "linear") {
+      let sumX = 0;
+      let sumY = 0;
+      let sumXY = 0;
+      let sumXX = 0;
+      for (const p of pts) {
+        sumX += p.x;
+        sumY += p.y;
+        sumXY += p.x * p.y;
+        sumXX += p.x * p.x;
+      }
+      const denom = n * sumXX - sumX * sumX;
+      if (Math.abs(denom) < 1e-9) continue;
+      const slope = (n * sumXY - sumX * sumY) / denom;
+      const intercept = (sumY - slope * sumX) / n;
+      const x0 = pts[0]!.x;
+      const x1 = pts[pts.length - 1]!.x;
+      const y0 = slope * x0 + intercept;
+      const y1 = slope * x1 + intercept;
+      tree.add(
+        new LeaferPath({
+          path: `M ${x0} ${y0} L ${x1} ${y1}`,
+          stroke: "#595959",
+          strokeWidth: 1.5,
+          dashPattern: [4, 4],
+        }),
+      );
+      if (tl.dispEq || tl.displayEquation) {
+        const sign = intercept >= 0 ? "+" : "-";
+        const eq = `y = ${Math.round(slope * 100) / 100}x ${sign} ${Math.round(Math.abs(intercept) * 100) / 100}`;
+        label(tree, eq, x1, y1 - 8, LABEL_PX - 2, "right");
+      }
+    } else if (type === "movingAverage") {
+      const period = Math.max(num(tl.period) ?? 2, 2);
+      const maPts: { x: number; y: number }[] = [];
+      for (let i = period - 1; i < n; i++) {
+        let avgY = 0;
+        for (let j = 0; j < period; j++) avgY += pts[i - j]!.y;
+        avgY /= period;
+        maPts.push({ x: pts[i]!.x, y: avgY });
+      }
+      if (maPts.length >= 2) {
+        const path = maPts.map((p, idx) => `${idx === 0 ? "M" : "L"} ${p.x} ${p.y}`).join(" ");
+        tree.add(
+          new LeaferPath({
+            path,
+            stroke: "#595959",
+            strokeWidth: 1.5,
+            dashPattern: [4, 4],
+          }),
+        );
+      }
+    } else if (type === "exponential") {
+      const x0 = pts[0]!.x;
+      const x1 = pts[pts.length - 1]!.x;
+      const steps = 10;
+      const curvePts: { x: number; y: number }[] = [];
+      const y0 = pts[0]!.y;
+      const y1 = pts[pts.length - 1]!.y;
+      for (let i = 0; i <= steps; i++) {
+        const t = i / steps;
+        const cx = x0 + t * (x1 - x0);
+        const cy = y0 * Math.pow(Math.max(y1 / (y0 || 1), 0.1), t);
+        curvePts.push({ x: cx, y: cy });
+      }
+      const path = curvePts.map((p, idx) => `${idx === 0 ? "M" : "L"} ${p.x} ${p.y}`).join(" ");
+      tree.add(
+        new LeaferPath({
+          path,
+          stroke: "#595959",
+          strokeWidth: 1.5,
+          dashPattern: [4, 4],
+        }),
+      );
+    }
+  }
+}
+
+function paintErrorBars(
+  tree: IGroup,
+  series: Rec,
+  pts: { x: number; y: number; val: number }[],
+  bounds: { min: number; max: number },
+  plot: PlotBox,
+): void {
+  const eb = isRecord(series.errorBars) ? series.errorBars : undefined;
+  if (!eb) return;
+  const barType = str(eb.barType) ?? "both";
+  const valueType = str(eb.valueType) ?? "fixedValue";
+  const rawVal = num(eb.value) ?? 5;
+  const noEndCap = eb.noEndCap === true;
+  const span = bounds.max - bounds.min || 1;
+
+  for (const p of pts) {
+    let err = rawVal;
+    if (valueType === "percentage") {
+      err = Math.abs(p.val) * (rawVal / 100);
+    }
+    const errPx = (err / span) * plot.height;
+    if (errPx <= 0) continue;
+
+    if (barType === "both" || barType === "plus") {
+      segment(tree, p.x, p.y, p.x, p.y - errPx, "#595959", 1.2);
+      if (!noEndCap) segment(tree, p.x - 3, p.y - errPx, p.x + 3, p.y - errPx, "#595959", 1.2);
+    }
+    if (barType === "both" || barType === "minus") {
+      segment(tree, p.x, p.y, p.x, p.y + errPx, "#595959", 1.2);
+      if (!noEndCap) segment(tree, p.x - 3, p.y + errPx, p.x + 3, p.y + errPx, "#595959", 1.2);
+    }
+  }
+}
 
 /** Text label, horizontally centered on x (or left/right-anchored by align).
  *  With a fixed maxWidth box Leafer anchors the Text at its top-left corner,
@@ -218,16 +478,17 @@ function paintValueChart(tree: IGroup, model: ChartModel, plot: PlotBox, reg?: E
   // Per-category stacks resolve against the stack total (percentStacked
   // normalizes it to 100); plain clusters use the raw data range.
   const catCount = Math.max(model.categories.length, ...all.map((v) => v.length), 1);
-  let bounds: { min: number; max: number; step: number };
+  const axisCfg = resolveAxisConfig(model.valueAxis);
+  let bounds: { min: number; max: number; step: number; logBase?: number };
   if (stacked) {
     const totals: number[] = [];
     for (let c = 0; c < catCount; c++) {
       const sum = all.reduce((acc, vals) => acc + (vals[c] ?? 0), 0);
       totals.push(model.grouping === "percentStacked" ? 100 : sum);
     }
-    bounds = niceBounds(Math.min(0, ...totals), Math.max(0, ...totals));
+    bounds = niceBounds(Math.min(0, ...totals), Math.max(0, ...totals), axisCfg);
   } else {
-    bounds = niceBounds(Math.min(0, ...flat), Math.max(0, ...flat));
+    bounds = niceBounds(Math.min(0, ...flat), Math.max(0, ...flat), axisCfg);
   }
   const toPx = (v: number): number =>
     horizontal
@@ -252,12 +513,13 @@ function paintValueChart(tree: IGroup, model: ChartModel, plot: PlotBox, reg?: E
   for (let v = bounds.min; v <= bounds.max + bounds.step / 2; v += bounds.step) ticks.push(v);
   for (const t of ticks) {
     const p = toPx(t);
+    const tickStr = formatValue(t, axisCfg?.numberFormat);
     if (horizontal) {
       segment(tree, p, plot.y, p, plot.y + plot.height, GRID_LINE);
-      label(tree, fmtTick(t), p, plot.y + plot.height + 4, LABEL_PX - 1, "center");
+      label(tree, tickStr, p, plot.y + plot.height + 4, LABEL_PX - 1, "center");
     } else {
       segment(tree, plot.x, p, plot.x + plot.width, p, t === bounds.min ? AXIS_LINE : GRID_LINE);
-      label(tree, fmtTick(t), plot.x - 6, p, LABEL_PX - 1, "right");
+      label(tree, tickStr, plot.x - 6, p, LABEL_PX - 1, "right");
     }
   }
   // Category axis: one band per category (labels under/left of the baseline).
@@ -284,7 +546,7 @@ function paintValueChart(tree: IGroup, model: ChartModel, plot: PlotBox, reg?: E
     const isArea = model.type === "area";
     if (isLine || isArea) {
       const pts = vals
-        .map((v, c) => ({ x: plot.x + (c + 0.5) * band, y: toPx(v), c }))
+        .map((v, c) => ({ x: plot.x + (c + 0.5) * band, y: toPx(v), c, val: v }))
         .filter((p) => p.x >= plot.x && p.x <= plot.x + plot.width);
       if (pts.length === 0) return;
       const d = pts.map((p, i) => `${i === 0 ? "M" : "L"} ${p.x} ${p.y}`).join(" ");
@@ -306,6 +568,40 @@ function paintValueChart(tree: IGroup, model: ChartModel, plot: PlotBox, reg?: E
           tree.add(new Ellipse({ x: p.x - 3, y: p.y - 3, width: 6, height: 6, fill: `#${fill}` }));
         }
       }
+      for (const p of pts) {
+        const dlText = dataLabelTextOf(
+          series,
+          p.val,
+          p.c,
+          model.categories,
+          undefined,
+          model.dataLabels,
+        );
+        if (dlText) {
+          const pos = dataLabelPos(series, model, "top");
+          let lx = p.x;
+          let ly = p.y - 8;
+          let align: "center" | "left" | "right" = "center";
+          if (pos === "bottom") ly = p.y + 8;
+          else if (pos === "left") {
+            lx = p.x - 8;
+            ly = p.y;
+            align = "right";
+          } else if (pos === "right") {
+            lx = p.x + 8;
+            ly = p.y;
+            align = "left";
+          } else if (pos === "center") {
+            lx = p.x;
+            ly = p.y;
+            align = "center";
+          }
+          paintDataLabel(tree, dlText, lx, ly, align);
+        }
+      }
+      paintTrendlines(tree, series, pts, plot);
+      paintErrorBars(tree, series, pts, bounds, plot);
+
       if (reg) {
         // The series shape first, the data points after — the click's
         // topmost-last scan makes a point win over the line it sits on.
@@ -344,6 +640,47 @@ function paintValueChart(tree: IGroup, model: ChartModel, plot: PlotBox, reg?: E
           ? { x: y0, y: plot.y + c * band, width: h, height: band }
           : { x: plot.x + c * band, y: y0, width: band, height: h };
         tree.add(new Rect({ ...bar, fill: `#${fill}` }));
+        const dlText = dataLabelTextOf(series, v, c, model.categories, undefined, model.dataLabels);
+        if (dlText) {
+          const pos = dataLabelPos(series, model, "outsideEnd");
+          let lx = bar.x + bar.width / 2;
+          let ly = bar.y - 8;
+          let align: "center" | "left" | "right" = "center";
+          if (horizontal) {
+            if (pos === "insideEnd") {
+              lx = bar.x + bar.width - 4;
+              ly = bar.y + bar.height / 2;
+              align = "right";
+            } else if (pos === "center") {
+              lx = bar.x + bar.width / 2;
+              ly = bar.y + bar.height / 2;
+              align = "center";
+            } else if (pos === "insideBase") {
+              lx = bar.x + 4;
+              ly = bar.y + bar.height / 2;
+              align = "left";
+            } else {
+              lx = bar.x + bar.width + 4;
+              ly = bar.y + bar.height / 2;
+              align = "left";
+            }
+          } else {
+            if (pos === "insideEnd") {
+              lx = bar.x + bar.width / 2;
+              ly = bar.y + 8;
+            } else if (pos === "center") {
+              lx = bar.x + bar.width / 2;
+              ly = bar.y + bar.height / 2;
+            } else if (pos === "insideBase") {
+              lx = bar.x + bar.width / 2;
+              ly = base - 8;
+            } else {
+              lx = bar.x + bar.width / 2;
+              ly = bar.y - 8;
+            }
+          }
+          paintDataLabel(tree, dlText, lx, ly, align);
+        }
         reg?.({ series: si, point: c, valueDrag }, bar.x, bar.y, bar.width, bar.height);
         return;
       }
@@ -362,8 +699,58 @@ function paintValueChart(tree: IGroup, model: ChartModel, plot: PlotBox, reg?: E
             height: Math.abs(p - base),
           };
       tree.add(new Rect({ ...bar, fill: `#${fill}` }));
+      const dlText = dataLabelTextOf(series, v, c, model.categories, undefined, model.dataLabels);
+      if (dlText) {
+        const pos = dataLabelPos(series, model, "outsideEnd");
+        let lx = bar.x + bar.width / 2;
+        let ly = bar.y - 8;
+        let align: "center" | "left" | "right" = "center";
+        if (horizontal) {
+          if (pos === "insideEnd") {
+            lx = bar.x + bar.width - 4;
+            ly = bar.y + bar.height / 2;
+            align = "right";
+          } else if (pos === "center") {
+            lx = bar.x + bar.width / 2;
+            ly = bar.y + bar.height / 2;
+            align = "center";
+          } else if (pos === "insideBase") {
+            lx = bar.x + 4;
+            ly = bar.y + bar.height / 2;
+            align = "left";
+          } else {
+            lx = bar.x + bar.width + 4;
+            ly = bar.y + bar.height / 2;
+            align = "left";
+          }
+        } else {
+          if (pos === "insideEnd") {
+            lx = bar.x + bar.width / 2;
+            ly = bar.y + 8;
+          } else if (pos === "center") {
+            lx = bar.x + bar.width / 2;
+            ly = bar.y + bar.height / 2;
+          } else if (pos === "insideBase") {
+            lx = bar.x + bar.width / 2;
+            ly = base - 8;
+          } else {
+            lx = bar.x + bar.width / 2;
+            ly = bar.y - 8;
+          }
+        }
+        paintDataLabel(tree, dlText, lx, ly, align);
+      }
       reg?.({ series: si, point: c, valueDrag }, bar.x, bar.y, bar.width, bar.height);
     });
+
+    const pts = vals.map((v, c) => {
+      const offset = si * slot;
+      const x = horizontal ? toPx(v) : plot.x + c * band + offset + slot * 0.5;
+      const y = horizontal ? plot.y + c * band + offset + slot * 0.5 : toPx(v);
+      return { x, y, val: v };
+    });
+    paintTrendlines(tree, series, pts, plot);
+    paintErrorBars(tree, series, pts, bounds, plot);
   });
 }
 
@@ -396,6 +783,8 @@ function paintPie(tree: IGroup, model: ChartModel, plot: PlotBox, reg?: ElementR
           fill: `#${seriesFillOf(series, i)}`,
         }),
       );
+      const dlText = dataLabelTextOf(series, v, i, model.categories, total, model.dataLabels);
+      if (dlText) paintDataLabel(tree, dlText, cx, cy);
       reg?.({ series: 0, point: i }, cx - r, cy - r, r * 2, r * 2);
       return;
     }
@@ -424,6 +813,20 @@ function paintPie(tree: IGroup, model: ChartModel, plot: PlotBox, reg?: ElementR
         strokeWidth: 1,
       }),
     );
+    const dlText = dataLabelTextOf(series, v, i, model.categories, total, model.dataLabels);
+    if (dlText) {
+      const pos = dataLabelPos(series, model, "bestFit");
+      const mid = (a0 + a1) / 2;
+      const lr =
+        pos === "outsideEnd"
+          ? r * 1.15
+          : pos === "insideEnd"
+            ? r * 0.85
+            : hole
+              ? (r + hole) / 2
+              : r * 0.65;
+      paintDataLabel(tree, dlText, cx + lr * Math.cos(mid), cy + lr * Math.sin(mid));
+    }
     reg?.(
       {
         series: 0,
@@ -447,7 +850,7 @@ function paintScatter(tree: IGroup, model: ChartModel, plot: PlotBox, reg?: Elem
   const xs = flat.flatMap((p) => p.x);
   const ys = flat.flatMap((p) => p.y);
   const bx = niceBounds(Math.min(...xs), Math.max(...xs));
-  const by = niceBounds(Math.min(0, ...ys), Math.max(0, ...ys));
+  const by = niceBounds(Math.min(0, ...ys), Math.max(0, ...ys), resolveAxisConfig(model.valueAxis));
   const px = (v: number) => plot.x + ((v - bx.min) / (bx.max - bx.min)) * plot.width;
   const py = (v: number) => plot.y + plot.height - ((v - by.min) / (by.max - by.min)) * plot.height;
   xyGrid(tree, bx, by, plot, px, py);
@@ -465,14 +868,29 @@ function paintScatter(tree: IGroup, model: ChartModel, plot: PlotBox, reg?: Elem
           fill: `#${fill}`,
         }),
       );
+      const dlText = dataLabelTextOf(
+        series,
+        pair.y[pi]!,
+        pi,
+        model.categories,
+        undefined,
+        model.dataLabels,
+      );
+      if (dlText) {
+        paintDataLabel(tree, dlText, px(xv) + 8, py(pair.y[pi]!), "left");
+      }
       reg?.({ series: si, point: pi }, px(xv) - 4.5, py(pair.y[pi]) - 4.5, 9, 9);
     });
+    const pts = pair.x.map((xv, pi) => ({ x: px(xv), y: py(pair.y[pi]!), val: pair.y[pi]! }));
+    paintTrendlines(tree, series, pts, plot);
+    paintErrorBars(tree, series, pts, by, plot);
   });
 }
 
 const ticksOf = (b: { min: number; max: number; step: number }): number[] => {
   const out: number[] = [];
-  for (let v = b.min; v <= b.max + b.step / 2; v += b.step) out.push(v);
+  const step = Math.max(b.step, 0.0001);
+  for (let v = b.min; v <= b.max + step / 2; v += step) out.push(v);
   return out;
 };
 
@@ -510,8 +928,12 @@ function paintRadar(tree: IGroup, model: ChartModel, plot: PlotBox, reg?: Elemen
   const cx = plot.x + plot.width / 2;
   const cy = plot.y + plot.height / 2;
   const radius = Math.min(plot.width, plot.height) / 2;
-  const bounds = niceBounds(Math.min(0, ...flat), Math.max(0, ...flat));
-  const span = bounds.max - bounds.min;
+  const bounds = niceBounds(
+    Math.min(0, ...flat),
+    Math.max(0, ...flat),
+    resolveAxisConfig(model.valueAxis),
+  );
+  const span = bounds.max - bounds.min || 1;
   const pointAt = (c: number, v: number): [number, number] => {
     const angle = (Math.PI * 2 * c) / catCount - Math.PI / 2;
     const r = (Math.max(0, v - bounds.min) / span) * radius;
@@ -548,15 +970,24 @@ function paintRadar(tree: IGroup, model: ChartModel, plot: PlotBox, reg?: Elemen
       tree.add(
         new LeaferPath({ path: d, stroke: `#${fill}`, strokeWidth: 2, strokeJoin: "round" }),
       );
-      if (model.radarStyle === "marker") {
+      if (model.radarStyle === "marker" || model.markers) {
         for (const [x, y] of pts) {
           tree.add(new Ellipse({ x: x - 3, y: y - 3, width: 6, height: 6, fill: `#${fill}` }));
         }
       }
     }
-    pts.forEach(([x, y], c) =>
-      reg?.({ series: si, point: c, valueDrag: drag }, x - 4, y - 4, 8, 8),
-    );
+    pts.forEach(([x, y], c) => {
+      const dlText = dataLabelTextOf(
+        series,
+        vals[c] ?? 0,
+        c,
+        model.categories,
+        undefined,
+        model.dataLabels,
+      );
+      if (dlText) paintDataLabel(tree, dlText, x, y - 8, "center");
+      reg?.({ series: si, point: c, valueDrag: drag }, x - 4, y - 4, 8, 8);
+    });
   });
   outer.forEach((v, c) =>
     label(
@@ -594,7 +1025,7 @@ function paintBubble(tree: IGroup, model: ChartModel, plot: PlotBox, reg?: Eleme
   const xs = pts.map((d) => d.x);
   const ys = pts.map((d) => d.y);
   const bx = niceBounds(Math.min(...xs), Math.max(...xs));
-  const by = niceBounds(Math.min(0, ...ys), Math.max(0, ...ys));
+  const by = niceBounds(Math.min(0, ...ys), Math.max(0, ...ys), resolveAxisConfig(model.valueAxis));
   const px = (v: number) => plot.x + ((v - bx.min) / (bx.max - bx.min)) * plot.width;
   const py = (v: number) => plot.y + plot.height - ((v - by.min) / (by.max - by.min)) * plot.height;
   xyGrid(tree, bx, by, plot, px, py);
@@ -619,6 +1050,15 @@ function paintBubble(tree: IGroup, model: ChartModel, plot: PlotBox, reg?: Eleme
           opacity: 0.75,
         }),
       );
+      const dlText = dataLabelTextOf(
+        model.series[si]!,
+        s.p.y[c]!,
+        c,
+        model.categories,
+        undefined,
+        model.dataLabels,
+      );
+      if (dlText) paintDataLabel(tree, dlText, x + r + 4, y, "left");
       reg?.({ series: si, point: c }, x - r - 1, y - r - 1, r * 2 + 2, r * 2 + 2);
     });
   });
@@ -626,19 +1066,19 @@ function paintBubble(tree: IGroup, model: ChartModel, plot: PlotBox, reg?: Eleme
 
 // ── stock ──
 
-/** Stock (c:stock): the series order is the data slots — open/high/low/close
- *  (four series) or high/low/close (three, no left ticks). Each category
- *  draws a high–low spine with the open/close ticks reaching left/right
- *  (Word's high-low-close and open-high-low-close line stocks). No sub-hits:
- *  the data edits through the Edit Data dialog. */
+/** Stock (c:stock): Japanese candlesticks (open/high/low/close) or high-low-close lines. */
 function paintStock(tree: IGroup, model: ChartModel, plot: PlotBox): void {
   const all = model.series.map(valuesOf);
   const flat = all.flat();
   if (flat.length === 0) return;
   const catCount = Math.max(model.categories.length, ...all.map((v) => v.length), 1);
-  const bounds = niceBounds(Math.min(0, ...flat), Math.max(0, ...flat));
+  const bounds = niceBounds(
+    Math.min(0, ...flat),
+    Math.max(0, ...flat),
+    resolveAxisConfig(model.valueAxis),
+  );
   const py = (v: number) =>
-    plot.y + plot.height - ((v - bounds.min) / (bounds.max - bounds.min)) * plot.height;
+    plot.y + plot.height - ((v - bounds.min) / (bounds.max - bounds.min || 1)) * plot.height;
   for (const t of ticksOf(bounds)) {
     segment(tree, plot.x, py(t), plot.x + plot.width, py(t), GRID_LINE);
     label(tree, fmtTick(t), plot.x - 6, py(t), LABEL_PX - 1, "right");
@@ -654,11 +1094,38 @@ function paintStock(tree: IGroup, model: ChartModel, plot: PlotBox): void {
     const hi = high[c];
     const lo = low[c];
     if (hi == null || lo == null) continue;
-    segment(tree, cx, py(hi), cx, py(lo), "#595959", 1.5);
-    const tick = band * 0.18;
-    if (open && open[c] != null)
-      segment(tree, cx - tick, py(open[c]), cx, py(open[c]), "#595959", 1.5);
-    if (close[c] != null) segment(tree, cx, py(close[c]), cx + tick, py(close[c]), "#595959", 1.5);
+
+    const op = open ? open[c] : undefined;
+    const cl = close[c];
+
+    if (op != null && cl != null) {
+      // Japanese candlestick: vertical wick through center + box body
+      segment(tree, cx, py(hi), cx, py(lo), "#595959", 1.5);
+      const topY = Math.min(py(op), py(cl));
+      const botY = Math.max(py(op), py(cl));
+      const h = Math.max(botY - topY, 2);
+      const w = Math.min(band * 0.55, 18);
+      const isUp = cl >= op;
+      tree.add(
+        new Rect({
+          x: cx - w / 2,
+          y: topY,
+          width: w,
+          height: h,
+          fill: isUp ? "#FFFFFF" : "#ED7D31",
+          stroke: isUp ? "#26A69A" : "#595959",
+          strokeWidth: 1.5,
+        }),
+      );
+    } else {
+      segment(tree, cx, py(hi), cx, py(lo), "#595959", 1.5);
+      const tick = band * 0.18;
+      if (open && open[c] != null)
+        segment(tree, cx - tick, py(open[c]), cx, py(open[c]), "#595959", 1.5);
+      if (close[c] != null)
+        segment(tree, cx, py(close[c]), cx + tick, py(close[c]), "#595959", 1.5);
+    }
+
     label(
       tree,
       model.categories[c] ?? String(c + 1),
@@ -670,7 +1137,428 @@ function paintStock(tree: IGroup, model: ChartModel, plot: PlotBox): void {
   }
 }
 
-// ── placeholder (surface / ofPie — unmodeled) ──
+// ── surface ──
+
+/** Surface (c:surface): 3D topographical contour mesh with elevation bands and wireframe. */
+function paintSurface(tree: IGroup, model: ChartModel, plot: PlotBox, reg?: ElementReg): void {
+  const all = model.series.map(valuesOf);
+  const flat = all.flat();
+  if (flat.length === 0) return;
+  const catCount = Math.max(model.categories.length, ...all.map((v) => v.length), 2);
+  const seriesCount = Math.max(model.series.length, 2);
+  const bounds = niceBounds(
+    Math.min(0, ...flat),
+    Math.max(0, ...flat),
+    resolveAxisConfig(model.valueAxis),
+  );
+
+  // 3D Oblique parameters
+  const originX = plot.x + 35;
+  const originY = plot.y + plot.height - 30;
+  const depthDx = (plot.width * 0.3) / Math.max(seriesCount - 1, 1);
+  const depthDy = -(plot.height * 0.22) / Math.max(seriesCount - 1, 1);
+  const colDx = (plot.width * 0.6) / Math.max(catCount - 1, 1);
+  const valHeight = plot.height * 0.55;
+  const span = bounds.max - bounds.min || 1;
+
+  const projectPoint = (r: number, c: number, v: number): [number, number] => {
+    const x = originX + c * colDx + r * depthDx;
+    const normV = (v - bounds.min) / span;
+    const y = originY + r * depthDy - normV * valHeight;
+    return [x, y];
+  };
+
+  // Base elevation axis ticks at front left
+  for (const t of ticksOf(bounds)) {
+    const norm = (t - bounds.min) / span;
+    const ty = originY - norm * valHeight;
+    segment(tree, originX - 4, ty, originX, ty, AXIS_LINE, 1);
+    label(tree, fmtTick(t), originX - 8, ty, LABEL_PX - 2, "right");
+  }
+  segment(tree, originX, originY, originX, originY - valHeight, AXIS_LINE, 1.5);
+
+  // Elevation color palette
+  const ELEVATION_COLORS = ["#5B9BD5", "#70AD47", "#FFC000", "#ED7D31", "#C00000"];
+
+  // Render quads from back to front: r = seriesCount - 2 down to 0, c = 0 to catCount - 2
+  for (let r = seriesCount - 2; r >= 0; r--) {
+    for (let c = 0; c < catCount - 1; c++) {
+      const v00 = all[r]?.[c] ?? bounds.min;
+      const v01 = all[r]?.[c + 1] ?? bounds.min;
+      const v11 = all[r + 1]?.[c + 1] ?? bounds.min;
+      const v10 = all[r + 1]?.[c] ?? bounds.min;
+
+      const p00 = projectPoint(r, c, v00);
+      const p01 = projectPoint(r, c + 1, v01);
+      const p11 = projectPoint(r + 1, c + 1, v11);
+      const p10 = projectPoint(r + 1, c, v10);
+
+      const avgV = (v00 + v01 + v11 + v10) / 4;
+      const bandIdx = Math.min(
+        ELEVATION_COLORS.length - 1,
+        Math.max(0, Math.floor(((avgV - bounds.min) / span) * ELEVATION_COLORS.length)),
+      );
+      const color = ELEVATION_COLORS[bandIdx]!;
+      const quadPath = `M ${p00[0]} ${p00[1]} L ${p01[0]} ${p01[1]} L ${p11[0]} ${p11[1]} L ${p10[0]} ${p10[1]} Z`;
+
+      if (!model.wireframe) {
+        tree.add(
+          new LeaferPath({
+            path: quadPath,
+            fill: color,
+            fillOpacity: 0.75,
+            stroke: "#404040",
+            strokeWidth: 0.75,
+          }),
+        );
+      } else {
+        tree.add(
+          new LeaferPath({
+            path: quadPath,
+            stroke: color,
+            strokeWidth: 1.2,
+          }),
+        );
+      }
+
+      reg?.({ series: r, point: c }, p00[0] - 4, p00[1] - 4, 8, 8);
+    }
+  }
+
+  // Category labels along front edge
+  for (let c = 0; c < catCount; c++) {
+    const text = model.categories[c] ?? String(c + 1);
+    const [x] = projectPoint(0, c, bounds.min);
+    label(tree, text, x, originY + 12, LABEL_PX - 2, "center");
+  }
+
+  // Series labels along depth edge
+  for (let r = 0; r < seriesCount; r++) {
+    const s = model.series[r];
+    const name = str(s?.name) ?? `S${r + 1}`;
+    const [x, y] = projectPoint(r, 0, bounds.min);
+    label(tree, name, x - 12, y + 6, LABEL_PX - 2, "right");
+  }
+}
+
+// ── of-pie ──
+
+/** Of-Pie (c:ofPie): primary pie with split slices leading to secondary pie or bar chart. */
+function paintOfPie(tree: IGroup, model: ChartModel, plot: PlotBox, reg?: ElementReg): void {
+  const series = model.series[0];
+  if (!series) return;
+  const vals = valuesOf(series);
+  if (vals.length === 0) return;
+  const total = vals.reduce((a, b) => a + Math.max(0, b), 0);
+  if (total <= 0) return;
+
+  const splitPos = Math.max(1, Math.min(model.splitPosition || 2, vals.length - 1));
+  const primaryCount = vals.length - splitPos;
+  const isBar = model.ofPieType === "bar";
+
+  const pWidth = plot.width * 0.55;
+  const sWidth = plot.width * 0.35;
+  const cx1 = plot.x + pWidth * 0.48;
+  const cy1 = plot.y + plot.height / 2;
+  const r1 = Math.min(pWidth * 0.45, plot.height * 0.42);
+
+  const primaryVals = vals.slice(0, primaryCount);
+  const secondaryVals = vals.slice(primaryCount);
+  const secondarySum = secondaryVals.reduce((a, b) => a + Math.max(0, b), 0);
+  const primaryWithSplit = [...primaryVals, secondarySum];
+
+  let angle = -90;
+  let splitStartAngle = 0;
+  let splitEndAngle = 0;
+
+  primaryWithSplit.forEach((v, i) => {
+    const sweep = (Math.max(0, v) / total) * 360;
+    if (sweep <= 0) return;
+    const a0 = (angle * Math.PI) / 180;
+    const a1 = ((angle + sweep) * Math.PI) / 180;
+    angle += sweep;
+    const isSplit = i === primaryWithSplit.length - 1;
+    if (isSplit) {
+      splitStartAngle = a0;
+      splitEndAngle = a1;
+    }
+    const large = sweep > 180 ? 1 : 0;
+    const x0 = cx1 + r1 * Math.cos(a0);
+    const y0 = cy1 + r1 * Math.sin(a0);
+    const x1 = cx1 + r1 * Math.cos(a1);
+    const y1 = cy1 + r1 * Math.sin(a1);
+    const d = `M ${cx1} ${cy1} L ${x0} ${y0} A ${r1} ${r1} 0 ${large} 1 ${x1} ${y1} Z`;
+    const fill = isSplit ? "7F7F7F" : seriesFillOf(series, i);
+    tree.add(new LeaferPath({ path: d, fill: `#${fill}`, stroke: "#FFFFFF", strokeWidth: 1 }));
+
+    const dlText = dataLabelTextOf(series, v, i, model.categories, total, model.dataLabels);
+    if (dlText) {
+      const mid = (a0 + a1) / 2;
+      const lr = r1 * 0.7;
+      paintDataLabel(tree, dlText, cx1 + lr * Math.cos(mid), cy1 + lr * Math.sin(mid));
+    }
+    if (!isSplit) {
+      reg?.(
+        { series: 0, point: i, shape: { kind: "wedge", cx: cx1, cy: cy1, r: r1, a0, a1 } },
+        cx1 - r1,
+        cy1 - r1,
+        r1 * 2,
+        r1 * 2,
+      );
+    }
+  });
+
+  if (isBar) {
+    const barX = plot.x + plot.width - sWidth + 10;
+    const barW = Math.min(sWidth * 0.5, 45);
+    const barH = r1 * 1.8;
+    const barY = cy1 - barH / 2;
+
+    let curY = barY;
+    secondaryVals.forEach((v, si) => {
+      const origIdx = primaryCount + si;
+      const h = secondarySum > 0 ? (v / secondarySum) * barH : barH / secondaryVals.length;
+      const fill = seriesFillOf(series, origIdx);
+      tree.add(
+        new Rect({
+          x: barX,
+          y: curY,
+          width: barW,
+          height: h,
+          fill: `#${fill}`,
+          stroke: "#FFFFFF",
+          strokeWidth: 1,
+        }),
+      );
+      const dlText = dataLabelTextOf(series, v, origIdx, model.categories, total, model.dataLabels);
+      if (dlText) paintDataLabel(tree, dlText, barX + barW / 2, curY + h / 2);
+      reg?.({ series: 0, point: origIdx }, barX, curY, barW, h);
+      curY += h;
+    });
+
+    const topWedgeX = cx1 + r1 * Math.cos(splitStartAngle);
+    const topWedgeY = cy1 + r1 * Math.sin(splitStartAngle);
+    const botWedgeX = cx1 + r1 * Math.cos(splitEndAngle);
+    const botWedgeY = cy1 + r1 * Math.sin(splitEndAngle);
+
+    segment(tree, topWedgeX, topWedgeY, barX, barY, "#8C8C8C", 1);
+    segment(tree, botWedgeX, botWedgeY, barX, barY + barH, "#8C8C8C", 1);
+  } else {
+    const cx2 = plot.x + plot.width - sWidth * 0.6;
+    const cy2 = cy1;
+    const r2 = r1 * 0.75;
+    let sAngle = -90;
+
+    secondaryVals.forEach((v, si) => {
+      const origIdx = primaryCount + si;
+      const sweep = secondarySum > 0 ? (v / secondarySum) * 360 : 360 / secondaryVals.length;
+      const a0 = (sAngle * Math.PI) / 180;
+      const a1 = ((sAngle + sweep) * Math.PI) / 180;
+      sAngle += sweep;
+      const large = sweep > 180 ? 1 : 0;
+      const x0 = cx2 + r2 * Math.cos(a0);
+      const y0 = cy2 + r2 * Math.sin(a0);
+      const x1 = cx2 + r2 * Math.cos(a1);
+      const y1 = cy2 + r2 * Math.sin(a1);
+      const d = `M ${cx2} ${cy2} L ${x0} ${y0} A ${r2} ${r2} 0 ${large} 1 ${x1} ${y1} Z`;
+      const fill = seriesFillOf(series, origIdx);
+      tree.add(new LeaferPath({ path: d, fill: `#${fill}`, stroke: "#FFFFFF", strokeWidth: 1 }));
+      const dlText = dataLabelTextOf(series, v, origIdx, model.categories, total, model.dataLabels);
+      if (dlText) {
+        const mid = (a0 + a1) / 2;
+        paintDataLabel(
+          tree,
+          dlText,
+          cx2 + r2 * 0.6 * Math.cos(mid),
+          cy2 + r2 * 0.6 * Math.sin(mid),
+        );
+      }
+      reg?.(
+        { series: 0, point: origIdx, shape: { kind: "wedge", cx: cx2, cy: cy2, r: r2, a0, a1 } },
+        cx2 - r2,
+        cy2 - r2,
+        r2 * 2,
+        r2 * 2,
+      );
+    });
+
+    const topWedgeX = cx1 + r1 * Math.cos(splitStartAngle);
+    const topWedgeY = cy1 + r1 * Math.sin(splitStartAngle);
+    const botWedgeX = cx1 + r1 * Math.cos(splitEndAngle);
+    const botWedgeY = cy1 + r1 * Math.sin(splitEndAngle);
+
+    segment(tree, topWedgeX, topWedgeY, cx2, cy2 - r2, "#8C8C8C", 1);
+    segment(tree, botWedgeX, botWedgeY, cx2, cy2 + r2, "#8C8C8C", 1);
+  }
+}
+
+// ── combo ──
+
+/** Combo (mixed types): column + line series on same plot or secondary axis. */
+function paintCombo(tree: IGroup, model: ChartModel, plot: PlotBox, reg?: ElementReg): void {
+  const all = model.series.map(valuesOf);
+  const flat = all.flat();
+  if (flat.length === 0) return;
+
+  const catCount = Math.max(model.categories.length, ...all.map((v) => v.length), 1);
+  const hasSecondary = model.series.some((s) => s.secondaryAxis === true || s.axis === "secondary");
+
+  const primaryIndices = model.series
+    .map((_, i) => i)
+    .filter((i) => !model.series[i]?.secondaryAxis && model.series[i]?.axis !== "secondary");
+  const secondaryIndices = model.series
+    .map((_, i) => i)
+    .filter((i) => model.series[i]?.secondaryAxis || model.series[i]?.axis === "secondary");
+
+  const primVals = primaryIndices.flatMap((i) => all[i]!);
+  const secVals = secondaryIndices.flatMap((i) => all[i]!);
+
+  const primBounds = niceBounds(
+    Math.min(0, ...primVals),
+    Math.max(0, ...primVals),
+    resolveAxisConfig(model.valueAxis),
+  );
+  const secBounds = hasSecondary
+    ? niceBounds(
+        Math.min(0, ...secVals),
+        Math.max(0, ...secVals),
+        resolveAxisConfig(model.secondaryValueAxis),
+      )
+    : primBounds;
+
+  const toPxPrim = (v: number): number =>
+    plot.y +
+    plot.height -
+    ((v - primBounds.min) / (primBounds.max - primBounds.min || 1)) * plot.height;
+  const toPxSec = (v: number): number =>
+    plot.y +
+    plot.height -
+    ((v - secBounds.min) / (secBounds.max - secBounds.min || 1)) * plot.height;
+
+  for (const t of ticksOf(primBounds)) {
+    const p = toPxPrim(t);
+    segment(tree, plot.x, p, plot.x + plot.width, p, t === primBounds.min ? AXIS_LINE : GRID_LINE);
+    label(tree, fmtTick(t), plot.x - 6, p, LABEL_PX - 1, "right");
+  }
+
+  if (hasSecondary) {
+    segment(
+      tree,
+      plot.x + plot.width,
+      plot.y,
+      plot.x + plot.width,
+      plot.y + plot.height,
+      AXIS_LINE,
+    );
+    for (const t of ticksOf(secBounds)) {
+      const p = toPxSec(t);
+      segment(tree, plot.x + plot.width, p, plot.x + plot.width + 4, p, AXIS_LINE);
+      label(tree, fmtTick(t), plot.x + plot.width + 8, p, LABEL_PX - 1, "left");
+    }
+  }
+
+  const band = plot.width / catCount;
+  const basePx = toPxPrim(Math.max(primBounds.min, 0));
+  for (let c = 0; c < catCount; c++) {
+    const text = model.categories[c] ?? String(c + 1);
+    label(tree, text, plot.x + (c + 0.5) * band, basePx + 4, LABEL_PX - 1, "center", band);
+  }
+
+  const colSeriesIndices = model.series
+    .map((s, i) => ({ s, i }))
+    .filter(({ s }) => {
+      const t = str(s.type);
+      return !t || t === "column" || t === "bar";
+    })
+    .map(({ i }) => i);
+
+  const colSlot = band / Math.max(colSeriesIndices.length, 1);
+
+  // Pass 1: Area
+  model.series.forEach((series, si) => {
+    const t = str(series.type);
+    if (t !== "area") return;
+    const vals = all[si]!;
+    const isSec = series.secondaryAxis || series.axis === "secondary";
+    const toPx = isSec ? toPxSec : toPxPrim;
+    const bMin = isSec ? secBounds.min : primBounds.min;
+    const pts = vals.map((v, c) => ({ x: plot.x + (c + 0.5) * band, y: toPx(v) }));
+    if (pts.length === 0) return;
+    const d = pts.map((p, i) => `${i === 0 ? "M" : "L"} ${p.x} ${p.y}`).join(" ");
+    const base = toPx(Math.max(bMin, 0));
+    const fill = seriesFillOf(series, si);
+    tree.add(
+      new LeaferPath({
+        path: `${d} L ${pts[pts.length - 1]!.x} ${base} L ${pts[0]!.x} ${base} Z`,
+        fill: `#${fill}`,
+        opacity: 0.5,
+      }),
+    );
+  });
+
+  // Pass 2: Columns
+  colSeriesIndices.forEach((si, colIdx) => {
+    const series = model.series[si]!;
+    const vals = all[si]!;
+    const isSec = series.secondaryAxis || series.axis === "secondary";
+    const toPx = isSec ? toPxSec : toPxPrim;
+    const bMin = isSec ? secBounds.min : primBounds.min;
+    const base = toPx(Math.max(bMin, 0));
+    const fill = seriesFillOf(series, si);
+    const offset = colIdx * colSlot;
+
+    vals.forEach((v, c) => {
+      const p = toPx(v);
+      const bar = {
+        x: plot.x + c * band + offset + colSlot * 0.1,
+        y: Math.min(base, p),
+        width: colSlot * 0.8,
+        height: Math.abs(p - base),
+      };
+      tree.add(new Rect({ ...bar, fill: `#${fill}` }));
+      const dlText = dataLabelTextOf(series, v, c, model.categories, undefined, model.dataLabels);
+      if (dlText) paintDataLabel(tree, dlText, bar.x + bar.width / 2, bar.y - 8);
+      reg?.({ series: si, point: c }, bar.x, bar.y, bar.width, bar.height);
+    });
+  });
+
+  // Pass 3: Lines, markers, trendlines, error bars
+  model.series.forEach((series, si) => {
+    const t = str(series.type);
+    if (t !== "line" && (t || !colSeriesIndices.includes(si))) {
+      if (t !== "line") return;
+    }
+    if (t !== "line" && colSeriesIndices.includes(si)) return;
+
+    const vals = all[si]!;
+    const isSec = series.secondaryAxis || series.axis === "secondary";
+    const toPx = isSec ? toPxSec : toPxPrim;
+    const pts = vals.map((v, c) => ({ x: plot.x + (c + 0.5) * band, y: toPx(v), c, val: v }));
+    if (pts.length === 0) return;
+    const d = pts.map((p, i) => `${i === 0 ? "M" : "L"} ${p.x} ${p.y}`).join(" ");
+    const fill = seriesFillOf(series, si);
+    tree.add(new LeaferPath({ path: d, stroke: `#${fill}`, strokeWidth: 2, strokeJoin: "round" }));
+
+    for (const p of pts) {
+      tree.add(new Ellipse({ x: p.x - 3, y: p.y - 3, width: 6, height: 6, fill: `#${fill}` }));
+      const dlText = dataLabelTextOf(
+        series,
+        p.val,
+        p.c,
+        model.categories,
+        undefined,
+        model.dataLabels,
+      );
+      if (dlText) paintDataLabel(tree, dlText, p.x, p.y - 8);
+      reg?.({ series: si, point: p.c }, p.x - 4, p.y - 4, 8, 8);
+    }
+
+    paintTrendlines(tree, series, pts, plot);
+    paintErrorBars(tree, series, pts, isSec ? secBounds : primBounds, plot);
+  });
+}
+
+// ── placeholder (fallback for unknown chart type) ──
 
 function paintPlaceholder(tree: IGroup, model: ChartModel, plot: PlotBox): void {
   tree.add(
@@ -701,7 +1589,7 @@ function paintLegend(tree: IGroup, model: ChartModel, box: PlotBox, reg?: Elemen
   const vertical = model.legendPosition === "right" || model.legendPosition === "left";
   // A pie's legend lists its categories (Word colors each point individually),
   // not the single series every pie has.
-  const pie = model.type === "pie" || model.type === "doughnut";
+  const pie = model.type === "pie" || model.type === "doughnut" || model.type === "ofPie";
   const entries = pie
     ? model.categories.map((name, i) => ({
         name,
@@ -842,7 +1730,7 @@ export function paintChartMember(
     reg?.({ title: true }, 0, 0, m.width, TITLE_PX + 8);
     top += TITLE_PX + 8;
   }
-  const pie = model.type === "pie" || model.type === "doughnut";
+  const pie = model.type === "pie" || model.type === "doughnut" || model.type === "ofPie";
   // A pie's legend (its categories) shows on the single series too — Word
   // defaults every pie to a legend; other charts need a second series.
   const legendSize =
@@ -901,6 +1789,15 @@ export function paintChartMember(
       break;
     case "stock":
       paintStock(chart, model, plot);
+      break;
+    case "surface":
+      paintSurface(chart, model, plot, reg);
+      break;
+    case "ofPie":
+      paintOfPie(chart, model, plot, reg);
+      break;
+    case "combo":
+      paintCombo(chart, model, plot, reg);
       break;
     default:
       paintPlaceholder(chart, model, plot);

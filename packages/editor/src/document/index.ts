@@ -12,11 +12,14 @@
 
 import {
   convertMillimetersToTwip,
+  decodePassthroughData,
+  detectUnsupportedContent,
   docxExtensions,
   effectiveRunProps,
   generateDOCX,
   normalizeDocument,
   parseDOCX,
+  parseTextEffects,
   prepareDocument,
   selectionSlicePayload,
   type HtmlGenerateOptions,
@@ -34,13 +37,18 @@ import {
 } from "@docen/docx/layout";
 import {
   browserFontMetrics,
-  TextMeasurer,
+  createMeasurer,
+  loadDefaultFonts,
+  registerShapingFont,
   type FlowPage,
   type FlowPageInsets,
+  type RegisterDefaultFontsOptions,
 } from "@docen/layout";
+import { initShapingWasm } from "@docen/shaping";
 import { attr, customElement } from "@microsoft/fast-element";
 import type { Mark, Node as PMNode } from "@tiptap/pm/model";
 import { EditorState, NodeSelection, TextSelection, type Transaction } from "@tiptap/pm/state";
+import { DocAttrStep } from "@tiptap/pm/transform";
 
 import { descendGroupChild, drawingNodePos } from "../drawing";
 import type { DocenAddin } from "../ui";
@@ -50,7 +58,9 @@ import {
   notifyLocaleChange,
   observeLang,
   registerComponents,
+  resolveDir,
   resolveTheme,
+  setUiDirection,
   t,
   type RibbonMenuItem,
 } from "../ui";
@@ -60,6 +70,7 @@ import type { DrawingPropertiesState } from "../ui/components/workspace/drawing-
 import type { FontDialogPatch } from "../ui/components/workspace/font-dialog";
 import type { GoToKind, GoToPayload } from "../ui/components/workspace/go-to-dialog";
 import type { LinkValues } from "../ui/components/workspace/link-dialog";
+import type { DocenMiniToolbar } from "../ui/components/workspace/mini-toolbar";
 import type {
   NoteKindSettings,
   NoteSettingsValues,
@@ -82,19 +93,20 @@ import {
   type StoryKind,
   type StorySlot,
 } from "./canvas/edit-bridge";
+import { CanvasStage, type CanvasStageSection, type LaidFurnitureSection } from "./canvas/stage";
+import { documentStyles, documentTemplate } from "./chrome";
+import { ClipboardCommands } from "./commands/clipboard";
 // Side-effect: register the document-specific UI components moved out of the
 // shared ui/ barrel — <docen-format-pane> (properties fallback),
 // <docen-outline> (navigation Headings tab), <docen-styles-pane> (Styles).
 import "./components/format-pane";
 import "./components/outline";
 import "./components/styles-pane";
-import { CanvasStage, type CanvasStageSection, type LaidFurnitureSection } from "./canvas/stage";
-import { documentStyles, documentTemplate } from "./chrome";
-import { ClipboardCommands } from "./commands/clipboard";
+import "../ui/components/workspace/alt-text-pane";
 import { CommentsCommands } from "./commands/comments";
 import { combineDocs, compareDocs } from "./commands/compare";
 import { DesignCommands } from "./commands/design";
-import { DialogCommands } from "./commands/dialogs";
+import { DialogCommands, updateDynamicFieldsBeforePrint } from "./commands/dialogs";
 import { hostCommands, type HostCommandRegistry } from "./commands/host";
 import {
   BuildingBlocksHostCommands,
@@ -110,30 +122,45 @@ import { RevisionsCommands } from "./commands/revisions";
 import { SectionCommands } from "./commands/sections";
 import { SpellingCommands } from "./commands/spelling";
 import { THEMES } from "./commands/themes";
+import { contentWarningText } from "./content-warning";
+import {
+  applyDocumentDefaults,
+  clearDocumentDefaults,
+  documentDefaultsOf,
+  newDocumentJSON,
+  readDocumentDefaults,
+  writeDocumentDefaults,
+} from "./defaults";
 import type { NewStyleDefinition } from "./extensions/commands";
 import type { ModifyStylePatch, ParagraphDialogPatch } from "./extensions/commands";
+import { stampStyleRunPatches } from "./extensions/commands";
 import { type FieldFrame } from "./fields";
 import { READONLY_LIVE, type SaveFormat } from "./file-formats";
 import { ChromeDomain } from "./host/chrome";
 import { InsertDomain } from "./host/insert";
 import { IODomain } from "./host/io";
-// Side-effect import: registers the ribbon/header translation tables.
-import "./i18n";
 import { RenderDomain } from "./host/render";
 import { StatusDomain } from "./host/status";
+// Side-effect import: registers the ribbon/header translation tables.
+import "./i18n";
 import { pageInsets, StoriesDomain } from "./host/stories";
 import { StylesDomain } from "./host/styles";
 import { mergeSectionProperties } from "./page-setup";
 import { compressPictureSrc, pickTransparentColor, type CropRect } from "./pixels";
 import {
+  addPermissionRange,
   applyProtectionMode,
   enforceProtection,
-  isInsideEditableSdt,
+  findNextPermissionRange,
+  hasPermissionRanges,
+  isInsideEditableField,
+  isInsideEditablePermission,
   stopProtection,
   withProtection,
   type ProtectionHostView,
   type ProtectionPane,
 } from "./protection";
+import { downloadOleObject } from "./quick-tables";
 import { formattingInfoOf } from "./reveal-formatting";
 import { useCmUnits } from "./ribbon";
 import {
@@ -147,6 +174,9 @@ import {
   type SettingsPatch,
 } from "./settings";
 import { getSynonyms, spellSuggestions } from "./spelling";
+import { attachTemplate, type DotxTemplatePackage } from "./template-manager";
+import { textEffectThemeXml } from "./text-effects";
+import { translateText } from "./translation";
 
 /** Double-click window (ms) — the format painter's sticky toggle and the
  *  bare-click stroke deferral both track the system double-click time. */
@@ -218,17 +248,35 @@ export type TaskPaneId =
   | "clipboard"
   | "proofing"
   | "thesaurus"
+  | "translate"
   | "revisions"
   | "styles"
   | "reveal"
   | "restrict"
-  | "a11y";
+  | "a11y"
+  | "altText";
 
 /**
  * Visibility mode values, matching `Office.VisibilityMode` (`taskpane` | `hidden`).
  * Carried on {@link docen:taskpane-visibility-change} event details.
  */
 export type VisibilityMode = "taskpane" | "hidden";
+
+/** The interactive horizontal ruler element (View → Ruler): the
+ *  `<docen-ruler>` component surface the host drives. */
+interface InteractiveRulerElement extends HTMLElement {
+  bindEditor(editor: Editor): void;
+  setParagraphAttrs(
+    indent?: { left?: number; right?: number; firstLine?: number; hanging?: number },
+    tabStops?: Array<{ position: number; type: string }>,
+    geometry?: {
+      pageWidthPx?: number;
+      marginLeftPx?: number;
+      marginRightPx?: number;
+      scale?: number;
+    },
+  ): void;
+}
 
 @customElement({ name: "docen-document", template: documentTemplate, styles: documentStyles })
 class DocenDocument extends AddinHost<Editor> {
@@ -248,11 +296,85 @@ class DocenDocument extends AddinHost<Editor> {
   /** The document view (Word's View tab): "print" | "web" | "draft" | "read".
    *  Anything else falls back to "print". */
   @attr view?: string;
+  @attr override dir!: string;
+  @attr({ mode: "boolean", attribute: "touch-mode" }) touchMode = false;
+
+  get isRtl(): boolean {
+    const d = this.dir || this.getAttribute("dir");
+    return d === "rtl" || resolveDir(this) === "rtl";
+  }
+
+  dirChanged(): void {
+    const d = this.dir || this.getAttribute("dir");
+    if (d === "rtl" || d === "ltr") {
+      this.#syncDirTo(d);
+    } else {
+      this.#syncDir();
+    }
+  }
+
+  touchModeChanged(): void {
+    this.#syncTouchMode();
+  }
+
+  #syncTouchMode = (): void => {
+    const ribbon = this.shadowRoot?.querySelector("docen-ribbon");
+    if (ribbon) {
+      if (this.touchMode) {
+        ribbon.setAttribute("touch-mode", "");
+        (ribbon as HTMLElement & { touchMode?: boolean }).touchMode = true;
+      } else {
+        ribbon.removeAttribute("touch-mode");
+        (ribbon as HTMLElement & { touchMode?: boolean }).touchMode = false;
+      }
+    }
+  };
+
+  #syncDirTo = (nextDir: string): void => {
+    const ribbon = this.shadowRoot?.querySelector("docen-ribbon");
+    if (ribbon && ribbon.getAttribute("dir") !== nextDir) {
+      ribbon.setAttribute("dir", nextDir);
+    }
+    const statusBar = this.shadowRoot?.querySelector("docen-status-bar");
+    if (statusBar && statusBar.getAttribute("dir") !== nextDir) {
+      statusBar.setAttribute("dir", nextDir);
+    }
+    const navPane = this.shadowRoot?.querySelector("docen-nav-pane, docen-navigation-pane");
+    if (navPane && navPane.getAttribute("dir") !== nextDir) {
+      navPane.setAttribute("dir", nextDir);
+    }
+    const workspace = this.shadowRoot?.querySelector("docen-workspace");
+    if (workspace && workspace.getAttribute("dir") !== nextDir) {
+      workspace.setAttribute("dir", nextDir);
+    }
+  };
+
+  #syncDir = (): void => {
+    const nextDir = resolveDir(this);
+    if (this.getAttribute("dir") !== nextDir) {
+      this.setAttribute("dir", nextDir);
+    }
+    this.#syncDirTo(nextDir);
+    this.#syncRulerDirection();
+  };
+
+  setUiDirection(direction: "ltr" | "rtl" | "auto"): void {
+    setUiDirection(direction);
+    this.#syncDir();
+  }
 
   #bridge?: EditBridge;
   /** The Markdown input mode (Options → Markdown) — session-level, like the
    *  spelling toggle: the bridge reads it per keystroke via a getter. */
   #markdown = true;
+  #fieldShading: "never" | "always" | "whenSelected" = "whenSelected";
+  /** Mailings → Highlight Merge Fields (view-only, per-document session). */
+  #highlightMergeFields = false;
+  /** Home → Editing → Select → Select Objects: the object-selection mode the
+   *  bridge enforces (clicks select drawings, text editing is suppressed). */
+  #objectSelect = false;
+  #updateFieldsBeforePrint = false;
+  #printMarkup = false;
   /** Whether the document's settings.xml carries a read-only editing
    *  restriction (Options → Document). Folds into every editable
    *  computation — never a second setEditable writer. */
@@ -349,15 +471,18 @@ class DocenDocument extends AddinHost<Editor> {
     caretLanguage: () => this.#caretLanguage(),
     taskpaneOpen: (id) => this.getTaskpaneState(id),
     updateReveal: () => this.#updateRevealFormatting(),
+    updateAltText: () => this.#syncAltTextPane(),
     setView: (view) => this.setAttribute("view", view),
-    emitZoom: (zoom) =>
+    emitZoom: (zoom) => {
       this.dispatchEvent(
         new CustomEvent("docen:zoom-change", {
           bubbles: true,
           composed: true,
           detail: { zoom },
         }),
-      ),
+      );
+      this.#syncRuler();
+    },
   });
   /** Ribbon/title-bar chrome (QAT, auto-save, header/panes, menu syncs), split
    *  out of this class — see host/chrome.ts. */
@@ -373,6 +498,8 @@ class DocenDocument extends AddinHost<Editor> {
     getAttribute: (name) => this.getAttribute(name),
     hasAttribute: (name) => this.hasAttribute(name),
     markdown: () => this.#markdown,
+    highlightMergeFields: () => this.#highlightMergeFields,
+    objectSelectActive: () => this.#objectSelect,
     markupView: () => this.#markupView,
     markupAuthors: () => this.#markupAuthors,
     markupColors: () => this.#markupColors,
@@ -387,6 +514,10 @@ class DocenDocument extends AddinHost<Editor> {
     getTaskpaneState: (id) => this.getTaskpaneState(id),
     setTaskpane: (id, open) => this.#setTaskpane(id, open),
     updateStatus: () => this.#updateStatus(),
+    hostCommandEvents: () => {
+      const registry = this.#hostCommandRegistry();
+      return new Set<string>([...registry.chrome.keys(), ...registry.editor.keys()]);
+    },
     dispatch: (event) => this.dispatchEvent(event),
   });
   /** File I/O (open/save/print/close/templates), split out of this class —
@@ -401,6 +532,7 @@ class DocenDocument extends AddinHost<Editor> {
     sectionOfPage: () => this.#sectionOfPage,
     flow: () => this.#flow,
     lastRun: () => this.#lastRun,
+    fonts: () => this.#fonts,
     viewMode: () => this.#viewMode(),
     lang: () => this.lang,
     docxVariant: () => this.#docxVariant,
@@ -436,6 +568,7 @@ class DocenDocument extends AddinHost<Editor> {
     applyDocumentTheme: (kind, value, persist) => this.#applyDocumentTheme(kind, value, persist),
     snapshotStyles: () => this.#snapshotStyles(),
     syncEditable: () => this.#syncEditable(),
+    syncDocumentSettings: (settings) => this.#syncDocumentSettings(settings),
   });
   /** Styles pane / gallery / Modify Style dialogs, split out of this class —
    *  see host/styles.ts. */
@@ -454,7 +587,6 @@ class DocenDocument extends AddinHost<Editor> {
     root: () => this.shadowRoot,
     editor: () => this.editor,
     bridge: () => this.#bridge,
-    stage: () => this.#stage,
     flow: () => this.#flow,
     pages: () => this.#pages,
     hyphenation: () => this.#hyphenation,
@@ -522,6 +654,10 @@ class DocenDocument extends AddinHost<Editor> {
     flow: () => this.#flow,
     setFlow: (flow) => {
       this.#flow = flow;
+      // The flow box is the ruler's geometry source — sync as soon as it lands
+      // (the first render is incremental, so renderDoc's own call may run
+      // before the first slice has laid out).
+      this.#syncRuler();
     },
     lastRun: () => this.#lastRun,
     setLastRun: (run) => {
@@ -536,7 +672,6 @@ class DocenDocument extends AddinHost<Editor> {
     pageInsets: (flow, furniture, laid) => this.#pageInsets(flow, furniture, laid),
     updateStatus: () => this.#updateStatus(),
     syncStatusLanguage: () => this.#syncStatusLanguage(),
-    syncActiveTabStops: () => this.#syncActiveTabStops(),
     setProgress: (label) => this.#setProgress(label),
     viewMode: () => this.#viewMode(),
   });
@@ -563,6 +698,11 @@ class DocenDocument extends AddinHost<Editor> {
     isPageField: (child) => DocenDocument.isPageField(child),
   });
   #stageHost?: HTMLElement;
+  /** The interactive horizontal ruler (View → Ruler). Mounted above the
+   *  pages; the vertical strip stays on the stage. */
+  #ruler?: InteractiveRulerElement;
+  #rulerGeometry = "";
+  #rulerEditor?: Editor;
   readonly #a11yMirror = new A11yMirror();
   #a11yTimer?: number;
   #versionSnapshots: Array<{
@@ -573,7 +713,14 @@ class DocenDocument extends AddinHost<Editor> {
     doc: JSONContent;
   }> = [];
   #currentLandmarkIdx = 0;
-  #measurer = new TextMeasurer(browserFontMetrics);
+  #measurer = createMeasurer(browserFontMetrics);
+  /** Host-registered font bytes by lowercased family — used for shaping
+   *  (when opted in) and for PDF/DOCX font embedding. The original family
+   *  spelling rides along for font-name output. */
+  readonly #fonts = new Map<string, { family: string; fontData: Uint8Array }>();
+  /** True while the user dismissed the unsupported-content warning for the
+   *  current document (reset on every load). */
+  #contentWarningDismissed = false;
   #pages: readonly FlowPage[] = [];
   /** Page index → section index (the caret's section and per-page geometry
    *  read through it). */
@@ -610,6 +757,13 @@ class DocenDocument extends AddinHost<Editor> {
   #painterSticky = false;
   #painterClickAt = 0;
   #painterStrokeTimer?: ReturnType<typeof setTimeout>;
+  #lastMiniToolbarSelection: { from: number; to: number } | null = null;
+  #previewSnapshot: {
+    docContent: unknown;
+    selection: { from: number; to: number };
+    themeKind?: string;
+    themeCssVars?: Map<string, string>;
+  } | null = null;
   /** Cached unwrapped JSON (host.getJSON result). Invalidated on every user/doc
    *  change; recomputed lazily. Saves the editor.getJSON walk on every
    *  save/autosave/getJSON call. */
@@ -656,6 +810,11 @@ class DocenDocument extends AddinHost<Editor> {
   #borderPainting = false;
   #borderErase = false;
   #borderPaintKeyOff?: () => void;
+
+  #tableDrawing = false;
+  #tableEraser = false;
+  #tableDrawKeyOff?: () => void;
+  #tableEraserKeyOff?: () => void;
 
   /** Insert → Shapes: the armed preset token (null = disarmed). While armed
    *  the canvas presses drag a ghost rectangle and insert the preset at it
@@ -771,6 +930,7 @@ class DocenDocument extends AddinHost<Editor> {
    *  ignored inside ribbon comboboxes and other inputs (so the keystroke reaches
    *  them); Ctrl+F is global. preventDefault blocks the browser's native zoom/find. */
   readonly #onZoomKey = (event: KeyboardEvent): void => {
+    if (event.defaultPrevented) return;
     // Alt+Q focuses the command search (Office's "Tell me what you want to
     // do" shortcut). Handled before the Ctrl/Meta gate below.
     if (
@@ -829,6 +989,12 @@ class DocenDocument extends AddinHost<Editor> {
       return;
     }
     if (!(event.ctrlKey || event.metaKey)) return;
+    // Ctrl+F1 toggles ribbon minimized mode (Word behavior).
+    if (event.key === "F1") {
+      event.preventDefault();
+      this.#toggleRibbonMinimized();
+      return;
+    }
     // Ctrl+Shift+8 toggles formatting marks (Word). Shift+8 turns the key
     // into "*" on US layouts, so both spellings count.
     if (event.shiftKey && (event.key === "8" || event.key === "*")) {
@@ -917,6 +1083,29 @@ class DocenDocument extends AddinHost<Editor> {
         target.tabIndex = -1;
         target.focus();
       }
+    }
+  }
+
+  #toggleRibbonMinimized(): void {
+    const ribbon = this.shadowRoot?.querySelector("docen-ribbon") as
+      | (HTMLElement & {
+          currentMode?: string;
+          toggleMinimized?: () => void;
+        })
+      | null;
+    if (!ribbon) return;
+    if (typeof ribbon.toggleMinimized === "function") {
+      ribbon.toggleMinimized();
+    } else {
+      const current = ribbon.getAttribute("data-ribbon-mode") ?? "always";
+      const next = current === "tabs-only" ? "always" : "tabs-only";
+      if (next === "always") {
+        ribbon.removeAttribute("data-ribbon-mode");
+      } else {
+        ribbon.setAttribute("data-ribbon-mode", next);
+      }
+      ribbon.removeAttribute("data-expanded");
+      ribbon.dispatchEvent(new CustomEvent("ribbon-mode-change", { detail: { mode: next } }));
     }
   }
 
@@ -1058,6 +1247,20 @@ class DocenDocument extends AddinHost<Editor> {
     stopProtection(this.#protectionView());
   };
 
+  readonly #onProtectionToggleException = (event: CustomEvent<any>): void => {
+    const editor = this.#bridge?.activeEditor() ?? this.editor;
+    if (!editor) return;
+    const { group } = event.detail ?? {};
+    addPermissionRange(editor, { editGroup: group ?? "everyone" });
+    this.#syncEditable();
+  };
+
+  readonly #onProtectionFindNext = (): void => {
+    const editor = this.#bridge?.activeEditor() ?? this.editor;
+    if (!editor) return;
+    findNextPermissionRange(editor);
+  };
+
   readonly #onA11ySelectIssue = (event: CustomEvent<any>): void => {
     const issue = event.detail?.issue;
     if (!issue) return;
@@ -1127,6 +1330,11 @@ class DocenDocument extends AddinHost<Editor> {
     if (!editor) return;
     if (value === "similar") {
       selectSimilarFormatting(editor);
+      return;
+    }
+    // Select Objects: toggles the object-selection mode (Word's arrow mode).
+    if (value === "objects") {
+      this.setObjectSelect(!this.#objectSelect);
       return;
     }
     if ((value ?? "all") !== "all") return;
@@ -1303,6 +1511,50 @@ class DocenDocument extends AddinHost<Editor> {
     this.#borderPaintKeyOff = undefined;
   }
 
+  #armTableDrawer(): void {
+    this.#stopBorderPainting();
+    this.#stopFormatPainter();
+    this.#stopShapeDrawing();
+    this.#stopTableEraser();
+    this.#tableDrawing = true;
+    const onKey = (event: Event): void => {
+      if ((event as KeyboardEvent).key === "Escape") {
+        event.stopPropagation();
+        this.#stopTableDrawing();
+      }
+    };
+    this.addEventListener("keydown", onKey, true);
+    this.#tableDrawKeyOff = () => this.removeEventListener("keydown", onKey, true);
+  }
+
+  #stopTableDrawing(): void {
+    this.#tableDrawing = false;
+    this.#tableDrawKeyOff?.();
+    this.#tableDrawKeyOff = undefined;
+  }
+
+  #armTableEraser(): void {
+    this.#stopBorderPainting();
+    this.#stopFormatPainter();
+    this.#stopShapeDrawing();
+    this.#stopTableDrawing();
+    this.#tableEraser = true;
+    const onKey = (event: Event): void => {
+      if ((event as KeyboardEvent).key === "Escape") {
+        event.stopPropagation();
+        this.#stopTableEraser();
+      }
+    };
+    this.addEventListener("keydown", onKey, true);
+    this.#tableEraserKeyOff = () => this.removeEventListener("keydown", onKey, true);
+  }
+
+  #stopTableEraser(): void {
+    this.#tableEraser = false;
+    this.#tableEraserKeyOff?.();
+    this.#tableEraserKeyOff = undefined;
+  }
+
   /** Arm the Shapes drawer (Insert → Shapes pick): the next canvas press
    *  draws and disarms. The keydown captures — before a draw an Escape only
    *  means "put the pencil down", not the bridge's selection Escapes
@@ -1370,13 +1622,19 @@ class DocenDocument extends AddinHost<Editor> {
     // also the one that appends the Table Layout panel — the combos only
     // exist from that pass on. The drawing Size combos ride the same pass.
     this.#syncCellSize();
+    this.#syncTableLookCheckboxes();
     this.#syncDrawingSize();
     // Selection-sensitive greying: the arrange group's liveness depends on
     // what the selection points at, which no static pass sees.
     this.#syncArrangeGreying();
     this.#syncFormatButtons();
+    this.#syncSelectMenu();
     this.#syncDrawingMenus();
     this.#syncQuickPartsMenu();
+    this.#syncMiniToolbar();
+    // The ruler's direction follows the caret's paragraph (Word mirrors the
+    // scale for RTL runs even in an LTR shell).
+    this.#syncRulerDirection();
     if (this.#uiSelectionDirty) {
       this.#uiSelectionDirty = false;
       // The status-bar language mirrors the caret's proofing language (Word).
@@ -1409,6 +1667,63 @@ class DocenDocument extends AddinHost<Editor> {
     if (sizeCb && sizeCb.getAttribute("value") !== sizeDisplay) {
       sizeCb.setAttribute("value", sizeDisplay);
     }
+  }
+
+  #syncMiniToolbar(): void {
+    const miniToolbar = this.shadowRoot?.querySelector(
+      "docen-mini-toolbar",
+    ) as DocenMiniToolbar | null;
+    if (!miniToolbar) return;
+    const editor = this.#bridge?.activeEditor() ?? this.editor;
+    if (!editor) {
+      miniToolbar.hide();
+      this.#lastMiniToolbarSelection = null;
+      return;
+    }
+    const { selection } = editor.state;
+    // Read-only / protected regions have no formatting to apply — Word does
+    // not float the toolbar over them.
+    const editable =
+      editor.isEditable &&
+      (this.#protectionMode !== "forms" || isInsideEditableField(editor)) &&
+      (this.#protectionMode !== "readOnly" || isInsideEditablePermission(editor));
+    if (
+      !editable ||
+      selection.empty ||
+      !(selection instanceof TextSelection) ||
+      this.#drawingStateOf() != null
+    ) {
+      miniToolbar.hide();
+      this.#lastMiniToolbarSelection = null;
+      return;
+    }
+    const isNewSel =
+      !this.#lastMiniToolbarSelection ||
+      this.#lastMiniToolbarSelection.from !== selection.from ||
+      this.#lastMiniToolbarSelection.to !== selection.to;
+    this.#lastMiniToolbarSelection = { from: selection.from, to: selection.to };
+
+    if (isNewSel || miniToolbar.isOpen) {
+      const rect = this.#bridge?.selectionClientRect(selection.from, selection.to);
+      if (rect && (rect.width > 0 || rect.height > 0)) {
+        miniToolbar.showNear(rect);
+      }
+    }
+    const { font, size } = effectiveRunProps(
+      this.#docStyles(editor),
+      this.#currentStyleId(editor),
+      editor.getAttributes("textStyle"),
+    );
+    miniToolbar.updateFormatting({
+      bold: editor.isActive("bold"),
+      italic: editor.isActive("italic"),
+      underline: editor.isActive("underline"),
+      fontName: font ?? undefined,
+      fontSize: size != null ? String(size) : undefined,
+      fontColor: (editor.getAttributes("textStyle")?.color as string) ?? undefined,
+      highlightColor: (editor.getAttributes("highlight")?.color as string) ?? undefined,
+      editable,
+    });
   }
 
   #docStyles(editor: Editor): StylesOptions | null {
@@ -1492,6 +1807,59 @@ class DocenDocument extends AddinHost<Editor> {
     this.#styles.restoreStylesSnapshot();
   }
 
+  /** Design → Document Formatting → Text Effects: stamp the chosen effect
+   *  theme onto the Title/Heading 1-3 styles (Word's document text-effects
+   *  gallery). "none" clears the effect from those styles. */
+  #setTextEffectsTheme(value?: string): void {
+    const xml = textEffectThemeXml(value);
+    if (xml === undefined) return;
+    const editor = this.editor;
+    if (!editor) return;
+    const patch = { w14RawXml: xml };
+    const styles = (editor.state.doc.attrs.styles ?? {}) as Record<string, unknown>;
+    editor.view.dispatch(
+      editor.state.tr.step(
+        new DocAttrStep(
+          "styles",
+          stampStyleRunPatches(styles, {
+            title: patch,
+            heading1: patch,
+            heading2: patch,
+            heading3: patch,
+          }),
+        ),
+      ),
+    );
+  }
+
+  /** Design → Set as Default: persist this document's theme + style set as the
+   *  formatting newly created documents start from. Word stores it on the
+   *  Normal template; the browser element stores it in localStorage (see
+   *  {@link readDocumentDefaults}) because it has no filesystem template. */
+  #setAsDefault(): void {
+    const editor = this.editor;
+    if (!editor) return;
+    writeDocumentDefaults(documentDefaultsOf(editor.state.doc.attrs));
+  }
+
+  /** Record the style set a `style-set` dispatch applied (or cleared, for the
+   *  "Document Default" entry) so Set as Default can persist it. The value
+   *  rides documentExtras.settings — the same channel the theme uses — and is
+   *  ignored by the DOCX writer (office-open emits only known settings). */
+  #rememberStyleSet(styleSet: string | null): void {
+    const editor = this.editor;
+    if (!editor) return;
+    const attrs = (editor.state.doc.attrs ?? {}) as { documentExtras?: Record<string, unknown> };
+    const extras = attrs.documentExtras ?? {};
+    const settings = (extras.settings as Record<string, unknown>) ?? {};
+    if ((settings.styleSet ?? null) === styleSet) return;
+    const next = { ...settings, ...(styleSet ? { styleSet } : {}) };
+    if (!styleSet) delete next.styleSet;
+    editor.view.dispatch(
+      editor.state.tr.setDocAttribute("documentExtras", { ...extras, settings: next }),
+    );
+  }
+
   async connectedCallback(): Promise<void> {
     super.connectedCallback();
     // Forward this host's `lang` attribute to the internal <docen-workspace>
@@ -1551,8 +1919,29 @@ class DocenDocument extends AddinHost<Editor> {
           this.editor.commands.insertContent(event.detail);
         }
       }) as EventListener);
+    this.shadowRoot
+      ?.querySelector<HTMLElement>("docen-translate-pane")
+      ?.addEventListener("translate:insert", ((event: CustomEvent<string>) => {
+        if (event.detail && this.editor) {
+          this.editor.commands.insertContent(event.detail);
+        }
+      }) as EventListener);
+    this.shadowRoot
+      ?.querySelector<HTMLElement>("docen-translate-pane")
+      ?.addEventListener("translate:document", ((
+        event: CustomEvent<{ from?: string; to?: string }>,
+      ) => {
+        this.#translateDocument(event.detail?.from, event.detail?.to);
+      }) as EventListener);
+    this.addEventListener("docen:translate", ((event: CustomEvent<{ text?: string }>) => {
+      this.#openTranslate(event.detail?.text);
+    }) as EventListener);
 
     this.#stageHost = this.shadowRoot!.querySelector<HTMLElement>(".docen-canvas") ?? undefined;
+    this.#mountRuler();
+    this.shadowRoot
+      ?.querySelector<HTMLElement>(".content-warning-close")
+      ?.addEventListener("click", () => this.#dismissContentWarning());
     this.#stageHost?.addEventListener("wheel", this.#onWheel as EventListener, {
       capture: true,
       passive: false,
@@ -1562,6 +1951,20 @@ class DocenDocument extends AddinHost<Editor> {
     // Fonts must be loaded before the pipeline measures, else the layout
     // drifts from the browser's actual font metrics.
     await document.fonts?.ready;
+    // The production shaping set: register the bundled metric-compatible
+    // faces before the first layout so the default Word families shape
+    // deterministically instead of silently falling back to canvas. A failure
+    // (e.g. a bundler that did not emit the package's asset URLs) is loud but
+    // non-fatal — the canvas measurer keeps working.
+    try {
+      await this.registerDefaultFonts();
+    } catch (err) {
+      console.warn(
+        "[docen-document] bundled shaping fonts unavailable — using canvas metrics. " +
+          "Call registerDefaultFonts({ baseUrl }) with the emitted assets/fonts directory to opt in.",
+        err,
+      );
+    }
 
     const contentAttr = this.getAttribute("content");
     // Declarative section-properties / styles (JSON) seed doc-level attrs so a
@@ -1603,7 +2006,11 @@ class DocenDocument extends AddinHost<Editor> {
 
     this.#bridge = mountEditBridge({
       host: this.#stageHost,
-      canEdit: (ed) => (this.#protectionMode === "forms" ? isInsideEditableSdt(ed) : true),
+      canEdit: (ed) => {
+        if (this.#protectionMode === "forms") return isInsideEditableField(ed);
+        if (this.#protectionMode === "readOnly") return isInsideEditablePermission(ed);
+        return true;
+      },
       // The textarea must live outside docen-context-menu (fluent-menu eats
       // Space/Enter) — the input layer at the shadow root is menu-free.
       inputHost: this.shadowRoot!.querySelector<HTMLElement>(".input-layer")!,
@@ -1616,6 +2023,14 @@ class DocenDocument extends AddinHost<Editor> {
       pageHost: (page) => this.#stage?.slotAt(page)?.parentElement ?? null,
       extensions: [...docxExtensions, ...(defaultAddin.extensions ?? [])],
       scale: () => this.#stage?.scale() ?? 1,
+      onZoomChange: (scale) => this.#setZoom(Math.round(scale * 100)),
+      setScale: (scale) => this.#setZoom(Math.round(scale * 100)),
+      onPointerTypeChange: (type) => {
+        if (type === "touch" && !this.touchMode) {
+          this.touchMode = true;
+        }
+      },
+      contentWidthPx: () => this.#flow?.contentWidthPx,
       frontFloats: (page) => this.#stage?.frontFloatBoxes(page) ?? [],
       // Word's paste-options bar hangs after every rich paste; the clipboard
       // pane collects each in-editor copy/cut.
@@ -1646,6 +2061,11 @@ class DocenDocument extends AddinHost<Editor> {
       // NodeSelection (projectDrawings collects drawings in run order, the
       // same order the paragraph's content carries the nodes).
       drawingAt: (page, lx, ly) => this.#stage?.drawingAt(page, lx, ly) ?? null,
+      // Select Objects' marquee scans every painted drawing box.
+      drawingBoxes: () => this.#stage?.drawingBoxes() ?? [],
+      // The mode can exit inside the bridge (Esc / empty click) — mirror the
+      // host state and lit ribbon toggle either way.
+      onObjectSelectChange: (on) => this.#applyObjectSelectState(on),
       // Margin balloons: the stage's painted card table routes clicks to the
       // comment/revision commands and the hover tone back to the stage.
       balloonAt: (page, lx, ly) => this.#stage?.balloonAt(page, lx, ly) ?? null,
@@ -1653,6 +2073,14 @@ class DocenDocument extends AddinHost<Editor> {
       onBalloonHover: (hit) => this.#stage?.hoverBalloon(hit),
       drawingSelection: (hit, enter) =>
         this.#drawingNodePos(hit.para, hit.index, hit.kind, hit.childPath, enter),
+      pageFlow: (page) => this.#stage?.flowOf(page) ?? null,
+      siblingBoxes: (page, hit) =>
+        this.#stage?.pageDrawingBoxes(
+          page,
+          hit
+            ? ({ para: hit.para, index: hit.index, childPath: hit.childPath } as never)
+            : undefined,
+        ) ?? [],
       chartPartBoxes: (para, index, kind) => this.#stage?.chartPartBoxesOf(para, index, kind) ?? [],
       shapeTextStacks: () => this.#stage?.allShapeTextStacks() ?? [],
       shapeResolve: (host) => {
@@ -1713,8 +2141,34 @@ class DocenDocument extends AddinHost<Editor> {
           editor.commands["paint-cell-border"](JSON.stringify({ sides, pen: this.#pen }));
         }
       },
+      tableDraw: () => this.#tableDrawing,
+      tableEraser: () => this.#tableEraser,
+      stopTableDraw: () => this.#stopTableDrawing(),
+      stopTableEraser: () => this.#stopTableEraser(),
+      applyTableDraw: (rect) => {
+        const editor = this.#bridge?.activeEditor() ?? this.editor;
+        if (!editor || !this.#tableDrawing) return;
+        const inTable =
+          this.#bridge?.cellAtPoint(rect.page, rect.stroke.x1, rect.stroke.y1) != null;
+        (editor.commands as any)["draw-table-stroke"]?.({
+          page: rect.page,
+          widthPx: rect.width,
+          heightPx: rect.height,
+          dx: rect.stroke.x2 - rect.stroke.x1,
+          dy: rect.stroke.y2 - rect.stroke.y1,
+          inTable,
+        });
+      },
+      applyTableEraser: (sides) => {
+        const editor = this.#bridge?.activeEditor() ?? this.editor;
+        if (!editor || !this.#tableEraser || !sides.length) return;
+        (editor.commands as any)["table-eraser-click"]?.({ sides });
+      },
     });
     if (this.getAttribute("editable") === "false") this.#bridge.editor.setEditable(false);
+    // A Select Objects toggle that was on when the document (re)opened carries
+    // over to the fresh bridge.
+    if (this.#objectSelect) this.#bridge.setObjectSelect(true);
     // First paint + caret map feed (transactions re-render via the bridge's
     // raf-merged onDoc from here on).
     this.#snapshotStyles();
@@ -1730,6 +2184,8 @@ class DocenDocument extends AddinHost<Editor> {
     // Ribbon gallery right-click (Word's gallery context entry) — only the
     // Styles gallery routes it today: Modify the right-clicked style.
     this.shadowRoot!.addEventListener("item-context", this.#onItemContext as EventListener);
+    this.shadowRoot!.addEventListener("item-preview", this.#onItemPreview as EventListener);
+    this.shadowRoot!.addEventListener("item-preview-end", this.#onItemPreviewEnd as EventListener);
     this.shadowRoot!.addEventListener("change", this.#onChange as EventListener);
     // Right-click → Word's context menu. Captured on the shadow root so the
     // items are built before <docen-context-menu>'s own capture handler opens
@@ -1910,6 +2366,37 @@ class DocenDocument extends AddinHost<Editor> {
     this.shadowRoot!.querySelector("docen-template-dialog")?.addEventListener("template:create", ((
       event: CustomEvent<{ id: string }>,
     ) => this.#newFromTemplate(event.detail.id)) as EventListener);
+    this.shadowRoot!.querySelector("docen-template-dialog")?.addEventListener("template:attach", ((
+      event: CustomEvent<{ data: Uint8Array; autoUpdateStyles: boolean; filename: string }>,
+    ) =>
+      this.attachTemplate(event.detail.data, {
+        autoUpdateStyles: event.detail.autoUpdateStyles,
+      })) as EventListener);
+    this.shadowRoot!.querySelector("docen-print-preview")?.addEventListener(
+      "print-preview:markup-change",
+      ((event: Event) => {
+        const customEvent = event as CustomEvent<{ markup: boolean }>;
+        if (!this.#stage) return;
+        void (async () => {
+          const shots = await this.#stage!.printSnapshots({ markup: customEvent.detail.markup });
+          const previewEl = this.shadowRoot?.querySelector("docen-print-preview") as
+            | (HTMLElement & {
+                seed(options: unknown): void;
+                updatePreview(): void;
+              })
+            | null;
+          const cursor = this.editor?.state.selection.from ?? 0;
+          const page = (this.#bridge?.pageOf(cursor) ?? 0) + 1;
+          previewEl?.seed({
+            snapshots: shots,
+            filename: this.getAttribute("filename") ?? "Document",
+            currentPage: page,
+            printMarkup: customEvent.detail.markup,
+          });
+          previewEl?.updatePreview();
+        })();
+      }) as EventListener,
+    );
     // Language dialog — commit the selection's proofing language (w:lang).
     this.shadowRoot!.querySelector("docen-language-dialog")?.addEventListener(
       "language:ok",
@@ -1931,6 +2418,8 @@ class DocenDocument extends AddinHost<Editor> {
         leader: string;
         showPageNumbers: boolean;
         alignPageNumbers: boolean;
+        hyperlink?: boolean;
+        styles?: string;
       }>,
     ) => this.#insertCustomToc(event.detail)) as EventListener);
     // Phonetic guide dialog — split the selection into per-character ruby
@@ -1978,6 +2467,11 @@ class DocenDocument extends AddinHost<Editor> {
     this.shadowRoot!.querySelector("docen-chart-data-dialog")?.addEventListener(
       "chart:ok",
       this.#dialogs.onChartOk as EventListener,
+    );
+    // Chart type dialog — the Change Chart Type picker commit (Chart Design tab).
+    this.shadowRoot!.querySelector("docen-chart-type-dialog")?.addEventListener(
+      "chart-type:ok",
+      this.#dialogs.onChartTypeOk as EventListener,
     );
     // Compress Pictures — the OK path re-encodes the selected picture's
     // pixels (the picture-pixels command swaps the source in).
@@ -2049,6 +2543,14 @@ class DocenDocument extends AddinHost<Editor> {
       "protection:stop",
       this.#onProtectionStop as EventListener,
     );
+    this.shadowRoot!.querySelector("docen-restrict-editing-pane")?.addEventListener(
+      "protection:toggle-exception",
+      this.#onProtectionToggleException as EventListener,
+    );
+    this.shadowRoot!.querySelector("docen-restrict-editing-pane")?.addEventListener(
+      "protection:find-next",
+      this.#onProtectionFindNext as EventListener,
+    );
     this.shadowRoot!.querySelector("docen-reveal-formatting-pane")?.addEventListener(
       "reveal:compare-toggle",
       this.#onRevealCompareToggle as EventListener,
@@ -2063,6 +2565,19 @@ class DocenDocument extends AddinHost<Editor> {
         (this.shadowRoot?.querySelector("docen-a11y-checker-pane") as any)?.check(this.getJSON());
       },
     );
+    const altTextPane = this.shadowRoot!.querySelector("docen-alt-text-pane");
+    altTextPane?.addEventListener("alt-text:change", ((e: CustomEvent) => {
+      const detail = e.detail;
+      if (detail && this.editor) {
+        (this.editor.commands as any)["drawing-alt-text"]?.(detail);
+      }
+    }) as EventListener);
+    altTextPane?.addEventListener("alt-text:apply", ((e: CustomEvent) => {
+      const detail = e.detail;
+      if (detail && this.editor) {
+        (this.editor.commands as any)["drawing-alt-text"]?.(detail);
+      }
+    }) as EventListener);
     this.shadowRoot!.querySelector("docen-sdt-dialog")?.addEventListener(
       "sdt-dialog:ok",
       this.#onSdtDialogOk as EventListener,
@@ -2149,6 +2664,16 @@ class DocenDocument extends AddinHost<Editor> {
       "fill-effects:ok",
       this.#design.onFillEffectsOk as EventListener,
     );
+    // Online Pictures dialog — insert the fetched/embedded image.
+    this.shadowRoot!.querySelector("docen-online-pictures-dialog")?.addEventListener(
+      "online-picture:ok",
+      this.#onOnlinePictureOk as EventListener,
+    );
+    // Text Effects dialog — apply the staged w14 effect patch.
+    this.shadowRoot!.querySelector("docen-text-effects-dialog")?.addEventListener(
+      "text-effects:ok",
+      this.#onTextEffectsOk as EventListener,
+    );
     this.shadowRoot!.querySelector("docen-status-bar")?.addEventListener(
       "zoom:open",
       this.#status.onZoomOpen as EventListener,
@@ -2165,8 +2690,13 @@ class DocenDocument extends AddinHost<Editor> {
       this.#status.onViewSelect as EventListener,
     );
 
+    this.#syncDir();
+    this.#syncTouchMode();
     // Re-render header + ribbon when the page locale (<html lang>) changes.
-    this.#unobserveLang = observeLang(() => this.#renderChrome());
+    this.#unobserveLang = observeLang(() => {
+      this.#syncDir();
+      this.#renderChrome();
+    });
 
     // Persisted settings (identity + writing toggles) — any store change
     // (this element's Options commit / setSettings, another <docen-document>,
@@ -2199,7 +2729,7 @@ class DocenDocument extends AddinHost<Editor> {
     // card whose range the caret sits in).
     this.editor?.on("selectionUpdate", this.#comments.syncActiveCommentCard);
     this.editor?.on("selectionUpdate", this.#revisions.syncActiveRevision);
-    this.editor?.on("selectionUpdate", this.#onSelectionUpdateForTabs);
+    this.editor?.on("selectionUpdate", this.#onSelectionUpdateForTranslate);
     document.addEventListener("fullscreenchange", this.#onFullscreenChange);
     this.addEventListener("keydown", this.#onZoomKey);
     this.dispatchEvent(new CustomEvent("docen:ready", { bubbles: true, composed: true }));
@@ -2342,9 +2872,56 @@ class DocenDocument extends AddinHost<Editor> {
     return sel.node.attrs.crop != null;
   }
 
+  /** The selected or caret-adjacent OLE embedded object, if any. */
+  #selectedOleObject(): { data: Uint8Array; fileName: string; progId: string } | null {
+    const editor = this.#bridge?.activeEditor() ?? this.editor;
+    if (!editor) return null;
+    const { state } = editor;
+    const { selection } = state;
+    let found: { data: Uint8Array; fileName: string; progId: string } | null = null;
+    const checkNode = (node: PMNode): void => {
+      if (node.type.name === "inlinePassthrough" && node.attrs?.data) {
+        try {
+          const parsed = decodePassthroughData<{
+            object?: { embed?: { data?: Uint8Array; fileName?: string; progId?: string } };
+          }>(node.attrs.data);
+          if (parsed?.object?.embed) {
+            const embed = parsed.object.embed;
+            found = {
+              data:
+                embed.data instanceof Uint8Array
+                  ? embed.data
+                  : new Uint8Array((embed.data as any) ?? []),
+              fileName: embed.fileName ?? "Microsoft_Excel_Worksheet.xlsx",
+              progId: embed.progId ?? "Excel.Sheet.12",
+            };
+          }
+        } catch {
+          // ignore malformed data
+        }
+      }
+    };
+
+    if (selection instanceof NodeSelection) {
+      checkNode(selection.node);
+    } else if (selection.empty) {
+      const $pos = selection.$from;
+      if ($pos.nodeBefore) checkNode($pos.nodeBefore);
+      if (!found && $pos.nodeAfter) checkNode($pos.nodeAfter);
+    } else {
+      state.doc.nodesBetween(selection.from, selection.to, (node) => {
+        if (!found) checkNode(node);
+      });
+    }
+    return found;
+  }
+
   /** The active view, normalized (an unknown attr value reads as print). */
-  #viewMode(): "print" | "web" | "draft" | "read" {
-    return this.view === "web" || this.view === "draft" || this.view === "read"
+  #viewMode(): "print" | "web" | "draft" | "read" | "outline" {
+    return this.view === "web" ||
+      this.view === "draft" ||
+      this.view === "read" ||
+      this.view === "outline"
       ? this.view
       : "print";
   }
@@ -2358,6 +2935,12 @@ class DocenDocument extends AddinHost<Editor> {
     this.#stage?.setViewMode(mode);
     this.#syncReadChrome(mode === "read");
     this.#syncEditable();
+    const outlineView = this.shadowRoot?.querySelector("docen-outline-view") as
+      | (HTMLElement & { setEditor: (e: any) => void; syncFromEditor: () => void })
+      | null;
+    if (outlineView && this.editor) {
+      outlineView.setEditor(this.editor);
+    }
     this.#renderDoc(this.getJSON());
     this.#updateStatus();
   }
@@ -2367,8 +2950,11 @@ class DocenDocument extends AddinHost<Editor> {
    *  protection changes just flip #docProtected and re-run it. */
   #syncEditable(): void {
     if (!this.editor) return;
+    const hasPerms = hasPermissionRanges(this.editor.state.doc);
+    const effectiveProtected =
+      this.#docProtected && !(this.#protectionMode === "readOnly" && hasPerms);
     const editable =
-      this.editable !== "false" && this.#viewMode() !== "read" && !this.#docProtected;
+      this.editable !== "false" && this.#viewMode() !== "read" && !effectiveProtected;
     if (this.editor.isEditable !== editable) {
       this.editor.setEditable(editable);
       this.#syncEditModeMenu();
@@ -2411,6 +2997,112 @@ class DocenDocument extends AddinHost<Editor> {
 
   #renderDoc(doc: JSONContent): void {
     this.#render.renderDoc(doc);
+    // Page geometry may have changed (page setup, sections) — keep the
+    // interactive ruler's width/margins in step.
+    this.#syncRuler();
+    this.#updateContentWarning(doc);
+  }
+
+  /** Show/refresh the unsupported-content warning bar from the document JSON
+   *  (item 14): content the editor can preserve but not edit — altChunk,
+   *  subDoc, SmartArt, OLE, raw/custom XML, content parts — must be visible to
+   *  the user, never silently carried. Hidden while the user has dismissed it
+   *  for this document. */
+  #updateContentWarning(doc: JSONContent): void {
+    const bar = this.shadowRoot?.querySelector<HTMLElement>(".content-warning");
+    if (!bar) return;
+    const translate = (key: string): string => t(key, this);
+    const close = bar.querySelector<HTMLElement>(".content-warning-close");
+    close?.setAttribute("aria-label", translate("contentWarning.dismiss"));
+    close?.setAttribute("title", translate("contentWarning.dismiss"));
+    const report = detectUnsupportedContent(doc);
+    if (report.total === 0 || this.#contentWarningDismissed) {
+      bar.hidden = true;
+      return;
+    }
+    const text = bar.querySelector<HTMLElement>(".content-warning-text");
+    if (text) text.textContent = contentWarningText(report, translate);
+    bar.hidden = false;
+  }
+
+  #dismissContentWarning(): void {
+    this.#contentWarningDismissed = true;
+    const bar = this.shadowRoot?.querySelector<HTMLElement>(".content-warning");
+    if (bar) bar.hidden = true;
+  }
+
+  /** Mount the interactive horizontal ruler above the pages (idempotent).
+   *  The stage keeps only the vertical strip; this strip owns the draggable
+   *  indent markers, tab stops and the unit toggle. */
+  #mountRuler(): void {
+    if (this.#ruler || !this.#stageHost) return;
+    const area = this.#stageHost.closest("docen-document-area");
+    if (!area) return;
+    const ruler = document.createElement("docen-ruler") as InteractiveRulerElement;
+    Object.assign(ruler.style, {
+      position: "sticky",
+      top: "0",
+      zIndex: "6",
+      margin: "0 auto",
+      display: "none",
+    } satisfies Partial<CSSStyleDeclaration>);
+    ruler.addEventListener("ruler:open-tabs", () => this.#insert.openTabsDialog());
+    // Direct child of the scroll container (NOT the flex canvas wrapper, where
+    // a second flex item would break the page centering).
+    area.insertBefore(ruler, area.firstChild);
+    this.#ruler = ruler;
+  }
+
+  /** Mirror the interactive ruler for RTL paragraphs (Word flips the scale at
+   *  the caret) and for an RTL shell direction; LTR paragraphs in an LTR shell
+   *  keep Word's left-to-right scale. */
+  #syncRulerDirection(): void {
+    const ruler = this.#ruler;
+    if (!ruler) return;
+    const editor = this.#bridge?.activeEditor() ?? this.editor;
+    let bidi = false;
+    if (editor) {
+      const { $from } = editor.state.selection;
+      for (let d = $from.depth; d > 0; d--) {
+        const node = $from.node(d);
+        if (node.type.name === "paragraph" || node.type.name === "heading") {
+          bidi = node.attrs.bidirectional === true;
+          break;
+        }
+      }
+    }
+    const dir = bidi || this.getAttribute("dir") === "rtl" ? "rtl" : "ltr";
+    if (ruler.getAttribute("dir") !== dir) ruler.setAttribute("dir", dir);
+  }
+
+  /** Show/hide and re-geometry the interactive ruler from the current flow
+   *  box + zoom. Cheap when nothing changed (signature-guarded). */
+  #syncRuler(): void {
+    const ruler = this.#ruler;
+    if (!ruler) return;
+    this.#syncRulerDirection();
+    const on = this.getShowRuler();
+    ruler.style.display = on ? "block" : "none";
+    if (!on) return;
+    const editor = this.#bridge?.activeEditor() ?? this.editor;
+    if (editor && editor !== this.#rulerEditor) {
+      this.#rulerEditor = editor;
+      ruler.bindEditor(editor);
+    }
+    const flow = this.#flow;
+    if (!flow) return;
+    const zoom = this.#stage ? this.#stage.zoom / 100 : 1;
+    const geometry = {
+      pageWidthPx: flow.pageWidthPx,
+      marginLeftPx: flow.contentLeftPx,
+      marginRightPx: flow.pageWidthPx - flow.contentLeftPx - flow.contentWidthPx,
+      scale: zoom,
+    };
+    const key = `${geometry.pageWidthPx}|${geometry.marginLeftPx}|${geometry.marginRightPx}|${zoom}`;
+    if (key === this.#rulerGeometry) return;
+    this.#rulerGeometry = key;
+    ruler.style.width = `${geometry.pageWidthPx * zoom}px`;
+    ruler.setParagraphAttrs(undefined, undefined, geometry);
   }
 
   /** Create the stage on first use and refresh its per-render context —
@@ -2418,7 +3110,7 @@ class DocenDocument extends AddinHost<Editor> {
   #armStage(p: {
     sections: (ProjectedSection & CanvasStageSection)[];
     background?: ProjectedPageBackground;
-    viewMode: "print" | "web" | "draft" | "read";
+    viewMode: "print" | "web" | "draft" | "read" | "outline";
   }): CanvasStage {
     this.#stage ??= new CanvasStage(this.#stageHost!, {
       metrics: browserFontMetrics,
@@ -2426,8 +3118,6 @@ class DocenDocument extends AddinHost<Editor> {
       sectionOfPage: [],
       background: p.background,
     });
-    this.#stage.onAddTabStop = (posTw) => this.#addTabStopAt(posTw);
-    this.#stage.onOpenTabsDialog = () => this.#insert.openTabsDialog();
     // Viewport virtualization → overlay culling (the bridge paints squiggles,
     // selection and search only on pages the stage keeps painted).
     this.#stage.onLiveChange = (page, live) => this.#bridge?.setPageLive(page, live);
@@ -2440,12 +3130,17 @@ class DocenDocument extends AddinHost<Editor> {
       sectionBreakEvenPage: t("marks.sectionBreakEvenPage", this),
       sectionBreakOddPage: t("marks.sectionBreakOddPage", this),
     });
+    this.#stage.setFieldShading(this.#fieldShading);
+    this.#stage.setHighlightMergeFields(this.#highlightMergeFields);
     // A `zoom` attribute parsed before the stage existed only recorded the
     // level here — push it in before the first sync sizes the slots. The
     // `show-marks` and `view` attributes get the same once-over (idempotent
     // setters; the read-only + chrome trimming rides #applyView's gate).
     if (this.#stage.zoom !== this.#status.getZoom()) this.#stage.setZoom(this.#status.getZoom());
     if (this.hasAttribute("show-marks")) this.#stage.setShowMarks(true);
+    if (this.hasAttribute("show-ruler") || this.hasAttribute("ruler"))
+      this.#stage.setShowRuler(true);
+    this.#syncRuler();
     if (this.#stage.viewMode !== p.viewMode) {
       this.#stage.setViewMode(p.viewMode);
       this.#syncReadChrome(p.viewMode === "read");
@@ -2460,7 +3155,7 @@ class DocenDocument extends AddinHost<Editor> {
     sectionOfPage: number[];
     sections: (ProjectedSection & CanvasStageSection)[];
     background?: ProjectedPageBackground;
-    viewMode?: "print" | "web" | "draft" | "read";
+    viewMode?: "print" | "web" | "draft" | "read" | "outline";
   };
 
   /** Bumped by every render — an incremental layout walk compares its capture
@@ -2475,6 +3170,11 @@ class DocenDocument extends AddinHost<Editor> {
     this.#unobserveLang = undefined;
     this.shadowRoot?.removeEventListener("command", this.#onCommand as EventListener);
     this.shadowRoot?.removeEventListener("item-context", this.#onItemContext as EventListener);
+    this.shadowRoot?.removeEventListener("item-preview", this.#onItemPreview as EventListener);
+    this.shadowRoot?.removeEventListener(
+      "item-preview-end",
+      this.#onItemPreviewEnd as EventListener,
+    );
     this.shadowRoot?.removeEventListener("change", this.#onChange as EventListener);
     this.#fileInput?.removeEventListener("change", this.#io.onFileChange);
     this.#imageInput?.removeEventListener("change", this.#io.onImageChange);
@@ -2567,6 +3267,9 @@ class DocenDocument extends AddinHost<Editor> {
       ?.querySelector("docen-chart-data-dialog")
       ?.removeEventListener("chart:ok", this.#dialogs.onChartOk as EventListener);
     this.shadowRoot
+      ?.querySelector("docen-chart-type-dialog")
+      ?.removeEventListener("chart-type:ok", this.#dialogs.onChartTypeOk as EventListener);
+    this.shadowRoot
       ?.querySelector("docen-cross-reference-dialog")
       ?.removeEventListener("cross-ref:ok", this.#dialogs.onCrossRefOk as EventListener);
     this.shadowRoot
@@ -2618,6 +3321,12 @@ class DocenDocument extends AddinHost<Editor> {
       ?.querySelector("docen-fill-effects-dialog")
       ?.removeEventListener("fill-effects:ok", this.#design.onFillEffectsOk as EventListener);
     this.shadowRoot
+      ?.querySelector("docen-online-pictures-dialog")
+      ?.removeEventListener("online-picture:ok", this.#onOnlinePictureOk as EventListener);
+    this.shadowRoot
+      ?.querySelector("docen-text-effects-dialog")
+      ?.removeEventListener("text-effects:ok", this.#onTextEffectsOk as EventListener);
+    this.shadowRoot
       ?.querySelector("docen-page-setup-dialog")
       ?.removeEventListener("page-setup:ok", this.#sections.onPageSetupOk as EventListener);
     this.shadowRoot
@@ -2649,6 +3358,8 @@ class DocenDocument extends AddinHost<Editor> {
     });
     this.editor?.off("transaction", this.#onTransaction);
     this.editor?.off("selectionUpdate", this.#comments.syncActiveCommentCard);
+    this.editor?.off("selectionUpdate", this.#onSelectionUpdateForTranslate);
+    this.removeEventListener("docen:translate", this.#onDocenTranslate as EventListener);
     document.removeEventListener("fullscreenchange", this.#onFullscreenChange);
     this.removeEventListener("keydown", this.#onZoomKey);
     this.shadowRoot
@@ -2740,6 +3451,10 @@ class DocenDocument extends AddinHost<Editor> {
     this.#chrome.syncFormatButtons();
   }
 
+  #syncSelectMenu(): void {
+    this.#chrome.syncSelectMenu();
+  }
+
   #syncDrawingMenus(): void {
     this.#chrome.syncDrawingMenus();
   }
@@ -2770,6 +3485,10 @@ class DocenDocument extends AddinHost<Editor> {
 
   #syncDrawingSize(): void {
     this.#chrome.syncDrawingSize();
+  }
+
+  #syncTableLookCheckboxes(): void {
+    this.#chrome.syncTableLookCheckboxes();
   }
 
   #syncContextTabs(): void {
@@ -2980,18 +3699,6 @@ class DocenDocument extends AddinHost<Editor> {
     this.#insert.insertSoftHyphen();
   }
 
-  #addTabStopAt(posTw: number): void {
-    this.#insert.addTabStopAt(posTw);
-  }
-
-  readonly #onSelectionUpdateForTabs = (): void => {
-    this.#syncActiveTabStops();
-  };
-
-  #syncActiveTabStops(): void {
-    this.#insert.syncActiveTabStops();
-  }
-
   // The Paragraph dialog's OK — stamp its patch onto every selected paragraph
   // in the editor input currently routes into (a furniture story's editor
   // while a story is open, else the main document).
@@ -3042,10 +3749,9 @@ class DocenDocument extends AddinHost<Editor> {
     if (mode !== "edit" || !this.editor) return;
     const recipients = this.#merge.recipients();
     if (!recipients) return;
-    // Prepare images once on a clone — the per-row merges below then carry
-    // embedded data and skip the fetch.
-    const json = structuredClone(this.getJSON());
-    await prepareDocument(json);
+    // Prepare a copy once — the per-row merges below then carry whatever the
+    // local (network-free) default preparation embedded.
+    const json = await prepareDocument(this.getJSON());
     const body = json.content ?? [];
     const bodyAttrs = (json.attrs ?? {}) as {
       sectionProperties?: SectionPropertiesOptions | null;
@@ -3188,6 +3894,35 @@ class DocenDocument extends AddinHost<Editor> {
       // carries the whole drawing, deleteSelection cuts it.
       items.push({ text: t("context.cut", this), event: "cut" });
       items.push({ text: t("context.copy", this), event: "copy" });
+      items.push({ text: t("context.paste", this), event: "paste" });
+      items.push({ text: "-" });
+      items.push({
+        text: t("ribbon.cmd.wrap", this) || "Wrap Text",
+        items: [
+          {
+            text: t("ribbon.opt.wrap-inline", this) || "In Line with Text",
+            event: "wrap",
+            value: "inline",
+          },
+          { text: t("ribbon.opt.wrap-square", this) || "Square", event: "wrap", value: "square" },
+          { text: t("ribbon.opt.wrap-tight", this) || "Tight", event: "wrap", value: "tight" },
+          {
+            text: t("ribbon.opt.wrap-behind", this) || "Behind Text",
+            event: "wrap",
+            value: "behind",
+          },
+          {
+            text: t("ribbon.opt.wrap-front", this) || "In Front of Text",
+            event: "wrap",
+            value: "front",
+          },
+          {
+            text: t("ribbon.opt.wrap-top-bottom", this) || "Top and Bottom",
+            event: "wrap",
+            value: "top-bottom",
+          },
+        ],
+      });
       items.push({ text: "-" });
       items.push({ text: t("context.bring-forward", this), event: "bring-forward" });
       items.push({ text: t("context.send-backward", this), event: "send-backward" });
@@ -3261,6 +3996,7 @@ class DocenDocument extends AddinHost<Editor> {
       items.push({ text: t("spelling.ignore-once", this), event: "spell-ignore-once" });
       items.push({ text: t("spelling.ignore-all", this), event: "spell-ignore-all" });
       items.push({ text: t("spelling.add", this), event: "spell-add" });
+      items.push({ text: t("pane.spelling", this) || "Spelling...", event: "spell-check" });
       items.push({ text: "-" });
     } else if (grammarHit) {
       if (grammarHit.replacements.length) {
@@ -3318,19 +4054,43 @@ class DocenDocument extends AddinHost<Editor> {
       value: "keep-text-only",
     });
     items.push({ text: "-" });
+    items.push({ text: t("context.font", this) || "Font...", event: "font-dialog" });
+    items.push({ text: t("context.paragraph", this) || "Paragraph...", event: "paragraph-dialog" });
+    items.push({
+      text: t("context.styles", this) || "Styles",
+      items: [
+        { text: t("styles.pane.title", this) || "Styles Pane...", event: "styles-pane" },
+        { text: "-" },
+        { text: "Normal", event: "style", value: "Normal" },
+        { text: "Heading 1", event: "style", value: "Heading 1" },
+        { text: "Heading 2", event: "style", value: "Heading 2" },
+        { text: "Heading 3", event: "style", value: "Heading 3" },
+      ],
+    });
+    items.push({
+      text: t("context.bullets-numbering", this) || "Bullets & Numbering",
+      items: [
+        { text: t("ribbon.cmd.bullet-list", this) || "Bullet List", event: "bullet-list" },
+        { text: t("ribbon.cmd.ordered-list", this) || "Numbered List", event: "ordered-list" },
+        {
+          text: t("ribbon.cmd.multilevel-list", this) || "Multilevel List",
+          event: "multilevel-list",
+        },
+      ],
+    });
+    items.push({ text: "-" });
     if (onLink) {
       items.push({ text: t("context.open-link", this), event: "open-link" });
       items.push({ text: t("context.copy-link", this), event: "copy-link" });
       items.push({ text: t("context.edit-link", this), event: "link" });
       items.push({ text: t("context.unlink", this), event: "unset-link" });
       items.push({ text: "-" });
-      items.push({ text: t("context.comment", this), event: "new-comment" });
-      items.push({ text: "-" });
-    } else if (inSelection) {
-      items.push({ text: t("context.link", this), event: "link" });
-      items.push({ text: t("context.comment", this), event: "new-comment" });
-      items.push({ text: "-" });
+    } else {
+      items.push({ text: t("context.link", this) || "Link…", event: "link" });
     }
+    items.push({ text: t("context.translate", this) || "Translate", event: "translate" });
+    items.push({ text: t("context.comment", this), event: "new-comment" });
+    items.push({ text: "-" });
     // Word: a right-click on a note reference offers edit/delete for the
     // referenced note's body (the caret was collapsed onto the atom above).
     const note = this.#dialogs.noteTarget();
@@ -3356,24 +4116,110 @@ class DocenDocument extends AddinHost<Editor> {
       }
       items.push({ text: "-" });
     }
+    const ole = this.#selectedOleObject();
+    if (ole) {
+      const isExcel =
+        ole.fileName.endsWith(".xlsx") ||
+        ole.fileName.endsWith(".xls") ||
+        ole.progId.toLowerCase().includes("excel");
+      items.push({
+        text: isExcel ? t("context.open-worksheet", this) : t("context.open-object", this),
+        event: "open-embedded-object",
+      });
+      items.push({
+        text: isExcel ? t("context.download-worksheet", this) : t("context.download-object", this),
+        event: "download-embedded-object",
+      });
+      items.push({ text: "-" });
+    }
     items.push({ text: t("context.select-all", this), event: "select" });
     if (inTable) {
       items.push({ text: "-" });
-      items.push({ text: t("ribbon.cmd.insert-row-above", this), event: "insert-row-above" });
-      items.push({ text: t("ribbon.cmd.insert-row-below", this), event: "insert-row-below" });
-      items.push({ text: t("ribbon.cmd.insert-column-left", this), event: "insert-column-left" });
-      items.push({ text: t("ribbon.cmd.insert-column-right", this), event: "insert-column-right" });
-      items.push({ text: "-" });
-      items.push({ text: t("ribbon.cmd.delete-row", this), event: "delete-row" });
-      items.push({ text: t("ribbon.cmd.delete-column", this), event: "delete-column" });
-      items.push({ text: t("context.delete-table", this), event: "delete-table" });
-      // Word's merge/split + AutoFit + the Properties entry close the table
-      // menu (commands shared with the Table Layout tab).
+      items.push({
+        text: t("context.insert", this),
+        items: [
+          { text: t("ribbon.cmd.insert-column-left", this), event: "insert-column-left" },
+          { text: t("ribbon.cmd.insert-column-right", this), event: "insert-column-right" },
+          { text: "-" },
+          { text: t("ribbon.cmd.insert-row-above", this), event: "insert-row-above" },
+          { text: t("ribbon.cmd.insert-row-below", this), event: "insert-row-below" },
+          { text: "-" },
+          { text: t("context.insert-cells", this), event: "insert-cells" },
+        ],
+      });
+      items.push({
+        text: t("context.delete", this),
+        items: [
+          { text: t("context.delete-cells", this), event: "delete-cells" },
+          { text: t("ribbon.cmd.delete-column", this), event: "delete-column" },
+          { text: t("ribbon.cmd.delete-row", this), event: "delete-row" },
+          { text: "-" },
+          { text: t("context.delete-table", this), event: "delete-table" },
+        ],
+      });
+      items.push({
+        text: t("context.select", this),
+        items: [
+          { text: t("ribbon.cmd.select-table-cell", this), event: "select-table-cell" },
+          { text: t("ribbon.cmd.select-table-column", this), event: "select-table-column" },
+          { text: t("ribbon.cmd.select-table-row", this), event: "select-table-row" },
+          { text: t("ribbon.cmd.select-table", this), event: "select-table" },
+        ],
+      });
       items.push({ text: "-" });
       items.push({ text: t("ribbon.cmd.merge-cells", this), event: "merge-cells" });
       items.push({ text: t("ribbon.cmd.split-cell", this), event: "split-cell" });
-      items.push({ text: t("ribbon.opt.autofit-contents", this), event: "autofit-contents" });
-      items.push({ text: t("ribbon.opt.autofit-window", this), event: "autofit-window" });
+      items.push({ text: t("ribbon.cmd.split-table", this), event: "split-table" });
+      items.push({ text: "-" });
+      items.push({
+        text: t("ribbon.cmd.autofit", this),
+        items: [
+          { text: t("ribbon.opt.autofit-contents", this), event: "autofit-contents" },
+          { text: t("ribbon.opt.autofit-window", this), event: "autofit-window" },
+          { text: t("ribbon.opt.fixed-column-width", this), event: "fixed-column-width" },
+        ],
+      });
+      items.push({
+        text: t("ribbon.cmd.align-cell", this),
+        items: [
+          { text: t("ribbon.opt.cell-align-tl", this), event: "align-cell", value: "tl" },
+          { text: t("ribbon.opt.cell-align-tc", this), event: "align-cell", value: "tc" },
+          { text: t("ribbon.opt.cell-align-tr", this), event: "align-cell", value: "tr" },
+          { text: t("ribbon.opt.cell-align-ml", this), event: "align-cell", value: "ml" },
+          { text: t("ribbon.opt.cell-align-mc", this), event: "align-cell", value: "mc" },
+          { text: t("ribbon.opt.cell-align-mr", this), event: "align-cell", value: "mr" },
+          { text: t("ribbon.opt.cell-align-bl", this), event: "align-cell", value: "bl" },
+          { text: t("ribbon.opt.cell-align-bc", this), event: "align-cell", value: "bc" },
+          { text: t("ribbon.opt.cell-align-br", this), event: "align-cell", value: "br" },
+        ],
+      });
+      items.push({
+        text: t("context.distribute", this),
+        items: [
+          { text: t("ribbon.cmd.distribute-rows", this), event: "distribute-rows" },
+          { text: t("ribbon.cmd.distribute-columns", this), event: "distribute-columns" },
+        ],
+      });
+      items.push({ text: t("ribbon.cmd.text-direction", this), event: "text-direction" });
+      items.push({
+        text: t("ribbon.cmd.cell-margins", this),
+        items: [
+          {
+            text: t("ribbon.opt.cell-margin-normal", this),
+            event: "cell-margins",
+            value: "normal",
+          },
+          { text: t("ribbon.opt.cell-margin-none", this), event: "cell-margins", value: "none" },
+        ],
+      });
+      items.push({
+        text: t("ribbon.opt.borders-shading", this),
+        event: "border",
+        value: "borders-shading",
+      });
+      items.push({ text: t("ribbon.cmd.repeat-header-rows", this), event: "repeat-header-rows" });
+      items.push({ text: t("ribbon.group.sort", this) || "Sort...", event: "sort" });
+      items.push({ text: t("context.formula", this), event: "table-formula" });
       items.push({ text: "-" });
       items.push({ text: t("context.table-properties", this), event: "table-properties" });
     }
@@ -3416,6 +4262,8 @@ class DocenDocument extends AddinHost<Editor> {
     leader: string;
     showPageNumbers: boolean;
     alignPageNumbers: boolean;
+    hyperlink?: boolean;
+    styles?: string;
   }): void {
     this.#insert.insertCustomToc(detail);
   }
@@ -3423,6 +4271,56 @@ class DocenDocument extends AddinHost<Editor> {
   #insertFileText(): void {
     this.#insert.insertFileText();
   }
+
+  /** Insert → Online Pictures: open the address dialog (the picture is
+   *  downloaded by the dialog and arrives back via `online-picture:ok`). */
+  #openOnlinePicturesDialog(): void {
+    (
+      this.shadowRoot?.querySelector("docen-online-pictures-dialog") as {
+        show(): void;
+      } | null
+    )?.show();
+  }
+
+  /** The Online Pictures dialog's commit — insert the embedded picture as a
+   *  normal image node at the caret. */
+  readonly #onOnlinePictureOk = (
+    event: CustomEvent<{ src: string; width?: number; height?: number; alt?: string }>,
+  ): void => {
+    const detail = event.detail;
+    if (!detail?.src) return;
+    this.#insert.insertOnlinePicture({
+      src: detail.src,
+      width: detail.width,
+      height: detail.height,
+      alt: detail.alt || t("onlinePictures.title", this),
+    });
+  };
+
+  /** Home → Font → Text Effects → Options: open the custom dialog prefilled
+   *  from the selection's run effects. */
+  #openTextEffectsDialog(): void {
+    const dialog = this.shadowRoot?.querySelector("docen-text-effects-dialog") as {
+      show?(current?: unknown): void;
+    } | null;
+    if (!dialog) return;
+    const editor = this.#bridge?.activeEditor() ?? this.editor;
+    const raw = editor
+      ? (editor.getAttributes("textStyle") as { w14RawXml?: unknown }).w14RawXml
+      : undefined;
+    dialog.show?.(typeof raw === "string" ? parseTextEffects(raw) : {});
+  }
+
+  /** The custom Text Effects dialog's commit — patch the selected runs' w14
+   *  effects (a null entry clears that family). */
+  readonly #onTextEffectsOk = (event: CustomEvent<Record<string, unknown>>): void => {
+    const patch = event.detail;
+    if (!patch || typeof patch !== "object") return;
+    const editor = this.#bridge?.activeEditor() ?? this.editor;
+    if (!editor) return;
+    editor.commands["text-effects-apply"](JSON.stringify(patch));
+    this.#bridge?.focus();
+  };
 
   /** Event → handler tables for the extracted host-command domains. Built on
    *  first dispatch (the adapter closures read live element state), then
@@ -3471,11 +4369,12 @@ class DocenDocument extends AddinHost<Editor> {
           syncEditModeMenu: () => this.#syncEditModeMenu(),
           setShowMarks: (on) => this.setShowMarks(on),
           getShowMarks: () => this.getShowMarks(),
-          showRuler: () => this.#stage?.showRuler ?? false,
-          setShowRuler: (on) => this.#stage?.setShowRuler(on),
+          showRuler: () => this.getShowRuler(),
+          setShowRuler: (on) => this.setShowRuler(on),
           showGridlines: () => this.#stage?.showGridlines ?? false,
           setShowGridlines: (on) => this.#stage?.setShowGridlines(on),
           setView: (view) => this.setAttribute("view", view),
+          setUiDirection: (dir) => this.setUiDirection(dir),
           toggleSplitWindow: () => this.#toggleSplitWindow(),
           toggleFocusMode: () => this.#toggleFocusMode(),
         },
@@ -3526,6 +4425,8 @@ class DocenDocument extends AddinHost<Editor> {
           lastRecord: () => this.#merge.lastRecord(),
           setMergeType: (type) => this.#merge.setMergeType(type),
           finishMerge: (mode) => void this.#finishMerge(mode),
+          toggleHighlightMergeFields: () =>
+            this.setHighlightMergeFields(!this.#highlightMergeFields),
         },
         comments: {
           insertComment: () => this.#comments.insertComment(),
@@ -3596,6 +4497,7 @@ class DocenDocument extends AddinHost<Editor> {
           hrefAtCaret: () => this.#hrefAtCaret(),
           jumpToBookmark: (name) => this.#jumpToBookmark(name),
           select: (value) => this.#select(value),
+          toggleObjectSelect: () => this.setObjectSelect(!this.#objectSelect),
           toggleFormatPainter: () => this.#toggleFormatPainter(),
         },
         drawing: {
@@ -3606,11 +4508,16 @@ class DocenDocument extends AddinHost<Editor> {
           armTransparentPick: () => this.#armTransparentPick(),
           drawingMulti: () => this.#bridge?.drawingMulti(),
           pickImage: () => this.#imageInput?.click(),
+          openOnlinePictures: () => this.#openOnlinePicturesDialog(),
+          openTextEffectsDialog: () => this.#openTextEffectsDialog(),
           pickPicture: () => this.#pictureInput?.click(),
           focusBridge: () => this.#bridge?.focus(),
           drawingState: () => this.#drawingStateOf(),
           enterCropMode: () => {
             this.#bridge?.enterCropMode();
+          },
+          enterEditPointsMode: () => {
+            this.#bridge?.enterEditPointsMode();
           },
           insertShapeAt: (preset) => this.#insertShapeAt(preset),
           armShapeDrawer: (preset) => this.#armShapeDrawer(preset),
@@ -3634,6 +4541,16 @@ class DocenDocument extends AddinHost<Editor> {
           borderErase: () => this.#borderErase,
           stopBorderPainting: () => this.#stopBorderPainting(),
           armBorderPainter: (erase) => this.#armBorderPainter(erase),
+          tableDrawing: () => this.#tableDrawing,
+          tableEraser: () => this.#tableEraser,
+          toggleDrawTable: () => {
+            if (this.#tableDrawing) this.#stopTableDrawing();
+            else this.#armTableDrawer();
+          },
+          toggleTableEraser: () => {
+            if (this.#tableEraser) this.#stopTableEraser();
+            else this.#armTableEraser();
+          },
         },
         dialogs: {
           element: () => this as HTMLElement,
@@ -3641,6 +4558,7 @@ class DocenDocument extends AddinHost<Editor> {
           docStyles: (editor) => this.#docStyles(editor),
           runState: (state) => this.#runStateOf(state),
           chartEditAtSelection: () => this.#dialogs.chartEditAtSelection(),
+          chartTypeAtSelection: () => this.#dialogs.chartTypeAtSelection(),
           phoneticOpen: () => this.#dialogs.phoneticOpen(),
           twoInOneOpen: () => this.#dialogs.twoInOneOpen(),
           defineListOpen: () => this.#dialogs.defineListOpen(),
@@ -3651,6 +4569,7 @@ class DocenDocument extends AddinHost<Editor> {
           pickFile: () => this.#pickFile(),
           print: () => this.#print(),
           insertFileText: () => this.#insertFileText(),
+          newDocument: () => this.newDocument(),
         },
         headerFooter: {
           editor: () => this.editor,
@@ -3668,6 +4587,8 @@ class DocenDocument extends AddinHost<Editor> {
           openWatermarkDialog: () => this.#design.openWatermarkDialog(),
           setWatermark: (preset) => this.#design.setWatermark(preset),
           openFillEffectsDialog: () => this.#design.openFillEffectsDialog(),
+          setTextEffectsTheme: (value) => this.#setTextEffectsTheme(value),
+          setAsDefault: () => this.#setAsDefault(),
           restoreStylesSnapshot: () => this.#restoreStylesSnapshot(),
         },
       },
@@ -3838,6 +4759,50 @@ class DocenDocument extends AddinHost<Editor> {
     pane.setFormatting?.(formattingInfoOf(editor));
   }
 
+  #syncAltTextPane(): void {
+    const pane = this.shadowRoot?.querySelector("docen-alt-text-pane") as {
+      setTarget?(target: { kind?: string; title?: string; descr?: string } | null): void;
+    } | null;
+    if (!pane || !this.getTaskpaneState("altText")) return;
+    const editor = this.#bridge?.activeEditor() ?? this.editor;
+    if (!editor) {
+      pane.setTarget?.(null);
+      return;
+    }
+    const sel = editor.state.selection;
+    if (sel instanceof NodeSelection) {
+      const node = sel.node;
+      const attrs = node.attrs as Record<string, unknown>;
+      const kind = node.type.name;
+      if (kind === "model3d" || kind === "ink") {
+        pane.setTarget?.({
+          kind,
+          title: (attrs.title as string) ?? "",
+          descr: (attrs.descr as string) ?? "",
+        });
+        return;
+      }
+      if (kind === "image") {
+        pane.setTarget?.({
+          kind,
+          title: (attrs.name as string) ?? "",
+          descr: (attrs.title as string) ?? "",
+        });
+        return;
+      }
+      if (kind === "wpsShape" || kind === "wpgGroup" || kind === "chart") {
+        const payload = (attrs[kind] ?? {}) as Record<string, unknown>;
+        pane.setTarget?.({
+          kind,
+          title: (payload.title as string) ?? "",
+          descr: (payload.descr as string) ?? "",
+        });
+        return;
+      }
+    }
+    pane.setTarget?.(null);
+  }
+
   readonly #onRevealCompareToggle = (event: CustomEvent<{ enabled?: boolean }>): void => {
     const pane = this.shadowRoot?.querySelector("docen-reveal-formatting-pane") as {
       setComparison?(reference: FormattingInfo | null): void;
@@ -3847,9 +4812,142 @@ class DocenDocument extends AddinHost<Editor> {
     pane.setComparison(event.detail?.enabled === true && editor ? formattingInfoOf(editor) : null);
   };
 
+  readonly #onItemPreview = (event: CustomEvent<{ event?: string; value?: string }>): void => {
+    const { event: name, value } = event.detail ?? {};
+    if (!name || !value) return;
+
+    const editor = this.editor;
+    if (!editor) return;
+
+    if (name === "theme" || name === "theme-color" || name === "theme-font") {
+      if (!this.#previewSnapshot) {
+        const vars = new Map<string, string>();
+        const varNames = [
+          "--docen-theme-accent1",
+          "--docen-theme-accent2",
+          "--docen-theme-accent3",
+          "--docen-theme-accent4",
+          "--docen-theme-accent5",
+          "--docen-theme-accent6",
+          "--docen-theme-font-major",
+          "--docen-theme-font-minor",
+        ];
+        for (const v of varNames) {
+          vars.set(v, this.style.getPropertyValue(v));
+        }
+        this.#previewSnapshot = {
+          docContent: null,
+          selection: { from: editor.state.selection.from, to: editor.state.selection.to },
+          themeKind: name,
+          themeCssVars: vars,
+        };
+      }
+      this.#applyDocumentTheme(name, value, false);
+      return;
+    }
+
+    if (name === "style" || name === "table-style" || name === "style-set") {
+      if (!this.#previewSnapshot) {
+        this.#previewSnapshot = {
+          docContent: editor.state.doc.toJSON(),
+          selection: { from: editor.state.selection.from, to: editor.state.selection.to },
+        };
+      } else {
+        this.#revertPreviewDoc();
+      }
+
+      const target = this.#bridge?.activeEditor() ?? editor;
+      const commands = target.commands as unknown as Record<string, (value?: string) => unknown>;
+      const cmd = commands[name];
+      if (typeof cmd === "function") {
+        const origDispatch = target.view.dispatch.bind(target.view);
+        target.view.dispatch = (tr) => {
+          tr.setMeta("addToHistory", false);
+          origDispatch(tr);
+        };
+        try {
+          cmd(value);
+        } finally {
+          target.view.dispatch = origDispatch;
+        }
+      }
+    }
+  };
+
+  #revertPreviewDoc(): void {
+    if (!this.#previewSnapshot?.docContent || !this.editor) return;
+    const editor = this.editor;
+    try {
+      const restoredNode = editor.schema.nodeFromJSON(
+        this.#previewSnapshot.docContent as JSONContent,
+      );
+      const tr = editor.state.tr.replaceWith(
+        0,
+        editor.state.doc.content.size,
+        restoredNode.content,
+      );
+      const targetPos = Math.min(this.#previewSnapshot.selection.from, tr.doc.content.size);
+      tr.setSelection(TextSelection.near(tr.doc.resolve(targetPos)));
+      tr.setMeta("addToHistory", false);
+      editor.view.dispatch(tr);
+    } catch {
+      // safe fallback
+    }
+  }
+
+  readonly #onItemPreviewEnd = (): void => {
+    if (!this.#previewSnapshot) return;
+
+    if (this.#previewSnapshot.themeCssVars) {
+      const targets = [this, this.shadowRoot?.querySelector("docen-workspace")].filter(
+        Boolean,
+      ) as HTMLElement[];
+      for (const target of targets) {
+        for (const [key, val] of this.#previewSnapshot.themeCssVars) {
+          if (val) target.style.setProperty(key, val);
+          else target.style.removeProperty(key);
+        }
+      }
+      this.#bridge?.replaceOverlays();
+    }
+
+    if (this.#previewSnapshot.docContent) {
+      this.#revertPreviewDoc();
+    }
+
+    this.#previewSnapshot = null;
+  };
+
   readonly #onCommand = (event: CustomEvent<{ event?: string; value?: string }>): void => {
     const { event: name, value } = event.detail ?? {};
     if (typeof name !== "string") return;
+    if (this.#previewSnapshot) {
+      this.#onItemPreviewEnd();
+    }
+    if (name === "toggle-ribbon-minimized") {
+      this.#toggleRibbonMinimized();
+      return;
+    }
+    if (name === "translate") {
+      const editor = this.#bridge?.activeEditor() ?? this.editor;
+      const selected =
+        editor && !editor.state.selection.empty
+          ? editor.state.doc.textBetween(
+              editor.state.selection.from,
+              editor.state.selection.to,
+              " ",
+            )
+          : "";
+      this.dispatchEvent(
+        new CustomEvent("docen:translate", {
+          bubbles: true,
+          composed: true,
+          detail: { text: selected },
+        }),
+      );
+      this.#openTranslate(selected);
+      return;
+    }
     if (name === "theme" || name === "theme-color" || name === "theme-font") {
       this.#applyDocumentTheme(name, value);
       return;
@@ -3860,6 +4958,16 @@ class DocenDocument extends AddinHost<Editor> {
     }
     if (name === "toggle-checkbox") {
       this.#sdtCommand().toggleCheckboxAtCaret();
+      return;
+    }
+    if (name === "open-embedded-object" || name === "download-embedded-object") {
+      const ole = this.#selectedOleObject();
+      if (ole) {
+        downloadOleObject(ole.data, ole.fileName);
+        this.dispatchEvent(
+          new CustomEvent("ole:open", { bubbles: true, composed: true, detail: ole }),
+        );
+      }
       return;
     }
     // Read-only documents (Viewing mode) reject document-changing commands —
@@ -3881,17 +4989,28 @@ class DocenDocument extends AddinHost<Editor> {
         return;
       }
     }
-    // Forms protection mode: allow only content control interaction outside readonly live
+    // Forms or ReadOnly protection mode: allow only field / permission region interaction outside readonly live
     if (
-      this.#protectionMode === "forms" &&
+      (this.#protectionMode === "forms" || this.#protectionMode === "readOnly") &&
       !READONLY_LIVE.has(name) &&
       !name.startsWith("sdt-") &&
       name !== "toggle-checkbox"
     ) {
       const active = this.#bridge?.activeEditor() ?? this.editor;
-      if (active && !isInsideEditableSdt(active)) {
-        return;
+      if (active) {
+        if (this.#protectionMode === "forms" && !isInsideEditableField(active)) {
+          return;
+        }
+        if (this.#protectionMode === "readOnly" && !isInsideEditablePermission(active)) {
+          return;
+        }
       }
+    }
+    // Set as Default needs the current style set; the command itself only
+    // writes the styles model, so record which preset was applied (or clear
+    // it for the "Document Default" restore).
+    if (name === "style-set" && typeof value === "string") {
+      this.#rememberStyleSet(value === "default" ? null : value);
     }
     // Local host commands (chrome actions plus document actions the engine
     // can't express) route through the per-domain registry — chrome handlers
@@ -4006,6 +5125,9 @@ class DocenDocument extends AddinHost<Editor> {
       case "print":
         if (!this.#emitCancelable("docen:print")) void this.#print();
         break;
+      case "print-preview":
+        void this.openPrintPreview();
+        break;
       case "properties":
         // Word's File → Info: the document properties pane.
         this.showTaskpane("properties");
@@ -4020,8 +5142,10 @@ class DocenDocument extends AddinHost<Editor> {
         this.#closeDocument();
         break;
       case "new":
-        // No built-in "new" — always hand to the host (docen:new).
-        this.#emitCancelable("docen:new");
+        // A host may take the action over (docen:new, cancelable); otherwise
+        // the element creates the blank document itself — with the stored
+        // Set as Default formatting (Word's Normal-template behavior).
+        if (!this.#emitCancelable("docen:new")) this.newDocument();
         break;
       case "new-from-template":
         this.#openTemplateDialog();
@@ -4044,6 +5168,8 @@ class DocenDocument extends AddinHost<Editor> {
                 ? Math.round((s.defaultTabStop / (1440 / 2.54)) * 100) / 100
                 : undefined,
             updateFields: s.updateFields === true,
+            updateFieldsBeforePrint: this.#updateFieldsBeforePrint,
+            fieldShading: this.#fieldShading,
             protection: (s.documentProtection as { edit?: string } | undefined)?.edit ?? "none",
             compatVersion: (s.compatibility as { version?: number } | undefined)?.version ?? 15,
           };
@@ -4126,6 +5252,79 @@ class DocenDocument extends AddinHost<Editor> {
     }
   }
 
+  /** Open the Translate task pane with optional initial selection text. */
+  #openTranslate(text?: string): void {
+    const editor = this.#bridge?.activeEditor() ?? this.editor;
+    let target = text;
+    if (target === undefined && editor) {
+      const sel = editor.state.selection;
+      if (!sel.empty) {
+        target = editor.state.doc.textBetween(sel.from, sel.to, " ").trim();
+      }
+    }
+    this.#setTaskpane("translate", true);
+    const pane = this.shadowRoot?.querySelector("docen-translate-pane") as
+      | (HTMLElement & { setSelectionText: (t: string) => void })
+      | null;
+    if (pane && typeof pane.setSelectionText === "function" && target !== undefined) {
+      pane.setSelectionText(target);
+    }
+  }
+
+  /** Translates paragraph blocks in the document. */
+  #translateDocument(from = "auto", to = "id"): void {
+    const editor = this.#bridge?.activeEditor() ?? this.editor;
+    if (!editor) return;
+
+    const blocks: Array<{ from: number; to: number; text: string }> = [];
+    editor.state.doc.descendants((node, pos) => {
+      if (node.isTextblock && node.textContent.trim().length > 0) {
+        blocks.push({
+          from: pos + 1,
+          to: pos + node.nodeSize - 1,
+          text: node.textContent,
+        });
+        return false;
+      }
+      return true;
+    });
+
+    if (blocks.length === 0) return;
+
+    const tr = editor.state.tr;
+    for (let i = blocks.length - 1; i >= 0; i--) {
+      const b = blocks[i];
+      const translated = translateText(b.text, from, to);
+      tr.insertText(translated, b.from, b.to);
+    }
+    editor.view.dispatch(tr);
+
+    const pane = this.shadowRoot?.querySelector("docen-translate-pane") as
+      | (HTMLElement & { onDocumentTranslated: (count: number) => void })
+      | null;
+    pane?.onDocumentTranslated?.(blocks.length);
+  }
+
+  readonly #onSelectionUpdateForTranslate = (): void => {
+    if (this.#paneEl("translate")?.open && this.editor) {
+      const sel = this.editor.state.selection;
+      if (!sel.empty) {
+        const text = this.editor.state.doc.textBetween(sel.from, sel.to, " ").trim();
+        if (text) {
+          const pane = this.shadowRoot?.querySelector("docen-translate-pane") as
+            | (HTMLElement & { setSelectionText: (t: string) => void })
+            | null;
+          pane?.setSelectionText?.(text);
+        }
+      }
+    }
+  };
+
+  readonly #onDocenTranslate = (event: Event): void => {
+    const detail = (event as CustomEvent<{ text?: string }>).detail;
+    this.#openTranslate(detail?.text);
+  };
+
   #syncStatusLanguage(): void {
     this.#status.syncStatusLanguage();
   }
@@ -4150,6 +5349,8 @@ class DocenDocument extends AddinHost<Editor> {
         document?: {
           defaultTabStop?: number;
           updateFields?: boolean;
+          updateFieldsBeforePrint?: boolean;
+          fieldShading?: "never" | "always" | "whenSelected";
           protection?: string;
           compatVersion?: number;
         };
@@ -4234,21 +5435,31 @@ class DocenDocument extends AddinHost<Editor> {
   #applyDocumentSettings(d: {
     defaultTabStop?: number;
     updateFields?: boolean;
+    updateFieldsBeforePrint?: boolean;
+    fieldShading?: "never" | "always" | "whenSelected";
     protection?: string;
     compatVersion?: number;
   }): void {
     const editor = this.editor;
     if (!editor) return;
+    if (d.fieldShading) this.setFieldShading(d.fieldShading);
+    if (typeof d.updateFieldsBeforePrint === "boolean") {
+      this.setUpdateFieldsBeforePrint(d.updateFieldsBeforePrint);
+    }
     const prev = this.#documentSettings();
     const prevTab = typeof prev.defaultTabStop === "number" ? prev.defaultTabStop : undefined;
     const prevProtection = (prev.documentProtection as { edit?: string } | undefined)?.edit;
     const prevCompat = (prev.compatibility as { version?: number } | undefined)?.version;
+    const prevUpdateBeforePrint = prev.updateFieldsBeforePrint === true;
+    const prevFieldShading = prev.fieldShading;
     // Empty tab input = untouched (undefined survives the round-trip compare).
     const tabTwip =
       d.defaultTabStop != null ? convertMillimetersToTwip(d.defaultTabStop * 10) : prevTab;
     if (
       tabTwip !== prevTab ||
       d.updateFields !== (prev.updateFields === true) ||
+      d.updateFieldsBeforePrint !== prevUpdateBeforePrint ||
+      d.fieldShading !== prevFieldShading ||
       d.protection !== (prevProtection ?? "none") ||
       d.compatVersion !== (prevCompat ?? 15)
     ) {
@@ -4258,6 +5469,9 @@ class DocenDocument extends AddinHost<Editor> {
       if (tabTwip != null) settings.defaultTabStop = tabTwip;
       if (d.updateFields) settings.updateFields = true;
       else delete settings.updateFields;
+      if (d.updateFieldsBeforePrint) settings.updateFieldsBeforePrint = true;
+      else delete settings.updateFieldsBeforePrint;
+      if (d.fieldShading) settings.fieldShading = d.fieldShading;
       settings = withProtection(settings, d.protection ?? "none");
       settings.compatibility = {
         ...(prev.compatibility as object | undefined),
@@ -4730,12 +5944,171 @@ class DocenDocument extends AddinHost<Editor> {
     dialog?.setAttribute("findings", JSON.stringify(this.#inspectFindings()));
   };
 
+  #syncDocumentSettings(settings: Record<string, unknown>): void {
+    const fs = settings.fieldShading as "never" | "always" | "whenSelected" | undefined;
+    if (fs === "never" || fs === "always" || fs === "whenSelected") {
+      this.#fieldShading = fs;
+    }
+    this.#updateFieldsBeforePrint = settings.updateFieldsBeforePrint === true;
+    this.#stage?.setFieldShading(this.#fieldShading);
+  }
+
+  getFieldShading(): "never" | "always" | "whenSelected" {
+    return this.#fieldShading;
+  }
+
+  setFieldShading(mode: "never" | "always" | "whenSelected"): void {
+    this.#fieldShading = mode;
+    this.#stage?.setFieldShading(mode);
+  }
+
+  /** Mailings → Highlight Merge Fields — the live view-only toggle. */
+  getHighlightMergeFields(): boolean {
+    return this.#highlightMergeFields;
+  }
+
+  setHighlightMergeFields(on: boolean): void {
+    this.#highlightMergeFields = on;
+    this.#stage?.setHighlightMergeFields(on);
+    // The click lands outside any transaction — re-stamp the lit toggle now.
+    this.#syncFormatButtons();
+  }
+
+  /**
+   * Home → Editing → Select → Select Objects (and the Draw tab's Select):
+   * toggle the object-selection mode. While on, a click selects a floating
+   * object, a drag marquees several, Ctrl+click toggles, Delete removes the
+   * selection, and Esc/empty click deselects and then leaves the mode — text
+   * editing is suppressed exactly like Word's arrow-pointer mode.
+   */
+  setObjectSelect(on: boolean): void {
+    if (on === this.#objectSelect) return;
+    if (this.#bridge) {
+      // The bridge notifies back through onObjectSelectChange (the one writer
+      // of host state), so Esc/empty-click exits stay in sync.
+      this.#bridge.setObjectSelect(on);
+      return;
+    }
+    this.#applyObjectSelectState(on);
+  }
+
+  /** Mirror the bridge's object-mode state into the host UI (ribbon checkmark,
+   *  lit Draw button, cursor handled by the bridge). */
+  #applyObjectSelectState(on: boolean): void {
+    if (on === this.#objectSelect) return;
+    this.#objectSelect = on;
+    this.#syncSelectMenu();
+    this.#syncFormatButtons();
+  }
+
+  objectSelectActive(): boolean {
+    return this.#objectSelect;
+  }
+
+  getUpdateFieldsBeforePrint(): boolean {
+    return this.#updateFieldsBeforePrint;
+  }
+
+  setUpdateFieldsBeforePrint(value: boolean): void {
+    this.#updateFieldsBeforePrint = value;
+  }
+
+  getPrintMarkup(): boolean {
+    return this.#printMarkup;
+  }
+
+  setPrintMarkup(value: boolean): void {
+    this.#printMarkup = value;
+  }
+
+  /**
+   * Attach an external .dotx (or .docx) template to this document, importing
+   * styles, numbering, docDefaults, and themes without replacing body content.
+   */
+  attachTemplate(
+    data: Uint8Array | ArrayBuffer,
+    options: { autoUpdateStyles?: boolean } = {},
+  ): DotxTemplatePackage | undefined {
+    if (!this.editor) return undefined;
+    const pkg = attachTemplate(this.editor, data, options);
+    if (pkg.theme) {
+      this.#applyDocumentTheme("theme", pkg.theme.id, false);
+    }
+    this.repaginate();
+    return pkg;
+  }
+
+  /**
+   * Open the Print Preview modal (<docen-print-preview>) with multi-page preview,
+   * zoom/navigation, page range, collation, booklet imposition, and markup toggle.
+   */
+  async openPrintPreview(options?: { markup?: boolean }): Promise<void> {
+    if (this.#updateFieldsBeforePrint) {
+      updateDynamicFieldsBeforePrint(this.#dialogs, this.editor?.commands, (pos) => {
+        const page = this.#bridge?.pageOf(pos);
+        return typeof page === "number" ? page + 1 : null;
+      });
+    }
+    const previewEl = this.shadowRoot?.querySelector("docen-print-preview") as
+      | (HTMLElement & {
+          seed(options: unknown): void;
+          show(): void;
+        })
+      | null;
+    if (!previewEl || !this.#stage) return;
+
+    const printMarkup = options?.markup ?? this.#printMarkup;
+    const shots = await this.#stage.printSnapshots({ markup: printMarkup });
+    const cursor = this.editor?.state.selection.from ?? 0;
+    const page = (this.#bridge?.pageOf(cursor) ?? 0) + 1;
+    previewEl.seed({
+      snapshots: shots,
+      filename: this.getAttribute("filename") ?? "Document",
+      currentPage: page,
+      printMarkup,
+    });
+    previewEl.show();
+  }
+
   async #print(): Promise<void> {
+    if (this.#updateFieldsBeforePrint) {
+      updateDynamicFieldsBeforePrint(this.#dialogs, this.editor?.commands, (pos) => {
+        const page = this.#bridge?.pageOf(pos);
+        return typeof page === "number" ? page + 1 : null;
+      });
+    }
     return this.#io.print();
   }
 
   async open(file: File): Promise<void> {
     return this.#io.open(file);
+  }
+
+  /**
+   * File → New: reset to a blank document. The stored `Set as Default`
+   * formatting (theme + style set) is applied, so new documents start from
+   * the user's chosen document formatting — Word's Normal-template behavior.
+   * A host may take the action over through the cancelable `docen:new` event
+   * (the ribbon path does); this method always creates the document.
+   */
+  newDocument(): void {
+    if (!this.editor) return;
+    const defaults = readDocumentDefaults();
+    const name = t("header.doc-name", this);
+    this.setAttribute("filename", name);
+    this.#docxVariant = "docx";
+    this.#io.applyOpenedJSON(newDocumentJSON(defaults), name);
+    applyDocumentDefaults(this.editor, defaults);
+  }
+
+  /**
+   * Reset `Set as Default` to the factory formatting (the Office theme, no
+   * style set) — the escape hatch for the Design → Set as Default action,
+   * which Word itself only reverses by setting a blank document's formatting.
+   * The next {@link newDocument} then opens on the factory template.
+   */
+  resetDocumentDefaults(): void {
+    clearDocumentDefaults();
   }
 
   async openDOCX(
@@ -4772,6 +6145,58 @@ class DocenDocument extends AddinHost<Editor> {
     return this.#io.saveDOCX(variant);
   }
 
+  /**
+   * Register font bytes for deterministic shaping and export embedding.
+   * Pass the family name the document styles reference (e.g. "Calibri") and,
+   * for a `.ttc`/`.otc` collection (Noto Sans CJK, msyh.ttc), the face
+   * `fontIndex`. Shaping is on by default — a registered family shapes under
+   * the engine and feeds the line breaker; families without a registered face
+   * keep the canvas fallback (`setShapingEnabled(false)` /
+   * `DOCEN_SHAPING_DISABLED=1` rolls back). PDF/DOCX export embeds the font
+   * whenever its `fsType` allows; collection faces cannot be subset by the
+   * embedded-font writer yet — register an extracted face for export
+   * embedding.
+   */
+  async registerFont(family: string, fontData: Uint8Array, fontIndex = 0): Promise<void> {
+    this.#fonts.set(family.toLowerCase(), { family, fontData });
+    await initShapingWasm();
+    registerShapingFont(family, fontData, fontIndex);
+    this.#measurer.clearCache();
+  }
+
+  /**
+   * Register docen's bundled production faces for the Word default families
+   * (Calibri/Calibri Light → Carlito, Cambria → Caladea, Arial → Liberation
+   * Sans, Times New Roman → Liberation Serif; all four weight/slant slots).
+   * The element calls this automatically on connect, so shaping never silently
+   * falls back to canvas for the default families; call it yourself (with
+   * `baseUrl` when your bundler does not emit the package's asset URLs, or
+   * after overriding the bundled files) to control it. Registered regular
+   * faces additionally join the export-embedding set.
+   *
+   * Failures are non-fatal: the editor warns and keeps the canvas fallback.
+   */
+  async registerDefaultFonts(options?: RegisterDefaultFontsOptions): Promise<string[]> {
+    const faces = await loadDefaultFonts(options);
+    await initShapingWasm();
+    const labels: string[] = [];
+    for (const face of faces) {
+      registerShapingFont(face.family, face.bytes, 0, {
+        bold: face.bold,
+        italic: face.italic,
+      });
+      // One face per family feeds the export-embedding map (its regular face,
+      // matching registerFont's family-keyed contract).
+      if (!face.bold && !face.italic) {
+        this.#fonts.set(face.family.toLowerCase(), { family: face.family, fontData: face.bytes });
+      }
+      labels.push(`${face.family}${face.bold ? " bold" : ""}${face.italic ? " italic" : ""}`);
+    }
+    this.#measurer.clearCache();
+    return labels;
+  }
+
+  /** Serialize the current document to a Markdown string. */
   saveMarkdown(): string {
     return this.#io.saveMarkdown();
   }
@@ -4801,6 +6226,9 @@ class DocenDocument extends AddinHost<Editor> {
   }
 
   #loadDoc(doc: JSONContent): void {
+    // A new document gets a fresh warning state — a dismissal does not leak
+    // from the previous document into this one.
+    this.#contentWarningDismissed = false;
     this.#io.loadDoc(doc);
   }
 
@@ -4852,17 +6280,21 @@ class DocenDocument extends AddinHost<Editor> {
               ? "proofing-pane"
               : id === "thesaurus"
                 ? "thesaurus-pane"
-                : id === "revisions"
-                  ? "revisions-pane"
-                  : id === "styles"
-                    ? "styles-pane"
-                    : id === "reveal"
-                      ? "reveal-pane"
-                      : id === "restrict"
-                        ? "restrict-pane"
-                        : id === "a11y"
-                          ? "a11y-pane"
-                          : "props-pane";
+                : id === "translate"
+                  ? "translate-pane"
+                  : id === "revisions"
+                    ? "revisions-pane"
+                    : id === "styles"
+                      ? "styles-pane"
+                      : id === "reveal"
+                        ? "reveal-pane"
+                        : id === "restrict"
+                          ? "restrict-pane"
+                          : id === "a11y"
+                            ? "a11y-pane"
+                            : id === "altText"
+                              ? "alt-text-pane"
+                              : "props-pane";
     return this.shadowRoot?.querySelector(`docen-task-pane[part="${part}"]`) as
       | (HTMLElement & { open: boolean })
       | null;
@@ -4889,6 +6321,8 @@ class DocenDocument extends AddinHost<Editor> {
     if (open) {
       if (id === "a11y") {
         (this.shadowRoot?.querySelector("docen-a11y-checker-pane") as any)?.check(this.getJSON());
+      } else if (id === "altText") {
+        this.#syncAltTextPane();
       } else if (id === "reveal") {
         this.#updateRevealFormatting();
       } else if (id === "proofing") {
@@ -4957,6 +6391,32 @@ class DocenDocument extends AddinHost<Editor> {
   /** Whether editing/formatting marks are currently shown. */
   getShowMarks(): boolean {
     return this.hasAttribute("show-marks");
+  }
+
+  // ── Ruler (method + event; boolean `show-ruler` / `ruler` attribute) ──
+
+  /** Toggle ruler on or off. Idempotent; dispatches `docen:ruler-change`. */
+  setShowRuler(on: boolean): void {
+    if (this.getShowRuler() === on) return;
+    this.toggleAttribute("show-ruler", on);
+    this.#stage?.setShowRuler(on);
+    this.#syncRuler();
+    this.dispatchEvent(
+      new CustomEvent("docen:ruler-change", {
+        bubbles: true,
+        composed: true,
+        detail: { showRuler: on },
+      }),
+    );
+  }
+
+  /** Whether ruler is currently shown. */
+  getShowRuler(): boolean {
+    return (
+      this.hasAttribute("show-ruler") ||
+      this.hasAttribute("ruler") ||
+      (this.#stage?.showRuler ?? false)
+    );
   }
 
   // ── Persisted settings (identity + writing toggles) ────────────────────────
@@ -5032,4 +6492,12 @@ export type {
 export type { BuildingBlocksSeed } from "../ui/components/workspace/building-blocks-dialog";
 export type { QuickPartSeed, QuickPartValues } from "../ui/components/workspace/quick-part-dialog";
 
+/**
+ * `<docen-editor>` — Turnkey rich document editor element.
+ * Drop-in custom element wrapping DocenDocument with touch, pen, and RTL support.
+ */
+@customElement({ name: "docen-editor", template: documentTemplate, styles: documentStyles })
+export class DocenEditor extends DocenDocument {}
+
+export { DocenDocument };
 export default DocenDocument;

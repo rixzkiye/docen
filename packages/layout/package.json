@@ -29,7 +29,8 @@
     "url": "git+https://github.com/DemoMacro/docen.git"
   },
   "files": [
-    "dist"
+    "dist",
+    "assets"
   ],
   "type": "module",
   "main": "dist/index.mjs",
@@ -46,6 +47,7 @@
     "prepack": "pnpm build"
   },
   "dependencies": {
-    "@docen/pretext": "workspace:*"
+    "@docen/pretext": "workspace:*",
+    "@docen/shaping": "workspace:*"
   }
 }

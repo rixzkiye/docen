@@ -1,0 +1,131 @@
+{
+  "type": "doc",
+  "attrs": {
+    "documentExtras": {
+      "settings": {
+        "captions": {
+          "captions": [
+            {
+              "name": "Figure",
+              "sep": "period"
+            }
+          ]
+        }
+      }
+    }
+  },
+  "content": [
+    {
+      "type": "paragraph",
+      "attrs": {
+        "heading": "Heading1"
+      },
+      "content": [
+        {
+          "type": "text",
+          "text": "Chapter One"
+        }
+      ]
+    },
+    {
+      "type": "paragraph",
+      "attrs": {
+        "style": "Caption"
+      },
+      "content": [
+        {
+          "type": "text",
+          "text": "Figure "
+        },
+        {
+          "type": "inlinePassthrough",
+          "attrs": {
+            "data": "{\"simpleField\":{\"instruction\":\" SEQ Figure \\\\* ARABIC \\\\s 1 \",\"cachedValue\":\"99\"}}"
+          }
+        },
+        {
+          "type": "text",
+          "text": ": first"
+        }
+      ]
+    },
+    {
+      "type": "paragraph",
+      "attrs": {
+        "style": "Caption"
+      },
+      "content": [
+        {
+          "type": "text",
+          "text": "Figure "
+        },
+        {
+          "type": "inlinePassthrough",
+          "attrs": {
+            "data": "{\"simpleField\":{\"instruction\":\" SEQ Figure \\\\* ARABIC \\\\s 1 \",\"cachedValue\":\"99\"}}"
+          }
+        },
+        {
+          "type": "text",
+          "text": ": second"
+        }
+      ]
+    },
+    {
+      "type": "paragraph",
+      "attrs": {
+        "style": "Caption"
+      },
+      "content": [
+        {
+          "type": "text",
+          "text": "Table "
+        },
+        {
+          "type": "inlinePassthrough",
+          "attrs": {
+            "data": "{\"simpleField\":{\"instruction\":\" SEQ Table \\\\* ARABIC \",\"cachedValue\":\"99\"}}"
+          }
+        },
+        {
+          "type": "text",
+          "text": ": grid"
+        }
+      ]
+    },
+    {
+      "type": "paragraph",
+      "attrs": {
+        "heading": "Heading1"
+      },
+      "content": [
+        {
+          "type": "text",
+          "text": "Chapter Two"
+        }
+      ]
+    },
+    {
+      "type": "paragraph",
+      "attrs": {
+        "style": "Caption"
+      },
+      "content": [
+        {
+          "type": "text",
+          "text": "Figure "
+        },
+        {
+          "type": "inlinePassthrough",
+          "attrs": {
+            "data": "{\"simpleField\":{\"instruction\":\" SEQ Figure \\\\* ROMAN \\\\s 1 \",\"cachedValue\":\"99\"}}"
+          }
+        },
+        {
+          "type": "text",
+          "text": ": third"
+        }
+      ]
+    }
+  ]
+}

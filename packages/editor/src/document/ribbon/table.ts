@@ -327,6 +327,10 @@ export function tableContextTabs(scope?: Element): RibbonTab[] {
             menu("table-delete", "delete-table", parsedItems(tableDeleteItems())),
           ]),
         ]),
+        group("draw", [
+          btn("pen", "draw-table", { size: "large" }),
+          btn("eraser", "table-eraser", { size: "large" }),
+        ]),
         group("rows-columns", [
           row([
             col([

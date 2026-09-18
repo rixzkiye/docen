@@ -1,4 +1,3 @@
-import { sectionPageSizeDefaults } from "@office-open/docx";
 import type {
   BorderOptions,
   BordersOptions,
@@ -9,13 +8,19 @@ import type {
   TableCellOptions,
 } from "@office-open/docx";
 
+import { DOCEN_DEFAULT_PAGE_SIZE } from "../converters/section-defaults";
+
 // ── Tiptap attr factory ──
 
 /** Factory for a Tiptap attr that carries an office-open native value: never
  *  parsed from HTML nor rendered to it, defaulting to null (ProseMirror stores
  *  every declared attr). Shared by every extension carrying OOXML attrs
  *  (paragraph/table/table-cell/…). */
-export const attrNative = () => ({ default: null, parseHTML: () => null, rendered: false });
+export const attrNative = (defaultValue: unknown = null) => ({
+  default: defaultValue,
+  parseHTML: () => null,
+  rendered: false,
+});
 
 // ── Shared paragraph attr factory ──
 //
@@ -173,7 +178,7 @@ export function docxParagraphAttrs() {
 type CellKeyElsewhere = "rowSpan" | "children" | "text" | "cellProperties";
 
 /** The full attr key set the tableCell node declares. */
-type TableCellAttrKey = Exclude<keyof TableCellOptions, CellKeyElsewhere>;
+type TableCellAttrKey = Exclude<keyof TableCellOptions, CellKeyElsewhere> | "tcPrChange";
 
 /** Shared office-open table-cell attrs — TableCellPropertiesOptions mirror.
  *  The satisfies guard pins the key set to TableCellAttrKey — same mirror
@@ -218,6 +223,7 @@ export function docxTableCellAttrs() {
     deletion: attrNative(),
     cellMerge: attrNative(),
     revision: attrNative(),
+    tcPrChange: attrNative(),
     // Mirror contract: every office-open cell property declared, nothing else.
   } satisfies Record<TableCellAttrKey, DocxAttrSpec>;
 }
@@ -299,10 +305,12 @@ export function normalizeColorToHex(color: unknown): string | undefined {
 // Office default theme1.xml font tokens → concrete font names. office-open does
 // not parse the theme part, so a run's rFonts *Theme attributes survive as the
 // literal tokens "minorHAnsi"/"minorEastAsia"/…; map them to the Office default
-// theme fonts here (Calibri/等线 on a stock zh-CN template). Documents carrying
-// a custom theme fall back to these defaults — rare, and still better than the
-// browser's Segoe UI fallback. The CJK eastAsia font varies by the document's
-// eastAsia language; zh-CN (等线) is the default, covering the common case.
+// theme fonts here. The eastAsia slot needs the *document's* East Asian
+// language to pick its face — there is no locale-neutral CJK font. docen does
+// not guess zh-CN: `DOCEN_DEFAULT_EAST_ASIA_LANGUAGE` is en-US, whose Office
+// theme leaves the East Asian slot empty, so a theme-only run resolves to the
+// theme's Latin face (Calibri/Calibri Light). Callers that know the document
+// is zh-CN/zh-TW/ja-JP/ko-KR pass the language explicitly.
 const THEME_LATIN_FONTS: Record<string, string> = {
   minorHAnsi: "Calibri",
   majorHAnsi: "Calibri Light",
@@ -310,20 +318,34 @@ const THEME_LATIN_FONTS: Record<string, string> = {
   majorBidi: "Arial",
 };
 const THEME_EAST_ASIA_FONTS: Record<string, Record<string, string>> = {
+  // en-US: the Office default theme's a:ea typeface is empty — no CJK face is
+  // named, so the eastAsia slot falls through to the Latin theme face below.
+  "en-US": {},
   "zh-CN": { minorEastAsia: "等线", majorEastAsia: "等线 Light" },
   "zh-TW": { minorEastAsia: "新細明體", majorEastAsia: "微軟正黑體" },
   "ja-JP": { minorEastAsia: "游ゴシック", majorEastAsia: "游ゴシック Light" },
   "ko-KR": { minorEastAsia: "맑은 고딕", majorEastAsia: "맑은 고딕" },
 };
+/** East Asian theme token → its Latin-slot counterpart, used when the
+ *  document's language names no East Asian face (the en-US default). */
+const THEME_EAST_ASIA_LATIN_FALLBACK: Record<string, string> = {
+  minorEastAsia: "minorHAnsi",
+  majorEastAsia: "majorHAnsi",
+};
+
+/** The East Asian language a theme-only *eastAsiaTheme token resolves with
+ *  when no caller-supplied document language is available. Deliberately
+ *  locale-neutral (en-US): the zh-CN CJK face is never applied implicitly. */
+export const DOCEN_DEFAULT_EAST_ASIA_LANGUAGE = "en-US";
 
 /** Resolve a run's rFonts — literal ascii/eastAsia/hAnsi OR *Theme tokens — to
  *  the concrete { ascii, eastAsia } pair used by both font-family renderers.
  *  *Theme tokens map to the Office default theme fonts (office-open leaves them
- *  unresolved). `eastAsiaLang` picks the CJK font for *eastAsiaTheme (zh-CN
- *  default). Returns null only when the value is empty/non-font. */
+ *  unresolved). `eastAsiaLang` picks the CJK font for *eastAsiaTheme, defaulting
+ *  to the locale-neutral en-US. Returns null only when the value is empty/non-font. */
 export function resolveRFonts(
   font: unknown,
-  eastAsiaLang = "zh-CN",
+  eastAsiaLang = DOCEN_DEFAULT_EAST_ASIA_LANGUAGE,
 ): { ascii: string | null; eastAsia: string | null } | null {
   if (!font) return null;
   if (typeof font === "string") return { ascii: font, eastAsia: null };
@@ -336,17 +358,25 @@ export function resolveRFonts(
     hAnsiTheme?: string;
     eastAsiaTheme?: string;
   };
-  const eaMap = THEME_EAST_ASIA_FONTS[eastAsiaLang] ?? THEME_EAST_ASIA_FONTS["zh-CN"];
+  const eaMap = THEME_EAST_ASIA_FONTS[eastAsiaLang] ?? THEME_EAST_ASIA_FONTS["en-US"]!;
   const ascii =
     f.ascii ?? THEME_LATIN_FONTS[f.asciiTheme ?? ""] ?? THEME_LATIN_FONTS[f.hAnsiTheme ?? ""];
   const hAnsi = f.hAnsi ?? THEME_LATIN_FONTS[f.hAnsiTheme ?? ""] ?? ascii;
-  const eastAsia = f.eastAsia ?? eaMap[f.eastAsiaTheme ?? ""];
+  const eastAsia =
+    f.eastAsia ??
+    eaMap[f.eastAsiaTheme ?? ""] ??
+    (f.eastAsiaTheme
+      ? THEME_LATIN_FONTS[THEME_EAST_ASIA_LATIN_FALLBACK[f.eastAsiaTheme] ?? ""]
+      : undefined);
   return { ascii: ascii ?? hAnsi ?? null, eastAsia: eastAsia ?? null };
 }
 
 /** Resolve a font value (string or OOXML rFonts, incl. *Theme tokens) to a
  *  single CSS family name (ascii/hAnsi/eastAsia). */
-export function resolveFontName(font: unknown, eastAsiaLang = "zh-CN"): string | null {
+export function resolveFontName(
+  font: unknown,
+  eastAsiaLang = DOCEN_DEFAULT_EAST_ASIA_LANGUAGE,
+): string | null {
   const r = resolveRFonts(font, eastAsiaLang);
   return r?.ascii ?? r?.eastAsia ?? null;
 }
@@ -402,12 +432,12 @@ export function shadingFromCss(css: string | null | undefined): ShadingPropertie
 /** Resolve a section's printable page dimensions (twips), honoring orientation.
  *  A landscape section commonly stores portrait dims (w<h) with
  *  `orientation: "landscape"` — swap width/height so width is the larger edge.
- *  Falls back to the engine's default page size (@office-open/docx
- *  `sectionPageSizeDefaults` = A4) when the size is absent or non-numeric — the
- *  engine's `stringifySectionPropertiesXml` fills an empty sectPr the same way,
- *  so edit-time geometry matches render/measure/generate/export. */
+ *  Falls back to docen's own default page size (A4, see
+ *  {@link DOCEN_DEFAULT_PAGE_SIZE}) when the size is absent or non-numeric —
+ *  the same constant generation stamps into every section, so edit-time
+ *  geometry matches render/measure/generate/export. */
 export function resolvePageSize(size: unknown): { width: number; height: number } {
-  const fallback = { width: sectionPageSizeDefaults.WIDTH, height: sectionPageSizeDefaults.HEIGHT };
+  const fallback = { width: DOCEN_DEFAULT_PAGE_SIZE.WIDTH, height: DOCEN_DEFAULT_PAGE_SIZE.HEIGHT };
   if (!size || typeof size !== "object") return fallback;
   const s = size as { width?: unknown; height?: unknown; orientation?: unknown };
   const w = typeof s.width === "number" ? s.width : undefined;

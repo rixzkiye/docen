@@ -1,6 +1,6 @@
 import {
+  createMeasurer,
   stackBlocks,
-  TextMeasurer,
   type LaidOutStackItem,
   type LayoutBlock,
   type LayoutBorderEdge,
@@ -9,7 +9,7 @@ import { Rect, type IGroup } from "leafer-ui";
 
 import { paintBlock } from "../painter";
 import type { PaintContext } from "./context";
-import { drawEdge } from "./table";
+import { drawDiagonal, drawEdge } from "./table";
 
 // ── graphic-frame table painter ──
 //
@@ -28,7 +28,9 @@ interface FrameCell {
   spanH: number;
   fill?: string;
   opacity?: number;
-  borders?: Partial<Record<"top" | "right" | "bottom" | "left", LayoutBorderEdge>>;
+  borders?: Partial<
+    Record<"top" | "right" | "bottom" | "left" | "tl2br" | "tr2bl", LayoutBorderEdge>
+  >;
   anchor?: "top" | "center" | "bottom";
   marginsPx: { left: number; top: number; right: number; bottom: number };
   blocks: LayoutBlock[];
@@ -54,7 +56,7 @@ export function paintFrameTable(
   const cols = t?.columnWidthsPx;
   const rows = t?.rows;
   if (!cols?.length || !rows?.length) return;
-  const measurer = new TextMeasurer(ctx.metrics);
+  const measurer = createMeasurer(ctx.metrics);
 
   // Column bands from the fixed widths.
   const colX = [0];
@@ -139,5 +141,7 @@ export function paintFrameTable(
     if (cell.borders.bottom) drawEdge(tree, x0, y0 + h, w, true, cell.borders.bottom);
     if (cell.borders.left) drawEdge(tree, x0, y0, h, false, cell.borders.left);
     if (cell.borders.right) drawEdge(tree, x0 + w, y0, h, false, cell.borders.right);
+    if (cell.borders.tl2br) drawDiagonal(tree, x0, y0, x0 + w, y0 + h, cell.borders.tl2br);
+    if (cell.borders.tr2bl) drawDiagonal(tree, x0 + w, y0, x0, y0 + h, cell.borders.tr2bl);
   }
 }

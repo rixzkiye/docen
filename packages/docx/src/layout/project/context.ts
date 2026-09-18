@@ -95,6 +95,11 @@ export interface ProjectContext {
    *  palette) — the incremental projection refuses to reuse such a child
    *  (see the layout adapter's projection cache). */
   stateful?: { hit: boolean };
+  /** Effective paragraph / run styling cascaded from a table cell's conditional format. */
+  tableCellDefaults?: {
+    paragraph?: Record<string, unknown>;
+    run?: Record<string, unknown>;
+  };
 }
 
 /** Mark the current child projection stateful — call wherever a projection

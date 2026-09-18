@@ -1,4 +1,4 @@
-import type { RibbonTab } from "../../ui";
+import type { RibbonGallery, RibbonTab } from "../../ui";
 import {
   accessibilityGroup,
   arrangeGroup,
@@ -13,8 +13,7 @@ import {
   tab,
 } from "./shared";
 
-/** Chart Type's drop-down — every ChartType token in Word's order; the seven
- *  the renderer draws are live, the placeholder-only tail greys out. */
+/** Chart Type's drop-down — every ChartType token in Word's order. */
 export const chartTypeItems = (): string =>
   JSON.stringify([
     { text: opt("chart-type.column"), value: "column" },
@@ -23,14 +22,15 @@ export const chartTypeItems = (): string =>
     { text: opt("chart-type.area"), value: "area" },
     { text: "-" },
     { text: opt("chart-type.pie"), value: "pie" },
+    { text: opt("chart-type.of-pie"), value: "ofPie" },
     { text: opt("chart-type.doughnut"), value: "doughnut" },
     { text: opt("chart-type.scatter"), value: "scatter" },
     { text: "-" },
     { text: opt("chart-type.radar"), value: "radar" },
     { text: opt("chart-type.stock"), value: "stock" },
-    { text: opt("chart-type.surface"), value: "surface", disabled: true },
-    { text: opt("chart-type.of-pie"), value: "ofPie", disabled: true },
+    { text: opt("chart-type.surface"), value: "surface" },
     { text: opt("chart-type.bubble"), value: "bubble" },
+    { text: opt("chart-type.combo"), value: "combo" },
   ]);
 
 /** The Legend placement drop-down — "none" plus LegendPosition's four sides. */
@@ -42,6 +42,18 @@ export const chartLegendItems = (): string =>
     { text: opt("chart-legend.right"), value: "right" },
     { text: opt("chart-legend.top"), value: "top" },
   ]);
+
+/** Word's Chart Styles gallery: preset style numbers (1 through 8). */
+export const chartStyleGallery = (): RibbonGallery => ({
+  type: "gallery",
+  event: "chart-style",
+  label: opt("more-chart-styles"),
+  items: [1, 2, 3, 4, 5, 6, 7, 8].map((s) => ({
+    text: `Style ${s}`,
+    value: String(s),
+  })),
+  visibleCount: 4,
+});
 
 /** Word's Chart Tools — the contextual tab while a chart carries the
  *  selection. Word splits it into Design + Format tabs; the renderer's model
@@ -57,10 +69,10 @@ export function chartDesignTab(): RibbonTab {
     contextual: true,
     groups: [
       group("chart-type", [
-        col([
-          grid([menu("chart", "chart-type", parsedItems(chartTypeItems()), { size: "large" })]),
-        ]),
+        btn("chart", "chart-change-type", { size: "large" }),
+        col([grid([menu("chart", "chart-type", parsedItems(chartTypeItems()))])]),
       ]),
+      group("chart-styles", [chartStyleGallery()]),
       group("chart-layouts", [
         col([
           grid([

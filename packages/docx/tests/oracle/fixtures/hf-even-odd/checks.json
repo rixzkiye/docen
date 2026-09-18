@@ -1,0 +1,39 @@
+{
+  "description": "even/odd headers and footers (evenAndOddHeaders + even slot); odd pages use default",
+  "xml": [
+    {
+      "part": "word/settings.xml",
+      "contains": ["<w:evenAndOddHeaders w:val=\"1\"/>"]
+    },
+    {
+      "part": "word/document.xml",
+      "contains": ["w:type=\"even\"", "w:type=\"default\""]
+    }
+  ],
+  "python": [
+    {
+      "path": "document.sections[0].headerRefs.even",
+      "truthy": true
+    },
+    {
+      "path": "document.sections[0].footerRefs.even",
+      "truthy": true
+    }
+  ],
+  "pdf": [
+    {
+      "page": 1,
+      "contains": ["ODD HEADER", "ODD FOOTER"],
+      "notContains": ["EVEN HEADER"]
+    },
+    {
+      "page": 2,
+      "contains": ["EVEN HEADER", "EVEN FOOTER"],
+      "notContains": ["ODD HEADER"]
+    },
+    {
+      "page": 3,
+      "contains": ["ODD HEADER", "ODD FOOTER"]
+    }
+  ]
+}

@@ -26,6 +26,20 @@ export const styleSetItems = (): string =>
     { text: opt("style-set-elegant"), value: "elegant" },
   ]);
 
+/** The Design tab's Text Effects gallery — the document-wide effect theme
+ *  stamped onto the Title/Heading styles (Word's Document Formatting → Text
+ *  Effects). Labels reuse the Font gallery's effect names. */
+export const textEffectThemeItems = (): string =>
+  JSON.stringify([
+    { text: opt("te-none"), value: "none" },
+    { text: opt("te-outline"), value: "outline" },
+    { text: opt("te-shadow"), value: "shadow" },
+    { text: opt("te-reflection"), value: "reflection" },
+    { text: opt("te-glow"), value: "glow" },
+    { text: opt("te-bevel"), value: "bevel" },
+    { text: opt("te-rotation"), value: "rotation" },
+  ]);
+
 /** The Watermark split's drop-down: Word's preset gallery plus Remove. */
 export const watermarkItems = (): string =>
   JSON.stringify([
@@ -97,7 +111,9 @@ export const designTab = (): RibbonTab =>
       split("theme", "theme", parsedItems(themeItems()), { size: "large" }),
       split("font-color", "theme-color", parsedItems(themeColorItems()), { size: "large" }),
       split("text-font", "theme-font", parsedItems(themeFontItems()), { size: "large" }),
-      btn("text-effects", "effects", { size: "large" }),
+      // Document text-effect theme (stamped onto the heading styles) — Word's
+      // Design → Document Formatting → Text Effects gallery.
+      split("text-effects", "effects", parsedItems(textEffectThemeItems()), { size: "large" }),
       col([
         grid([
           menu("line-spacing", "paragraph-spacing", parsedItems(paragraphSpacingItems())),

@@ -7,9 +7,16 @@
 
 import { measureNaturalWidth, prepareWithSegments, type PrepareOptions } from "@docen/pretext";
 
-import { isCjkCodeUnit, isCjkText, type FontMetrics, type FontSlots } from "../font";
-import { WORD_FONT_METRICS } from "../font-metrics-data";
+import {
+  resolvedBaselineShare,
+  isCjkCodeUnit,
+  isCjkText,
+  type FontMetrics,
+  type FontSlots,
+} from "../font";
+import { getWordFontMetric, wordBaselineShare } from "../font-metrics-data";
 import type { LayoutTextStyle } from "../layout-doc";
+import type { LaidOutGlyphRun } from "../layout-result";
 
 /** One same-script stretch of a run. */
 export interface ScriptSegment {
@@ -179,8 +186,13 @@ export function baselineShareOf(family: string, bold: boolean, italic: boolean):
   const key = `${family}|${bold ? "b" : ""}${italic ? "i" : ""}`;
   const cached = baselineShareCache.get(key);
   if (cached != null) return cached;
-  const word = WORD_FONT_METRICS[family.trim().toLowerCase()];
-  let share = word ? word.winAscent / word.upem : 0;
+  // A font file the shaping layer knows (registered bytes) carries its own
+  // winAscent — deterministic, no canvas/DOM read.
+  let share = resolvedBaselineShare(family) ?? 0;
+  if (share === 0) {
+    const word = getWordFontMetric(family);
+    share = word ? wordBaselineShare(word) : 0;
+  }
   if (share === 0 && typeof document !== "undefined") {
     baselineCanvas ??= document.createElement("canvas");
     const ctx = baselineCanvas.getContext("2d");
@@ -305,6 +317,20 @@ export class TextMeasurer {
         }),
       );
     return width;
+  }
+
+  /** The shaped glyph run for a painted run, when this measurer can shape it.
+   *  The canvas-backed measurer has no run — the painter then draws fillText. */
+  glyphRunOf(_text: string, _style: LayoutTextStyle): LaidOutGlyphRun | undefined {
+    return undefined;
+  }
+
+  /** Optional breaker measurement provider: when it returns a function, the
+   *  line breaker measures this style's segments with it instead of the
+   *  canvas. The value must be a raw advance — before letterSpacing/widthScale,
+   *  which pretext applies itself. The canvas measurer has none. */
+  segmentMeasurer(_style: LayoutTextStyle): ((segment: string) => number) | undefined {
+    return undefined;
   }
 }
 

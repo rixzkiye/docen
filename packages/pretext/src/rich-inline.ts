@@ -33,6 +33,9 @@ export type RichInlineItem = {
   widthScale?: number;
   // docen-local: explicit canvas kerning while measuring this item.
   fontKerning?: boolean;
+  // docen-local: shaped advance provider (see PrepareOptions.measure). When
+  // set, this item's segment widths come from the provider, not the canvas.
+  measure?: (segment: string) => number;
 };
 
 export type PreparedRichInline = {
@@ -242,6 +245,7 @@ export function prepareRichInline(
     if (letterSpacing !== 0) prepareOptions.letterSpacing = letterSpacing;
     if (item.widthScale != null) prepareOptions.widthScale = item.widthScale;
     if (item.fontKerning === true) prepareOptions.fontKerning = true;
+    if (item.measure) prepareOptions.measure = item.measure;
     const prepared = prepareWithSegments(
       trimmedText,
       item.font,

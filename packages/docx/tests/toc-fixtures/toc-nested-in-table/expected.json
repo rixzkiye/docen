@@ -1,0 +1,32 @@
+{
+  "description": "A TOC nested inside a table cell",
+  "fields": {
+    "pageCount": 1,
+    "tocPageOf": {
+      "heading:0": 1
+    }
+  },
+  "python": {
+    "simple": [],
+    "instrTexts": [" TOC \\o \"1-1\" "],
+    "tocEntries": [
+      {
+        "style": "TOC1",
+        "text": "Intro",
+        "page": "1"
+      }
+    ]
+  },
+  "xmlPresent": ["TOC \\o \"1-1\""],
+  "pdf": {
+    "contains": ["Intro"],
+    "patterns": ["Intro\\.{2,}1"]
+  },
+  "update": {
+    "skip": "LibreOffice fails to load a table-nested TOC over UNO (LO limitation)"
+  },
+  "loLimitations": [
+    "LibreOffice's UNO load crashes on a TOC inside a table cell (the same file converts to PDF); the explicit-update oracle is skipped for this fixture."
+  ],
+  "resavePython": {}
+}

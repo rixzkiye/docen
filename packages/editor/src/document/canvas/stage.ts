@@ -45,9 +45,15 @@ import {
  * after the editing milestones (M-R2+) land.
  */
 import type { FlowPage, FontMetrics, LaidOutParagraph, LaidOutStackItem } from "@docen/layout";
-import { stackBlocks, TextMeasurer } from "@docen/layout";
+import { createMeasurer, stackBlocks } from "@docen/layout";
 import { App, Debug, Group, Line, Rect, Text, type IGroup } from "leafer-ui";
 
+import {
+  RULER_TICK_LEN,
+  rulerTicks,
+  type RulerUnit,
+} from "../../ui/components/workspace/ruler-ticks";
+import { getArtBorderSvgDataUri } from "./art-borders";
 import { collectPageParas } from "./caret-map";
 import { diffFlowItems } from "./item-diff";
 import { computeLineNumbers } from "./line-numbers";
@@ -213,7 +219,7 @@ export function layFurnitureSections(
   sections: readonly CanvasStageSection[],
   metrics: FontMetrics,
 ): (LaidFurnitureSection | undefined)[] {
-  const measurer = new TextMeasurer(metrics);
+  const measurer = createMeasurer(metrics);
   return sections.map((section) => {
     const f = section.furniture;
     if (!f) return undefined;
@@ -273,30 +279,9 @@ export class CanvasStage {
    *  restarts). */
   private pageNumberOffsets: number[] = [];
 
-  onAddTabStop?: (positionTw: number) => void;
-  onOpenTabsDialog?: () => void;
   /** A page's paint app went live/dark (viewport virtualization) — the host
    *  mirrors it into the edit bridge so overlays cull to live pages. */
   onLiveChange?: (page: number, live: boolean) => void;
-  activeTabStops?: readonly {
-    positionPx: number;
-    type: "left" | "center" | "right" | "decimal" | "bar";
-  }[];
-
-  setActiveTabStops(
-    stops?: readonly {
-      positionPx: number;
-      type: "left" | "center" | "right" | "decimal" | "bar";
-    }[],
-  ): void {
-    this.activeTabStops = stops;
-    if (this.#showRuler) {
-      for (let i = 0; i < this.slots.length; i++) {
-        const frame = this.slots[i].el.parentElement;
-        if (frame) this.applyRulers(frame, i);
-      }
-    }
-  }
 
   /** The section a page belongs to (its flow box + furniture). */
   private sectionAt(page: number): CanvasStageSection {
@@ -507,19 +492,46 @@ export class CanvasStage {
     this.#repaintViewFlagStaleRest();
   }
 
+  /** Word field shading: "never" | "always" | "whenSelected". */
+  #fieldShading: "never" | "always" | "whenSelected" = "never";
+
+  getFieldShading(): "never" | "always" | "whenSelected" {
+    return this.#fieldShading;
+  }
+
+  setFieldShading(mode: "never" | "always" | "whenSelected"): void {
+    if (mode === this.#fieldShading) return;
+    this.#fieldShading = mode;
+    this.#repaintViewFlagStaleRest();
+  }
+
+  /** Mailings → Highlight Merge Fields (Word's view-only yellow tint). */
+  #highlightMergeFields = false;
+
+  getHighlightMergeFields(): boolean {
+    return this.#highlightMergeFields;
+  }
+
+  setHighlightMergeFields(on: boolean): void {
+    if (on === this.#highlightMergeFields) return;
+    this.#highlightMergeFields = on;
+    this.#repaintViewFlagStaleRest();
+  }
+
   /** The document view (Word's View tab): print = paginated pages with
    *  furniture; draft = paginated, body only (no headers/footers, white
    *  background); web/read = the section laid as ONE continuous page rendered
    *  through a viewport window (see {@link WINDOW_PX}), read additionally
    *  read-only with the chrome trimmed by the host. */
-  #viewMode: "print" | "draft" | "web" | "read" = "print";
+  #viewMode: "print" | "draft" | "web" | "read" | "outline" = "print";
 
   /** Print snapshots repaint without the page color (Word's "Print
    *  background colors and images" ships off) — set only inside
    *  {@link printSnapshots}. */
   #suppressBackground = false;
+  #suppressBalloons = false;
 
-  setViewMode(mode: "print" | "draft" | "web" | "read"): void {
+  setViewMode(mode: "print" | "draft" | "web" | "read" | "outline"): void {
     if (mode === this.#viewMode) return;
     const wasContinuous = this.#viewMode === "web" || this.#viewMode === "read";
     this.#viewMode = mode;
@@ -527,7 +539,7 @@ export class CanvasStage {
     this.#repaintViewFlagStaleRest();
   }
 
-  get viewMode(): "print" | "draft" | "web" | "read" {
+  get viewMode(): "print" | "draft" | "web" | "read" | "outline" {
     return this.#viewMode;
   }
 
@@ -771,6 +783,16 @@ export class CanvasStage {
           `${CanvasStage.BORDER_STYLE[side.style] ?? "solid"} ` +
           `#${side.color && side.color !== "auto" ? side.color : "000000"}`
         : "none";
+    const artSide = b.top?.art
+      ? b.top
+      : b.right?.art
+        ? b.right
+        : b.bottom?.art
+          ? b.bottom
+          : b.left?.art
+            ? b.left
+            : undefined;
+
     const div = document.createElement("div");
     div.className = "page-borders";
     Object.assign(div.style, {
@@ -781,10 +803,32 @@ export class CanvasStage {
       // back is negative (still above the frame's own background fill).
       zIndex: b.behind ? "-1" : "2",
     } satisfies Partial<CSSStyleDeclaration>);
-    div.style.borderTop = cssSide(b.top);
-    div.style.borderRight = cssSide(b.right);
-    div.style.borderBottom = cssSide(b.bottom);
-    div.style.borderLeft = cssSide(b.left);
+
+    if (artSide?.art) {
+      const dataUri = getArtBorderSvgDataUri(artSide.art, artSide.color);
+      const artW = (side: ProjectedPageBorder | undefined): number =>
+        side
+          ? Math.max(
+              16,
+              Math.round((side.widthPx > 8 ? side.widthPx : side.widthPx * 6) * this.factor),
+            )
+          : 0;
+      const tW = artW(b.top);
+      const rW = artW(b.right);
+      const bW = artW(b.bottom);
+      const lW = artW(b.left);
+      div.style.borderStyle = "solid";
+      div.style.borderWidth = `${tW}px ${rW}px ${bW}px ${lW}px`;
+      div.style.borderImageSource = `url("${dataUri}")`;
+      div.style.borderImageSlice = "20";
+      div.style.borderImageRepeat = "repeat";
+      div.style.borderImageWidth = `${tW}px ${rW}px ${bW}px ${lW}px`;
+    } else {
+      div.style.borderTop = cssSide(b.top);
+      div.style.borderRight = cssSide(b.right);
+      div.style.borderBottom = cssSide(b.bottom);
+      div.style.borderLeft = cssSide(b.left);
+    }
     div.style.top = `${insetPt(b.top, margin.top)}px`;
     div.style.right = `${insetPt(b.right, margin.right)}px`;
     div.style.bottom = `${insetPt(b.bottom, margin.bottom)}px`;
@@ -845,129 +889,66 @@ export class CanvasStage {
       `${pad(flow.contentLeftPx)}`;
   }
 
-  /** Rulers (Word's View → Ruler): a horizontal strip above the page and a
-   *  vertical strip to its left, each an SVG of tick lines whose 0 sits on
+  /** Vertical ruler (Word's View → Ruler): a 20px strip hugging the left edge
+   *  of each page, drawn from the same four-level tick hierarchy as the
+   *  interactive horizontal `<docen-ruler>` the host mounts above the pages
+   *  (which owns the draggable markers, tab stops, and unit toggle). 0 sits on
    *  the content-box edge (Word's margin-line origin — the margin shows
-   *  negative ticks). Inch ticks on en locales, centimetres otherwise; the
-   *  strips re-render on every sizeSlot, so zoom rescales the ticks. They
-   *  hang in the inter-page gutter (PAGE_GAP 24 > strip 20), covering
-   *  nothing on the page. */
+   *  negative ticks). Inch ticks on en locales, centimetres otherwise. The
+   *  geometry key keeps a sync from rebuilding the SVG of every page on every
+   *  keystroke. */
   private applyRulers(frame: HTMLElement, page: number): void {
-    frame.querySelectorAll(":scope > .h-ruler, :scope > .v-ruler").forEach((el) => el.remove());
-    if (!this.#showRuler) return;
+    const existing = frame.querySelector<HTMLElement>(":scope > .v-ruler");
+    if (!this.#showRuler) {
+      existing?.remove();
+      return;
+    }
     const flow = this.sectionAt(page).flow;
     const THICKNESS = 20;
-    const metric = !/^en/i.test(navigator.language || "");
-    const unit = (metric ? 96 / 2.54 : 96) * this.factor;
-    const half = unit / 2;
-    const minor = metric ? unit / 10 : unit / 4;
-    const build = (length: number, zero: number, vertical: boolean): string => {
-      let out = "";
-      for (let p = Math.ceil(-zero / minor) * minor; p <= length - zero; p += minor) {
-        const whole = p / unit;
-        const major = Math.abs(whole - Math.round(whole)) < 1e-6;
-        const mid = Math.abs(p / half - Math.round(p / half)) < 1e-6;
-        const len = major ? THICKNESS - 2 : mid ? THICKNESS * 0.62 : THICKNESS * 0.38;
-        const pos = zero + p;
-        const num = Math.round(whole);
-        if (vertical) {
-          out += `<line x1="${THICKNESS}" y1="${pos}" x2="${THICKNESS - len}" y2="${pos}"/>`;
-          if (major)
-            out += `<text x="${THICKNESS - len - 2}" y="${pos + 2}" text-anchor="middle" transform="rotate(-90 ${THICKNESS - len - 2} ${pos + 2})">${num}</text>`;
-        } else {
-          out += `<line x1="${pos}" y1="${THICKNESS}" x2="${pos}" y2="${THICKNESS - len}"/>`;
-          if (major)
-            out += `<text x="${pos + 1}" y="${THICKNESS - len - 3}" stroke="none">${num}</text>`;
-        }
+    const UNIT: RulerUnit = /^en/i.test(navigator.language || "") ? "in" : "cm";
+    const heightPx = this.pageCss(flow.pageHeightPx);
+    const zeroPx = flow.contentTopPx * this.factor;
+    const key = `${heightPx}|${zeroPx}|${this.factor}|${UNIT}`;
+    if (existing?.dataset.geom === key) return;
+    existing?.remove();
+
+    let out = "";
+    for (const tick of rulerTicks({
+      lengthPx: heightPx,
+      zeroPx,
+      unit: UNIT,
+      scale: this.factor,
+    })) {
+      const y = Math.round(tick.pos) + 0.5;
+      const len = RULER_TICK_LEN[tick.level];
+      out += `<line x1="${THICKNESS}" y1="${y}" x2="${THICKNESS - len}" y2="${y}"/>`;
+      if (tick.label !== undefined) {
+        const tx = THICKNESS - RULER_TICK_LEN[0] - 4;
+        out += `<text x="${tx}" y="${y}" text-anchor="middle" transform="rotate(-90 ${tx} ${y})">${tick.label}</text>`;
       }
-      if (!vertical && this.activeTabStops) {
-        for (const stop of this.activeTabStops) {
-          const pos = zero + stop.positionPx * this.factor;
-          if (stop.type === "left") {
-            out += `<path d="M ${pos} ${THICKNESS} L ${pos} ${THICKNESS - 6} L ${pos + 5} ${THICKNESS - 6}" stroke="#2563eb" stroke-width="1.5" fill="none"/>`;
-          } else if (stop.type === "right") {
-            out += `<path d="M ${pos} ${THICKNESS} L ${pos} ${THICKNESS - 6} L ${pos - 5} ${THICKNESS - 6}" stroke="#2563eb" stroke-width="1.5" fill="none"/>`;
-          } else if (stop.type === "center") {
-            out += `<path d="M ${pos} ${THICKNESS} L ${pos} ${THICKNESS - 6} M ${pos - 3} ${THICKNESS - 6} L ${pos + 3} ${THICKNESS - 6}" stroke="#2563eb" stroke-width="1.5" fill="none"/>`;
-          } else if (stop.type === "decimal") {
-            out += `<path d="M ${pos} ${THICKNESS} L ${pos} ${THICKNESS - 6} M ${pos - 3} ${THICKNESS - 6} L ${pos + 3} ${THICKNESS - 6}" stroke="#2563eb" stroke-width="1.5" fill="none"/><circle cx="${pos + 2}" cy="${THICKNESS - 8}" r="1" fill="#2563eb"/>`;
-          } else if (stop.type === "bar") {
-            out += `<line x1="${pos}" y1="${THICKNESS}" x2="${pos}" y2="${THICKNESS - 8}" stroke="#2563eb" stroke-width="1.5"/>`;
-          }
-        }
-      }
-      return (
-        `<svg xmlns="http://www.w3.org/2000/svg" width="100%" height="100%">` +
-        `<g stroke="#9aa4b2" stroke-width="1" fill="#5b6675" font-size="7"` +
-        ` font-family="Inter, sans-serif">${out}</g></svg>`
-      );
-    };
-    const mount = (cls: string, style: Partial<CSSStyleDeclaration>, svg: string): HTMLElement => {
-      const div = document.createElement("div");
-      div.className = cls;
-      // Two assign targets, not one spread object: the linter flags spreading
-      // a CSSStyleDeclaration-typed value (index-signature interface) into an
-      // object literal as an iterable spread.
-      Object.assign(
-        div.style,
-        {
-          position: "absolute",
-          pointerEvents: "none",
-          zIndex: "2",
-          background: "#fafbfc",
-          border: "1px solid #d8dce2",
-        } satisfies Partial<CSSStyleDeclaration>,
-        style,
-      );
-      div.innerHTML = svg;
-      frame.append(div);
-      return div;
-    };
-    const hDiv = mount(
-      "h-ruler",
-      {
-        left: "0",
-        top: `-${THICKNESS}px`,
-        width: `${this.pageCss(flow.pageWidthPx)}px`,
-        height: `${THICKNESS}px`,
-        pointerEvents: "auto",
-        cursor: "pointer",
-      },
-      build(this.pageCss(flow.pageWidthPx), flow.contentLeftPx * this.factor, false),
-    );
-    const zeroX = flow.contentLeftPx * this.factor;
-    let clickTimer: ReturnType<typeof setTimeout> | undefined;
-    hDiv.addEventListener("click", (e: MouseEvent) => {
-      const rect = hDiv.getBoundingClientRect();
-      const clickX = e.clientX - rect.left;
-      const posPx = (clickX - zeroX) / this.factor;
-      if (posPx < 0) return;
-      const posTw = Math.round(posPx * 15);
-      if (clickTimer) {
-        clearTimeout(clickTimer);
-        clickTimer = undefined;
-      }
-      clickTimer = setTimeout(() => {
-        this.onAddTabStop?.(posTw);
-      }, 220);
-    });
-    hDiv.addEventListener("dblclick", () => {
-      if (clickTimer) {
-        clearTimeout(clickTimer);
-        clickTimer = undefined;
-      }
-      this.onOpenTabsDialog?.();
-    });
-    mount(
-      "v-ruler",
-      {
-        left: `-${THICKNESS}px`,
-        top: "0",
-        width: `${THICKNESS}px`,
-        height: `${this.pageCss(flow.pageHeightPx)}px`,
-      },
-      build(this.pageCss(flow.pageHeightPx), flow.contentTopPx * this.factor, true),
-    );
+    }
+
+    const div = document.createElement("div");
+    div.className = "v-ruler";
+    // border-box so the 1px hairline never spills over the page edge.
+    Object.assign(div.style, {
+      position: "absolute",
+      pointerEvents: "none",
+      zIndex: "2",
+      boxSizing: "border-box",
+      background: "#f3f3f3",
+      border: "1px solid #c8c8c8",
+      left: `-${THICKNESS}px`,
+      top: "0",
+      width: `${THICKNESS}px`,
+      height: `${heightPx}px`,
+    } satisfies Partial<CSSStyleDeclaration>);
+    div.innerHTML =
+      `<svg xmlns="http://www.w3.org/2000/svg" width="100%" height="100%"` +
+      ` shape-rendering="crispEdges">` +
+      `<g stroke="#8f8f8f" stroke-width="1" fill="#555555" font-size="7">${out}</g></svg>`;
+    div.dataset.geom = key;
+    frame.append(div);
   }
 
   /** Lay out page slots for a flow result and repaint visible pages. The
@@ -1078,6 +1059,12 @@ export class CanvasStage {
         // painter's item list often IS the previous generation — nothing to
         // re-point then, and the paragraph walk can be skipped whole.
         if (!this.#pageItemsUnchanged(slot, index)) this.#relinkHitParas(slot.app, index);
+      }
+    }
+    if (this.#showRuler) {
+      for (const [index, slot] of this.slots.entries()) {
+        const frame = slot.el.parentElement;
+        if (frame) this.applyRulers(frame, index);
       }
     }
   }
@@ -1220,16 +1207,23 @@ export class CanvasStage {
    *  scrolled-into-view ones), every slot repaints, then each canvas exports
    *  as PNG. `width`/`height` are the page's unzoomed CSS px (96 dpi) so the
    *  print view can lay the images out at true paper size. */
-  async printSnapshots(): Promise<{ width: number; height: number; url: string }[]> {
-    const urls = await this.#rasterizeAll();
-    return this.slots.flatMap((_, index) => {
-      const url = urls[index];
-      if (!url) return [];
-      const flow = this.sectionAt(index).flow;
-      return [
-        { width: this.pageCss(flow.pageWidthPx), height: this.pageCss(flow.pageHeightPx), url },
-      ];
-    });
+  async printSnapshots(options?: {
+    markup?: boolean;
+  }): Promise<{ width: number; height: number; url: string }[]> {
+    if (options?.markup === false) this.#suppressBalloons = true;
+    try {
+      const urls = await this.#rasterizeAll();
+      return this.slots.flatMap((_, index) => {
+        const url = urls[index];
+        if (!url) return [];
+        const flow = this.sectionAt(index).flow;
+        return [
+          { width: this.pageCss(flow.pageWidthPx), height: this.pageCss(flow.pageHeightPx), url },
+        ];
+      });
+    } finally {
+      this.#suppressBalloons = false;
+    }
   }
 
   /** Shared full-document raster pass: strip the page color for the export
@@ -1391,6 +1385,8 @@ export class CanvasStage {
       pageIndex: index,
       pageCount: this.pages.length,
       layer: "behind",
+      fieldShading: this.#fieldShading,
+      highlightMergeFields: this.#highlightMergeFields,
       showMarks: this.#showMarks,
       showGridlines: this.#showGridlines,
       marksLabels: this.ctx.marksLabels,
@@ -1713,7 +1709,8 @@ export class CanvasStage {
     paintEndnotes(layers.overlay, this.pages[ctx.pageIndex]?.endnotes, ctx);
     // Margin balloons repaint with the overlay (their geometry comes from the
     // page's packed stack) and register their click boxes + hover groups.
-    const painted = paintBalloons(layers.overlay, this.pages[ctx.pageIndex]?.balloons, ctx);
+    const balloons = this.#suppressBalloons ? undefined : this.pages[ctx.pageIndex]?.balloons;
+    const painted = paintBalloons(layers.overlay, balloons, ctx);
     this.balloonBoxes.set(ctx.pageIndex, painted.boxes);
     this.balloonGroups.set(ctx.pageIndex, painted.groups);
     this.#applyBalloonHover(ctx.pageIndex);
@@ -1860,6 +1857,25 @@ export class CanvasStage {
       if (b) return b;
     }
     return null;
+  }
+
+  /** The section flow for a specific page. */
+  flowOf(page: number): ProjectedFlowBox {
+    return this.sectionAt(page).flow;
+  }
+
+  /** Drawing hit boxes on a specific page, optionally excluding a specific hit box. */
+  pageDrawingBoxes(page: number, excludeHit?: DrawingHitBox): DrawingHitBox[] {
+    return (this.hitBoxes.get(page) ?? []).filter(
+      (b) =>
+        !excludeHit ||
+        (b !== excludeHit &&
+          !(
+            b.para === excludeHit.para &&
+            b.index === excludeHit.index &&
+            sameChildPath(b.childPath, excludeHit.childPath)
+          )),
+    );
   }
 
   /** Every page's drawing boxes — the host's stale-hit fallback scans these

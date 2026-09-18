@@ -8,7 +8,7 @@
  */
 
 // Editor elements (register their custom elements on import)
-export { default as DocenDocument } from "./document";
+export { default as DocenDocument, DocenEditor } from "./document";
 export { default as DocenPresentation } from "./presentation";
 export { default as DocenWorkbook } from "./workbook";
 
@@ -18,13 +18,16 @@ export {
   applyTheme,
   availableLanguages,
   builtinThemes,
+  getUiDirection,
   notifyLocaleChange,
   observeLang,
   registerComponents,
   registerLocalization,
   registerTheme,
   registerTranslation,
+  resolveDir,
   resolveTheme,
+  setUiDirection,
   t,
 } from "./ui";
 

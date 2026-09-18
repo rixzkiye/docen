@@ -66,6 +66,7 @@ import {
   getEngineProfile,
   getFontMeasurementState,
   getSegmentMetrics,
+  type SegmentMetrics,
   textMayContainEmoji,
 } from "./measurement.js";
 
@@ -159,6 +160,11 @@ export type PrepareOptions = {
   // docen-local: explicitly enable canvas font kerning ("normal") while this
   // preparation measures. Absent leaves the engine default ("auto").
   fontKerning?: boolean;
+  // docen-local: shaped advance provider for the breaker. When set, every
+  // segment's width comes from `measure(segment)` — a raw advance, before
+  // letterSpacing/widthScale (pretext applies those itself) — instead of
+  // canvas measureText, and the canvas emoji/CJK corrections are skipped.
+  measure?: (segment: string) => number;
 };
 
 // Internal hard-break chunk hint for the line walker. Not public because
@@ -393,25 +399,42 @@ function measureAnalysis(
   letterSpacing: number,
   widthScale: number,
   fontKerning: boolean,
+  measure?: (segment: string) => number,
 ): InternalPreparedText | PreparedTextWithSegments {
   const engineProfile = getEngineProfile();
-  const { cache, emojiCorrection, cjkCorrection } = getFontMeasurementState(
+  // A measure provider supplies exact advances: the canvas-only emoji/CJK
+  // corrections are irrelevant (and skipping the probes saves the DOM reads).
+  const {
+    cache,
+    emojiCorrection: canvasEmojiCorrection,
+    cjkCorrection: canvasCjkCorrection,
+  } = getFontMeasurementState(
     font,
-    textMayContainEmoji(analysis.normalized),
-    isCJK(analysis.normalized),
+    !measure && textMayContainEmoji(analysis.normalized),
+    !measure && isCJK(analysis.normalized),
     fontKerning,
   );
+  const emojiCorrection = measure ? 0 : canvasEmojiCorrection;
+  const cjkCorrection = measure ? 0 : canvasCjkCorrection;
+  // Provider widths live in their own per-preparation cache: the font-level
+  // canvas cache must not mix exact advances with canvas metrics.
+  const metricCache: Map<string, SegmentMetrics> = measure ? new Map() : cache;
   // docen-local: the horizontal scale filters every glyph advance (and the
   // letter spacing measured with it) — see PrepareOptions.widthScale.
   // Zero is a real scale (a hidden run's suppressed advance), not a fallback.
   const scale = Number.isFinite(widthScale) && widthScale >= 0 ? widthScale : 1;
   const discretionaryHyphenWidth =
-    (getCorrectedSegmentWidth("-", getSegmentMetrics("-", cache), emojiCorrection, cjkCorrection) +
+    (getCorrectedSegmentWidth(
+      "-",
+      getSegmentMetrics("-", metricCache, measure),
+      emojiCorrection,
+      cjkCorrection,
+    ) +
       (letterSpacing === 0 ? 0 : letterSpacing * 2)) *
     scale;
   const spaceWidth = getCorrectedSegmentWidth(
     " ",
-    getSegmentMetrics(" ", cache),
+    getSegmentMetrics(" ", metricCache, measure),
     emojiCorrection,
     cjkCorrection,
   );
@@ -464,7 +487,7 @@ function measureAnalysis(
     wordLike: boolean,
     allowOverflowBreaks: boolean,
   ): void {
-    const textMetrics = getSegmentMetrics(text, cache);
+    const textMetrics = getSegmentMetrics(text, metricCache, measure);
     const spacingGraphemeCount = hasLetterSpacing ? countRenderedSpacingGraphemes(text, kind) : 0;
     const naturalWidth = addInternalLetterSpacing(
       getCorrectedSegmentWidth(text, textMetrics, emojiCorrection, cjkCorrection),
@@ -494,10 +517,11 @@ function measureAnalysis(
       const fitAdvances = getSegmentBreakableFitAdvances(
         text,
         textMetrics,
-        cache,
+        metricCache,
         emojiCorrection,
         cjkCorrection,
         fitMode,
+        measure,
       );
       const scaledFitAdvances =
         fitAdvances === null || scale === 1 ? fitAdvances : fitAdvances.map((w) => w * scale);
@@ -572,7 +596,7 @@ function measureAnalysis(
       continue;
     }
 
-    const segMetrics = getSegmentMetrics(segText, cache);
+    const segMetrics = getSegmentMetrics(segText, metricCache, measure);
 
     if (segKind === "text" && segMetrics.containsCJK) {
       const baseUnits = buildBaseCjkUnits(segText, engineProfile);
@@ -690,6 +714,7 @@ function prepareInternal(
     letterSpacing,
     options?.widthScale ?? 1,
     options?.fontKerning === true,
+    options?.measure,
   );
 }
 

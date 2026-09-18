@@ -63,7 +63,7 @@ const styles = css`
 
 const template = html<DocenSignatureLineDialog>`
   <docen-dialog ${ref("dialog")} modal heading="${(x) => t("sig.dialogTitle", x)}">
-    <div class="sig-body" slot="body">
+    <div class="sig-body">
       <div class="field-row">
         <label>${(x) => t("sig.suggestedSigner", x)}:</label>
         <fluent-text-input
@@ -103,7 +103,7 @@ ${(x) => t("sig.defaultInstructions", x)}</textarea>
         </fluent-checkbox>
       </div>
     </div>
-    <div class="footer" slot="footer">
+    <div class="footer" slot="action">
       <fluent-button appearance="primary" @click="${(x) => x.onOk()}"
         >${(x) => t("dialog.ok", x)}</fluent-button
       >

@@ -7,6 +7,7 @@
  */
 
 import {
+  EncryptedDocumentError,
   generateDOCX,
   generateHTML,
   generateMarkdown,
@@ -18,19 +19,21 @@ import {
   parseMarkdown,
   parsePlainText,
   parseRTF,
+  prepareEmbeddedFonts,
   type DocxVariant,
+  type FieldCacheOptions,
   type HtmlGenerateOptions,
   type JSONContent,
 } from "@docen/docx";
 import type { Editor } from "@docen/docx/core";
 import type { ProjectedFlowBox, ProjectedSection } from "@docen/docx/layout";
-import type { FlowPage } from "@docen/layout";
+import { computePageNumberOffsets, type FlowPage } from "@docen/layout";
 import { EditorState } from "@tiptap/pm/state";
 
 import { t } from "../../ui";
 import type { EditBridge } from "../canvas/edit-bridge";
 import type { CanvasStage, CanvasStageSection } from "../canvas/stage";
-import { extractPdfPageLayers, pagesToPdf } from "../export-pdf";
+import { buildEmbeddedPdfFonts, extractPdfPageLayers, pagesToPdf } from "../export-pdf";
 import { collectRevisions } from "../extensions/track-changes";
 import {
   OpenFormatError,
@@ -40,6 +43,7 @@ import {
   type SaveFormat,
 } from "../file-formats";
 import { findTemplate, templateLocale } from "../templates";
+import { collectBookmarkPages, collectFieldPages, collectTocTargetPages } from "./field-pages";
 
 /** The file-I/O domain's view of the host — only what its bodies touch. */
 export interface IOHostView {
@@ -52,7 +56,10 @@ export interface IOHostView {
   sectionOfPage(): readonly number[];
   flow(): ProjectedFlowBox | undefined;
   lastRun(): { sections: (ProjectedSection & CanvasStageSection)[] } | undefined;
-  viewMode(): "print" | "web" | "draft" | "read";
+  /** Host-registered font bytes by lowercased family — used by PDF/DOCX
+   *  export embedding (registration lives on the element's `registerFont`). */
+  fonts(): ReadonlyMap<string, { family: string; fontData: Uint8Array }>;
+  viewMode(): "print" | "web" | "draft" | "read" | "outline";
   lang(): string;
   docxVariant(): DocxVariant;
   setDocxVariant(variant: DocxVariant): void;
@@ -75,6 +82,7 @@ export interface IOHostView {
   applyDocumentTheme(kind: string, value?: string, persist?: boolean): void;
   snapshotStyles(): void;
   syncEditable(): void;
+  syncDocumentSettings?(settings: Record<string, unknown>): void;
 }
 
 /**
@@ -95,6 +103,9 @@ export class IODomain {
    *  through the editor i18n table (en/zh), anything else surfaces its own
    *  message. */
   openRefusalMessage(err: unknown): string {
+    if (err instanceof EncryptedDocumentError) {
+      return t("open.encrypted", this.host.element());
+    }
     if (err instanceof OpenFormatError) {
       if (err.code === "flat-opc") return t("open.flat-opc-unsupported", this.host.element());
       return t("open.unsupported", this.host.element()).replace("{name}", err.file ?? "(unknown)");
@@ -217,10 +228,22 @@ export class IODomain {
       textSpans: pageLayers[i]?.textSpans,
       links: pageLayers[i]?.links,
     }));
+    const fonts = this.host.fonts();
+    const embeddedFonts =
+      fonts.size > 0
+        ? await buildEmbeddedPdfFonts(
+            pageLayers.flatMap((layer) => layer.textSpans),
+            [...fonts.values()].map((entry) => ({
+              family: entry.family,
+              fontData: entry.fontData,
+            })),
+          )
+        : [];
     const title = this.host.getAttribute("filename") ?? t("header.doc-name", this.host.element());
     const blob = await pagesToPdf(shotsWithLayers, {
       metadata: { title, author: "Docen" },
       tagged: true,
+      ...(embeddedFonts.length > 0 ? { embeddedFonts } : {}),
     });
     await this.saveBlob(blob, SAVE_FORMATS.pdf, false);
   }
@@ -517,10 +540,72 @@ export class IODomain {
   /** Serialize the current document to a DOCX buffer. `variant` selects the
    *  package kind (default: the open document's own — a .docm saves as a .docm,
    *  a .dotx as a .dotx) and stamps the main-part content type; macro parts
-   *  carried from the source stay in the package. */
+   *  carried from the source stay in the package.
+   *
+   *  Host-registered fonts are embedded (word/fontTable.xml + obfuscated
+   *  word/fonts/fontN.odttf parts) when their OS/2 fsType permits it — the
+   *  engine writes the parts/relationships. */
   async saveDOCX(variant: DocxVariant = this.host.docxVariant()): Promise<Uint8Array> {
-    const buffer = await generateDOCX(this.getJSON(), { variant });
+    const fonts = this.host.fonts();
+    const embedded =
+      fonts.size > 0
+        ? prepareEmbeddedFonts(
+            [...fonts.values()].map((entry) => ({
+              family: entry.family,
+              fontData: entry.fontData,
+            })),
+          )
+        : [];
+    // Generated-field caches: the builder re-derives SEQ/REF/TOC from the
+    // model, and the live canvas pagination supplies the page context for
+    // PAGE/NUMPAGES/PAGEREF/SECTION so Word never opens on a stale number.
+    const fields = this.#fieldCacheOptions();
+    const buffer = await generateDOCX(this.getJSON(), {
+      variant,
+      ...(embedded.length > 0 ? { document: { fonts: embedded } } : {}),
+      ...(fields ? { fields } : {}),
+    });
     return buffer as unknown as Uint8Array;
+  }
+
+  /** Page context for the generated-field pass, from the host's pagination
+   *  (null when headless/not yet laid out). */
+  #fieldCacheOptions(): FieldCacheOptions | undefined {
+    const editor = this.host.editor();
+    const pages = this.host.pages();
+    if (!editor || pages.length === 0) return undefined;
+    const sections = this.host.lastRun()?.sections ?? [];
+    const sectionOfPage = this.host.sectionOfPage();
+    const pageOffsets = computePageNumberOffsets(sections, sectionOfPage);
+    const view = {
+      sectionOfPage,
+      pageOffsets,
+      physicalPageOf: (pos: number) => this.host.bridge()?.pageOf(pos),
+    };
+    const fieldPages = collectFieldPages(editor.state.doc, view);
+    const bookmarkPages = collectBookmarkPages(editor.state.doc, view);
+    const tocPages = collectTocTargetPages(editor.state.doc, view);
+    return {
+      // PAGEREF resolves against the bookmark's page; everything else against
+      // the field's own.
+      ...(fieldPages.size > 0 || bookmarkPages.size > 0
+        ? {
+            pageOf: ({ index, bookmark }: { index: number; bookmark?: string }) =>
+              bookmark != null ? bookmarkPages.get(bookmark) : fieldPages.get(index),
+          }
+        : {}),
+      pageCount: pages.length,
+      // A saved TOC whose cached entries were missing gets real page numbers
+      // from the live canvas pagination instead of Word's empty slots.
+      ...(tocPages.headingPages.size > 0 || tocPages.captionPages.size > 0
+        ? {
+            tocPageOf: ({ index, kind }: { index: number; kind: "heading" | "caption" }) =>
+              kind === "heading"
+                ? tocPages.headingPages.get(index)
+                : tocPages.captionPages.get(index),
+          }
+        : {}),
+    };
   }
 
   /** Serialize the current document to a Markdown string. */
@@ -625,6 +710,7 @@ export class IODomain {
     // re-derive editability. Word also forces revision tracking on when a
     // document opens under a tracked-changes restriction.
     const settings = this.documentSettings();
+    this.host.syncDocumentSettings?.(settings);
     const docProtection = settings.documentProtection as
       | {
           edit?: string;

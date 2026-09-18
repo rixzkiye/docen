@@ -44,17 +44,19 @@ const SKIP_KEYS = new Set(["rows", "columnWidthsRevision"]);
  *  at parse too), and the core base's 6 band flags — docx models those in
  *  `tableLook` (w:tblLook); they are stringify-only authoring shorthand and
  *  parse never emits them as top-level keys (descriptor.ts tableLookForEmit). */
-type TableAttrKey = Exclude<
-  keyof TablePropertiesOptions | keyof TableOptions,
-  | "rows"
-  | "columnWidthsRevision"
-  | "firstRow"
-  | "lastRow"
-  | "firstCol"
-  | "lastCol"
-  | "bandRow"
-  | "bandCol"
->;
+type TableAttrKey =
+  | Exclude<
+      keyof TablePropertiesOptions | keyof TableOptions,
+      | "rows"
+      | "columnWidthsRevision"
+      | "firstRow"
+      | "lastRow"
+      | "firstCol"
+      | "lastCol"
+      | "bandRow"
+      | "bandCol"
+    >
+  | "tblPrChange";
 
 /** office-open table attr mirror, satisfies-guarded against keyof drift (same
  *  contract as docxParagraphAttrs in utils.ts). */
@@ -99,14 +101,18 @@ const docxTableAttrs = {
   description: attrNative(),
   // Table-level property revision (w:tblPrChange).
   revision: attrNative(),
+  tblPrChange: attrNative(),
 } satisfies Record<TableAttrKey, DocxAttrSpec>;
 
 export function renderDocx(node: JSONContent): Partial<TableOptions> {
   const attrs = (node.attrs ?? {}) as Record<string, unknown>;
   const opts: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(attrs)) {
-    if (SKIP_KEYS.has(key)) continue;
+    if (SKIP_KEYS.has(key) || key === "tblPrChange") continue;
     if (value !== null && value !== undefined) opts[key] = value;
+  }
+  if (attrs.tblPrChange != null && opts.revision == null) {
+    opts.revision = attrs.tblPrChange as any;
   }
   return opts;
 }
@@ -116,6 +122,9 @@ export function parseDocx(opts: TableOptions): Record<string, unknown> {
   for (const [key, value] of Object.entries(opts)) {
     if (SKIP_KEYS.has(key)) continue;
     attrs[key] = value ?? null;
+  }
+  if (opts.revision != null) {
+    attrs.tblPrChange = opts.revision;
   }
   return attrs;
 }

@@ -52,7 +52,7 @@ export interface ProjectedFlowInputs {
   sections: (ProjectedSection & CanvasStageSection)[];
   background?: ProjectedPageBackground;
   flowSections: FlowSection[];
-  viewMode: "print" | "web" | "draft" | "read";
+  viewMode: "print" | "web" | "draft" | "read" | "outline";
   continuous: boolean;
 }
 
@@ -61,7 +61,7 @@ type RenderRun = {
   sectionOfPage: number[];
   sections: (ProjectedSection & CanvasStageSection)[];
   background?: ProjectedPageBackground;
-  viewMode?: "print" | "web" | "draft" | "read";
+  viewMode?: "print" | "web" | "draft" | "read" | "outline";
 };
 
 /** The render domain's view of the host — only what its bodies touch. */
@@ -75,7 +75,7 @@ export interface RenderHostView {
   armStage(projected: {
     sections: (ProjectedSection & CanvasStageSection)[];
     background?: ProjectedPageBackground;
-    viewMode: "print" | "web" | "draft" | "read";
+    viewMode: "print" | "web" | "draft" | "read" | "outline";
   }): CanvasStage;
   measurer(): TextMeasurer;
   a11yMirror(): A11yMirror;
@@ -131,8 +131,7 @@ export interface RenderHostView {
   setProgress(label?: string): void;
   updateStatus(): void;
   syncStatusLanguage(): void;
-  syncActiveTabStops(): void;
-  viewMode(): "print" | "web" | "draft" | "read";
+  viewMode(): "print" | "web" | "draft" | "read" | "outline";
 }
 
 /**
@@ -458,6 +457,9 @@ export class RenderDomain {
     doc: JSONContent,
   ): Promise<void> {
     const stage = this.host.armStage(projected);
+    // The flow box feeds every content-width consumer (table inserts, the
+    // ruler) — the incremental path must publish it like the full one does.
+    this.host.setFlow(projected.sections[0]?.flow);
     const pages: FlowPage[] = [];
     const sectionOfPage: number[] = [];
     const origin = this.host.pageOriginOf(projected.sections, sectionOfPage);
@@ -560,6 +562,5 @@ export class RenderDomain {
     this.host.revisions().syncRevisionsPane();
     this.host.spelling().schedule();
     this.host.syncStatusLanguage();
-    this.host.syncActiveTabStops();
   }
 }

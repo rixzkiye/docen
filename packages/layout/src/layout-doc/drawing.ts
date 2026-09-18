@@ -129,6 +129,33 @@ export type LayoutDrawingMember =
       chart: unknown;
     }
   | {
+      kind: "model3d";
+      x: number;
+      y: number;
+      width: number;
+      height: number;
+      childPath?: readonly number[];
+      model3d: unknown;
+      title?: string;
+      descr?: string;
+      altText?: string;
+      rotation?: number;
+      camera?: unknown;
+    }
+  | {
+      kind: "ink";
+      x: number;
+      y: number;
+      width: number;
+      height: number;
+      childPath?: readonly number[];
+      ink: unknown;
+      title?: string;
+      descr?: string;
+      altText?: string;
+      rotation?: number;
+    }
+  | {
       kind: "table";
       x: number;
       y: number;

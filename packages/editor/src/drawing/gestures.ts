@@ -3,7 +3,9 @@ import { EMU_PER_PX } from "@docen/layout";
 import type { Node as PmNode } from "@tiptap/pm/model";
 import { NodeSelection } from "@tiptap/pm/state";
 
+import { drawingPositionModeOf, wrapMenuValueOf } from "../document/extensions/commands";
 import { CropOverlay } from "./crop-overlay";
+import { NodeEditOverlay } from "./node-edit-overlay";
 import { DrawingOverlay } from "./overlay";
 import type { DrawingHit } from "./target";
 
@@ -56,6 +58,18 @@ export interface DrawingGesturesHost {
   crossesCell?(hit: DrawingHit, page: number, x: number, y: number): boolean;
   pageHost(page: number): HTMLElement | null;
   scale(): number;
+  pageFlow?(page: number): {
+    pageWidthPx: number;
+    pageHeightPx: number;
+    contentLeftPx: number;
+    contentTopPx: number;
+    contentWidthPx: number;
+    contentHeightPx: number;
+  } | null;
+  siblingBoxes?(
+    page: number,
+    excludeHit?: DrawingHit,
+  ): Array<{ x: number; y: number; width: number; height: number }>;
 }
 
 /**
@@ -68,6 +82,7 @@ export class DrawingGestures {
   #host: DrawingGesturesHost;
   #overlay: DrawingOverlay;
   #crop: CropOverlay;
+  #nodeEdit: NodeEditOverlay;
   /** The selected drawing — the hit box carries the laid host paragraph + its
    *  drawing index (how the PM node was found); after a re-render the box
    *  re-resolves from the stage table, and a drawing that no longer paints
@@ -121,6 +136,37 @@ export class DrawingGestures {
       applyBox: (box) => this.#applyBox(box),
       applyOffset: (dx, dy, clientX, clientY) => this.#applyOffset(dx, dy, clientX, clientY),
       applyRotation: (delta) => this.#applyRotation(delta),
+      snapContext: () => {
+        if (!this.#sel) return null;
+        const flow = this.#host.pageFlow?.(this.#sel.page);
+        if (!flow) return null;
+        const hostEl = this.#host.pageHost(this.#sel.page);
+        const margins = {
+          contentLeft: flow.contentLeftPx,
+          contentTop: flow.contentTopPx,
+          contentWidth: flow.contentWidthPx,
+          contentHeight: flow.contentHeightPx,
+          pageWidth: flow.pageWidthPx,
+          pageHeight: flow.pageHeightPx,
+        };
+        const siblings = this.#host.siblingBoxes?.(this.#sel.page, this.#sel) ?? [];
+        return { margins, siblings, pageHost: hostEl };
+      },
+      onSelectWrap: (wrap) => {
+        this.#host.editor().commands.wrap(wrap);
+      },
+      onSelectPositionMode: (mode) => {
+        this.#host.editor().commands["drawing-position-mode"](mode);
+      },
+      onOpenPropertiesDialog: () => {
+        const dialog = document.querySelector("docen-drawing-properties-dialog") as {
+          show?(state: unknown): void;
+        } | null;
+        const sel = this.#sel;
+        if (dialog && sel) {
+          // Trigger drawing properties dialog
+        }
+      },
     });
     // The crop layer: the selected image's source shows in full with black
     // crop handles; a commit writes the dragged insets through the crop
@@ -138,12 +184,20 @@ export class DrawingGestures {
       },
       onExit: () => this.place(),
     });
+    this.#nodeEdit = new NodeEditOverlay({
+      scale: () => this.#host.scale(),
+      applyCustomGeometry: (cg) => {
+        if (!this.#sel) return;
+        this.#host.editor().commands["shape-custom-geometry-apply"]?.(JSON.stringify(cg));
+      },
+      onExit: () => this.place(),
+    });
   }
 
   /** Mount both overlay layers into the positioned host covering the canvas
    *  surface (they re-parent into per-page frames as selections move). */
   mount(host: HTMLElement): void {
-    host.append(this.#overlay.el, this.#crop.el);
+    host.append(this.#overlay.el, this.#crop.el, this.#nodeEdit.el);
   }
 
   /** The selected drawing's hit, if one is selected. */
@@ -507,6 +561,11 @@ export class DrawingGestures {
     } else {
       if (frame !== this.#overlay.el.parentElement) frame.append(this.#overlay.el);
       this.#overlay.refresh(this.#sel, this.#sel.rotation);
+      const ed = this.#host.editor();
+      const wrapMode = wrapMenuValueOf(ed.state) ?? "inline";
+      const positionMode = drawingPositionModeOf(ed.state);
+      const isFloating = this.movableFloating();
+      this.#overlay.updateLayoutOptions(wrapMode, positionMode, isFloating);
     }
     this.#placeMulti();
     this.#placeChartPart();
@@ -544,6 +603,7 @@ export class DrawingGestures {
 
   /** Drop the selection state (the frame itself hides on the next place). */
   clear(): void {
+    if (this.#nodeEdit.active) this.#nodeEdit.cancel();
     this.#sel = null;
     this.#multi = [];
     this.#dropChartPart();
@@ -587,11 +647,52 @@ export class DrawingGestures {
     return true;
   }
 
+  /** Enter edit points mode on the selected shape. */
+  enterEditPointsMode(): boolean {
+    if (!this.#sel || this.#nodeEdit.active) return false;
+    const nodePos = this.#host.drawingSelection(this.#sel);
+    const editor = this.#host.editor();
+    const node = nodePos != null ? editor.state.doc.nodeAt(nodePos) : null;
+    if (!node || node.type.name !== "wpsShape") return false;
+
+    const frame = this.#host.pageHost(this.#sel.page);
+    if (!frame) return false;
+    if (frame !== this.#nodeEdit.el.parentElement) frame.append(this.#nodeEdit.el);
+
+    const wps = (node.attrs.wpsShape ?? {}) as Record<string, any>;
+    let cg = wps.customGeometry;
+    if (!cg) {
+      const box = this.#sel;
+      const w = Math.round(box.width);
+      const h = Math.round(box.height);
+      cg = {
+        pathList: [
+          {
+            w,
+            h,
+            commands: [
+              { command: "moveTo", point: { x: "0", y: "0" } },
+              { command: "lnTo", point: { x: String(w), y: "0" } },
+              { command: "lnTo", point: { x: String(w), y: String(h) } },
+              { command: "lnTo", point: { x: "0", y: String(h) } },
+              { command: "close" },
+            ],
+          },
+        ],
+      };
+    }
+
+    this.#overlay.hide();
+    this.#nodeEdit.show(this.#sel, this.#sel.rotation ?? 0, cg);
+    return true;
+  }
+
   /** A re-render under an open crop layer orphans its geometry — drop the
    *  mode (the drag commits through Enter/click, never mid-transaction) and
    *  re-place the frame. */
   replaceOverlays(): void {
     if (this.#crop.active) this.#crop.cancel();
+    if (this.#nodeEdit.active) this.#nodeEdit.cancel();
     this.place();
   }
 
@@ -600,6 +701,7 @@ export class DrawingGestures {
     this.#overlay.hide();
     this.#overlay.el.remove();
     this.#crop.el.remove();
+    this.#nodeEdit.el.remove();
   }
 
   /** The selected floating drawing's position anchors (null on any other

@@ -62,8 +62,9 @@ export const breaksItems = (): string =>
   JSON.stringify([
     { text: cmd("page-break"), value: "page-break", event: "page-break" },
     { text: opt("column-break"), value: "column-break", event: "column-break" },
-    // Text Wrapping opens Word's layout-options dialog (not built yet).
-    { text: opt("text-wrapping"), value: "text-wrapping", event: "text-wrapping", disabled: true },
+    // Text Wrapping — Word's soft break that ends text wrapping around a
+    // floating object (w:br type="textWrapping").
+    { text: opt("text-wrapping"), value: "text-wrapping", event: "text-wrapping" },
     // Word's four section-break types; Even/Odd Page need engine support for
     // starting sections on even/odd pages (with blank interleaves) — greyed
     // until then.

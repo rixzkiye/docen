@@ -105,12 +105,45 @@ const template = html<DocenRestrictEditingPane>`
       class="dropdown-select"
       ${ref("protectionTypeSelect")}
       ?disabled="${(x) => x.isEnforced}"
+      @change="${(x, c) => x.onProtectionTypeChange(c.event)}"
     >
       <option value="trackedChanges">${(x) => t("protect.trackedChanges", x)}</option>
       <option value="comments">${(x) => t("protect.comments", x)}</option>
       <option value="forms">${(x) => t("protect.fillingInForms", x)}</option>
       <option value="readOnly">${(x) => t("protect.noChangesReadOnly", x)}</option>
     </select>
+
+    ${(x) =>
+      x.protectionType === "readOnly"
+        ? html<DocenRestrictEditingPane>`
+            <div
+              class="exceptions-box"
+              style="margin-top: 8px; display: flex; flex-direction: column; gap: 6px;"
+            >
+              <div style="font-weight: 600;">${(p) => t("protect.exceptionsTitle", p)}</div>
+              <p style="margin: 0; color: #666; font-size: 11px;">
+                ${(p) => t("protect.exceptionsDesc", p)}
+              </p>
+              <div style="margin-top: 4px;">
+                <div style="font-weight: 500; margin-bottom: 2px;">
+                  ${(p) => t("protect.groups", p)}
+                </div>
+                <fluent-checkbox
+                  ${ref("everyoneCheckbox")}
+                  ?disabled="${(p) => p.isEnforced}"
+                  @change="${(p, c) => p.onToggleEveryone(c.event)}"
+                >
+                  ${(p) => t("protect.everyone", p)}
+                </fluent-checkbox>
+              </div>
+              <div style="display: flex; flex-direction: column; gap: 4px; margin-top: 6px;">
+                <fluent-button appearance="neutral" @click="${(p) => p.onFindNextRegion()}">
+                  ${(p) => t("protect.findNextRegion", p)}
+                </fluent-button>
+              </div>
+            </div>
+          `
+        : ""}
   </div>
 
   <div class="section">
@@ -172,6 +205,7 @@ export class DocenRestrictEditingPane extends FASTElement {
   @observable limitFormattingCheckbox?: HTMLElement & { checked: boolean };
   @observable allowEditingCheckbox?: HTMLElement & { checked: boolean };
   @observable protectionTypeSelect?: HTMLSelectElement;
+  @observable everyoneCheckbox?: HTMLElement & { checked: boolean };
   @observable startPasswordInput?: HTMLInputElement;
   @observable startConfirmPasswordInput?: HTMLInputElement;
   @observable stopPasswordInput?: HTMLInputElement;
@@ -254,5 +288,19 @@ export class DocenRestrictEditingPane extends FASTElement {
     this.#passwordHash = undefined;
 
     this.$emit("protection:stop", {});
+  }
+
+  onProtectionTypeChange(e: Event): void {
+    this.protectionType =
+      ((e.target as HTMLSelectElement).value as ProtectionType) || "trackedChanges";
+  }
+
+  onToggleEveryone(e: Event): void {
+    const checked = Boolean((e.target as HTMLInputElement).checked);
+    this.$emit("protection:toggle-exception", { group: "everyone", checked });
+  }
+
+  onFindNextRegion(): void {
+    this.$emit("protection:find-next", {});
   }
 }

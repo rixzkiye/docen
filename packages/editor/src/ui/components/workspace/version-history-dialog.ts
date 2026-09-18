@@ -92,13 +92,13 @@ const styles = css`
 
 const template = html<DocenVersionHistoryDialog>`
   <docen-dialog ${ref("dialog")} modal heading="${(x) => t("history.dialogTitle", x)}">
-    <div class="history-container" slot="body">
+    <div class="history-container">
       <div class="version-list" ${ref("listEl")}></div>
       <div class="preview-pane" ${ref("previewEl")}>
         <div class="preview-empty">${(x) => t("history.selectVersionToPreview", x)}</div>
       </div>
     </div>
-    <div class="footer" slot="footer">
+    <div class="footer" slot="action">
       <fluent-button
         appearance="accent"
         ?disabled="${(x) => !x.selectedVersion}"

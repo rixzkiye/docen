@@ -5,7 +5,7 @@
  * thin delegating members so its call sites stay unchanged.
  */
 
-import type { JSONContent } from "@docen/docx";
+import { resolveTableLook, type JSONContent } from "@docen/docx";
 import type { Editor } from "@docen/docx/core";
 import { redoDepth, undoDepth } from "@tiptap/pm/history";
 import { NodeSelection } from "@tiptap/pm/state";
@@ -57,7 +57,7 @@ import type { StoriesDomain } from "./stories";
  *  set persists in localStorage (`docen:qat`); the order here is the bar's. */
 /** Split-button faces whose command greys from the text selection, not the
  *  dropdown value. */
-const FACE_ONLY_SPLITS: ReadonlySet<string> = new Set(["autofit", "columns"]);
+const FACE_ONLY_SPLITS: ReadonlySet<string> = new Set(["autofit", "columns", "text-effects"]);
 
 /** Arrange events that need a floating object (Word greys the rest). */
 const FLOATING_ONLY = new Set([
@@ -115,6 +115,10 @@ export interface ChromeHostView {
   getAttribute(name: string): string | null;
   hasAttribute(name: string): boolean;
   markdown(): boolean;
+  /** Mailings → Highlight Merge Fields host flag (view-only toggle). */
+  highlightMergeFields(): boolean;
+  /** Home → Editing → Select → Select Objects mode flag. */
+  objectSelectActive(): boolean;
   markupView(): "simple" | "all" | "none" | "original";
   markupAuthors(): string[] | null;
   markupColors(): "author" | "changeType";
@@ -127,6 +131,9 @@ export interface ChromeHostView {
   getTaskpaneState(id: TaskPaneId): boolean;
   setTaskpane(id: TaskPaneId, open: boolean): void;
   updateStatus(): void;
+  /** Every event the host-command registry handles (chrome + editor domains) —
+   *  merged into the wired set so those ribbon controls stay enabled. */
+  hostCommandEvents(): ReadonlySet<string>;
   dispatch(event: Event): boolean;
 }
 
@@ -455,6 +462,7 @@ export class ChromeDomain {
       ["clipboard-pane", "pane.clipboard"],
       ["proofing-pane", "pane.proofing"],
       ["thesaurus-pane", "pane.thesaurus"],
+      ["translate-pane", "pane.translate"],
       ["styles-pane", "pane.styles"],
     ] as const) {
       root
@@ -625,6 +633,11 @@ export class ChromeDomain {
       // Markdown input mode — the host flag is its truth (the Options
       // dialog writes it without a click, so the sync re-stamps both ways).
       ["markdown-input", this.host.markdown()],
+      // Highlight Merge Fields (Mailings) — a view toggle; the host flag is
+      // its truth, same as the other view-state buttons.
+      ["highlight-merge", this.host.highlightMergeFields()],
+      // Select Objects (Home → Editing / Draw tab) — the mode's lit state.
+      ["select-objects", this.host.objectSelectActive()],
     ];
     const key = rows.map(([event, on]) => (on ? `${event}|` : `${event},`)).join("");
     if (key === this.#formatButtonsKey) return;
@@ -659,6 +672,21 @@ export class ChromeDomain {
     } catch {
       return [];
     }
+  }
+
+  /** Re-stamp the Home → Editing → Select split with the live Select Objects
+   *  checkmark (Word's menu entry shows a check while the mode is on). */
+  syncSelectMenu(): void {
+    const el = this.host
+      .root()
+      ?.querySelector<HTMLElement>('docen-ribbon-split-button[event="select"]');
+    if (!el) return;
+    const active = this.host.objectSelectActive();
+    const items = this.ribbonMenuItems(el).map((item) =>
+      item.value === "objects" ? { ...item, checked: active } : item,
+    );
+    const json = JSON.stringify(items);
+    if (json !== el.getAttribute("items")) el.setAttribute("items", json);
   }
 
   /** Re-stamp the drawing state menus' checked rows against the selection —
@@ -1101,7 +1129,27 @@ export class ChromeDomain {
     if (firstNew) tablist.setAttribute("activeid", firstNew);
     present.clear();
     for (const id of want.keys()) present.add(id);
+    if (want.has("table-design")) this.syncTableLookCheckboxes();
     this.applyRibbonGreying();
+  }
+
+  /** Sync Table Style Options checkboxes (w:tblLook) with the active table. */
+  syncTableLookCheckboxes(): void {
+    const state = this.host.editor()?.state;
+    if (!state) return;
+    const anchor = tableAncestry(state);
+    if (!anchor) return;
+    const table = state.selection.$from.node(anchor.tableAt);
+    const look = resolveTableLook(table.attrs.tableLook);
+    const root = this.host.root();
+    if (!root) return;
+    const flags = ["firstRow", "lastRow", "bandRow", "firstCol", "lastCol", "bandCol"] as const;
+    for (const flag of flags) {
+      const cb = root.querySelector<HTMLElement>(
+        `docen-ribbon-checkbox[event="toggle-table-look"][value="${flag}"]`,
+      );
+      cb?.toggleAttribute("checked", !!look[flag]);
+    }
   }
 
   /** The full set of wired command names (Tiptap dispatch + locally handled +
@@ -1109,7 +1157,11 @@ export class ChromeDomain {
    *  URL) via `commands`; their keys count as wired so {@link #applyRibbonGreying}
    *  doesn't disable the controls that dispatch them. */
   wiredCommands(): Set<string> {
-    const wired = new Set<string>([...WIRED_DISPATCH, ...LOCAL_HANDLED]);
+    const wired = new Set<string>([
+      ...WIRED_DISPATCH,
+      ...LOCAL_HANDLED,
+      ...this.host.hostCommandEvents(),
+    ]);
     for (const addin of this.host.addins()) {
       if (!addin.commands) continue;
       for (const key of Object.keys(addin.commands)) wired.add(key);

@@ -1,5 +1,6 @@
 import { FASTElement, css, customElement, html, observable, ref } from "@microsoft/fast-element";
 
+import { ART_BORDER_PRESETS } from "../../../document/canvas/art-borders";
 import type { BorderSideState, BordersDialogPatch } from "../../../document/extensions/commands";
 import { observeLang, t } from "../../i18n/localize";
 import { listboxOf, opt, pick, pickedValue, type FluentDropdown } from "./fluent-combo";
@@ -48,10 +49,18 @@ interface TabState {
   style: string;
   color: string | null;
   width: number;
-  sides: Record<"top" | "bottom" | "left" | "right", BorderSideState | null>;
+  art?: string | null;
+  sides: Record<"top" | "bottom" | "left" | "right" | "tl2br" | "tr2bl", BorderSideState | null>;
 }
 
-const emptySides = (): TabState["sides"] => ({ top: null, bottom: null, left: null, right: null });
+const emptySides = (): TabState["sides"] => ({
+  top: null,
+  bottom: null,
+  left: null,
+  right: null,
+  tl2br: null,
+  tr2bl: null,
+});
 
 const styles = css`
   :host {
@@ -149,11 +158,17 @@ const styles = css`
   .apply-row {
     margin-top: 12px;
   }
+  .preview-wrap {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+  }
   .preview {
     display: grid;
     grid-template-columns: 16px 1fr 16px;
     grid-template-rows: 16px 1fr 16px;
     height: 88px;
+    width: 140px;
     background: var(--docen-color-hover, rgba(0, 0, 0, 0.02));
   }
   .preview .edge {
@@ -161,6 +176,29 @@ const styles = css`
     background: none;
     border: 0 solid #555;
     padding: 0;
+  }
+  .diag-col {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .diag-btn {
+    width: 28px;
+    height: 28px;
+    border: 1px solid var(--docen-color-divider, #e1e1e1);
+    background: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 14px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: inherit;
+    padding: 0;
+  }
+  .diag-btn[aria-pressed="true"] {
+    border-color: var(--docen-color-brand, #0078d4);
+    background: color-mix(in srgb, var(--docen-color-brand, #0078d4) 15%, transparent);
   }
   .palette {
     display: flex;
@@ -278,33 +316,105 @@ const template = html<DocenBordersShadingDialog>`
                 </fluent-dropdown>
               </div>
             </div>
+            <div class="row hidden" ${ref("artRow")}>
+              <div class="field" ${ref("artField")}>
+                <label ${ref("artLabel")}></label>
+                <fluent-dropdown
+                  type="combobox"
+                  appearance="outline"
+                  ${ref("artSel")}
+                  @change="${(x) => x.syncArt()}"
+                >
+                  <fluent-listbox popover="manual" tabindex="-1"></fluent-listbox>
+                  <input
+                    slot="control"
+                    role="combobox"
+                    aria-haspopup="listbox"
+                    type="combobox"
+                    size="1"
+                    style="width:100%;box-sizing:border-box"
+                  />
+                </fluent-dropdown>
+              </div>
+            </div>
             <div class="heading" ${ref("previewHeading")}></div>
-            <div class="preview">
-              <span></span>
-              <button
-                class="edge"
-                ${ref("edgeTop")}
-                @click="${(x) => x.toggleEdge("top")}"
-              ></button>
-              <span></span>
-              <button
-                class="edge"
-                ${ref("edgeLeft")}
-                @click="${(x) => x.toggleEdge("left")}"
-              ></button>
-              <span></span>
-              <button
-                class="edge"
-                ${ref("edgeRight")}
-                @click="${(x) => x.toggleEdge("right")}"
-              ></button>
-              <span></span>
-              <button
-                class="edge"
-                ${ref("edgeBottom")}
-                @click="${(x) => x.toggleEdge("bottom")}"
-              ></button>
-              <span></span>
+            <div class="preview-wrap">
+              <div class="preview">
+                <span></span>
+                <button
+                  class="edge"
+                  ${ref("edgeTop")}
+                  @click="${(x) => x.toggleEdge("top")}"
+                ></button>
+                <span></span>
+                <button
+                  class="edge"
+                  ${ref("edgeLeft")}
+                  @click="${(x) => x.toggleEdge("left")}"
+                ></button>
+                <div style="width:100%;height:100%;position:relative;">
+                  <svg
+                    width="100%"
+                    height="100%"
+                    viewBox="0 0 100 100"
+                    preserveAspectRatio="none"
+                    style="display:block;"
+                  >
+                    <line
+                      ${ref("previewDiagDown")}
+                      x1="0"
+                      y1="0"
+                      x2="100"
+                      y2="100"
+                      stroke="#555"
+                      stroke-width="2"
+                      style="display:none"
+                    />
+                    <line
+                      ${ref("previewDiagUp")}
+                      x1="100"
+                      y1="0"
+                      x2="0"
+                      y2="100"
+                      stroke="#555"
+                      stroke-width="2"
+                      style="display:none"
+                    />
+                  </svg>
+                </div>
+                <button
+                  class="edge"
+                  ${ref("edgeRight")}
+                  @click="${(x) => x.toggleEdge("right")}"
+                ></button>
+                <span></span>
+                <button
+                  class="edge"
+                  ${ref("edgeBottom")}
+                  @click="${(x) => x.toggleEdge("bottom")}"
+                ></button>
+                <span></span>
+              </div>
+              <div class="diag-col" ${ref("diagCol")}>
+                <button
+                  type="button"
+                  class="diag-btn"
+                  ${ref("edgeDiagonalDown")}
+                  @click="${(x) => x.toggleEdge("tl2br")}"
+                  title="Diagonal Down"
+                >
+                  ╲
+                </button>
+                <button
+                  type="button"
+                  class="diag-btn"
+                  ${ref("edgeDiagonalUp")}
+                  @click="${(x) => x.toggleEdge("tr2bl")}"
+                  title="Diagonal Up"
+                >
+                  ╱
+                </button>
+              </div>
             </div>
           </div>
         </div>
@@ -371,6 +481,10 @@ class DocenBordersShadingDialog extends FASTElement {
   @observable colorSel?: FluentDropdown;
   @observable widthLabel?: HTMLElement;
   @observable widthSel?: FluentDropdown;
+  @observable artRow?: HTMLElement;
+  @observable artField?: HTMLElement;
+  @observable artLabel?: HTMLElement;
+  @observable artSel?: FluentDropdown;
   @observable applyToLabel?: HTMLElement;
   @observable applyToValue?: HTMLElement;
   @observable previewHeading?: HTMLElement;
@@ -378,6 +492,11 @@ class DocenBordersShadingDialog extends FASTElement {
   @observable edgeLeft?: HTMLButtonElement;
   @observable edgeRight?: HTMLButtonElement;
   @observable edgeBottom?: HTMLButtonElement;
+  @observable diagCol?: HTMLElement;
+  @observable edgeDiagonalDown?: HTMLButtonElement;
+  @observable edgeDiagonalUp?: HTMLButtonElement;
+  @observable previewDiagDown?: SVGLineElement;
+  @observable previewDiagUp?: SVGLineElement;
   @observable pageHint?: HTMLElement;
   @observable fillHeading?: HTMLElement;
   @observable palette?: HTMLElement;
@@ -440,6 +559,8 @@ class DocenBordersShadingDialog extends FASTElement {
     this.borderPage?.classList.toggle("hidden", tab === "shading");
     this.shadingPage?.classList.toggle("hidden", tab !== "shading");
     this.pageHint?.classList.toggle("hidden", tab !== "page");
+    this.artRow?.classList.toggle("hidden", tab !== "page");
+    this.diagCol?.classList.toggle("hidden", tab === "page");
     if (this.tablist) this.tablist.activeid = `bs-tab-${tab}`;
     this.#loadTabState();
     this.#paintEdges();
@@ -460,7 +581,14 @@ class DocenBordersShadingDialog extends FASTElement {
         size: state.width,
         color: state.color,
       });
-      state.sides = { top: edge(), bottom: edge(), left: edge(), right: edge() };
+      state.sides = {
+        top: edge(),
+        bottom: edge(),
+        left: edge(),
+        right: edge(),
+        tl2br: null,
+        tr2bl: null,
+      };
       // Word's shadow preset: the bottom/right rules run thick.
       if (preset === "shadow") {
         state.sides.bottom = { ...edge(), size: state.width * 3 };
@@ -472,7 +600,7 @@ class DocenBordersShadingDialog extends FASTElement {
     this.#paintPresets();
   }
 
-  toggleEdge(side: "top" | "bottom" | "left" | "right"): void {
+  toggleEdge(side: "top" | "bottom" | "left" | "right" | "tl2br" | "tr2bl"): void {
     const state = this.#tabState();
     state.sides[side] = state.sides[side]
       ? null
@@ -497,6 +625,12 @@ class DocenBordersShadingDialog extends FASTElement {
     this.#paintEdges();
   }
 
+  syncArt(): void {
+    const v = pickedValue(this.artSel) ?? "";
+    this.#tabState().art = v || null;
+    this.#paintEdges();
+  }
+
   pickFill(color: string | null): void {
     this.#fill = color;
     for (const btn of this.palette?.querySelectorAll("button") ?? [])
@@ -510,7 +644,7 @@ class DocenBordersShadingDialog extends FASTElement {
     const patch: BordersDialogPatch =
       this.#tab === "shading"
         ? { tab: "shading", fill: this.#fill }
-        : { tab: this.#tab, sides: { ...state.sides } };
+        : { tab: this.#tab, sides: { ...state.sides }, art: state.art ?? null };
     this.$emit("borders-shading:ok", patch);
     this.hide();
   }
@@ -530,11 +664,21 @@ class DocenBordersShadingDialog extends FASTElement {
       style: fallbackStyle,
       color: null,
       width: fallbackWidth,
+      art: null,
       sides: emptySides(),
     };
     if (!src) return state;
-    for (const side of ["top", "bottom", "left", "right"] as const) {
-      const edge = src[side] as Record<string, unknown> | null | undefined;
+    for (const side of ["top", "bottom", "left", "right", "tl2br", "tr2bl"] as const) {
+      const alt =
+        side === "tl2br"
+          ? "topLeftToBottomRight"
+          : side === "tr2bl"
+            ? "topRightToBottomLeft"
+            : undefined;
+      const edge = (src[side] ?? (alt ? src[alt] : undefined)) as
+        | Record<string, unknown>
+        | null
+        | undefined;
       if (!edge || edge.style === "nil" || edge.style === "none") continue;
       state.sides[side] = {
         style: typeof edge.style === "string" ? edge.style : fallbackStyle,
@@ -542,8 +686,16 @@ class DocenBordersShadingDialog extends FASTElement {
         color: typeof edge.color === "string" && edge.color !== "auto" ? edge.color : null,
       };
     }
+    const rawArt = (src as { art?: string }).art ?? (src.top as { art?: string } | undefined)?.art;
+    if (typeof rawArt === "string") state.art = rawArt;
     // The style widgets land on the first live edge so OK-without-edits keeps it.
-    const live = state.sides.top ?? state.sides.bottom ?? state.sides.left ?? state.sides.right;
+    const live =
+      state.sides.top ??
+      state.sides.bottom ??
+      state.sides.left ??
+      state.sides.right ??
+      state.sides.tl2br ??
+      state.sides.tr2bl;
     if (live) {
       state.style = live.style;
       state.color = live.color;
@@ -558,6 +710,7 @@ class DocenBordersShadingDialog extends FASTElement {
     pick(this.styleSel, state.style);
     pick(this.colorSel, state.color ?? "auto");
     pick(this.widthSel, String(state.width));
+    pick(this.artSel, state.art ?? "");
   }
 
   /** Render each preview edge from the staged sides — the edge itself shows
@@ -591,17 +744,41 @@ class DocenBordersShadingDialog extends FASTElement {
       btn.style.borderStyle = cssStyle[live.style] ?? "solid";
       btn.style.borderWidth = `${Math.max(1, Math.round(live.size / 6))}px`;
     }
+    if (this.previewDiagDown) {
+      const live = state.sides.tl2br;
+      this.previewDiagDown.style.display = live ? "block" : "none";
+      if (live) {
+        this.previewDiagDown.setAttribute("stroke", state.color ? `#${state.color}` : "#555555");
+        this.previewDiagDown.setAttribute(
+          "stroke-width",
+          String(Math.max(1, Math.round(live.size / 6))),
+        );
+      }
+    }
+    if (this.previewDiagUp) {
+      const live = state.sides.tr2bl;
+      this.previewDiagUp.style.display = live ? "block" : "none";
+      if (live) {
+        this.previewDiagUp.setAttribute("stroke", state.color ? `#${state.color}` : "#555555");
+        this.previewDiagUp.setAttribute(
+          "stroke-width",
+          String(Math.max(1, Math.round(live.size / 6))),
+        );
+      }
+    }
+    this.edgeDiagonalDown?.setAttribute("aria-pressed", String(Boolean(state.sides.tl2br)));
+    this.edgeDiagonalUp?.setAttribute("aria-pressed", String(Boolean(state.sides.tr2bl)));
   }
 
   /** Highlight the preset matching the current sides (all none / plain box /
    *  thick bottom-right shadow). */
   #paintPresets(): void {
     const state = this.#tabState();
-    const list = Object.values(state.sides);
+    const list = [state.sides.top, state.sides.bottom, state.sides.left, state.sides.right];
     const none = list.every((s) => !s);
     const box = !none && list.every((s) => !!s);
     const marks: Array<[HTMLButtonElement | undefined, boolean]> = [
-      [this.presetNone, none],
+      [this.presetNone, none && !state.sides.tl2br && !state.sides.tr2bl],
       [this.presetBox, box && state.sides.bottom?.size === state.width],
       [this.presetShadow, box && state.sides.bottom?.size !== state.width],
     ];
@@ -626,6 +803,17 @@ class DocenBordersShadingDialog extends FASTElement {
     const colorBox = listboxOf(this.colorSel);
     if (colorBox && colorBox.children.length === 0)
       colorBox.replaceChildren(...COLORS.map(([hex]) => opt("", hex ?? "auto")));
+    const artBox = listboxOf(this.artSel);
+    if (artBox && artBox.children.length === 0) {
+      const noneOpt = opt("", "");
+      noneOpt.setAttribute("data-art", "");
+      artBox.append(noneOpt);
+      for (const preset of ART_BORDER_PRESETS) {
+        const o = opt(preset.name, preset.id);
+        o.setAttribute("data-art", preset.id);
+        artBox.append(o);
+      }
+    }
     if (this.palette && !this.palette.children.length) {
       const none = document.createElement("button");
       none.dataset.color = "";
@@ -655,6 +843,18 @@ class DocenBordersShadingDialog extends FASTElement {
       const key = COLORS.find(([h]) => h === hex)?.[1] ?? "colorAuto";
       o.textContent = t(`fontDialog.${key}`, this);
     }
+    const artNone = listboxOf(this.artSel)?.querySelector('fluent-option[data-art=""]');
+    if (artNone) artNone.textContent = t("bordersShading.artNone", this);
+    for (const o of listboxOf(this.artSel)?.querySelectorAll("fluent-option") ?? []) {
+      const id = o.getAttribute("data-art");
+      if (!id) continue;
+      const preset = ART_BORDER_PRESETS.find((p) => p.id === id);
+      if (preset) {
+        o.textContent = this.closest("[lang]")?.getAttribute("lang")?.startsWith("zh")
+          ? preset.nameZh
+          : preset.name;
+      }
+    }
   }
 
   #applyLabels(): void {
@@ -671,7 +871,10 @@ class DocenBordersShadingDialog extends FASTElement {
     if (this.styleLabel) this.styleLabel.textContent = t("bordersShading.styleLine", this);
     if (this.colorLabel) this.colorLabel.textContent = t("bordersShading.colorB", this);
     if (this.widthLabel) this.widthLabel.textContent = t("bordersShading.widthB", this);
+    if (this.artLabel) this.artLabel.textContent = t("bordersShading.art", this);
     if (this.previewHeading) this.previewHeading.textContent = t("bordersShading.preview", this);
+    if (this.edgeDiagonalDown) this.edgeDiagonalDown.title = t("bordersShading.diagonalDown", this);
+    if (this.edgeDiagonalUp) this.edgeDiagonalUp.title = t("bordersShading.diagonalUp", this);
     if (this.applyToLabel) this.applyToLabel.textContent = t("bordersShading.applyTo", this);
     if (this.pageHint) this.pageHint.textContent = t("bordersShading.pageHint", this);
     if (this.fillHeading) this.fillHeading.textContent = t("bordersShading.fill", this);

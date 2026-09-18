@@ -26,6 +26,7 @@ import { Box, Ellipse, Group, Line, Path, Rect, Text, type IGroup } from "leafer
 
 import type { PaintColumn, PaintContext } from "./context";
 import { paintDrawing, paintMembers, recordDrawingHit } from "./drawing";
+import { paintGlyphRun } from "./glyph-painter";
 import { addCroppedImage, addDecodedImage } from "./image";
 import { strokePropsOf } from "./line";
 import { paintMath } from "./math";
@@ -50,12 +51,54 @@ const HIGHLIGHT_COLOR: Record<string, string> = {
   white: "#FFFFFF",
 };
 
+/** One drop-shadow spec (Leafer's shadow prop shape). */
+interface ShadowSpec {
+  x: number;
+  y: number;
+  blur?: number;
+  color: string;
+}
+
+/** The w14:scene3d text rotation as Leafer text transforms: z rotates the run
+ *  about its center, x/y squash it on the view axes (the flat-canvas stand-in
+ *  for the 3-D projection). */
+function rotationPropsOf(rotation: {
+  x?: number;
+  y?: number;
+  z?: number;
+}): Record<string, unknown> {
+  const x = (((rotation.x ?? 0) % 360) * Math.PI) / 180;
+  const y = (((rotation.y ?? 0) % 360) * Math.PI) / 180;
+  const props: Record<string, unknown> = {};
+  if (rotation.z) props.rotation = rotation.z;
+  if (x || y) {
+    props.origin = "center";
+    if (x) props.scaleY = Math.max(0.05, Math.abs(Math.cos(x)));
+    if (y) props.scaleX = Math.max(0.05, Math.abs(Math.cos(y)));
+  }
+  return props;
+}
+
 /** The w:u pattern to hand-stroke — undefined for the plain single line (and
  *  for runs with no underline at all), which stay on Leafer's textDecoration. */
 function underlinePatternOf(style: LayoutTextStyle): string | undefined {
   if (!style.underline) return undefined;
   const s = style.underlineStyle;
   return !s || s === "single" ? undefined : s;
+}
+
+/** Mailings → Highlight Merge Fields tint (Word's pale yellow field
+ *  highlight) — painted under the run's glyphs when the host view flag is on. */
+export const MERGE_FIELD_HIGHLIGHT = "rgba(255, 229, 100, 0.55)";
+
+/** Whether an inline atom carries a MERGEFIELD instruction (the mail merge
+ *  field `Highlight Merge Fields` tints). */
+export function isMergeField(inline: LayoutInline): boolean {
+  return (
+    inline.kind === "text" &&
+    typeof inline.instruction === "string" &&
+    /^\s*MERGEFIELD\b/i.test(inline.instruction)
+  );
 }
 
 /** w:u dash patterns in px (Leafer dashPattern stroke-gap pairs). */
@@ -489,8 +532,28 @@ export function paintParagraph(
         // shading (w:shd) fills the same box with an arbitrary color when no
         // highlight is present — OOXML precedence puts the highlight on top.
         const hl = inline.style.highlight ? HIGHLIGHT_COLOR[inline.style.highlight] : undefined;
-        const runFill =
-          hl ?? (inline.style.shadingFill ? `#${inline.style.shadingFill}` : undefined);
+        let runFill = hl ?? (inline.style.shadingFill ? `#${inline.style.shadingFill}` : undefined);
+        // Mailings → Highlight Merge Fields: the view-only yellow tint on
+        // every MERGEFIELD run (an explicit character highlight still wins —
+        // it is real formatting, the merge highlight is UI state).
+        if (!runFill && ctx.highlightMergeFields && isMergeField(inline)) {
+          runFill = MERGE_FIELD_HIGHLIGHT;
+        }
+        if (!runFill && ctx.fieldShading && ctx.fieldShading !== "never") {
+          const isCalculatedField =
+            inline.field === "page" ||
+            inline.field === "numPages" ||
+            inline.fieldShading === true ||
+            (typeof inline.instruction === "string" && inline.instruction.trim().length > 0);
+          if (isCalculatedField) {
+            if (
+              ctx.fieldShading === "always" ||
+              (ctx.fieldShading === "whenSelected" && ctx.isFieldSelected?.(inline))
+            ) {
+              runFill = "#d9d9d9";
+            }
+          }
+        }
         if (runFill) {
           tree.add(
             new Rect({
@@ -608,7 +671,7 @@ export function paintParagraph(
         let fill: string | undefined = textColor;
         let stroke: string | undefined;
         let strokeWidth: number | undefined;
-        let shadow: { x: number; y: number; blur: number; color: string } | undefined;
+        let shadow: ShadowSpec | ShadowSpec[] | undefined;
 
         if (inline.style.outline) {
           const out = typeof inline.style.outline === "object" ? inline.style.outline : undefined;
@@ -645,82 +708,124 @@ export function paintParagraph(
           };
         }
 
-        const textEl = new Text({
-          x: lineX + item.xPx,
-          // A raised/lowered run (w:vertAlign — the footnote reference) paints
-          // at the scaled size on a shifted baseline; the scaling itself is
-          // the shared vertAlignedSizePx so measure and paint agree. A ruby
-          // base sinks below the annotation space reserved at the line top.
-          y: baseY,
-          // width ONLY on justified/squeezed items (their stretch interval
-          // or compressed width): a width on every line would let Leafer
-          // wrap the slice again with its own metrics (a phantom second
-          // line). textWrap "none" keeps the interval from wrapping; height
-          // keeps the element paintable (height 0 is skipped by Leafer).
-          // w:w scales the element horizontally (scaleX), so the interval
-          // compensates by /scale to end where the layout measured it.
-          width:
-            intervalPx != null
-              ? intervalPx / scale
+        // 3-D Format bevel (w14:props3d): raise the glyphs with a light
+        // top-left edge and a dark bottom-right edge — the flat-canvas
+        // rendering of Word's beveled text.
+        if (inline.style.bevel) {
+          const bevel = inline.style.bevel;
+          const edges: ShadowSpec[] = [];
+          if (bevel.top) {
+            edges.push({
+              x: -(bevel.top.widthPx ?? 1),
+              y: -(bevel.top.heightPx ?? 1),
+              blur: 0,
+              color: "rgba(255,255,255,0.85)",
+            });
+          }
+          if (bevel.bottom) {
+            edges.push({
+              x: bevel.bottom.widthPx ?? 1,
+              y: bevel.bottom.heightPx ?? 1,
+              blur: 0,
+              color: "rgba(0,0,0,0.45)",
+            });
+          }
+          shadow = [...(Array.isArray(shadow) ? shadow : shadow ? [shadow] : []), ...edges];
+        }
+
+        let paintedGlyphs = false;
+        if (item.glyphRun && item.glyphRun.glyphs.length > 0 && !inline.style.rotation3d) {
+          // Target painted width (justified interval or the squeezed item
+          // width) vs the run's natural scaled advance — the glyph positions
+          // and x scale stretch by the ratio, matching how the Text path
+          // fills `intervalPx`/`squeezePx`.
+          const naturalPx = item.glyphRun.totalAdvancePx * scale;
+          const targetPx = intervalPx ?? item.widthPx;
+          const advanceScale = naturalPx > 0 && targetPx > 0 ? targetPx / naturalPx : 1;
+          paintedGlyphs = paintGlyphRun(tree, item.glyphRun, {
+            x: lineX + item.xPx,
+            y: baseY + leaferBaselinePadPx(ownSize),
+            fill,
+            stroke,
+            strokeWidth,
+            shadow,
+            scaleX: scale !== 1 ? scale : undefined,
+            advanceScale,
+          });
+        }
+
+        if (!paintedGlyphs) {
+          const textEl = new Text({
+            x: lineX + item.xPx,
+            y: baseY,
+            width:
+              intervalPx != null
+                ? intervalPx / scale
+                : squeezePx != null
+                  ? squeezePx / scale
+                  : undefined,
+            textWrap: intervalPx != null || squeezePx != null ? "none" : undefined,
+            textAlign: rights
+              ? justifyPerGrapheme(display)
+                ? "both-letter"
+                : "both-justify"
               : squeezePx != null
-                ? squeezePx / scale
+                ? "both-letter"
                 : undefined,
-          textWrap: intervalPx != null || squeezePx != null ? "none" : undefined,
-          // CJK items spread per glyph (both-letter); Latin items spread
-          // per word gap (both-justify — Leafer's word mode, Word's Latin
-          // justification). "both" keeps the single-row Text justifiable —
-          // and compresses when the interval is narrower than the glyphs
-          // (the squeeze path).
-          textAlign: rights
-            ? justifyPerGrapheme(display)
-              ? "both-letter"
-              : "both-justify"
-            : squeezePx != null
-              ? "both-letter"
+            height: Math.max(1, line.heightPx),
+            text: label,
+            fill,
+            ...(stroke ? { stroke, strokeWidth } : {}),
+            ...(shadow ? { shadow } : {}),
+            textDecoration: inline.style.strikethrough
+              ? underlinePatternOf(inline.style)
+                ? "delete"
+                : inline.style.underline
+                  ? "under-delete"
+                  : "delete"
+              : underlinePatternOf(inline.style)
+                ? undefined
+                : inline.style.underline
+                  ? "under"
+                  : undefined,
+            fontFamily: family,
+            fontSize: ownSize,
+            lineHeight: ownSize,
+            fontWeight: inline.style.bold ? 700 : 400,
+            italic: inline.style.italic,
+            letterSpacing: inline.style.letterSpacingPx
+              ? { type: "px", value: inline.style.letterSpacingPx }
               : undefined,
-          height: Math.max(1, line.heightPx),
-          text: label,
-          fill,
-          ...(stroke ? { stroke, strokeWidth } : {}),
-          ...(shadow ? { shadow } : {}),
-          // Leafer's textDecoration only knows the single line — a patterned
-          // or colored w:u strokes its own path below (paintUnderlinePattern).
-          // Single keeps the native path: the 91-page parity baseline rides on
-          // its metrics.
-          textDecoration: inline.style.strikethrough
-            ? underlinePatternOf(inline.style)
-              ? "delete"
-              : inline.style.underline
-                ? "under-delete"
-                : "delete"
-            : underlinePatternOf(inline.style)
-              ? undefined
-              : inline.style.underline
-                ? "under"
-                : undefined,
-          fontFamily: family,
-          fontSize: ownSize,
-          // Leafer's default 150% line spacing half-leads the glyphs ~0.25×
-          // fontSize below the line-box top the layout handed over (text-box
-          // text riding low). The px form pins one line's spacing to the font
-          // size — the percent form (`{ type: "percent" }`) silently blanks
-          // every body Text when combined with an explicit height.
-          lineHeight: ownSize,
-          // Numbers only: Leafer's fontWeight setter treats strings as named
-          // weights ("bold"/"thin"…) and silently maps unknown strings to 400,
-          // so a string "700" would lose bold. Italic is the `italic` boolean
-          // property — there is no fontStyle.
-          fontWeight: inline.style.bold ? 700 : 400,
-          italic: inline.style.italic,
-          letterSpacing: inline.style.letterSpacingPx
-            ? { type: "px", value: inline.style.letterSpacingPx }
-            : undefined,
-          // w:w — Word's character scale stretches the glyphs (and their
-          // spacing) horizontally about the run's left edge; the vertical
-          // metrics stay the font's. Absent = natural width.
-          ...(scale !== 1 ? { scaleX: scale, origin: "left" as const } : {}),
-        });
-        tree.add(textEl);
+            ...(scale !== 1 ? { scaleX: scale, origin: "left" as const } : {}),
+            ...(inline.style.rotation3d ? rotationPropsOf(inline.style.rotation3d) : {}),
+          });
+          tree.add(textEl);
+        } else {
+          if (inline.style.strikethrough && !underlinePatternOf(inline.style)) {
+            tree.add(
+              new Line({
+                x: lineX + item.xPx,
+                y: baseY + leaferBaselinePadPx(ownSize) - ownSize * 0.3,
+                width: intervalPx ?? item.widthPx,
+                stroke: fill,
+                strokeWidth: Math.max(1, Math.round(ownSize / 16)),
+                hittable: false,
+              }),
+            );
+          }
+          if (inline.style.underline && !underlinePatternOf(inline.style)) {
+            tree.add(
+              new Line({
+                x: lineX + item.xPx,
+                y: baseY + leaferBaselinePadPx(ownSize) + ownSize * 0.08,
+                width: intervalPx ?? item.widthPx,
+                stroke: inline.style.underlineColor ? `#${inline.style.underlineColor}` : fill,
+                strokeWidth: Math.max(1, Math.round(ownSize / 16)),
+                hittable: false,
+              }),
+            );
+          }
+        }
         if (inline.style.reflection) {
           const refl = inline.style.reflection;
           tree.add(

@@ -20,6 +20,11 @@ export const documentStyles = css`
     /* Anchors the input layer (see the template comment there). */
     position: relative;
   }
+  docen-workspace {
+    flex: 1 1 auto;
+    min-height: 0;
+    height: 100%;
+  }
   .input-layer {
     position: absolute;
     inset: 0;
@@ -147,6 +152,49 @@ export const documentStyles = css`
     font-size: 13px;
     color: var(--docen-color-text-2, #424242);
   }
+  /* Unsupported-content warning: a Word-style yellow message bar, sticky at
+       the top of the scrolling document area so it stays visible while the
+       user reads. Shown only when the loaded document carries content the
+       editor can preserve but not edit (altChunk, subDoc, SmartArt, OLE,
+       raw/custom XML, content parts). */
+  .content-warning {
+    position: sticky;
+    top: 0;
+    z-index: 30;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    box-sizing: border-box;
+    padding: 6px 12px;
+    font-size: 12.5px;
+    line-height: 1.45;
+    background: #fff4ce;
+    color: #3b3b3b;
+    border-bottom: 1px solid #f2dc9b;
+  }
+  .content-warning[hidden] {
+    display: none;
+  }
+  .content-warning-icon {
+    flex: none;
+  }
+  .content-warning-text {
+    flex: 1;
+    min-width: 0;
+  }
+  .content-warning-close {
+    flex: none;
+    border: 0;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    cursor: pointer;
+    padding: 2px 6px;
+    border-radius: 4px;
+  }
+  .content-warning-close:hover {
+    background: rgba(0, 0, 0, 0.08);
+  }
   /* Find Results — Office-style match list: each hit rendered with surrounding
        context and a data-from/to for click-to-jump. Padding keeps items off the
        pane edge (the previous "N matches" text butted right against it). */
@@ -203,6 +251,11 @@ export const documentTemplate = html`
         <fluent-progress-bar></fluent-progress-bar>
         <span class="load-label"></span>
       </div>
+      <div class="content-warning" part="content-warning" role="status" hidden>
+        <span class="content-warning-icon" aria-hidden="true">⚠️</span>
+        <span class="content-warning-text"></span>
+        <button class="content-warning-close" type="button">✕</button>
+      </div>
       <docen-context-menu part="context-menu">
         <div class="docen-canvas" part="page"></div>
       </docen-context-menu>
@@ -226,6 +279,9 @@ export const documentTemplate = html`
     </docen-task-pane>
     <docen-task-pane slot="task-pane-end" position="end" part="thesaurus-pane" title="Thesaurus">
       <docen-thesaurus-pane></docen-thesaurus-pane>
+    </docen-task-pane>
+    <docen-task-pane slot="task-pane-end" position="end" part="translate-pane" title="Translate">
+      <docen-translate-pane></docen-translate-pane>
     </docen-task-pane>
     <docen-task-pane slot="task-pane-end" position="end" part="styles-pane" title="Styles">
       <docen-styles-pane></docen-styles-pane>
@@ -254,6 +310,9 @@ export const documentTemplate = html`
     >
       <docen-a11y-checker-pane></docen-a11y-checker-pane>
     </docen-task-pane>
+    <docen-task-pane slot="task-pane-end" position="end" part="alt-text-pane" title="Alt Text">
+      <docen-alt-text-pane></docen-alt-text-pane>
+    </docen-task-pane>
     <docen-status-bar slot="status" part="status"></docen-status-bar>
   </docen-workspace>
   <!-- The edit bridge's textarea lives here, at the shadow root: inside the
@@ -261,6 +320,8 @@ export const documentTemplate = html`
        treats Space/Enter as menu keys and preventDefaults them — killing the
        textarea's beforeinput (spaces and Enter silently dropped). -->
   <div class="input-layer" part="input-layer"></div>
+  <docen-mini-toolbar part="mini-toolbar"></docen-mini-toolbar>
+  <docen-key-tips part="key-tips"></docen-key-tips>
   <docen-options-dialog part="options"></docen-options-dialog>
   <docen-autocorrect-dialog part="autocorrect"></docen-autocorrect-dialog>
   <docen-quick-part-dialog part="quick-part"></docen-quick-part-dialog>
@@ -288,6 +349,7 @@ export const documentTemplate = html`
   <docen-page-number-format-dialog part="page-number-format"></docen-page-number-format-dialog>
   <docen-field-dialog part="field"></docen-field-dialog>
   <docen-chart-data-dialog part="chart-data"></docen-chart-data-dialog>
+  <docen-chart-type-dialog part="chart-type"></docen-chart-type-dialog>
   <docen-compress-pictures-dialog part="compress-pictures"></docen-compress-pictures-dialog>
   <docen-cross-reference-dialog part="cross-reference"></docen-cross-reference-dialog>
   <docen-sources-dialog part="sources"></docen-sources-dialog>
@@ -295,11 +357,15 @@ export const documentTemplate = html`
   <docen-merge-field-dialog part="merge-field"></docen-merge-field-dialog>
   <docen-table-properties-dialog part="table-properties"></docen-table-properties-dialog>
   <docen-drawing-properties-dialog part="drawing-properties"></docen-drawing-properties-dialog>
+  <docen-distribute-dialog part="distribute-dialog"></docen-distribute-dialog>
   <docen-borders-shading-dialog part="borders-shading"></docen-borders-shading-dialog>
   <docen-watermark-dialog part="watermark-dialog"></docen-watermark-dialog>
   <docen-fill-effects-dialog part="fill-effects"></docen-fill-effects-dialog>
+  <docen-online-pictures-dialog part="online-pictures"></docen-online-pictures-dialog>
+  <docen-text-effects-dialog part="text-effects"></docen-text-effects-dialog>
   <docen-inspect-dialog part="inspect"></docen-inspect-dialog>
   <docen-template-dialog part="template"></docen-template-dialog>
+  <docen-print-preview part="print-preview"></docen-print-preview>
   <docen-modify-style-dialog part="modify-style"></docen-modify-style-dialog>
   <docen-new-style-dialog part="new-style"></docen-new-style-dialog>
   <docen-hyphenation-dialog part="hyphenation"></docen-hyphenation-dialog>

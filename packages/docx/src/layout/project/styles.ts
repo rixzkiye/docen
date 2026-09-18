@@ -10,6 +10,7 @@ import {
 } from "@docen/layout";
 import type { StylesOptions } from "@office-open/docx";
 
+import { parseTextEffects } from "../../extensions/text-effects";
 import { resolveRFonts } from "../../extensions/utils";
 import {
   defaultParagraphStyleId,
@@ -117,6 +118,9 @@ export interface RunStyle {
   positionPt?: number;
   /** w:kern threshold in points (native half-points resolved). */
   kernPt?: number;
+  /** w:rtl — the run's own RTL flag (three-state: explicit false cancels a
+   *  paragraph-bidi default). */
+  rtl?: boolean;
   /** w:bdr box around the run's glyphs. */
   border?: LayoutCharBorder;
   /** w:em emphasis mark token (ST_EmphasisMark minus "none"). */
@@ -133,6 +137,24 @@ export interface RunStyle {
   glow?: { radiusPx?: number; color?: string };
   /** Reflection effect. */
   reflection?: { blur?: number; distancePx?: number; opacity?: number };
+  /** 3-D Format bevels (w14:props3d). */
+  bevel?: LayoutTextStyle["bevel"];
+  /** 3-D rotation (w14:scene3d) in degrees. */
+  rotation3d?: LayoutTextStyle["rotation3d"];
+  /** OpenType ligatures setting (w:ligatures). */
+  ligatures?: "none" | "standard" | "contextual" | "historical" | "discretionary" | "all";
+  /** OpenType number form (w:numForm). */
+  numForm?: "default" | "lining" | "oldStyle";
+  /** OpenType number spacing (w:numSpacing). */
+  numSpacing?: "default" | "proportional" | "tabular";
+  /** OpenType stylistic set index (1-20, w:stylisticSet). */
+  stylisticSet?: number;
+  /** Explicit font feature settings. */
+  fontFeatures?: readonly { tag: string; value?: number }[];
+  /** Explicit font variation settings. */
+  fontVariations?: readonly { tag: string; value: number }[];
+  /** Numeric font weight. */
+  fontWeight?: number;
 }
 
 /** ST_TextScale resolution (w:w): only 1-600 is meaningful, and 100 is the
@@ -188,6 +210,38 @@ export function runStyleOf(rPr: Rec): RunStyle {
   const underlineStyle = u && str(u.type) && u.type !== "none" ? str(u.type) : undefined;
   const underlineColor = u && str(u.color) && str(u.color) !== "auto" ? str(u.color) : undefined;
   const tri = (v: unknown): boolean | undefined => (v === undefined ? undefined : v === true);
+  // Word 2010+ text effects ride the w14 raw XML office-open preserves
+  // verbatim; resolve them into the painter's structured fields (direct
+  // legacy w:outline/w:shadow elements still win when present).
+  const w14 = typeof rPr.w14RawXml === "string" ? parseTextEffects(rPr.w14RawXml) : {};
+  const w14Outline = w14.outline
+    ? { color: w14.outline.color, widthPx: w14.outline.widthPx }
+    : undefined;
+  const w14Shadow = w14.shadow
+    ? {
+        x: Math.cos((w14.shadow.dirDeg * Math.PI) / 180) * w14.shadow.distPx,
+        y: Math.sin((w14.shadow.dirDeg * Math.PI) / 180) * w14.shadow.distPx,
+        blur: w14.shadow.blurPx,
+        color:
+          w14.shadow.opacity < 1
+            ? withAlpha(w14.shadow.color, w14.shadow.opacity)
+            : `#${w14.shadow.color}`,
+      }
+    : undefined;
+  const w14Glow = w14.glow
+    ? {
+        radiusPx: w14.glow.radiusPx,
+        color:
+          w14.glow.opacity < 1 ? withAlpha(w14.glow.color, w14.glow.opacity) : `#${w14.glow.color}`,
+      }
+    : undefined;
+  const w14Reflection = w14.reflection
+    ? {
+        blur: w14.reflection.blurPx,
+        distancePx: w14.reflection.distPx,
+        opacity: w14.reflection.startOpacity,
+      }
+    : undefined;
   return {
     sizePt: num(rPr.size),
     font: fontAttr(rPr.font),
@@ -218,13 +272,50 @@ export function runStyleOf(rPr: Rec): RunStyle {
     scalePct: num(rPr.scale),
     positionPt: halfPtOf(rPr.position),
     kernPt: halfPtOf(rPr.kern),
+    rtl: tri(rPr.rtl),
     border: charBorderOf(rPr.border),
     emphasisMark: emphasisOf(rPr.emphasisMark),
-    outline: tri(rPr.outline) ?? (isRecord(rPr.outline) ? (rPr.outline as never) : undefined),
-    shadow: tri(rPr.shadow) ?? (isRecord(rPr.shadow) ? (rPr.shadow as never) : undefined),
+    outline:
+      tri(rPr.outline) ??
+      (isRecord(rPr.outline) ? (rPr.outline as never) : undefined) ??
+      w14Outline,
+    shadow:
+      tri(rPr.shadow) ?? (isRecord(rPr.shadow) ? (rPr.shadow as never) : undefined) ?? w14Shadow,
     emboss: tri(rPr.emboss),
     imprint: tri(rPr.imprint),
-    glow: isRecord(rPr.glow) ? (rPr.glow as never) : undefined,
-    reflection: isRecord(rPr.reflection) ? (rPr.reflection as never) : undefined,
+    glow: (isRecord(rPr.glow) ? (rPr.glow as never) : undefined) ?? w14Glow,
+    reflection: (isRecord(rPr.reflection) ? (rPr.reflection as never) : undefined) ?? w14Reflection,
+    bevel: w14.bevel
+      ? {
+          ...(w14.bevel.top ? { top: { ...w14.bevel.top } } : {}),
+          ...(w14.bevel.bottom ? { bottom: { ...w14.bevel.bottom } } : {}),
+        }
+      : undefined,
+    rotation3d: w14.rotation
+      ? { x: w14.rotation.x, y: w14.rotation.y, z: w14.rotation.z }
+      : undefined,
+    ligatures: str(rPr.ligatures) as LayoutTextStyle["ligatures"],
+    numForm: str(rPr.numForm) as LayoutTextStyle["numForm"],
+    numSpacing: str(rPr.numSpacing) as LayoutTextStyle["numSpacing"],
+    stylisticSet: num(rPr.stylisticSet),
+    fontFeatures: Array.isArray(rPr.fontFeatures) ? rPr.fontFeatures : undefined,
+    fontVariations: Array.isArray(rPr.fontVariations) ? rPr.fontVariations : undefined,
+    fontWeight: num(rPr.fontWeight),
   };
+}
+
+/** #RRGGBB + alpha → the rgba() color string the painter accepts. */
+function withAlpha(color: string, opacity: number): string {
+  const hex = color.replace(/^#/, "");
+  const full =
+    hex.length === 3
+      ? hex
+          .split("")
+          .map((c) => c + c)
+          .join("")
+      : hex;
+  const r = parseInt(full.slice(0, 2), 16) || 0;
+  const g = parseInt(full.slice(2, 4), 16) || 0;
+  const b = parseInt(full.slice(4, 6), 16) || 0;
+  return `rgba(${r},${g},${b},${Math.min(Math.max(opacity, 0), 1)})`;
 }

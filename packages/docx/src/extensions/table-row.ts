@@ -25,8 +25,11 @@ export function renderDocx(node: JSONContent): Partial<TableRowPropertiesOptions
   const attrs = (node.attrs ?? {}) as Record<string, unknown>;
   const opts: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(attrs)) {
-    if (SKIP_KEYS.has(key)) continue;
+    if (SKIP_KEYS.has(key) || key === "trPrChange") continue;
     if (value !== null && value !== undefined) opts[key] = value;
+  }
+  if (attrs.trPrChange != null && opts.revision == null) {
+    opts.revision = attrs.trPrChange as any;
   }
   return opts;
 }
@@ -36,6 +39,9 @@ export function parseDocx(opts: TableRowOptions): Record<string, unknown> {
   for (const [key, value] of Object.entries(opts)) {
     if (SKIP_KEYS.has(key)) continue;
     attrs[key] = value ?? null;
+  }
+  if (opts.revision != null) {
+    attrs.trPrChange = opts.revision;
   }
   return attrs;
 }
@@ -77,7 +83,8 @@ const docxTableRowAttrs = {
   insertion: attrNative(),
   deletion: attrNative(),
   revision: attrNative(),
-} satisfies Record<keyof TableRowPropertiesOptions, DocxAttrSpec>;
+  trPrChange: attrNative(),
+} satisfies Record<keyof TableRowPropertiesOptions | "trPrChange", DocxAttrSpec>;
 
 export const TableRow = Node.create({
   name: "tableRow",

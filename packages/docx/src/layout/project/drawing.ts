@@ -28,6 +28,12 @@ import type { GeometryGuide } from "@office-open/core";
 import type { CustomGeometryOptions } from "@office-open/core/drawing";
 import type { GroupChildMediaData, GroupOptions, MediaDataTransformation } from "@office-open/docx";
 
+import {
+  is3DModelXml,
+  isInkXml,
+  parse3DModelFromXml,
+  parseInkFromXml,
+} from "../../extensions/drawing-3d-ink";
 import type { ProjectContext } from "./context";
 import { isRecord, measureEmu, num, str, type BodyParagraph, type Rec } from "./guards";
 import { metafileMembers, pictureSrc } from "./media";
@@ -848,6 +854,93 @@ function projectChartRun(chart: Rec): LayoutDrawing | undefined {
   };
 }
 
+function project3DModelRun(m: Rec): LayoutDrawing | undefined {
+  const cx = num(m.cx);
+  const cy = num(m.cy);
+  const w = cx ?? (num(m.width) ? (m.width as number) * 9525 : 1905000);
+  const h = cy ?? (num(m.height) ? (m.height as number) * 9525 : 1905000);
+  if (!isRecord(m.floating)) return undefined;
+  const widthPx = emuToPx(w);
+  const heightPx = emuToPx(h);
+  const { anchor, wrap, wrapSide, contour, behind, zIndex, distances } = drawingAnchorOf(
+    m.floating,
+    widthPx,
+    heightPx,
+  );
+  const title = str(m.title) ?? "";
+  const descr = str(m.descr) ?? "";
+  return {
+    anchor,
+    width: widthPx,
+    height: heightPx,
+    members: [
+      {
+        kind: "model3d",
+        x: 0,
+        y: 0,
+        width: widthPx,
+        height: heightPx,
+        model3d: m,
+        title,
+        descr,
+        altText: title || descr,
+        ...(typeof m.rotation === "number" ? { rotation: m.rotation } : {}),
+        camera: m.camera,
+      },
+    ],
+    wrap,
+    wrapSide,
+    ...(contour ? { contour } : {}),
+    behind,
+    ...(zIndex != null ? { zIndex } : {}),
+    distances,
+    ...(typeof m.rotation === "number" && m.rotation ? { rotation: m.rotation } : {}),
+  };
+}
+
+function projectInkRun(k: Rec): LayoutDrawing | undefined {
+  const cx = num(k.cx);
+  const cy = num(k.cy);
+  const w = cx ?? (num(k.width) ? (k.width as number) * 9525 : 1524000);
+  const h = cy ?? (num(k.height) ? (k.height as number) * 9525 : 762000);
+  if (!isRecord(k.floating)) return undefined;
+  const widthPx = emuToPx(w);
+  const heightPx = emuToPx(h);
+  const { anchor, wrap, wrapSide, contour, behind, zIndex, distances } = drawingAnchorOf(
+    k.floating,
+    widthPx,
+    heightPx,
+  );
+  const title = str(k.title) ?? "";
+  const descr = str(k.descr) ?? "";
+  return {
+    anchor,
+    width: widthPx,
+    height: heightPx,
+    members: [
+      {
+        kind: "ink",
+        x: 0,
+        y: 0,
+        width: widthPx,
+        height: heightPx,
+        ink: k,
+        title,
+        descr,
+        altText: title || descr,
+        ...(typeof k.rotation === "number" ? { rotation: k.rotation } : {}),
+      },
+    ],
+    wrap,
+    wrapSide,
+    ...(contour ? { contour } : {}),
+    behind,
+    ...(zIndex != null ? { zIndex } : {}),
+    distances,
+    ...(typeof k.rotation === "number" && k.rotation ? { rotation: k.rotation } : {}),
+  };
+}
+
 /** Collect the anchored drawing runs of one paragraph (top level and one
  *  nested run level — a drawing rides its own w:r): wpg groups, wps shapes,
  *  charts, and floating pictures. Non-floating pictures stay inline atoms. */
@@ -864,6 +957,20 @@ export function projectDrawings(runs: readonly unknown[], ctx: ProjectContext): 
     }
     if (isRecord(run.chart)) {
       const d = projectChartRun(run.chart);
+      if (d) out.push(d);
+    }
+    if (isRecord(run.model3d) || (typeof run.rawXml === "string" && is3DModelXml(run.rawXml))) {
+      const m = isRecord(run.model3d)
+        ? run.model3d
+        : (parse3DModelFromXml(run.rawXml as string) as unknown as Rec);
+      const d = project3DModelRun(m);
+      if (d) out.push(d);
+    }
+    if (isRecord(run.ink) || (typeof run.rawXml === "string" && isInkXml(run.rawXml))) {
+      const k = isRecord(run.ink)
+        ? run.ink
+        : (parseInkFromXml(run.rawXml as string) as unknown as Rec);
+      const d = projectInkRun(k);
       if (d) out.push(d);
     }
     if (isRecord(run.picture) && isRecord(run.picture.floating)) {

@@ -64,21 +64,24 @@
   },
   "scripts": {
     "build": "vp pack",
-    "prepack": "pnpm build"
+    "prepack": "pnpm build",
+    "bench:streaming": "node --expose-gc bench/streaming-bench.mjs"
   },
   "dependencies": {
     "@docen/core": "workspace:*",
     "@docen/layout": "workspace:*",
-    "@docen/markdown": "workspace:*",
+    "@docen/shaping": "workspace:*",
     "@office-open/core": "0.14.5",
     "@office-open/docx": "0.14.5",
     "@tiptap/core": "3.31.3",
     "@tiptap/extension-link": "3.31.3",
     "@tiptap/pm": "3.31.3",
+    "fflate": "0.8.3",
     "image-meta": "0.2.2",
-    "leafer-x-metafile": "workspace:*"
+    "leafer-x-metafile": "workspace:*",
+    "linkedom": "0.18.13"
   },
   "devDependencies": {
-    "linkedom": "0.18.13"
+    "@docen/markdown": "workspace:*"
   }
 }

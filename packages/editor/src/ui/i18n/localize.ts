@@ -98,6 +98,26 @@ const translations = new Map<string, Record<string, string>>([
       "inspect.remove": "Remove All",
       "inspect.accept": "Accept All",
       "inspect.close": "Close",
+      "ruler.firstLine": "First Line Indent",
+      "ruler.hanging": "Hanging Indent",
+      "ruler.leftIndent": "Left Indent",
+      "ruler.rightIndent": "Right Indent",
+      "ruler.tabStop": "Tab Stop",
+      "ruler.unitToggle": "Measurement unit (click to switch)",
+      "miniToolbar.label": "Mini Toolbar",
+      "miniToolbar.fontName": "Font Name",
+      "miniToolbar.fontSize": "Font Size",
+      "miniToolbar.fontColorPicker": "Choose Font Color",
+      "miniToolbar.highlightPicker": "Choose Highlight Color",
+      "miniToolbar.bold": "Bold",
+      "miniToolbar.italic": "Italic",
+      "miniToolbar.underline": "Underline",
+      "miniToolbar.growFont": "Grow Font",
+      "miniToolbar.shrinkFont": "Shrink Font",
+      "miniToolbar.fontColor": "Font Color",
+      "miniToolbar.highlight": "Highlight Color",
+      "miniToolbar.bulletList": "Bullets",
+      "miniToolbar.formatPainter": "Format Painter",
     },
   ],
   [
@@ -136,13 +156,50 @@ const translations = new Map<string, Record<string, string>>([
       "inspect.remove": "全部删除",
       "inspect.accept": "全部接受",
       "inspect.close": "关闭",
+      "ruler.firstLine": "首行缩进",
+      "ruler.hanging": "悬挂缩进",
+      "ruler.leftIndent": "左缩进",
+      "ruler.rightIndent": "右缩进",
+      "ruler.tabStop": "制表位",
+      "ruler.unitToggle": "度量单位（单击切换）",
+      "miniToolbar.label": "浮动工具栏",
+      "miniToolbar.fontName": "字体",
+      "miniToolbar.fontSize": "字号",
+      "miniToolbar.fontColorPicker": "选择字体颜色",
+      "miniToolbar.highlightPicker": "选择突出显示颜色",
+      "miniToolbar.bold": "加粗",
+      "miniToolbar.italic": "倾斜",
+      "miniToolbar.underline": "下划线",
+      "miniToolbar.growFont": "增大字号",
+      "miniToolbar.shrinkFont": "缩小字号",
+      "miniToolbar.fontColor": "字体颜色",
+      "miniToolbar.highlight": "突出显示颜色",
+      "miniToolbar.bulletList": "项目符号",
+      "miniToolbar.formatPainter": "格式刷",
     },
   ],
 ]);
 const metadata = new Map<string, { readonly $name?: string; readonly $dir?: "ltr" | "rtl" }>([
   ["en", { $name: "English", $dir: "ltr" }],
   ["zh-CN", { $name: "中文（简体）", $dir: "ltr" }],
+  ["ar", { $name: "العربية", $dir: "rtl" }],
+  ["he", { $name: "עברית", $dir: "rtl" }],
+  ["fa", { $name: "فارسی", $dir: "rtl" }],
+  ["ur", { $name: "اردو", $dir: "rtl" }],
 ]);
+const RTL_LANGUAGES = new Set(["ar", "he", "fa", "ur", "ps", "sd", "ug", "yi", "syr"]);
+let uiDirection: "ltr" | "rtl" | "auto" = "auto";
+
+/** Toggle or set UI direction dynamically ("ltr" | "rtl" | "auto"). */
+export function setUiDirection(direction: "ltr" | "rtl" | "auto"): void {
+  uiDirection = direction;
+  notifyLocaleChange();
+}
+
+/** Get the currently set UI direction mode. */
+export function getUiDirection(): "ltr" | "rtl" | "auto" {
+  return uiDirection;
+}
 /** The fallback locale (localeChain's terminal link). The built-in default is
  *  "en"; `registerLocalization` updates it from `LocalizationInfo.defaultLanguageTag`. */
 let defaultLanguageTag = "en";
@@ -237,12 +294,46 @@ export function resolveLang(el: Element | null = document.documentElement): stri
   return document.documentElement.lang || defaultLanguageTag;
 }
 
+function findDirAttribute(el: Element | null): "ltr" | "rtl" | null {
+  let cur: Element | null = el;
+  while (cur) {
+    const dir = cur.getAttribute?.("dir");
+    if (dir === "rtl" || dir === "ltr") return dir;
+    if (cur.parentElement) {
+      cur = cur.parentElement;
+    } else {
+      const root = cur.getRootNode?.();
+      if (root instanceof ShadowRoot && root.host) {
+        cur = root.host;
+      } else {
+        break;
+      }
+    }
+  }
+  const htmlDir =
+    typeof document !== "undefined"
+      ? document.documentElement?.getAttribute("dir") || document.body?.getAttribute("dir")
+      : null;
+  if (htmlDir === "rtl" || htmlDir === "ltr") return htmlDir;
+  return null;
+}
+
 /** Resolve text direction for an element's locale ("ltr" by default). */
-export function resolveDir(el: Element | null = document.documentElement): "ltr" | "rtl" {
+export function resolveDir(
+  el: Element | null = typeof document !== "undefined" ? document.documentElement : null,
+): "ltr" | "rtl" {
+  if (uiDirection === "rtl") return "rtl";
+  if (uiDirection === "ltr") return "ltr";
+
+  const explicitDir = findDirAttribute(el);
+  if (explicitDir) return explicitDir;
+
   const lang = resolveLang(el);
   for (const code of localeChain(lang)) {
     const dir = metadata.get(code)?.$dir;
     if (dir) return dir;
+    const base = code.split("-")[0]?.toLowerCase();
+    if (base && RTL_LANGUAGES.has(base)) return "rtl";
   }
   return "ltr";
 }
@@ -290,7 +381,7 @@ function ensureHtmlObserver(): void {
   htmlObserver = new MutationObserver(notifyLocaleChange);
   htmlObserver.observe(document.documentElement, {
     attributes: true,
-    attributeFilter: ["lang"],
+    attributeFilter: ["lang", "dir"],
   });
 }
 

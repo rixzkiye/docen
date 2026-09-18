@@ -5,11 +5,19 @@
 // everywhere.
 
 import type {
+  ConditionalTableStyleOptions,
+  ParagraphStylePropertiesOptions,
+  RunStylePropertiesOptions,
   StylesOptions,
   TableBordersOptions,
   TableOptions,
+  TablePropertiesOptions,
+  TableRowPropertiesOptions,
   TableStyleOptions,
+  TableStyleOverrideType,
 } from "@office-open/docx";
+
+type TableCellPropertiesOptions = NonNullable<ConditionalTableStyleOptions["cell"]>;
 
 /** Table-level cell margins (w:tblCellMar) — TableCellMarginOptions is not
  *  exported, derive it from the field that carries it. */
@@ -269,4 +277,462 @@ export function mergeTableStyleProps(
   if (borders) out.borders = borders;
   if (margins) out.margins = margins;
   return out;
+}
+
+// ── OOXML Table Style & tblLook Conditional Formatting Cascade ──
+
+export interface ResolvedTableStyle {
+  table?: TablePropertiesOptions;
+  row?: TableRowPropertiesOptions;
+  cell?: TableCellPropertiesOptions;
+  paragraph?: ParagraphStylePropertiesOptions;
+  run?: RunStylePropertiesOptions;
+  conditionalFormats: Map<TableStyleOverrideType, ConditionalTableStyleOptions>;
+}
+
+export interface ResolvedTableLook {
+  firstRow: boolean;
+  lastRow: boolean;
+  firstCol: boolean;
+  lastCol: boolean;
+  bandRow: boolean;
+  bandCol: boolean;
+}
+
+/** Built-in table style definitions fallback when not present in styles.xml. */
+const BUILTIN_TABLE_STYLES: Record<string, TableStyleOptions> = {
+  "table-grid": {
+    id: "table-grid",
+    table: {
+      borders: {
+        top: { style: "single", size: 4, color: "auto" },
+        bottom: { style: "single", size: 4, color: "auto" },
+        left: { style: "single", size: 4, color: "auto" },
+        right: { style: "single", size: 4, color: "auto" },
+        insideHorizontal: { style: "single", size: 4, color: "auto" },
+        insideVertical: { style: "single", size: 4, color: "auto" },
+      },
+    },
+  },
+  TableGrid: {
+    id: "TableGrid",
+    table: {
+      borders: {
+        top: { style: "single", size: 4, color: "auto" },
+        bottom: { style: "single", size: 4, color: "auto" },
+        left: { style: "single", size: 4, color: "auto" },
+        right: { style: "single", size: 4, color: "auto" },
+        insideHorizontal: { style: "single", size: 4, color: "auto" },
+        insideVertical: { style: "single", size: 4, color: "auto" },
+      },
+    },
+  },
+  "no-style-no-grid": {
+    id: "no-style-no-grid",
+    table: {
+      borders: {
+        top: { style: "none", size: 0, color: "auto" },
+        bottom: { style: "none", size: 0, color: "auto" },
+        left: { style: "none", size: 0, color: "auto" },
+        right: { style: "none", size: 0, color: "auto" },
+        insideHorizontal: { style: "none", size: 0, color: "auto" },
+        insideVertical: { style: "none", size: 0, color: "auto" },
+      },
+    },
+  },
+  "light-shading": {
+    id: "light-shading",
+    table: {
+      borders: {
+        top: { style: "single", size: 4, color: "auto" },
+        bottom: { style: "single", size: 4, color: "auto" },
+        insideHorizontal: { style: "single", size: 4, color: "auto" },
+      },
+    },
+    conditionalFormats: [
+      {
+        type: "band1Horz",
+        cell: { shading: { fill: "D9E2F3", type: "clear" } },
+      },
+    ],
+  },
+  "light-list": {
+    id: "light-list",
+    table: {
+      borders: {
+        top: { style: "single", size: 4, color: "auto" },
+        bottom: { style: "single", size: 4, color: "auto" },
+        insideHorizontal: { style: "single", size: 4, color: "auto" },
+      },
+    },
+    conditionalFormats: [
+      {
+        type: "firstRow",
+        cell: { shading: { fill: "8EAADB", type: "clear" } },
+        run: { bold: true },
+      },
+    ],
+  },
+  "light-grid": {
+    id: "light-grid",
+    table: {
+      borders: {
+        top: { style: "single", size: 4, color: "auto" },
+        bottom: { style: "single", size: 4, color: "auto" },
+        left: { style: "single", size: 4, color: "auto" },
+        right: { style: "single", size: 4, color: "auto" },
+        insideHorizontal: { style: "single", size: 4, color: "auto" },
+        insideVertical: { style: "single", size: 4, color: "auto" },
+      },
+    },
+    conditionalFormats: [
+      {
+        type: "firstRow",
+        cell: { shading: { fill: "D9E2F3", type: "clear" } },
+        run: { bold: true },
+      },
+    ],
+  },
+  "grid-table": {
+    id: "grid-table",
+    table: {
+      borders: {
+        top: { style: "single", size: 8, color: "auto" },
+        bottom: { style: "single", size: 8, color: "auto" },
+        left: { style: "single", size: 8, color: "auto" },
+        right: { style: "single", size: 8, color: "auto" },
+        insideHorizontal: { style: "single", size: 4, color: "auto" },
+        insideVertical: { style: "single", size: 4, color: "auto" },
+      },
+    },
+    conditionalFormats: [
+      {
+        type: "firstRow",
+        cell: { shading: { fill: "4472C4", type: "clear" } },
+        run: { bold: true, color: "FFFFFF" },
+      },
+      {
+        type: "band1Horz",
+        cell: { shading: { fill: "D9E2F3", type: "clear" } },
+      },
+    ],
+  },
+};
+
+/** Parse and resolve w:tblLook from raw attributes (hex val mask or explicit flags).
+ *  Word defaults: firstRow: true, lastRow: false, bandRow: true, firstCol: false, lastCol: false, bandCol: false. */
+export function resolveTableLook(look: unknown): ResolvedTableLook {
+  let firstRow = true;
+  let lastRow = false;
+  let firstCol = false;
+  let lastCol = false;
+  let bandRow = true;
+  let bandCol = false;
+
+  if (isPlainObject(look)) {
+    const l = look as Record<string, unknown>;
+    if (l.val != null) {
+      const mask =
+        typeof l.val === "number"
+          ? l.val
+          : typeof l.val === "string"
+            ? parseInt(l.val, 16)
+            : Number.NaN;
+      if (!Number.isNaN(mask)) {
+        // Bit 0x0020: apply first row conditional formatting
+        firstRow = (mask & 0x0020) !== 0;
+        // Bit 0x0040: apply last row conditional formatting
+        lastRow = (mask & 0x0040) !== 0;
+        // Bit 0x0080: apply first column conditional formatting
+        firstCol = (mask & 0x0080) !== 0;
+        // Bit 0x0100: apply last column conditional formatting
+        lastCol = (mask & 0x0100) !== 0;
+        // Bit 0x0200: do not apply horizontal banding (noHBand)
+        bandRow = (mask & 0x0200) === 0;
+        // Bit 0x0400: do not apply vertical banding (noVBand)
+        bandCol = (mask & 0x0400) === 0;
+      }
+    }
+    // Explicit booleans take precedence over val mask
+    if (typeof l.firstRow === "boolean") firstRow = l.firstRow;
+    if (typeof l.lastRow === "boolean") lastRow = l.lastRow;
+    if (typeof l.firstCol === "boolean") firstCol = l.firstCol;
+    if (typeof l.lastCol === "boolean") lastCol = l.lastCol;
+    if (typeof l.bandRow === "boolean") bandRow = l.bandRow;
+    if (typeof l.bandCol === "boolean") bandCol = l.bandCol;
+  }
+  return { firstRow, lastRow, firstCol, lastCol, bandRow, bandCol };
+}
+
+const resolvedTableStyleCache = new WeakMap<
+  NonNullable<StylesOptions["tableStyles"]>,
+  Map<string, ResolvedTableStyle>
+>();
+const standaloneResolvedTableStyleCache = new Map<string, ResolvedTableStyle>();
+
+/** Resolve a table style and its basedOn chain into merged base props and conditional formats. */
+export function resolveTableStyle(
+  tableStyles: StylesOptions["tableStyles"],
+  styleId: string | null | undefined,
+): ResolvedTableStyle | undefined {
+  if (!styleId) return undefined;
+  if (tableStyles && tableStyles.length > 0) {
+    let perArray = resolvedTableStyleCache.get(tableStyles);
+    if (!perArray) {
+      perArray = new Map();
+      resolvedTableStyleCache.set(tableStyles, perArray);
+    }
+    const cached = perArray.get(styleId);
+    if (cached) return cached;
+  } else {
+    const cached = standaloneResolvedTableStyleCache.get(styleId);
+    if (cached) return cached;
+  }
+
+  const byId = new Map<string, TableStyleOptions>();
+  for (const t of tableStyles ?? []) byId.set(t.id, t);
+  for (const [id, t] of Object.entries(BUILTIN_TABLE_STYLES)) {
+    if (!byId.has(id)) byId.set(id, t);
+  }
+
+  const chain: TableStyleOptions[] = [];
+  const visited = new Set<string>();
+  let cur: string | undefined = styleId;
+  while (cur && !visited.has(cur)) {
+    visited.add(cur);
+    const s = byId.get(cur);
+    if (!s) break;
+    chain.unshift(s); // root first
+    cur = s.basedOn;
+  }
+  if (chain.length === 0) return undefined;
+
+  let table: Record<string, unknown> | undefined;
+  let row: Record<string, unknown> | undefined;
+  let cell: Record<string, unknown> | undefined;
+  let paragraph: Record<string, unknown> | undefined;
+  let run: Record<string, unknown> | undefined;
+  const conditionalFormats = new Map<TableStyleOverrideType, ConditionalTableStyleOptions>();
+
+  for (const s of chain) {
+    if (s.table) table = deepMergeInto(table ?? {}, s.table as Record<string, unknown>);
+    if (s.row) row = deepMergeInto(row ?? {}, s.row as Record<string, unknown>);
+    if (s.cell) cell = deepMergeInto(cell ?? {}, s.cell as Record<string, unknown>);
+    if (s.paragraph)
+      paragraph = deepMergeInto(paragraph ?? {}, s.paragraph as Record<string, unknown>);
+    if (s.run) run = deepMergeInto(run ?? {}, s.run as Record<string, unknown>);
+
+    for (const cf of s.conditionalFormats ?? []) {
+      const existing = conditionalFormats.get(cf.type);
+      if (existing) {
+        const merged: ConditionalTableStyleOptions = { type: cf.type };
+        if (existing.table || cf.table) {
+          merged.table = deepMergeInto(
+            { ...(existing.table as Record<string, unknown>) },
+            (cf.table ?? {}) as Record<string, unknown>,
+          ) as TablePropertiesOptions;
+        }
+        if (existing.row || cf.row) {
+          merged.row = deepMergeInto(
+            { ...(existing.row as Record<string, unknown>) },
+            (cf.row ?? {}) as Record<string, unknown>,
+          ) as TableRowPropertiesOptions;
+        }
+        if (existing.cell || cf.cell) {
+          merged.cell = deepMergeInto(
+            { ...(existing.cell as Record<string, unknown>) },
+            (cf.cell ?? {}) as Record<string, unknown>,
+          ) as TableCellPropertiesOptions;
+        }
+        if (existing.paragraph || cf.paragraph) {
+          merged.paragraph = deepMergeInto(
+            { ...(existing.paragraph as Record<string, unknown>) },
+            (cf.paragraph ?? {}) as Record<string, unknown>,
+          ) as ParagraphStylePropertiesOptions;
+        }
+        if (existing.run || cf.run) {
+          merged.run = deepMergeInto(
+            { ...(existing.run as Record<string, unknown>) },
+            (cf.run ?? {}) as Record<string, unknown>,
+          ) as RunStylePropertiesOptions;
+        }
+        conditionalFormats.set(cf.type, merged);
+      } else {
+        conditionalFormats.set(cf.type, {
+          type: cf.type,
+          table: cf.table ? { ...cf.table } : undefined,
+          row: cf.row ? { ...cf.row } : undefined,
+          cell: cf.cell ? { ...cf.cell } : undefined,
+          paragraph: cf.paragraph ? { ...cf.paragraph } : undefined,
+          run: cf.run ? { ...cf.run } : undefined,
+        });
+      }
+    }
+  }
+
+  const result: ResolvedTableStyle = {
+    table: table as TablePropertiesOptions | undefined,
+    row: row as TableRowPropertiesOptions | undefined,
+    cell: cell as TableCellPropertiesOptions | undefined,
+    paragraph: paragraph as ParagraphStylePropertiesOptions | undefined,
+    run: run as RunStylePropertiesOptions | undefined,
+    conditionalFormats,
+  };
+
+  if (tableStyles && tableStyles.length > 0) {
+    resolvedTableStyleCache.get(tableStyles)?.set(styleId, result);
+  } else {
+    standaloneResolvedTableStyleCache.set(styleId, result);
+  }
+  return result;
+}
+
+export interface TableCellPosition {
+  rowIndex: number;
+  colIndex: number;
+  rowSpan?: number;
+  colSpan?: number;
+  totalRows: number;
+  totalCols: number;
+}
+
+/** ECMA-376 Part 1 §17.7.2 priority order for conditional table formatting.
+ *  Earlier entries have lower precedence; later entries override earlier ones. */
+export const CONDITIONAL_FORMAT_PRIORITY: readonly TableStyleOverrideType[] = [
+  "wholeTable",
+  "band1Horz",
+  "band2Horz",
+  "band1Vert",
+  "band2Vert",
+  "firstCol",
+  "lastCol",
+  "firstRow",
+  "lastRow",
+  "neCell",
+  "nwCell",
+  "seCell",
+  "swCell",
+];
+
+/** Determine which conditional formatting types apply to a cell at a given position. */
+export function activeConditionalTypes(
+  pos: TableCellPosition,
+  look: ResolvedTableLook,
+  styleRowBandSize?: number,
+  styleColBandSize?: number,
+): Set<TableStyleOverrideType> {
+  const active = new Set<TableStyleOverrideType>();
+  active.add("wholeTable");
+
+  const r = pos.rowIndex;
+  const col = pos.colIndex;
+  const rSpan = pos.rowSpan ?? 1;
+  const cSpan = pos.colSpan ?? 1;
+  const rEnd = r + rSpan - 1;
+  const cEnd = col + cSpan - 1;
+
+  const isFirstRow = r === 0;
+  const isLastRow = rEnd === pos.totalRows - 1;
+  const isFirstCol = col === 0;
+  const isLastCol = cEnd === pos.totalCols - 1;
+
+  // Horizontal banding (alternating row bands)
+  if (look.bandRow) {
+    const isExempt = (look.firstRow && isFirstRow) || (look.lastRow && isLastRow);
+    if (!isExempt) {
+      const bandSize = Math.max(1, styleRowBandSize ?? 1);
+      const rowOffset = r - (look.firstRow ? 1 : 0);
+      if (rowOffset >= 0) {
+        const bandIdx = Math.floor(rowOffset / bandSize);
+        if (bandIdx % 2 === 0) {
+          active.add("band1Horz");
+        } else {
+          active.add("band2Horz");
+        }
+      }
+    }
+  }
+
+  // Vertical banding (alternating column bands)
+  if (look.bandCol) {
+    const isExempt = (look.firstCol && isFirstCol) || (look.lastCol && isLastCol);
+    if (!isExempt) {
+      const bandSize = Math.max(1, styleColBandSize ?? 1);
+      const colOffset = col - (look.firstCol ? 1 : 0);
+      if (colOffset >= 0) {
+        const bandIdx = Math.floor(colOffset / bandSize);
+        if (bandIdx % 2 === 0) {
+          active.add("band1Vert");
+        } else {
+          active.add("band2Vert");
+        }
+      }
+    }
+  }
+
+  if (look.firstCol && isFirstCol) active.add("firstCol");
+  if (look.lastCol && isLastCol) active.add("lastCol");
+  if (look.firstRow && isFirstRow) active.add("firstRow");
+  if (look.lastRow && isLastRow) active.add("lastRow");
+
+  // Four corner cells (active only when both respective flags are enabled)
+  if (look.firstRow && look.lastCol && isFirstRow && isLastCol) active.add("neCell");
+  if (look.firstRow && look.firstCol && isFirstRow && isFirstCol) active.add("nwCell");
+  if (look.lastRow && look.lastCol && isLastRow && isLastCol) active.add("seCell");
+  if (look.lastRow && look.firstCol && isLastRow && isFirstCol) active.add("swCell");
+
+  return active;
+}
+
+export interface EffectiveTableCellStyle {
+  cell?: TableCellPropertiesOptions;
+  row?: TableRowPropertiesOptions;
+  paragraph?: ParagraphStylePropertiesOptions;
+  run?: RunStylePropertiesOptions;
+}
+
+/** Resolve effective cell, row, paragraph, and run properties for a cell by cascading
+ *  active conditional formats in ECMA-376 priority order. */
+export function resolveTableCellStyle(
+  style: ResolvedTableStyle,
+  pos: TableCellPosition,
+  look: ResolvedTableLook,
+  styleRowBandSize?: number,
+  styleColBandSize?: number,
+): EffectiveTableCellStyle {
+  const active = activeConditionalTypes(pos, look, styleRowBandSize, styleColBandSize);
+
+  let cell: Record<string, unknown> = style.cell
+    ? deepMergeInto({}, style.cell as Record<string, unknown>)
+    : {};
+  let row: Record<string, unknown> = style.row
+    ? deepMergeInto({}, style.row as Record<string, unknown>)
+    : {};
+  let paragraph: Record<string, unknown> = style.paragraph
+    ? deepMergeInto({}, style.paragraph as Record<string, unknown>)
+    : {};
+  let run: Record<string, unknown> = style.run
+    ? deepMergeInto({}, style.run as Record<string, unknown>)
+    : {};
+
+  for (const type of CONDITIONAL_FORMAT_PRIORITY) {
+    if (!active.has(type)) continue;
+    const cf = style.conditionalFormats.get(type);
+    if (!cf) continue;
+
+    if (cf.cell) cell = deepMergeInto(cell, cf.cell as Record<string, unknown>);
+    if (cf.row) row = deepMergeInto(row, cf.row as Record<string, unknown>);
+    if (cf.paragraph) paragraph = deepMergeInto(paragraph, cf.paragraph as Record<string, unknown>);
+    if (cf.run) run = deepMergeInto(run, cf.run as Record<string, unknown>);
+  }
+
+  return {
+    cell: Object.keys(cell).length > 0 ? (cell as TableCellPropertiesOptions) : undefined,
+    row: Object.keys(row).length > 0 ? (row as TableRowPropertiesOptions) : undefined,
+    paragraph:
+      Object.keys(paragraph).length > 0
+        ? (paragraph as ParagraphStylePropertiesOptions)
+        : undefined,
+    run: Object.keys(run).length > 0 ? (run as RunStylePropertiesOptions) : undefined,
+  };
 }

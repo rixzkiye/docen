@@ -23,6 +23,7 @@ import {
   nextOrderedReference,
   presetShapePaths,
   type JSONContent,
+  decodePassthroughData,
 } from "@docen/docx";
 import { Editor } from "@docen/docx/core";
 import { EMU_PER_PX, type FlowPage } from "@docen/layout";
@@ -44,18 +45,27 @@ import { DrawingGestures, type DrawingHit } from "../../drawing";
 import { t } from "../../ui/i18n/localize";
 import { collectListReferences, listLevelStepPatch } from "../extensions/commands";
 import { KEYBOARD_SHORTCUTS } from "../extensions/keymap";
+import { downloadOleObject } from "../quick-tables";
 import {
   applyAutocorrect,
   autocorrectOf,
   hyperlinkFix,
   type AutocorrectConfig,
 } from "./autocorrect";
-import { CaretMap, type TableZone } from "./caret-map";
-import { CellSelection, cellAt, inSameTable } from "./cell-selection";
+import { CaretMap, type SelectionRect, type TableZone } from "./caret-map";
+import { CellSelection, cellAt, inSameTable, spanOf } from "./cell-selection";
 import { installChartHover, type ChartTip } from "./chart-hover";
 import { createDocJsonCache, pmNodeToJSON, type DocJsonCache } from "./doc-json";
 import { followLink, installLinkHover, type LinkHit } from "./link-hover";
 import { blockRuleOf, enterRuleOf, inlineRuleOf, isHyphenRun } from "./markdown-input";
+import { ObjectSelectionMode } from "./object-selection";
+import {
+  MultiSelectionManager,
+  ExtendModeManager,
+  computeBlockRanges,
+  MARGIN_SELECTION_CURSOR,
+  BLOCK_SELECT_CURSOR,
+} from "./selection";
 import type { BalloonHit } from "./stage";
 import { sameChildPath } from "./stage";
 
@@ -109,9 +119,8 @@ function wordUnitsForward(text: string, offset: number): number {
   const end = text.length;
   let i = offset;
   while (i < end && /\s/.test(text[i]!)) i++;
-  const wordStart = i;
   while (i < end && !/\s/.test(text[i]!)) i++;
-  return i - wordStart;
+  return i - offset;
 }
 
 /** A furniture edit story — the header/footer editing mode. One story at a
@@ -172,6 +181,11 @@ export interface EditBridgeOptions {
    *  written in screen px inside zoom-sized frames; hit-testing converts the
    *  other way. Defaults to 1 (unzoomed). */
   scale?: () => number;
+  /** Set or adjust zoom factor smoothly (e.g. from pinch-to-zoom). */
+  onZoomChange?: (scale: number) => void;
+  setScale?: (scale: number) => void;
+  /** Notification when pointer type switches (mouse, touch, pen). */
+  onPointerTypeChange?: (pointerType: "mouse" | "touch" | "pen") => void;
   /** The page's in-front float boxes (page-local px) — squiggles clip against
    *  them: a front-of-text picture covers the text and its spelling wave
    *  (Word keeps only the selection and caret above front floats). */
@@ -182,6 +196,12 @@ export interface EditBridgeOptions {
    *  selects the drawing (Word: clicking a picture grabs it) instead of
    *  placing the caret behind it; absent, every click is text. */
   drawingAt?: (page: number, lx: number, ly: number) => DrawingHit | null;
+  /** Every painted drawing box across pages — Select Objects' marquee
+   *  candidate set. Absent, the marquee selects nothing. */
+  drawingBoxes?: () => DrawingHit[];
+  /** Select Objects mode changed (including Esc/empty-click exits inside the
+   *  bridge) — the host mirrors the ribbon toggle and cursor. */
+  onObjectSelectChange?: (on: boolean) => void;
   /** Balloon hit-test (page-local px) — the stage's painted card table. A hit
    *  selects/opens the comment or reveals the revision (Word's balloon
    *  click); absent, balloon clicks fall through to the text. */
@@ -221,6 +241,18 @@ export interface EditBridgeOptions {
    *  re-objects the boxes, so a deleted series drops out and moved ones
    *  follow). */
   chartPartBoxes?: (para: unknown, index: number, kind: "drawing" | "inline") => DrawingHit[];
+  pageFlow?: (page: number) => {
+    pageWidthPx: number;
+    pageHeightPx: number;
+    contentLeftPx: number;
+    contentTopPx: number;
+    contentWidthPx: number;
+    contentHeightPx: number;
+  } | null;
+  siblingBoxes?: (
+    page: number,
+    excludeHit?: DrawingHit,
+  ) => Array<{ x: number; y: number; width: number; height: number }>;
   /** The paint pass's editable text-box stacks — registered with each fresh
    *  caret map so a double click edits the shape's text in place. */
   shapeTextStacks?: () => readonly ShapeTextStack[];
@@ -242,9 +274,13 @@ export interface EditBridgeOptions {
   /** A keyboard paste landed rich content (the docen slice or styled HTML
    *  lane) — the host shows Word's paste-options bar over the pasted text. */
   onRichPaste?: (source: { kind: "slice" | "html" | "rtf"; raw: string; text: string }) => void;
+  /** Extended selection mode change (Word's F8 extend mode indicator "EXT"). */
+  onExtendModeChange?: (active: boolean, label: string) => void;
   /** The border painter's armed state (Table Design → Draw Border). While
    *  active the canvas presses start edge sweeps instead of text selection. */
   borderPaint?: () => { active: boolean; eraser: boolean };
+  /** The current section's text width (px) — used for AutoFit Window. */
+  contentWidthPx?: () => number | undefined;
   /** The format painter's armed state (Home → Format Painter) — owns the
    *  cursor (Word's brush I-beam) until the paint lands or Esc disarms. */
   formatPaint?: () => boolean;
@@ -277,6 +313,25 @@ export interface EditBridgeOptions {
    *  collapse halves of an interior line included) for the host to commit as
    *  one paint/erase command. */
   applyBorderPaint?: (sides: { pos: number; side: "top" | "bottom" | "left" | "right" }[]) => void;
+  /** Armed state for Draw Table tool. */
+  tableDraw?: () => boolean;
+  /** Armed state for Table Eraser tool. */
+  tableEraser?: () => boolean;
+  /** Commit a drawn table stroke / rect. */
+  applyTableDraw?: (rect: {
+    page: number;
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+    stroke: { x1: number; y1: number; x2: number; y2: number };
+  }) => void;
+  /** Commit table eraser click on a border. */
+  applyTableEraser?: (sides: { pos: number; side: "top" | "bottom" | "left" | "right" }[]) => void;
+  /** Disarm Draw Table tool. */
+  stopTableDraw?: () => void;
+  /** Disarm Table Eraser tool. */
+  stopTableEraser?: () => void;
   /** Whether direct editing (typing, backspace, paste, cut) is permitted at the current selection. */
   canEdit?: (editor: Editor) => boolean;
 }
@@ -337,11 +392,23 @@ export interface EditBridge {
    *  crop handles; Enter / a press outside commits, Esc cancels. False when
    *  the selection isn't a source-carrying image. */
   enterCropMode(): boolean;
+  /** Enter edit points mode on the selected shape — vertex handles allow
+   *  dragging path points live. False when selection isn't a wpsShape. */
+  enterEditPointsMode(): boolean;
   /** Arm Set Transparent Color: the next canvas press on a drawing samples
    *  the pixel under the pointer (display-normalized 0..1) and calls back
    *  instead of running the select chains; a press off any drawing disarms
    *  and clicks through. Pass null to disarm (Esc does too). */
   setTransparentPick(onPick: ((hit: DrawingHit, nx: number, ny: number) => void) | null): void;
+  /** Select Objects mode — the host's ribbon toggle. While on, every left
+   *  press selects/marquees floating objects and typing/paste is consumed. */
+  setObjectSelect(on: boolean): void;
+  /** Whether Select Objects mode is on. */
+  readonly objectSelect: boolean;
+  /** How many objects the mode currently holds selected. */
+  objectSelectCount(): number;
+  /** Delete the current object selection (the Delete key's transaction). */
+  deleteObjectSelection(): boolean;
   /** The multi-selection's members (primary + Shift+Click set) with their PM
    *  positions and page boxes — the host assembles the group/distribute
    *  payloads from it. Null when fewer than two resolve. */
@@ -356,6 +423,19 @@ export interface EditBridge {
     from: number,
     to: number,
   ): { frame: HTMLElement; left: number; top: number; height: number } | null;
+  /** The client bounding rect of the text selection in screen px — frame
+   *  offsets, margins and zoom applied. Null when unmappable or in a story. */
+  selectionClientRect(
+    from: number,
+    to: number,
+  ): {
+    left: number;
+    top: number;
+    right: number;
+    bottom: number;
+    width: number;
+    height: number;
+  } | null;
   /** The caret's rect against its page frame — frame-relative screen px
    *  (zoom applied). The paste-options bar hangs it beside the pasted
    *  content. Main story only; null when unmappable or in a story. */
@@ -375,6 +455,10 @@ export interface EditBridge {
    *  no copy event (ribbon / context-menu buttons). Pins the slice payload
    *  exactly like the keyboard path, so every paste entry recovers marks. */
   copySelection(cut: boolean): Promise<void>;
+  /** Non-contiguous selection manager. */
+  multiSelection: MultiSelectionManager;
+  /** F8 extend selection mode manager. */
+  extendMode: ExtendModeManager;
   /** The editor input currently routes into — the main editor, or the
    *  furniture story's when one is open. Ribbon commands must target the same
    *  editor the caret lives in, or they stamp the main document's stale
@@ -383,6 +467,8 @@ export interface EditBridge {
   /** Move keyboard focus to the bridge's input surface (the editing focus —
    *  there is no DOM editor to focus). */
   focus(): void;
+  /** Lookup cell at page coordinates. */
+  cellAtPoint(page: number, x: number, y: number): { pos: number; rect: SelectionRect } | null;
   /** Re-place the caret/selection/search overlays against the current
    *  geometry — needed when the zoom rescales the frames without a
    *  selection transaction. */
@@ -395,6 +481,17 @@ export interface EditBridge {
    *  itself runs in the host, debounced per transaction). */
   setSpellingIssues(issues: Array<{ from: number; to: number }>): void;
   setGrammarIssues(issues: Array<{ from: number; to: number }>): void;
+  /** The most recent pointer type interacting with the canvas stage. */
+  readonly lastPointerType: "mouse" | "touch" | "pen";
+  /** Caret anchor rect with screen and frame-relative coordinates. */
+  caretAnchorRect(pos: number): {
+    frame: HTMLElement;
+    left: number;
+    top: number;
+    height: number;
+    clientX: number;
+    clientY: number;
+  } | null;
   destroy(): void;
 }
 
@@ -747,12 +844,44 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
   } | null = null;
   let overlayRaf = 0;
 
+  const multiSel: MultiSelectionManager =
+    ((main.editor.storage as unknown as Record<string, unknown>).multiSelection as
+      | MultiSelectionManager
+      | undefined) ??
+    (((main.editor.storage as unknown as Record<string, unknown>).multiSelection =
+      new MultiSelectionManager()) as MultiSelectionManager);
+
+  const getExtendMode = (): ExtendModeManager => {
+    const storage = active().editor.storage as unknown as Record<string, unknown>;
+    return (
+      (storage.extendMode as ExtendModeManager | undefined) ??
+      ((storage.extendMode = new ExtendModeManager()) as ExtendModeManager)
+    );
+  };
+
+  let marginDrag: {
+    page: number;
+    anchorLine: { from: number; to: number; paraFrom?: number; paraTo?: number };
+    mode: "line" | "para";
+  } | null = null;
+
+  let blockDrag: {
+    page: number;
+    startX: number;
+    startY: number;
+  } | null = null;
+
+  let ctrlDrag = false;
+
   const placeSelection = (): void => {
     const s = active();
     const sel = s.editor.state.selection;
+    const multiKey = multiSel?.hasRanges()
+      ? multiSel.ranges.map((r) => `${r.from}-${r.to}`).join(",")
+      : "";
     const key = `${sel.from}:${sel.to}:${
       sel instanceof CellSelection ? "c" : sel instanceof NodeSelection ? "n" : "t"
-    }`;
+    }:${multiKey}`;
     if (
       selectionCache &&
       selectionCache.key === key &&
@@ -781,6 +910,25 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
           height: r.heightPx,
           background: "rgba(0,120,215,.25)",
         });
+      }
+      if (multiSel?.hasRanges()) {
+        for (const r of multiSel.ranges) {
+          if (r.from !== r.to) {
+            const extra = s.map.selectionRects(r.from, r.to);
+            for (const sp of extra) {
+              const page = framePage(s, sp.page);
+              if (!isLive(page)) continue;
+              rects.push({
+                page,
+                x: sp.xPx,
+                y: sp.yPx,
+                width: sp.widthPx,
+                height: sp.heightPx,
+                background: "rgba(0,120,215,.25)",
+              });
+            }
+          }
+        }
       }
     }
     selectionCache = { key, map: s.map, liveGen: liveGeneration, rects };
@@ -1148,7 +1296,11 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
           setSel(to, from);
         }
       };
-      if (clicks >= 3) {
+      if (clicks >= 4) {
+        extend(0, doc.content.size);
+        return;
+      }
+      if (clicks === 3) {
         extend(base, base + $pos.parent.content.size);
         return;
       }
@@ -1197,6 +1349,11 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
    *  that same selection from the anchor. A plain click drops a caret and
    *  arms the drag from it. */
   const clickSelection = (pos: number, event: MouseEvent, clicks: number): void => {
+    const ext = getExtendMode();
+    if (ext.isActive) {
+      setSel(pos, ext.anchor);
+      return;
+    }
     const anchor = event.shiftKey ? active().editor.state.selection.anchor : undefined;
     if (clicks >= 2) {
       setSelClick(pos, clicks, anchor);
@@ -1289,6 +1446,8 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
     },
     pageHost: (page) => opts.pageHost?.(page) ?? null,
     scale: () => opts.scale?.() ?? 1,
+    pageFlow: (page) => opts.pageFlow?.(page) ?? null,
+    siblingBoxes: (page, excludeHit) => opts.siblingBoxes?.(page, excludeHit) ?? [],
     // The value-drag commit: one data point on the chart the NodeSelection
     // holds (the gesture only arms while the chart is framed).
     applyChartValue: (series, point, value) => {
@@ -1298,6 +1457,26 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
     },
   });
   draw.mount(opts.host);
+
+  /** Select Objects mode (Home → Editing → Select): clicks select floating
+   *  objects, a drag marquees them, Ctrl toggles, Delete removes, Esc exits.
+   *  While active the mode consumes every left press (and typing/paste), so
+   *  text editing is suppressed exactly like Word's object mode. */
+  const objectSel = new ObjectSelectionMode({
+    drawingAt: (page, lx, ly) => opts.drawingAt?.(page, lx, ly) ?? null,
+    allDrawingBoxes: () => opts.drawingBoxes?.() ?? [],
+    resolveBox: (hit) => opts.drawingBoxOf?.(hit.para, hit.index, hit.kind, hit.childPath) ?? null,
+    nodePosOf: (hit) => opts.drawingSelection?.(hit) ?? null,
+    pageHost: (page) => opts.pageHost?.(page) ?? null,
+    overlayHost: () => opts.inputHost,
+    onChange: (on) => {
+      opts.host.style.cursor = on ? "default" : "";
+      opts.onObjectSelectChange?.(on);
+    },
+    scale: () => opts.scale?.() ?? 1,
+    editor: () => main.editor,
+  });
+  objectSel.mount(opts.inputHost);
 
   /** A viewport point → the active story's doc position (furniture stories
    *  map through their single pseudo page). Clamping drags resolve the
@@ -1392,6 +1571,7 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
     grip.kind = null;
     grip.zone = null;
     grip.index = -1;
+    tableQuickInsertTarget = null;
     const s = active();
     if (s.map?.valid && !story) {
       const hit = hitPage(event.clientX, event.clientY);
@@ -1430,9 +1610,28 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
           // but only the corner window itself clicks it; here a click edits.
           grip.zone = zone;
         }
+
+        // Word's hover quick-insert (+) handle on row/col boundaries
+        if (lx >= -GRIP_WINDOW - 8 && lx <= 12) {
+          for (let r = 1; r < zone.rowEdges.length; r++) {
+            if (Math.abs(ly - zone.rowEdges[r]!) <= 8) {
+              tableQuickInsertTarget = { kind: "row", index: r, zone };
+              break;
+            }
+          }
+        }
+        if (!tableQuickInsertTarget && ly >= -GRIP_WINDOW - 8 && ly <= 12) {
+          for (let c = 1; c < zone.colEdges.length; c++) {
+            if (Math.abs(lx - zone.colEdges[c]!) <= 8) {
+              tableQuickInsertTarget = { kind: "col", index: c, zone };
+              break;
+            }
+          }
+        }
       }
     }
     placeGrip();
+    placeQuickInsert();
   };
 
   /** A grip click: park the caret in the strip's first cell (the commands
@@ -1532,6 +1731,150 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
     preset: string;
     line: boolean;
   } | null = null;
+
+  let tableDrawGhost: {
+    page: number;
+    scale: number;
+    sx: number;
+    sy: number;
+    ax: number;
+    ay: number;
+    moved: boolean;
+  } | null = null;
+
+  // Table column/row drag resize guide line & measurement badge
+  const tableResizeLineEl = document.createElement("div");
+  tableResizeLineEl.style.cssText =
+    "position:absolute;display:none;pointer-events:none;z-index:35;" +
+    "background:var(--docen-color-primary, #2b579a);";
+  const tableResizeBadgeEl = document.createElement("div");
+  tableResizeBadgeEl.style.cssText =
+    "position:absolute;display:none;pointer-events:none;z-index:36;padding:2px 6px;" +
+    "font-size:11px;font-family:Segoe UI, sans-serif;border-radius:3px;" +
+    "background:rgba(30,30,30,0.85);color:#fff;box-shadow:0 2px 4px rgba(0,0,0,0.2);white-space:nowrap;";
+
+  let tableResize: {
+    page: number;
+    scale: number;
+    kind: "col" | "row";
+    index: number;
+    startX: number;
+    startY: number;
+    currentX: number;
+    currentY: number;
+    moved: boolean;
+    zone: TableZone;
+    tablePos: number;
+    tableNode: PMNode;
+    initialWidths: number[];
+    initialHeight: number;
+    targetCol: number;
+    targetRow: number;
+  } | null = null;
+
+  // Table row/col drag move drop indicator
+  const tableDropIndicatorEl = document.createElement("div");
+  tableDropIndicatorEl.style.cssText =
+    "position:absolute;display:none;pointer-events:none;z-index:37;" +
+    "background:var(--docen-color-primary, #2b579a);box-shadow:0 0 3px rgba(43,87,154,0.6);";
+
+  let tableDragMove: {
+    page: number;
+    kind: "row" | "col";
+    zone: TableZone;
+    sourceIndex: number;
+    targetIndex: number;
+    startX: number;
+    startY: number;
+    moved: boolean;
+  } | null = null;
+
+  // Table hover quick-insert (+) handle & boundary guide line
+  const tableQuickInsertEl = document.createElement("div");
+  tableQuickInsertEl.style.cssText =
+    "position:absolute;display:none;z-index:38;cursor:pointer;width:16px;height:16px;border-radius:50%;" +
+    "pointer-events:auto;" +
+    "background:#ffffff;border:1px solid #2b579a;box-shadow:0 1px 4px rgba(0,0,0,0.25);" +
+    "align-items:center;justify-content:center;color:#2b579a;";
+  tableQuickInsertEl.innerHTML =
+    '<svg width="10" height="10" viewBox="0 0 10 10" style="display:block;margin:auto;"><path d="M5 1v8M1 5h8" stroke="#2b579a" stroke-width="1.5" stroke-linecap="round"/></svg>';
+
+  const tableQuickInsertLineEl = document.createElement("div");
+  tableQuickInsertLineEl.style.cssText =
+    "position:absolute;display:none;pointer-events:none;z-index:36;background:#2b579a;opacity:0.6;";
+
+  let tableQuickInsertTarget: {
+    kind: "row" | "col";
+    index: number;
+    zone: TableZone;
+  } | null = null;
+
+  const placeQuickInsert = (): void => {
+    if (!tableQuickInsertTarget) {
+      tableQuickInsertEl.style.display = "none";
+      tableQuickInsertLineEl.style.display = "none";
+      return;
+    }
+    const { kind, index, zone } = tableQuickInsertTarget;
+    const pageHost = opts.pageHost?.(framePage(active(), zone.page));
+    if (!pageHost) {
+      tableQuickInsertEl.style.display = "none";
+      tableQuickInsertLineEl.style.display = "none";
+      return;
+    }
+    const hostRect = opts.inputHost.getBoundingClientRect();
+    const pageRect = pageHost.getBoundingClientRect();
+    const scale = opts.scale?.() ?? 1;
+
+    if (kind === "row") {
+      const edgeY = zone.rowEdges[index]!;
+      const y = pageRect.top - hostRect.top + (zone.yPx + edgeY) * scale;
+      const x = pageRect.left - hostRect.left + (zone.xPx - 18) * scale;
+      tableQuickInsertEl.style.left = `${x}px`;
+      tableQuickInsertEl.style.top = `${y - 8}px`;
+      tableQuickInsertEl.style.display = "flex";
+
+      tableQuickInsertLineEl.style.left = `${pageRect.left - hostRect.left + zone.xPx * scale}px`;
+      tableQuickInsertLineEl.style.top = `${y}px`;
+      tableQuickInsertLineEl.style.width = `${zone.widthPx * scale}px`;
+      tableQuickInsertLineEl.style.height = "1px";
+      tableQuickInsertLineEl.style.display = "block";
+    } else {
+      const edgeX = zone.colEdges[index]!;
+      const x = pageRect.left - hostRect.left + (zone.xPx + edgeX) * scale;
+      const y = pageRect.top - hostRect.top + (zone.yPx - 18) * scale;
+      tableQuickInsertEl.style.left = `${x - 8}px`;
+      tableQuickInsertEl.style.top = `${y}px`;
+      tableQuickInsertEl.style.display = "flex";
+
+      tableQuickInsertLineEl.style.left = `${x}px`;
+      tableQuickInsertLineEl.style.top = `${pageRect.top - hostRect.top + zone.yPx * scale}px`;
+      tableQuickInsertLineEl.style.width = "1px";
+      tableQuickInsertLineEl.style.height = `${zone.heightPx * scale}px`;
+      tableQuickInsertLineEl.style.display = "block";
+    }
+  };
+
+  tableQuickInsertEl.addEventListener("mouseenter", () => {
+    tableQuickInsertEl.style.background = "#eff6ff";
+  });
+  tableQuickInsertEl.addEventListener("mouseleave", () => {
+    tableQuickInsertEl.style.background = "#ffffff";
+  });
+  tableQuickInsertEl.addEventListener("mousedown", (e) => {
+    e.stopPropagation();
+    e.preventDefault();
+    if (!tableQuickInsertTarget) return;
+    const { kind, index } = tableQuickInsertTarget;
+    tableQuickInsertTarget = null;
+    placeQuickInsert();
+    if (kind === "row") {
+      (active().editor.commands as any)["insert-row-at"]?.({ index });
+    } else {
+      (active().editor.commands as any)["insert-column-at"]?.({ index });
+    }
+  });
+
   const hideShapeGhost = (): void => {
     shapeGhostEl.style.display = "none";
     shapeLineEl.style.display = "none";
@@ -1695,9 +2038,23 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
   // furniture story deactivates the body's objects, so their cursors go
   // with it (the story's own links keep the hand).
   const applyCursor = (event: MouseEvent): void => {
+    // Select Objects mode shows the plain arrow (Word's object pointer) — the
+    // canvas stylesheet's I-beam would promise text editing the mode refuses.
+    if (!story && objectSel.active) {
+      opts.host.style.cursor = "default";
+      return;
+    }
     // The armed Shapes drawer owns the cursor outright (Word's fine-plus).
     if (!story && opts.shapeDraw?.()) {
       opts.host.style.cursor = "crosshair";
+      return;
+    }
+    if (!story && opts.tableDraw?.()) {
+      opts.host.style.cursor = "crosshair";
+      return;
+    }
+    if (!story && opts.tableEraser?.()) {
+      opts.host.style.cursor = "cell";
       return;
     }
     // The armed painter owns the cursor: crosshair for the pen, the dense
@@ -1712,7 +2069,19 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
       opts.host.style.cursor = FORMAT_PAINTER_CURSOR;
       return;
     }
+    if (tableResize) {
+      opts.host.style.cursor = tableResize.kind === "col" ? "col-resize" : "row-resize";
+      return;
+    }
     const hit = story ? null : hitPage(event.clientX, event.clientY);
+    if (hit && main.map?.isLeftMargin(hit.page, hit.lx, hit.ly)) {
+      opts.host.style.cursor = MARGIN_SELECTION_CURSOR;
+      return;
+    }
+    if (event.altKey && !tableResize && !tableDragMove && !shapeGhost && !tableDrawGhost) {
+      opts.host.style.cursor = BLOCK_SELECT_CURSOR;
+      return;
+    }
     const drawHit = hit && opts.drawingAt ? opts.drawingAt(hit.page, hit.lx, hit.ly) : null;
     const balloonHit = hit && opts.balloonAt ? opts.balloonAt(hit.page, hit.lx, hit.ly) : null;
     let want = "";
@@ -1724,6 +2093,12 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
       // object — the plain arrow until the drag gestures reach it.
       want = drawHit.chartPart ? "default" : drawHit.kind === "drawing" ? "move" : "default";
     } else {
+      const borderHit =
+        hit && main.map ? main.map.tableBorderHitAt(hit.page, hit.lx, hit.ly, 3) : null;
+      if (borderHit) {
+        opts.host.style.cursor = borderHit.kind === "col" ? "col-resize" : "row-resize";
+        return;
+      }
       const pos = posAtClient(event.clientX, event.clientY);
       const link = pos != null ? linkAt(pos) : null;
       if (link?.href) want = "pointer";
@@ -1758,6 +2133,24 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
   };
 
   const onMouseMove = (event: MouseEvent): void => {
+    if (objectSel.pressed) {
+      objectSel.move(event.clientX, event.clientY);
+      return;
+    }
+    if (tableDrawGhost) {
+      const g = tableDrawGhost;
+      if (!g.moved && Math.hypot(event.clientX - g.sx, event.clientY - g.sy) < 3) return;
+      g.moved = true;
+      const px = g.ax + (event.clientX - g.sx) / g.scale;
+      const py = g.ay + (event.clientY - g.sy) / g.scale;
+      showShapeGhost(
+        Math.min(g.ax, px),
+        Math.min(g.ay, py),
+        Math.abs(px - g.ax),
+        Math.abs(py - g.ay),
+      );
+      return;
+    }
     if (shapeGhost) {
       const g = shapeGhost;
       if (!g.moved && Math.hypot(event.clientX - g.sx, event.clientY - g.sy) < 3) return;
@@ -1786,6 +2179,147 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
       }
       return;
     }
+    if (marginDrag) {
+      const hit = story ? null : hitPage(event.clientX, event.clientY);
+      if (hit && main.map) {
+        const curLine = main.map.lineRangeAtPoint(hit.page, hit.ly);
+        if (curLine) {
+          if (marginDrag.mode === "para") {
+            const minPos = Math.min(marginDrag.anchorLine.from, curLine.paraFrom);
+            const maxPos = Math.max(marginDrag.anchorLine.to, curLine.paraTo);
+            setSel(maxPos, minPos);
+          } else {
+            const minPos = Math.min(marginDrag.anchorLine.from, curLine.from);
+            const maxPos = Math.max(marginDrag.anchorLine.to, curLine.to);
+            setSel(maxPos, minPos);
+          }
+          placeSelection();
+          placeCaret();
+        }
+      }
+      return;
+    }
+    if (blockDrag) {
+      const hit = story ? null : hitPage(event.clientX, event.clientY);
+      if (hit && main.map && hit.page === blockDrag.page) {
+        const ranges = computeBlockRanges(
+          main.map,
+          blockDrag.page,
+          blockDrag.startX,
+          blockDrag.startY,
+          hit.lx,
+          hit.ly,
+        );
+        multiSel.setRanges(ranges);
+        placeSelection();
+      }
+      return;
+    }
+    if (tableResize) {
+      if (
+        !tableResize.moved &&
+        Math.hypot(event.clientX - tableResize.startX, event.clientY - tableResize.startY) >= 3
+      ) {
+        tableResize.moved = true;
+      }
+      if (tableResize.moved) {
+        tableResize.currentX = event.clientX;
+        tableResize.currentY = event.clientY;
+        opts.host.style.cursor = tableResize.kind === "col" ? "col-resize" : "row-resize";
+
+        const hostRect = opts.inputHost.getBoundingClientRect();
+        const frame = opts.pageHost?.(tableResize.page);
+        const pageRect = frame?.getBoundingClientRect() ?? hostRect;
+        const scale = tableResize.scale;
+
+        if (tableResize.kind === "col") {
+          tableResizeLineEl.style.left = `${event.clientX - hostRect.left}px`;
+          tableResizeLineEl.style.top = `${pageRect.top - hostRect.top + tableResize.zone.yPx * scale}px`;
+          tableResizeLineEl.style.width = "2px";
+          tableResizeLineEl.style.height = `${tableResize.zone.heightPx * scale}px`;
+          tableResizeLineEl.style.display = "block";
+
+          const deltaTwip = Math.round(((event.clientX - tableResize.startX) / scale) * 15);
+          const c = tableResize.targetCol;
+          const initialW = tableResize.initialWidths[c] ?? 1440;
+          const currentW = Math.max(360, initialW + deltaTwip);
+          tableResizeBadgeEl.textContent = `${(currentW / 1440).toFixed(2)}" / ${(currentW / 567).toFixed(1)} cm`;
+          tableResizeBadgeEl.style.left = `${event.clientX - hostRect.left + 12}px`;
+          tableResizeBadgeEl.style.top = `${event.clientY - hostRect.top - 24}px`;
+          tableResizeBadgeEl.style.display = "block";
+        } else {
+          tableResizeLineEl.style.left = `${pageRect.left - hostRect.left + tableResize.zone.xPx * scale}px`;
+          tableResizeLineEl.style.top = `${event.clientY - hostRect.top}px`;
+          tableResizeLineEl.style.width = `${tableResize.zone.widthPx * scale}px`;
+          tableResizeLineEl.style.height = "2px";
+          tableResizeLineEl.style.display = "block";
+
+          const deltaTwip = Math.round(((event.clientY - tableResize.startY) / scale) * 15);
+          const currentH = Math.max(144, tableResize.initialHeight + deltaTwip);
+          tableResizeBadgeEl.textContent = `${(currentH / 1440).toFixed(2)}" / ${(currentH / 567).toFixed(1)} cm`;
+          tableResizeBadgeEl.style.left = `${event.clientX - hostRect.left + 12}px`;
+          tableResizeBadgeEl.style.top = `${event.clientY - hostRect.top - 24}px`;
+          tableResizeBadgeEl.style.display = "block";
+        }
+      }
+      return;
+    }
+    if (tableDragMove) {
+      if (
+        !tableDragMove.moved &&
+        Math.hypot(event.clientX - tableDragMove.startX, event.clientY - tableDragMove.startY) >= 3
+      ) {
+        tableDragMove.moved = true;
+      }
+      if (tableDragMove.moved) {
+        opts.host.style.cursor = "move";
+        const hostRect = opts.inputHost.getBoundingClientRect();
+        const frame = opts.pageHost?.(tableDragMove.page);
+        const pageRect = frame?.getBoundingClientRect() ?? hostRect;
+        const scale = opts.scale?.() ?? 1;
+        const zone = tableDragMove.zone;
+
+        if (tableDragMove.kind === "row") {
+          const ly = (event.clientY - pageRect.top) / scale - zone.yPx;
+          let bestIdx = 0;
+          let bestDist = Infinity;
+          for (let i = 0; i < zone.rowEdges.length; i++) {
+            const d = Math.abs(ly - zone.rowEdges[i]!);
+            if (d < bestDist) {
+              bestDist = d;
+              bestIdx = i;
+            }
+          }
+          tableDragMove.targetIndex = bestIdx;
+          const lineY = pageRect.top - hostRect.top + (zone.yPx + zone.rowEdges[bestIdx]!) * scale;
+          tableDropIndicatorEl.style.left = `${pageRect.left - hostRect.left + zone.xPx * scale}px`;
+          tableDropIndicatorEl.style.top = `${lineY - 1.5}px`;
+          tableDropIndicatorEl.style.width = `${zone.widthPx * scale}px`;
+          tableDropIndicatorEl.style.height = "3px";
+          tableDropIndicatorEl.style.display = "block";
+        } else {
+          const lx = (event.clientX - pageRect.left) / scale - zone.xPx;
+          let bestIdx = 0;
+          let bestDist = Infinity;
+          for (let j = 0; j < zone.colEdges.length; j++) {
+            const d = Math.abs(lx - zone.colEdges[j]!);
+            if (d < bestDist) {
+              bestDist = d;
+              bestIdx = j;
+            }
+          }
+          tableDragMove.targetIndex = bestIdx;
+          const lineX =
+            pageRect.left - hostRect.left + (zone.xPx + zone.colEdges[bestIdx]!) * scale;
+          tableDropIndicatorEl.style.left = `${lineX - 1.5}px`;
+          tableDropIndicatorEl.style.top = `${pageRect.top - hostRect.top + zone.yPx * scale}px`;
+          tableDropIndicatorEl.style.width = "3px";
+          tableDropIndicatorEl.style.height = `${zone.heightPx * scale}px`;
+          tableDropIndicatorEl.style.display = "block";
+        }
+      }
+      return;
+    }
     if (borderSweep) {
       const hit = story ? null : hitPage(event.clientX, event.clientY);
       const edges = hit ? main.map?.tableEdgeAt(hit.page, hit.lx, hit.ly) : null;
@@ -1793,6 +2327,7 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
       return;
     }
     if (textDrag) {
+      textDrag.copy = event.ctrlKey || event.altKey;
       if (
         !textDrag.moved &&
         Math.hypot(event.clientX - textDrag.startX, event.clientY - textDrag.startY) >= 3
@@ -1800,6 +2335,9 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
         textDrag.moved = true;
       }
       if (textDrag.moved) {
+        dragPoint.x = event.clientX;
+        dragPoint.y = event.clientY;
+        startDragAutoScroll();
         opts.host.style.cursor = textDrag.copy ? "copy" : "move";
         const dropPos = posAtClient(event.clientX, event.clientY, true);
         placeDropCaret(dropPos);
@@ -1837,6 +2375,120 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
     if (head != null) setDragSelection(dragAnchor, head);
   };
   const onMouseUp = (event: MouseEvent): void => {
+    if (objectSel.pressed) {
+      objectSel.release();
+      return;
+    }
+    if (tableResize) {
+      const trState = tableResize;
+      tableResize = null;
+      tableResizeLineEl.style.display = "none";
+      tableResizeBadgeEl.style.display = "none";
+      opts.host.style.cursor = "";
+
+      if (trState.moved) {
+        const { state, view } = active().editor;
+        const tr = state.tr;
+        if (trState.kind === "col") {
+          const deltaTwip = Math.round(((event.clientX - trState.startX) / trState.scale) * 15);
+          const nextWidths = [...trState.initialWidths];
+          const c = trState.targetCol;
+          if (event.shiftKey && c < nextWidths.length - 1) {
+            const maxGrow = nextWidths[c + 1]! - 360;
+            const maxShrink = nextWidths[c]! - 360;
+            const clamped = Math.max(-maxShrink, Math.min(maxGrow, deltaTwip));
+            nextWidths[c] += clamped;
+            nextWidths[c + 1] -= clamped;
+          } else {
+            nextWidths[c] = Math.max(360, nextWidths[c]! + deltaTwip);
+          }
+
+          tr.setNodeMarkup(trState.tablePos, undefined, {
+            ...trState.tableNode.attrs,
+            columnWidths: nextWidths,
+          });
+
+          let curRowPos = trState.tablePos + 1;
+          for (let r = 0; r < trState.tableNode.childCount; r++) {
+            const row = trState.tableNode.child(r);
+            let curCellPos = curRowPos + 1;
+            let col = 0;
+            for (let ci = 0; ci < row.childCount; ci++) {
+              const cell = row.child(ci);
+              const span = spanOf(cell);
+              let cellWidthTwip = 0;
+              for (let i = 0; i < span && col + i < nextWidths.length; i++) {
+                cellWidthTwip += nextWidths[col + i]!;
+              }
+              tr.setNodeMarkup(curCellPos, undefined, {
+                ...cell.attrs,
+                width: { value: cellWidthTwip, type: "dxa" },
+              });
+              col += span;
+              curCellPos += cell.nodeSize;
+            }
+            curRowPos += row.nodeSize;
+          }
+        } else {
+          const deltaTwip = Math.round(((event.clientY - trState.startY) / trState.scale) * 15);
+          const newHeight = Math.max(144, trState.initialHeight + deltaTwip);
+          let curRowPos = trState.tablePos + 1;
+          for (let r = 0; r < trState.tableNode.childCount; r++) {
+            const row = trState.tableNode.child(r);
+            if (r === trState.targetRow) {
+              tr.setNodeMarkup(curRowPos, undefined, {
+                ...row.attrs,
+                height: { value: newHeight, rule: "atLeast" },
+              });
+              break;
+            }
+            curRowPos += row.nodeSize;
+          }
+        }
+        view.dispatch(tr);
+      } else {
+        setSel(trState.tablePos + 1);
+      }
+      return;
+    }
+    if (tableDragMove) {
+      const tdm = tableDragMove;
+      tableDragMove = null;
+      tableDropIndicatorEl.style.display = "none";
+      opts.host.style.cursor = "";
+      if (tdm.moved) {
+        if (tdm.kind === "row") {
+          (active().editor.commands as any)["move-row"]?.({
+            fromIndex: tdm.sourceIndex,
+            toIndex: tdm.targetIndex,
+          });
+        } else {
+          (active().editor.commands as any)["move-column"]?.({
+            fromIndex: tdm.sourceIndex,
+            toIndex: tdm.targetIndex,
+          });
+        }
+      }
+      return;
+    }
+    if (tableDrawGhost) {
+      const g = tableDrawGhost;
+      tableDrawGhost = null;
+      hideShapeGhost();
+      const px = g.ax + (event.clientX - g.sx) / g.scale;
+      const py = g.ay + (event.clientY - g.sy) / g.scale;
+      const width = Math.abs(px - g.ax);
+      const height = Math.abs(py - g.ay);
+      opts.applyTableDraw?.({
+        page: g.page,
+        x: Math.min(g.ax, px),
+        y: Math.min(g.ay, py),
+        width,
+        height,
+        stroke: { x1: g.ax, y1: g.ay, x2: px, y2: py },
+      });
+      return;
+    }
     if (shapeGhost) {
       const g = shapeGhost;
       shapeGhost = null;
@@ -1932,6 +2584,22 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
       }
       placeCaret();
       return;
+    }
+    if (marginDrag) {
+      marginDrag = null;
+      return;
+    }
+    if (blockDrag) {
+      blockDrag = null;
+      return;
+    }
+    if (ctrlDrag) {
+      const cur = active().editor.state.selection;
+      if (cur.from !== cur.to) {
+        multiSel.addRange({ from: cur.from, to: cur.to });
+        placeSelection();
+      }
+      ctrlDrag = false;
     }
     dragAnchor = null;
     dragMoved = false;
@@ -2131,6 +2799,48 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
       ta.value = "";
       return;
     }
+    // Select Objects mode: every left press belongs to the object selection —
+    // a hit selects (Ctrl toggles), empty canvas arms the marquee. Runs after
+    // the armed transparent pick but before the table/shape tools so the mode
+    // is a genuine text-editing substitute (Word's arrow-pointer mode).
+    if (event.button === 0 && objectSel.active && !story) {
+      objectSel.press({
+        page: hit?.page ?? -1,
+        lx: hit?.lx ?? 0,
+        ly: hit?.ly ?? 0,
+        clientX: event.clientX,
+        clientY: event.clientY,
+        ctrlKey: event.ctrlKey,
+        metaKey: event.metaKey,
+      });
+      ta.focus();
+      ta.value = "";
+      return;
+    }
+    if (event.button === 0 && !story && opts.tableEraser?.() && hit && main.map) {
+      const edge = main.map.tableEdgeAt(hit.page, hit.lx, hit.ly, 5);
+      if (edge && edge.sides.length > 0) {
+        opts.applyTableEraser?.(edge.sides);
+        ta.focus();
+        ta.value = "";
+        return;
+      }
+    }
+    if (event.button === 0 && !story && opts.tableDraw?.() && hit) {
+      const scale = opts.scale?.() ?? 1;
+      tableDrawGhost = {
+        page: hit.page,
+        scale,
+        sx: event.clientX,
+        sy: event.clientY,
+        ax: hit.lx,
+        ay: hit.ly,
+        moved: false,
+      };
+      ta.focus();
+      ta.value = "";
+      return;
+    }
     // The armed Shapes drawer is the shallowest press (Word's drag-to-draw):
     // a left press on a page starts a ghost rectangle; every selection chain
     // below waits until the drawer is disarmed. Stays armed across draws.
@@ -2236,12 +2946,103 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
     if (!story) {
       hoverTableGrip(event);
       if (grip.kind) {
+        const gripKind = grip.kind;
+        const gripZone = grip.zone;
+        const gripIndex = grip.index;
         applyGrip();
         ta.focus();
         ta.value = "";
+        if ((gripKind === "row" || gripKind === "col") && gripZone) {
+          tableDragMove = {
+            page: gripZone.page,
+            kind: gripKind,
+            zone: gripZone,
+            sourceIndex: gripIndex,
+            targetIndex: gripIndex,
+            startX: event.clientX,
+            startY: event.clientY,
+            moved: false,
+          };
+        }
         return;
       }
     }
+    // Table border resize / dblclick AutoFit
+    if (!story && !opts.borderPaint?.().active && hit) {
+      const borderHit = main.map?.tableBorderHitAt(hit.page, hit.lx, hit.ly, 3);
+      if (borderHit) {
+        if (dbl) {
+          setSel(borderHit.cellPos + 1);
+          if (borderHit.kind === "col") {
+            if (event.shiftKey) {
+              const flow =
+                (opts.contentWidthPx ? opts.contentWidthPx() : undefined) ?? borderHit.zone.widthPx;
+              active().editor.commands["autofit-window"](String(Math.round(flow * 15)));
+            } else {
+              active().editor.commands["autofit-contents"](
+                borderHit.index > 0 ? borderHit.index - 1 : 0,
+              );
+            }
+          }
+          ta.focus();
+          ta.value = "";
+          return;
+        }
+
+        const { doc } = active().editor.state;
+        const $cell = doc.resolve(borderHit.cellPos);
+        let tablePos = -1;
+        let tableNode: PMNode | null = null;
+        for (let d = $cell.depth; d > 0; d--) {
+          const n = $cell.node(d);
+          if (n.type.name === "table") {
+            tablePos = $cell.before(d);
+            tableNode = n;
+            break;
+          }
+        }
+        if (tableNode && tablePos >= 0) {
+          const widths =
+            (tableNode.attrs.columnWidths as number[] | null)?.slice() ??
+            borderHit.zone.colEdges
+              .slice(0, -1)
+              .map((x, i) => Math.round((borderHit.zone.colEdges[i + 1]! - x) * 15));
+          const c = borderHit.index;
+          const targetCol = c > 0 ? c - 1 : 0;
+          const r = borderHit.index;
+          const targetRow = r > 0 ? r - 1 : 0;
+          const rowEl = tableNode.child(Math.min(targetRow, tableNode.childCount - 1));
+          const initialHeight =
+            (rowEl?.attrs.height as { value: number } | null)?.value ??
+            Math.round(
+              (borderHit.zone.rowEdges[targetRow + 1]! - borderHit.zone.rowEdges[targetRow]!) * 15,
+            );
+
+          tableResize = {
+            page: hit.page,
+            scale: opts.scale?.() ?? 1,
+            kind: borderHit.kind,
+            index: borderHit.index,
+            startX: event.clientX,
+            startY: event.clientY,
+            currentX: event.clientX,
+            currentY: event.clientY,
+            moved: false,
+            zone: borderHit.zone,
+            tablePos,
+            tableNode,
+            initialWidths: widths,
+            initialHeight,
+            targetCol,
+            targetRow,
+          };
+          ta.focus();
+          ta.value = "";
+          return;
+        }
+      }
+    }
+
     // Body editing (the main story). A click landing on a drawing grabs it
     // (Word's picture selection) instead of dropping a caret behind the art;
     // any other click drops a standing drawing selection first.
@@ -2353,6 +3154,51 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
     }
     draw.clear();
     draw.place();
+    if (hit && main.map?.isLeftMargin(hit.page, hit.lx, hit.ly)) {
+      const lineRange = main.map.lineRangeAtPoint(hit.page, hit.ly);
+      if (lineRange) {
+        if (clicks >= 3) {
+          const { doc } = active().editor.state;
+          setSel(doc.content.size, 0);
+          marginDrag = null;
+        } else if (clicks === 2) {
+          setSel(lineRange.paraTo, lineRange.paraFrom);
+          marginDrag = {
+            page: hit.page,
+            anchorLine: { from: lineRange.paraFrom, to: lineRange.paraTo },
+            mode: "para",
+          };
+        } else {
+          setSel(lineRange.to, lineRange.from);
+          marginDrag = {
+            page: hit.page,
+            anchorLine: { from: lineRange.from, to: lineRange.to },
+            mode: "line",
+          };
+        }
+        dragAnchor = null;
+        dragStart = null;
+        dragMoved = false;
+        ta.focus();
+        ta.value = "";
+        return;
+      }
+    }
+    if (event.altKey && hit && !tableResize && !borderSweep) {
+      blockDrag = {
+        page: hit.page,
+        startX: hit.lx,
+        startY: hit.ly,
+      };
+      multiSel.clear();
+      placeSelection();
+      dragAnchor = null;
+      dragStart = null;
+      dragMoved = false;
+      ta.focus();
+      ta.value = "";
+      return;
+    }
     const pos = posAtClient(event.clientX, event.clientY);
     if (pos != null) {
       // Word's Ctrl+Click follows the link instead of dropping a caret; a
@@ -2372,12 +3218,120 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
         ta.value = "";
         return;
       }
+      if (clicks === 2) {
+        const { doc, selection } = active().editor.state;
+        const $pos = doc.resolve(pos);
+        const target =
+          (selection instanceof NodeSelection && selection.node.type.name === "inlinePassthrough"
+            ? selection.node
+            : null) ??
+          ($pos.nodeAfter?.type.name === "inlinePassthrough" ? $pos.nodeAfter : null) ??
+          ($pos.nodeBefore?.type.name === "inlinePassthrough" ? $pos.nodeBefore : null);
+        if (target?.attrs?.data) {
+          try {
+            const parsed = decodePassthroughData<{
+              object?: { embed?: { data?: Uint8Array; fileName?: string } };
+            }>(target.attrs.data);
+            if (parsed?.object?.embed?.data) {
+              const bytes =
+                parsed.object.embed.data instanceof Uint8Array
+                  ? parsed.object.embed.data
+                  : new Uint8Array((parsed.object.embed.data as any) ?? []);
+              const fileName = parsed.object.embed.fileName ?? "Microsoft_Excel_Worksheet.xlsx";
+              downloadOleObject(bytes, fileName);
+              ta.focus();
+              ta.value = "";
+              return;
+            }
+          } catch {}
+        }
+      }
+      if (event.ctrlKey && !event.altKey && !event.shiftKey) {
+        const cur = active().editor.state.selection;
+        if (cur.from !== cur.to && multiSel.ranges.length === 0) {
+          multiSel.addRange({ from: cur.from, to: cur.to });
+        }
+        ctrlDrag = true;
+      } else if (!event.shiftKey && !event.altKey && !getExtendMode().isActive) {
+        if (multiSel.hasRanges()) {
+          multiSel.clear();
+          placeSelection();
+        }
+      }
       clickSelection(pos, event, clicks);
     }
     ta.focus();
     ta.value = "";
   };
   opts.host.addEventListener("mousedown", takeFocus);
+
+  // ── Pointer / Touch / Pen Input & Pinch-to-Zoom Support ──
+  let lastPointerType: "mouse" | "touch" | "pen" = "mouse";
+  const activePointers = new Map<
+    number,
+    { clientX: number; clientY: number; pointerType: string }
+  >();
+  let pinchInitialDistance: number | null = null;
+  let pinchInitialScale: number | null = null;
+
+  const onPointerDown = (event: PointerEvent): void => {
+    lastPointerType = (event.pointerType as "mouse" | "touch" | "pen") || "mouse";
+    opts.onPointerTypeChange?.(lastPointerType);
+
+    activePointers.set(event.pointerId, {
+      clientX: event.clientX,
+      clientY: event.clientY,
+      pointerType: event.pointerType,
+    });
+
+    if (activePointers.size === 2) {
+      const [p1, p2] = Array.from(activePointers.values());
+      pinchInitialDistance = Math.hypot(p1.clientX - p2.clientX, p1.clientY - p2.clientY);
+      pinchInitialScale = opts.scale ? opts.scale() : 1;
+    }
+  };
+
+  const onPointerMove = (event: PointerEvent): void => {
+    if (activePointers.has(event.pointerId)) {
+      activePointers.set(event.pointerId, {
+        clientX: event.clientX,
+        clientY: event.clientY,
+        pointerType: event.pointerType,
+      });
+    }
+
+    if (activePointers.size === 2 && pinchInitialDistance && pinchInitialScale) {
+      const [p1, p2] = Array.from(activePointers.values());
+      const currentDistance = Math.hypot(p1.clientX - p2.clientX, p1.clientY - p2.clientY);
+      if (pinchInitialDistance > 0 && currentDistance > 0) {
+        const ratio = currentDistance / pinchInitialDistance;
+        const targetScale = Math.max(0.1, Math.min(5.0, pinchInitialScale * ratio));
+        opts.onZoomChange?.(targetScale);
+        opts.setScale?.(targetScale);
+      }
+    }
+  };
+
+  const onPointerUp = (event: PointerEvent): void => {
+    activePointers.delete(event.pointerId);
+    if (activePointers.size < 2) {
+      pinchInitialDistance = null;
+      pinchInitialScale = null;
+    }
+  };
+
+  const onPointerCancel = (event: PointerEvent): void => {
+    activePointers.delete(event.pointerId);
+    if (activePointers.size < 2) {
+      pinchInitialDistance = null;
+      pinchInitialScale = null;
+    }
+  };
+
+  opts.host.addEventListener("pointerdown", onPointerDown);
+  opts.host.addEventListener("pointermove", onPointerMove);
+  opts.host.addEventListener("pointerup", onPointerUp);
+  opts.host.addEventListener("pointercancel", onPointerCancel);
 
   let composing = false;
 
@@ -2537,6 +3491,12 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
     // Viewing mode or forms protection refuses text entry (the bridge textarea is invisible but
     // focused — without this gate typing would still mutate the doc).
     if (!canEditActive()) {
+      event.preventDefault();
+      return;
+    }
+    // Select Objects mode owns the pointer/keys — typing must not mutate the
+    // document behind the object selection (Word's object mode has no caret).
+    if (objectSel.active) {
       event.preventDefault();
       return;
     }
@@ -2836,6 +3796,129 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
     return { pos: $cell.pos, isLastInTable: dir > 0 && targetIdx >= cells.length };
   };
 
+  /** Finds the doc position of the first cell in the current table row (Word: Alt+Home). */
+  const firstCellInRowPos = (state: Editor["state"]): number | null => {
+    const $from = state.selection.$from;
+    const $cell = cellAt($from);
+    if (!$cell) return null;
+    const rowStart = $cell.before($cell.depth);
+    return TextSelection.near(state.doc.resolve(rowStart + 2)).from;
+  };
+
+  /** Finds the doc position of the last cell in the current table row (Word: Alt+End). */
+  const lastCellInRowPos = (state: Editor["state"]): number | null => {
+    const $from = state.selection.$from;
+    const $cell = cellAt($from);
+    if (!$cell) return null;
+    const rowStart = $cell.before($cell.depth);
+    const row = $cell.node($cell.depth);
+    let cellPos = rowStart + 1;
+    for (let i = 0; i < row.childCount - 1; i++) {
+      cellPos += row.child(i).nodeSize;
+    }
+    return TextSelection.near(state.doc.resolve(cellPos + 2)).from;
+  };
+
+  /** Finds the doc position of the first cell in the current table column (Word: Alt+PageUp). */
+  const firstCellInColPos = (state: Editor["state"]): number | null => {
+    const $from = state.selection.$from;
+    const $cell = cellAt($from);
+    if (!$cell) return null;
+    const table = $cell.node($cell.depth - 1);
+    const tableStart = $cell.before($cell.depth - 1);
+    const rowNode = $cell.node($cell.depth);
+    let colIndex = 0;
+    let cellPos = $cell.before($cell.depth) + 1;
+    for (let c = 0; c < rowNode.childCount; c++) {
+      if (cellPos === $cell.pos) {
+        colIndex = c;
+        break;
+      }
+      cellPos += rowNode.child(c).nodeSize;
+    }
+    const firstRow = table.child(0);
+    const targetCol = Math.min(colIndex, firstRow.childCount - 1);
+    let targetPos = tableStart + 2;
+    for (let c = 0; c < targetCol; c++) {
+      targetPos += firstRow.child(c).nodeSize;
+    }
+    return TextSelection.near(state.doc.resolve(targetPos + 1)).from;
+  };
+
+  /** Finds the doc position of the last cell in the current table column (Word: Alt+PageDown). */
+  const lastCellInColPos = (state: Editor["state"]): number | null => {
+    const $from = state.selection.$from;
+    const $cell = cellAt($from);
+    if (!$cell) return null;
+    const table = $cell.node($cell.depth - 1);
+    const tableStart = $cell.before($cell.depth - 1);
+    const rowNode = $cell.node($cell.depth);
+    let colIndex = 0;
+    let cellPos = $cell.before($cell.depth) + 1;
+    for (let c = 0; c < rowNode.childCount; c++) {
+      if (cellPos === $cell.pos) {
+        colIndex = c;
+        break;
+      }
+      cellPos += rowNode.child(c).nodeSize;
+    }
+    let rowPos = tableStart + 1;
+    for (let r = 0; r < table.childCount - 1; r++) {
+      rowPos += table.child(r).nodeSize;
+    }
+    const lastRow = table.child(table.childCount - 1);
+    const targetCol = Math.min(colIndex, lastRow.childCount - 1);
+    let targetPos = rowPos + 1;
+    for (let c = 0; c < targetCol; c++) {
+      targetPos += lastRow.child(c).nodeSize;
+    }
+    return TextSelection.near(state.doc.resolve(targetPos + 1)).from;
+  };
+
+  /** Builds normalized shortcut string matching {@link KEYBOARD_SHORTCUTS} format. */
+  const resolveShortcutCommand = (event: KeyboardEvent): string | undefined => {
+    const parts: string[] = [];
+    if (event.ctrlKey || event.metaKey) parts.push("Mod");
+    if (event.altKey) parts.push("Alt");
+    if (event.shiftKey) parts.push("Shift");
+
+    let key = event.key;
+    if (key === " " || key === "Space" || event.code === "Space") {
+      key = "Space";
+    }
+    if (key.length === 1) {
+      parts.push(key.toUpperCase());
+    } else {
+      parts.push(key);
+    }
+    const primary = parts.join("-");
+    if (KEYBOARD_SHORTCUTS[primary]) return KEYBOARD_SHORTCUTS[primary];
+
+    if (event.code && event.code.startsWith("Digit")) {
+      const digit = event.code.slice(5);
+      const dParts: string[] = [];
+      if (event.ctrlKey || event.metaKey) dParts.push("Mod");
+      if (event.altKey) dParts.push("Alt");
+      if (event.shiftKey) dParts.push("Shift");
+      dParts.push(digit);
+      const fallback = dParts.join("-");
+      if (KEYBOARD_SHORTCUTS[fallback]) return KEYBOARD_SHORTCUTS[fallback];
+    }
+
+    if (key.startsWith("Arrow")) {
+      const shortName = key.slice(5);
+      const aParts: string[] = [];
+      if (event.ctrlKey || event.metaKey) aParts.push("Mod");
+      if (event.altKey) aParts.push("Alt");
+      if (event.shiftKey) aParts.push("Shift");
+      aParts.push(shortName);
+      const fallback = aParts.join("-");
+      if (KEYBOARD_SHORTCUTS[fallback]) return KEYBOARD_SHORTCUTS[fallback];
+    }
+
+    return undefined;
+  };
+
   /** Scrolls the caret's page so the caret sits a third of the way down the
    *  workspace viewport — only when it is out of view (Home/End/PageUp/PageDown,
    *  find-next). A caret already visible keeps its position. */
@@ -2895,6 +3978,19 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
     // otherwise (the grid survives). The default join path would tear cell
     // content across the range, so this must run before it.
     if (editable && (event.key === "Backspace" || event.key === "Delete")) {
+      // Select Objects mode: Delete removes every selected object (Word).
+      if (objectSel.count > 0) {
+        event.preventDefault();
+        objectSel.deleteSelection();
+        return;
+      }
+      if (multiSel.hasRanges()) {
+        event.preventDefault();
+        multiSel.deleteContents(active().editor);
+        placeSelection();
+        placeCaret();
+        return;
+      }
       const sel = active().editor.state.selection;
       if (sel instanceof NodeSelection) {
         event.preventDefault();
@@ -2940,6 +4036,41 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
         return;
       }
     }
+    if (event.key === "Escape") {
+      // Select Objects mode: Esc cancels the marquee, then clears the
+      // selection, then leaves the mode (Word's stepdown).
+      if (objectSel.active) {
+        event.preventDefault();
+        objectSel.escape();
+        return;
+      }
+      const ext = getExtendMode();
+      if (ext.isActive) {
+        event.preventDefault();
+        ext.cancel();
+        opts.onExtendModeChange?.(false, "");
+        return;
+      }
+      if (multiSel.hasRanges()) {
+        event.preventDefault();
+        multiSel.clear();
+        placeSelection();
+        return;
+      }
+    }
+    if (event.key === "F8" && !event.ctrlKey && !event.metaKey && !event.altKey) {
+      event.preventDefault();
+      const ext = getExtendMode();
+      if (event.shiftKey) {
+        ext.shrink(active().editor);
+      } else {
+        ext.step(active().editor);
+      }
+      opts.onExtendModeChange?.(ext.isActive, ext.statusLabel());
+      placeSelection();
+      placeCaret();
+      return;
+    }
     // Shift+Enter inserts a soft line break (w:br inside the paragraph) —
     // captured here because the textarea reports both Enter flavors to
     // beforeinput as the same insertLineBreak.
@@ -2958,63 +4089,101 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
       });
       return;
     }
-    // F4 (Word Repeat) — retype the last text insertion at the caret.
+    // F4 (Word Repeat) — repeat last action (command or text insertion).
     if (event.key === "F4" && !event.ctrlKey && !event.metaKey && !event.altKey) {
       event.preventDefault();
       if (editable) {
-        const repeat = (active().editor.storage as { repeat?: string }).repeat;
-        if (repeat) insertText(repeat);
+        const storage = active().editor.storage as unknown as {
+          repeat?: string;
+          repeatAction?: {
+            type: "command" | "text";
+            name?: string;
+            value?: unknown;
+            text?: string;
+          };
+        };
+        if (storage.repeatAction?.type === "command" && storage.repeatAction.name) {
+          const [name, arg] = [
+            storage.repeatAction.name,
+            storage.repeatAction.value as string | undefined,
+          ];
+          const cmds = active().editor.commands as unknown as Record<
+            string,
+            ((arg?: string) => boolean) | undefined
+          >;
+          cmds[name]?.(arg);
+        } else {
+          const repeat = storage.repeatAction?.text ?? storage.repeat;
+          if (repeat) insertText(repeat);
+        }
       }
       return;
     }
-    // Plain function-key entries in the shared table (F3 = AutoText/Quick
-    // Parts). The modifier branch below only consults the table for Mod
-    // combos, so an unmodified table key is matched here (Shift+F3 is Word's
-    // change-case cycle, not AutoText).
-    if (!event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey) {
-      const fnCommand = KEYBOARD_SHORTCUTS[event.key];
-      if (fnCommand) {
-        event.preventDefault();
-        if (!editable) return;
-        const [name, arg] = fnCommand.split(":");
-        (
-          active().editor.commands as unknown as Record<
-            string,
-            ((arg?: string) => boolean) | undefined
-          >
-        )[name]?.(arg);
-        return;
-      }
-    }
     if (event.ctrlKey || event.metaKey) {
-      const key = event.key;
-      const lower = key.toLowerCase();
+      const lower = event.key.toLowerCase();
       // Modifier combos dispatch commands (registered in KEYBOARD_SHORTCUTS).
       // Undo / Redo
-      if (lower === "z") {
+      if (lower === "z" && !event.altKey) {
         event.preventDefault();
         if (!editable) return;
         if (event.shiftKey) active().editor.commands.redo();
         else active().editor.commands.undo();
         return;
       }
-      if (lower === "y") {
+      if (lower === "y" && !event.altKey && !event.shiftKey) {
         event.preventDefault();
         if (!editable) return;
         active().editor.commands.redo();
         return;
       }
-      // Select all — without this the browser default selects the 1px
-      // textarea's (empty) contents and the press is lost.
-      if (lower === "a") {
+      // Word Ctrl+A cycling: Cell -> Table -> Document
+      if (lower === "a" && !event.altKey && !event.shiftKey) {
         event.preventDefault();
-        active().editor.commands.command(({ state, dispatch }) =>
-          selectAll(state as never, dispatch),
-        );
+        active().editor.commands.command(({ state, dispatch }) => {
+          const sel = state.selection;
+          const $cell = cellAt(sel.$from);
+          if ($cell) {
+            const cellNode = $cell.nodeAfter;
+            if (cellNode) {
+              const cellStart = $cell.pos + 1;
+              const cellEnd = $cell.pos + cellNode.nodeSize - 1;
+              const coversCell =
+                sel instanceof TextSelection && sel.from <= cellStart && sel.to >= cellEnd;
+
+              if (!coversCell && !(sel instanceof CellSelection)) {
+                if (dispatch) {
+                  dispatch(
+                    state.tr.setSelection(
+                      TextSelection.between(
+                        state.doc.resolve(cellStart),
+                        state.doc.resolve(cellEnd),
+                      ) as never,
+                    ),
+                  );
+                }
+                return true;
+              }
+
+              const tableSel = CellSelection.tableSelection($cell);
+              const alreadyTable =
+                sel instanceof CellSelection &&
+                sel.anchorCell === tableSel.anchorCell &&
+                sel.headCell === tableSel.headCell;
+
+              if (!alreadyTable) {
+                if (dispatch) {
+                  dispatch(state.tr.setSelection(tableSel as never));
+                }
+                return true;
+              }
+            }
+          }
+          return selectAll(state as never, dispatch);
+        });
         return;
       }
       // Mod-K: Insert / edit hyperlink (Word standard).
-      if (lower === "k") {
+      if (lower === "k" && !event.shiftKey && !event.altKey) {
         event.preventDefault();
         opts.host.dispatchEvent(
           new CustomEvent("command", {
@@ -3025,40 +4194,69 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
         );
         return;
       }
-      // Mod-D: Font dialog (Word standard).
-      if (lower === "d" && !event.shiftKey) {
-        event.preventDefault();
+    }
+    const command = resolveShortcutCommand(event);
+    if (command) {
+      if (!editable) return;
+      if (multiSel.hasRanges()) {
+        const markMap: Record<string, string> = {
+          "toggle-bold": "bold",
+          "toggle-italic": "italic",
+          "toggle-underline": "underline",
+          "toggle-strike": "strike",
+        };
+        const markName = markMap[command];
+        if (markName) {
+          event.preventDefault();
+          multiSel.applyMark(active().editor, markName);
+          placeSelection();
+          return;
+        }
+      }
+      event.preventDefault();
+      const [name, arg] = command.split(":");
+      const cmds = active().editor.commands as unknown as Record<
+        string,
+        ((arg?: string) => boolean) | undefined
+      >;
+      let handled = false;
+      if (typeof cmds[name] === "function") {
+        handled = Boolean(cmds[name]!(arg));
+      }
+      if (!handled) {
         opts.host.dispatchEvent(
           new CustomEvent("command", {
             bubbles: true,
             composed: true,
-            detail: { event: "font-dialog" },
+            detail: { event: name, value: arg },
           }),
         );
-        return;
       }
-      // Viewless editors have no EditorView, so nothing dispatches Tiptap's
-      // per-extension keyboard shortcuts — match the shared table here (the
-      // DocenKeymap extension serves the same table on a DOM route). Named
-      // keys keep their spelling ("Mod-Enter"); single characters uppercase
-      // ("Mod-B") — a blanket toUpperCase turned Enter into "ENTER" and
-      // silently dead-matched the table.
-      const combo = `Mod${event.shiftKey ? "-Shift" : ""}-${key.length === 1 ? lower.toUpperCase() : key}`;
-      const command = KEYBOARD_SHORTCUTS[combo];
-      if (command) {
-        if (!editable) return;
-        event.preventDefault();
-        const [name, arg] = command.split(":");
-        (
-          active().editor.commands as unknown as Record<
-            string,
-            ((arg?: string) => boolean) | undefined
-          >
-        )[name]?.(arg);
-      }
+      const storage = active().editor.storage as unknown as Record<string, unknown>;
+      storage.repeatAction = { type: "command", name, value: arg };
       return;
     }
-    const extend = event.shiftKey;
+    const extend = event.shiftKey || getExtendMode().isActive;
+    if (
+      getExtendMode().isActive &&
+      event.key.length === 1 &&
+      !event.ctrlKey &&
+      !event.altKey &&
+      !event.metaKey
+    ) {
+      const char = event.key;
+      const { doc, selection } = active().editor.state;
+      const textAfter = doc.textBetween(selection.head, doc.content.size, undefined, " ");
+      const idx = textAfter.indexOf(char);
+      if (idx >= 0) {
+        event.preventDefault();
+        const targetPos = selection.head + idx + 1;
+        setSel(targetPos, getExtendMode().anchor);
+        placeSelection();
+        placeCaret();
+        return;
+      }
+    }
     const head = () => active().editor.state.selection.head;
     switch (event.key) {
       case "ArrowLeft":
@@ -3077,34 +4275,90 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
         }
         apply(hStep(active().editor.state, head(), 1, event.ctrlKey || event.metaKey), extend);
         break;
-      case "ArrowUp":
+      case "ArrowUp": {
         event.preventDefault();
-        apply(vStep(head(), -1), extend);
+        if (event.ctrlKey || event.metaKey) {
+          const $pos = active().editor.state.doc.resolve(head());
+          let target: number;
+          if ($pos.parent.isTextblock && $pos.pos > $pos.start()) {
+            target = $pos.start();
+          } else {
+            const beforePos = $pos.depth > 0 ? $pos.before() : 0;
+            if (beforePos > 1) {
+              const prev = TextSelection.near(active().editor.state.doc.resolve(beforePos - 1), -1);
+              target = prev.$from.start();
+            } else {
+              target = TextSelection.near(active().editor.state.doc.resolve(0), 1).from;
+            }
+          }
+          apply(target, extend);
+          scrollIntoView(target);
+        } else {
+          apply(vStep(head(), -1), extend);
+        }
         break;
-      case "ArrowDown":
+      }
+      case "ArrowDown": {
         event.preventDefault();
-        apply(vStep(head(), 1), extend);
+        if (event.ctrlKey || event.metaKey) {
+          const $pos = active().editor.state.doc.resolve(head());
+          let target: number;
+          const afterPos = $pos.depth > 0 ? $pos.after() : $pos.doc.content.size;
+          if (afterPos < $pos.doc.content.size - 1) {
+            const next = TextSelection.near(active().editor.state.doc.resolve(afterPos + 1), 1);
+            target = next.$from.start();
+          } else {
+            target = $pos.doc.content.size;
+          }
+          apply(target, extend);
+          scrollIntoView(target);
+        } else {
+          apply(vStep(head(), 1), extend);
+        }
         break;
+      }
       case "Home": {
         event.preventDefault();
-        const target =
-          event.ctrlKey || event.metaKey ? 0 : edgeTarget(active().editor.state, head(), false);
+        let target: number;
+        if (event.altKey && cellAt(active().editor.state.selection.$from)) {
+          target = firstCellInRowPos(active().editor.state) ?? 0;
+        } else if (event.ctrlKey || event.metaKey) {
+          // Word's Ctrl+Home: the body's first caret position — the first
+          // valid text position, not the doc boundary (PM position 0 sits
+          // before the first block and cannot hold a text caret).
+          target = TextSelection.near(active().editor.state.doc.resolve(0), 1).from;
+        } else {
+          target = edgeTarget(active().editor.state, head(), false);
+        }
         apply(target, extend);
         scrollIntoView(target);
         break;
       }
       case "End": {
         event.preventDefault();
-        const target =
-          event.ctrlKey || event.metaKey
-            ? active().editor.state.doc.content.size
-            : edgeTarget(active().editor.state, head(), true);
+        let target: number;
+        if (event.altKey && cellAt(active().editor.state.selection.$from)) {
+          target =
+            lastCellInRowPos(active().editor.state) ?? active().editor.state.doc.content.size;
+        } else if (event.ctrlKey || event.metaKey) {
+          target = active().editor.state.doc.content.size;
+        } else {
+          target = edgeTarget(active().editor.state, head(), true);
+        }
         apply(target, extend);
         scrollIntoView(target);
         break;
       }
       case "PageUp": {
         event.preventDefault();
+        if (event.altKey && cellAt(active().editor.state.selection.$from)) {
+          const target = firstCellInColPos(active().editor.state);
+          if (target != null) {
+            apply(target, extend);
+            scrollIntoView(target);
+            break;
+          }
+        }
         const map = active().map;
         if (map?.valid) {
           const cur = head();
@@ -3118,6 +4372,14 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
       }
       case "PageDown": {
         event.preventDefault();
+        if (event.altKey && cellAt(active().editor.state.selection.$from)) {
+          const target = lastCellInColPos(active().editor.state);
+          if (target != null) {
+            apply(target, extend);
+            scrollIntoView(target);
+            break;
+          }
+        }
         const map = active().map;
         if (map?.valid) {
           const cur = head();
@@ -3135,8 +4397,20 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
           deleteForward(event.ctrlKey || event.metaKey);
         }
         break;
+      case "Backspace":
+        if (editable && (event.ctrlKey || event.metaKey)) {
+          event.preventDefault();
+          backspace(true);
+        }
+        break;
       // Leaving a furniture story (Word: Esc = Close Header and Footer).
       case "Escape":
+        if (opts.tableDraw?.() || opts.tableEraser?.()) {
+          opts.stopTableDraw?.();
+          opts.stopTableEraser?.();
+          event.preventDefault();
+          return;
+        }
         // The armed Set Transparent Color pick is the shallowest mode — Esc
         // disarms it before any other Escape meaning (Word).
         if (transparentPick) {
@@ -3184,6 +4458,10 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
         // 1. Table navigation: Tab moves to next cell; in the last cell, it inserts a new row below.
         const $cell = cellAt($from);
         if ($cell) {
+          if (event.ctrlKey || event.metaKey) {
+            if (editable) insertText("\t");
+            break;
+          }
           const adj = adjacentCellPos(active().editor.state, event.shiftKey ? -1 : 1);
           if (adj) {
             if (adj.isLastInTable) {
@@ -3248,7 +4526,7 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
     composing = false;
     const data = ta.value;
     ta.value = "";
-    if (data && canEditActive()) insertText(data);
+    if (data && canEditActive() && !objectSel.active) insertText(data);
   };
   // A cancelled composition (IME dismissed, focus stolen mid-composition —
   // paths where some browsers never fire compositionend) still must clear the
@@ -3305,6 +4583,7 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
   const onPaste = (event: ClipboardEvent): void => {
     event.preventDefault();
     if (!canEditActive()) return;
+    if (objectSel.active) return;
     // The docen lane first (a copy from a docen editor round-trips losslessly);
     // then styled HTML through the schema's parse rules so external rich text
     // maps to its DOCX equivalents; RTF; plain text is the last resort.
@@ -3337,6 +4616,7 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
   };
 
   const selectionText = (): string | null => {
+    if (multiSel.hasRanges()) return multiSel.copyText(active().editor);
     const { from, to } = active().editor.state.selection;
     return from === to ? null : active().editor.state.doc.textBetween(from, to, "\n");
   };
@@ -3525,6 +4805,11 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
   opts.inputHost.append(shapeGhostEl);
   opts.inputHost.append(shapeLineEl);
   opts.inputHost.append(shapePresetEl);
+  opts.inputHost.append(tableResizeLineEl);
+  opts.inputHost.append(tableResizeBadgeEl);
+  opts.inputHost.append(tableDropIndicatorEl);
+  opts.inputHost.append(tableQuickInsertEl);
+  opts.inputHost.append(tableQuickInsertLineEl);
 
   // The IME anchor's cached rects die on scroll (the page frames move under
   // the fixed input layer) and on resize (both rects move).
@@ -3633,6 +4918,9 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
     enterCropMode(): boolean {
       return draw.enterCropMode();
     },
+    enterEditPointsMode(): boolean {
+      return draw.enterEditPointsMode();
+    },
     setTransparentPick(onPick) {
       transparentPick = onPick;
     },
@@ -3656,6 +4944,28 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
         height: last.heightPx * scale,
       };
     },
+    selectionClientRect(from, to) {
+      if (story || !main.map?.valid) return null;
+      const rects = main.map.selectionRects(from, to);
+      if (!rects.length) return null;
+      const first = rects[0]!;
+      const frame = opts.pageHost?.(framePage(main, first.page));
+      if (!frame) return null;
+      const frameRect = frame.getBoundingClientRect();
+      const scale = opts.scale?.() ?? 1;
+      const minX = Math.min(...rects.map((r) => r.xPx)) * scale;
+      const maxX = Math.max(...rects.map((r) => r.xPx + r.widthPx)) * scale;
+      const minY = Math.min(...rects.map((r) => r.yPx)) * scale;
+      const maxY = Math.max(...rects.map((r) => r.yPx + r.heightPx)) * scale;
+      return {
+        left: frameRect.left + minX,
+        top: frameRect.top + minY,
+        right: frameRect.left + maxX,
+        bottom: frameRect.top + maxY,
+        width: maxX - minX,
+        height: maxY - minY,
+      };
+    },
     pasteAnchorRect(pos) {
       if (story || !main.map?.valid) return null;
       const rect = main.map.caretRect(pos);
@@ -3676,6 +4986,21 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
     insertSlicePayload(raw: string): boolean {
       return insertSlicePayload(raw);
     },
+    /** Select Objects mode — the host's ribbon toggle. */
+    setObjectSelect(on: boolean): void {
+      objectSel.setActive(on);
+    },
+    get objectSelect(): boolean {
+      return objectSel.active;
+    },
+    objectSelectCount(): number {
+      return objectSel.count;
+    },
+    /** Delete the current object selection (the same transaction the Delete
+     *  key runs) — exposed for host commands/tests. */
+    deleteObjectSelection(): boolean {
+      return objectSel.deleteSelection();
+    },
     focus(): void {
       ta.focus();
     },
@@ -3694,8 +5019,12 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
       // drawing layer drops the mode and re-places its overlays (the drag
       // commits through Enter/click, never mid-transaction).
       draw.replaceOverlays();
+      objectSel.refresh();
       placeCaret();
     },
+    cellAtPoint: (page, x, y) => main.map?.cellAtPoint(page, x, y) ?? null,
+    multiSelection: multiSel,
+    extendMode: getExtendMode(),
     /** Hand the host's fresh spell-check results to the overlay (the check
      *  itself runs in the host, debounced per transaction). Placement is
      *  coalesced onto the overlay rAF: a transaction both remaps the issue
@@ -3710,6 +5039,29 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
       grammarIssues = issues;
       scheduleOverlayRefresh();
     },
+    get lastPointerType(): "mouse" | "touch" | "pen" {
+      return lastPointerType;
+    },
+    caretAnchorRect(pos: number) {
+      if (story || !main.map?.valid) return null;
+      const rect = main.map.caretRect(pos);
+      if (!rect) return null;
+      const frame = opts.pageHost?.(framePage(main, rect.page));
+      if (!frame) return null;
+      const scale = opts.scale?.() ?? 1;
+      const frameRect = frame.getBoundingClientRect();
+      const left = rect.xPx * scale;
+      const top = rect.yPx * scale;
+      const height = rect.heightPx * scale;
+      return {
+        frame,
+        left,
+        top,
+        height,
+        clientX: frameRect.left + left,
+        clientY: frameRect.top + top,
+      };
+    },
     destroy(): void {
       if (main.raf) cancelAnimationFrame(main.raf);
       if (overlayRaf) cancelAnimationFrame(overlayRaf);
@@ -3722,12 +5074,17 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
       main.editor.destroy();
       stopDragAutoScroll();
       opts.host.removeEventListener("mousedown", takeFocus);
+      opts.host.removeEventListener("pointerdown", onPointerDown);
+      opts.host.removeEventListener("pointermove", onPointerMove);
+      opts.host.removeEventListener("pointerup", onPointerUp);
+      opts.host.removeEventListener("pointercancel", onPointerCancel);
       opts.host.removeEventListener("dragover", onDragOver);
       opts.host.removeEventListener("dragleave", onDragLeave);
       opts.host.removeEventListener("drop", onDrop);
       document.removeEventListener("mousemove", onMouseMove);
       document.removeEventListener("mouseup", onMouseUp);
       draw.destroy();
+      objectSel.destroy();
       pooledPlace(selectionPool, [], {});
       pooledPlace(searchPool, [], {});
       pooledPlace(spellingPool, [], {});

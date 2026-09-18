@@ -7,6 +7,7 @@ import type {
   ProjectedLineNumbers,
   ProjectedPageBackground,
   ProjectedPageFurniture,
+  LayoutInline,
 } from "@docen/layout";
 import type { IGroup } from "leafer-ui";
 
@@ -188,6 +189,14 @@ export interface PaintContext {
    *  continuing the previous section. */
   pageNumber?: { offset: number; fmt?: string };
   background?: ProjectedPageBackground;
+  /** Word field shading configuration: "never" | "always" | "whenSelected". */
+  fieldShading?: "never" | "always" | "whenSelected";
+  /** Test whether an inline field is in the active selection when fieldShading is "whenSelected". */
+  isFieldSelected?: (inline: LayoutInline) => boolean;
+  /** Mailings → Highlight Merge Fields: tint every MERGEFIELD run's box
+   *  (view-only — Word's yellow merge-field highlight; nothing is written to
+   *  the document). Absent/false = no tint. */
+  highlightMergeFields?: boolean;
   pageIndex: number;
   pageCount: number;
   layer: "behind" | "body";

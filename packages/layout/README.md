@@ -11,20 +11,29 @@ Consumed by [`@docen/docx`](../docx/README.md)'s projection (DocumentOptions →
 ## Design
 
 - **Input is a `LayoutDoc` projection, all-px, style-cascades already resolved.** Adapters (docx from Tiptap/ProseMirror, pptx from its shape tree, xlsx from its grid) convert their document units and resolve their style chains exactly once; the engine never sees a `styleId`, a twip, or a Tiptap node. Only layout semantics keep their OOXML shape (line rules, grid pitch, snap flags) — those are the rules this engine exists to implement.
-- **FontMetrics is the measuring seam.** The engine works from per-code-unit advances supplied by a `FontMetrics` provider (`browserFontMetrics` measures through canvas 2d today; headless and server providers slot into the same interface). Misses fall back with a warning — Word's behavior.
+- **FontMetrics and ShapedMeasurer are the measuring seams.** The engine can measure with deterministic OpenType text shaping backed by `@docen/shaping` (`ShapedMeasurer` using `rustybuzz` + `skrifa` WASM) and per-face Word-calibrated line ratios (`WORD_FONT_METRICS`). Shaping is **on by default**: register the bundled production faces with `registerDefaultFonts()` (metric-compatible Carlito/Caladea/Liberation Sans/Liberation Serif for Calibri/Calibri Light/Cambria/Arial/Times New Roman, all four weight/slant slots, under `assets/fonts`) or your own bytes via `registerShapingFont(family, bytes, index, { bold, italic })` / `ShapedMeasurer.registerFont`. A family with no registered face falls back to canvas measurement **with a one-time console warning** — never silently; `DOCEN_SHAPING_DISABLED=1` rolls the whole process back to canvas. The bundled bytes and their shaped-run hashes are pinned in `test/font-metrics-golden.json`: verify with `pnpm exec vp test run packages/layout/src/text/default-fonts.spec.ts`, regenerate after an intentional font change with `DOCEN_FONT_GOLDEN_UPDATE=1 …`.
 - **One packer for text, hard breaks, and inline pictures** — the unified breaker the DOM route never had. UAX #14 line breaking (linebreak.js) with CJK kinsoku, trailing-space hanging, first-line indent, float-zone width reduction, and per-line OOXML line-height semantics (exact / atLeast / multiple × docGrid pitch, CJK ceil snap).
 - **Determinism is a contract.** Same input → same output every pass — the property the paginator's convergence depends on.
 
-Known boundaries: no GSUB shaping (ligature substitution — advances run slightly wide, conservative for breaking); rowspan cell content counts fully on its start row.
+Known boundaries: rowspan cell content counts fully on its start row.
 
 ## Usage
 
 ```ts
-import { TextMeasurer, browserFontMetrics, layoutBlock } from "@docen/layout";
+import {
+  browserFontMetrics,
+  createMeasurer,
+  layoutBlock,
+  registerDefaultFonts,
+} from "@docen/layout";
 
-const measurer = new TextMeasurer(browserFontMetrics);
+// Shaping is on by default — load the bundled production faces once, then
+// every createMeasurer() instance measures with deterministic OpenType
+// advances. DOCEN_SHAPING_DISABLED=1 rolls back to the canvas measurer.
+await registerDefaultFonts();
+const measurer = createMeasurer(browserFontMetrics);
 const laid = layoutBlock(paragraph, 612, { linePitchPx: 25 }, measurer);
-// laid.lines — y, height, positioned items, split points
+// laid.lines — y, height, positioned items, glyph runs (shaped path), split points
 ```
 
 ## License

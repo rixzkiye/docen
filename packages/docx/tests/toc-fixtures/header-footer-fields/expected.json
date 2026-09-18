@@ -1,0 +1,44 @@
+{
+  "description": "PAGE/NUMPAGES/SECTION/PAGEREF fields in header and footer stories",
+  "fields": {
+    "pageCount": 1,
+    "bookmarkPages": {
+      "_Ref1": 1
+    }
+  },
+  "python": {
+    "simple": [],
+    "instrTexts": [],
+    "tocEntries": [],
+    "parts": {
+      "word/header1.xml": {
+        "simple": [
+          ["PAGE", "99"],
+          ["SECTION", "1"]
+        ],
+        "instrTexts": [" NUMPAGES "]
+      },
+      "word/footer1.xml": {
+        "simple": [["PAGEREF _Ref1 \\h", "99"]],
+        "instrTexts": []
+      }
+    }
+  },
+  "pdf": {
+    "patterns": ["PAGE\\s+1\\s*/\\s*1\\s*\\|\\s*SEC\\s+1", "ref\\s+1"]
+  },
+  "update": {
+    "patterns": ["PAGE\\s+1\\s*/\\s*1\\s*\\|\\s*SEC\\s+1", "ref\\s+1"]
+  },
+  "loLimitations": [
+    "Header/footer story field caches are preserved, not re-derived, at generation (the fields context only walks the main document). LibreOffice computes PAGE/NUMPAGES/PAGEREF live but never SECTION, so an author-supplied SECTION cache is what readers show."
+  ],
+  "resavePython": {
+    "headers": {
+      "instrTexts": ["PAGE", "NUMPAGES", "SECTION"]
+    },
+    "footers": {
+      "instrTexts": ["PAGEREF _Ref1"]
+    }
+  }
+}

@@ -1,0 +1,89 @@
+{
+  "description": "Multi-level TOC filled from H1-H3 with live page numbers",
+  "fields": {
+    "pageCount": 3,
+    "pageOf": {
+      "0": 3
+    },
+    "tocPageOf": {
+      "heading:0": 1,
+      "heading:1": 2,
+      "heading:2": 2,
+      "heading:3": 3
+    }
+  },
+  "python": {
+    "simple": [
+      ["PAGE", "3"],
+      ["NUMPAGES", "3"]
+    ],
+    "instrTexts": [" TOC \\h \\o \"1-3\" "],
+    "tocEntries": [
+      {
+        "style": "TOC1",
+        "text": "Chapter One",
+        "page": "1"
+      },
+      {
+        "style": "TOC2",
+        "text": "Section One",
+        "page": "2"
+      },
+      {
+        "style": "TOC3",
+        "text": "Subsection",
+        "page": "2"
+      },
+      {
+        "style": "TOC2",
+        "text": "Section Two",
+        "page": "3"
+      }
+    ]
+  },
+  "xmlPresent": ["TOC1", "TOC2", "TOC3", "TOC \\h \\o \"1-3\""],
+  "pdf": {
+    "contains": ["Chapter One", "Section One", "Subsection", "Section Two"],
+    "patterns": [
+      "Chapter One\\.{2,}1",
+      "Section One\\.{2,}2",
+      "Subsection\\.{2,}2",
+      "Section Two\\.{2,}3",
+      "Page\\s+3\\s*/\\s*3"
+    ]
+  },
+  "update": {
+    "contains": ["Chapter One", "Section One", "Subsection", "Section Two"],
+    "patterns": [
+      "Chapter One\\.{2,}1",
+      "Section One\\.{2,}2",
+      "Subsection\\.{2,}2",
+      "Section Two\\.{2,}3"
+    ]
+  },
+  "resavePython": {
+    "instrTexts": [" TOC \\h \\o \"1-3\""],
+    "tocEntries": [
+      {
+        "style": "TOC1",
+        "text": "Chapter One",
+        "page": "1"
+      },
+      {
+        "style": "TOC2",
+        "text": "Section One",
+        "page": "2"
+      },
+      {
+        "style": "TOC3",
+        "text": "Subsection",
+        "page": "2"
+      },
+      {
+        "style": "TOC2",
+        "text": "Section Two",
+        "page": "3"
+      }
+    ]
+  }
+}

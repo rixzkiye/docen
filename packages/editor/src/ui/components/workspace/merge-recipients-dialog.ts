@@ -107,7 +107,7 @@ const styles = css`
 
 const template = html<DocenMergeRecipientsDialog>`
   <docen-dialog ${ref("dialog")} modal heading="${(x) => t("recipients.editTitle", x)}">
-    <div class="recipients-body" slot="body">
+    <div class="recipients-body">
       <div class="toolbar">
         <input
           type="text"
@@ -136,7 +136,7 @@ const template = html<DocenMergeRecipientsDialog>`
 
       <div class="count-bar" ${ref("countBarEl")}></div>
     </div>
-    <div class="footer" slot="footer">
+    <div class="footer" slot="action">
       <fluent-button appearance="primary" @click="${(x) => x.onOk()}"
         >${(x) => t("dialog.ok", x)}</fluent-button
       >

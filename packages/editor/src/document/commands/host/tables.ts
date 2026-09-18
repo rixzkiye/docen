@@ -22,6 +22,10 @@ export interface TablesHostView {
   borderErase(): boolean;
   stopBorderPainting(): void;
   armBorderPainter(erase: boolean): void;
+  tableDrawing(): boolean;
+  tableEraser(): boolean;
+  toggleDrawTable(): void;
+  toggleTableEraser(): void;
 }
 
 /**
@@ -40,11 +44,21 @@ export class TablesHostCommands implements HostCommandDomain {
     "insert-table",
     "table-dialog",
     "autofit-window",
+    "draw-table",
+    "table-eraser",
   ];
 
-  readonly editor: readonly string[] = ["table-properties"];
+  readonly editor: readonly string[] = ["table-properties", "insert-quick-table", "insert-excel"];
 
   run(event: string, value?: string): boolean {
+    if (event === "draw-table") {
+      this.host.toggleDrawTable();
+      return true;
+    }
+    if (event === "table-eraser") {
+      this.host.toggleTableEraser();
+      return true;
+    }
     // Table Design → Draw Border: the pen pickers stamp the host pen state;
     // the painter split arms the sweep — the face toggles the pen, the
     // drop-down's eraser toggles the erase half (one painter at a time).

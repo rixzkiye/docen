@@ -121,44 +121,58 @@ const markdown = generateMarkdown({ type: 'doc', content: [...] });
 
 #### `parseDOCX(input)`
 
-Parses a DOCX file into TipTap JSON content.
+Parses a DOCX file into TipTap JSON content. The archive is validated against
+untrusted-input admission limits (entry/size/ratio/media caps, bounded
+inflation, XML depth/text budgets) before parsing; violations throw an
+`ArchiveRejection` whose `code` names the failed rule.
 
 **Parameters:**
 
-- `input: Buffer | ArrayBuffer | Uint8Array | string` - DOCX file data or path
+- `input: Buffer | ArrayBuffer | Uint8Array | Blob | ReadableStream` - DOCX file data
 
-**Returns:** `JSONContent` - TipTap document object
+**Returns:** `Promise<JSONContent>` - TipTap document object
 
 ```typescript
 import { readFileSync } from "node:fs";
 const buffer = readFileSync("document.docx");
-const doc = parseDOCX(buffer);
+const doc = await parseDOCX(buffer);
 ```
 
 #### `generateDOCX(docJson, options?)`
 
-Generates a DOCX file from TipTap JSON asynchronously. Styling is derived from the TipTap attrs. By default runs `prepareDocument` first — fetching http image URLs and embedding them as data URLs (required: http images are otherwise dropped).
+Generates a DOCX file from TipTap JSON asynchronously. Styling is derived from the TipTap attrs. Byte-reproducible: the same input yields the same output in the same process and in a fresh one, with a fixed generation clock (`DOCX_EPOCH` by default; `options.date` overrides, `null` omits generated dates). The input JSON is never mutated.
 
 **Parameters:**
 
 - `docJson: JSONContent` - TipTap document object
-- `options?: DocxGenerateOptions` - `{ prepare?, packer? }`:
-  - `prepare` (default `true`): `true` runs the default image pre-fetch; `false` skips it; a `PrepareStep[]` runs custom steps.
+- `options?: DocxGenerateOptions` - `{ prepare?, packer?, document?, variant?, date? }`:
+  - `prepare` (default `true`): `true` runs the default **local-only** preparation (no network); `false` skips it; a `PrepareStep[]` runs custom steps. External `http(s)` images require an explicit `prepareImages({ allow: [...] })` policy — scheme/host allowlist, response size cap, redirect cap and timeout are enforced.
   - `packer`: `PackerOptions`; `type` controls the output format (`"nodebuffer"` default → Buffer, `"blob"`, `"arraybuffer"`, …).
+  - `date`: fixed clock for generated dates (string/`Date`; default `DOCX_EPOCH`; `null` omits).
 
 **Returns:** `Promise<Buffer | Blob | ArrayBuffer | Uint8Array | string>` - DOCX data in the requested format
 
 ```typescript
-// Default: prepare images, Node.js Buffer
+import { prepareImages } from "docen/docx";
+
+// Default: local-only preparation, Node.js Buffer
 const buffer = await generateDOCX(doc);
+
+// Remote images: explicit host allowlist (never fetched by default)
+const withImages = await generateDOCX(doc, {
+  prepare: [prepareImages({ allow: ["cdn.example.com"] })],
+});
 
 // Skip preparation, Browser Blob
 const blob = await generateDOCX(doc, { prepare: false, packer: { type: "blob" } });
 ```
 
-#### `generateDOCXSync(docJson, packerOptions?)`
+#### `generateDOCXSync(docJson, options?)`
 
-Synchronous variant — fastest throughput, blocks the event loop. Does **not** run `prepareDocument` (it is async); call `await prepareDocument(doc)` first when http images need embedding.
+Synchronous variant — fastest throughput, blocks the event loop. Does **not**
+run `prepareDocument` (it is async); call
+`const prepared = await prepareDocument(doc)` first when images need
+embedding. Byte-reproducible like `generateDOCX`, and never mutates its input.
 
 **Returns:** `Buffer | Blob | ArrayBuffer | Uint8Array | string` - DOCX data in the requested format
 
@@ -168,7 +182,11 @@ const buffer = generateDOCXSync(doc);
 
 #### `generateDOCXStream(docJson, options?)`
 
-Streams the DOCX as a `ReadableStream<Uint8Array>` — for large documents or HTTP responses. Runs `prepareDocument` by default (async).
+Streams the DOCX as a `ReadableStream<Uint8Array>` — for large documents or
+HTTP responses. Runs the default **local-only** `prepareDocument` (async) and
+is byte-identical to the sync path for the same input. Time/peak-RSS numbers
+for 100–300 page documents are recorded in
+[`@docen/docx/bench/README.md`](../docx/bench/README.md).
 
 **Returns:** `Promise<ReadableStream<Uint8Array>>`
 
@@ -263,7 +281,7 @@ All conversions go through TipTap JSON as the intermediate format, ensuring cons
 - **@docen/docx** - DOCX / Markdown converters built on the DocxManager architecture (full surface via `docen/docx`)
 - **@docen/editor** - Fluent UI shell + docx engine → `<docen-document>` (exposed via the `docen/editor` subpath)
 - **@office-open/docx** - Native OOXML parse/generate (`parseDocument`, `generateDocument`, `patchDocument`)
-- **@docen/markdown** - Format-agnostic Markdown syntax layer — the IR + renderer behind `parseMarkdown`/`generateMarkdown`
+- **@docen/markdown** - Format-agnostic Markdown syntax layer — the IR + renderer behind `parseMarkdown`/`generateMarkdown` (bundled into `@docen/docx`, no separate install)
 
 ## Comparison with Alternatives
 

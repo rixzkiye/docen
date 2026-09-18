@@ -28,13 +28,19 @@ export {
 // edits it as one — same rationale as SectionPropertiesOptions above. The
 // @office-open/docx barrel doesn't re-export the core chart value-domain
 // names, so they come straight from @office-open/core (already a dependency).
+import type { ChartType as OfficeChartType } from "@office-open/core";
+export type ChartType = OfficeChartType | "combo";
 export type { ChartOptions } from "@office-open/docx";
-export type { ChartType, ChartSeriesData, LegendPosition } from "@office-open/core";
-// Re-export the engine's section-geometry defaults (MS Office zh-CN "Normal":
-// A4 + top/bottom 1440tw, left/right 1800tw) so editor-side geometry fallbacks
-// — content-width for image capping, page measurement — reuse the SAME defaults
-// the engine uses to fill an empty sectPr, instead of hardcoding divergent ones.
-export { sectionMarginDefaults, sectionPageSizeDefaults } from "@office-open/docx";
+export type { ChartSeriesData, LegendPosition } from "@office-open/core";
+// docen-owned section-geometry defaults — generation stamps these into every
+// sectPr (never office-open's zh-CN `sectionMarginDefaults`), and editor-side
+// geometry fallbacks — content-width for image capping, page measurement —
+// reuse the SAME constants instead of hardcoding divergent ones.
+export {
+  DOCEN_DEFAULT_PAGE_SIZE,
+  DOCEN_DEFAULT_PAGE_MARGIN,
+  docenDefaultSectionProperties,
+} from "./converters/section-defaults";
 // Re-export the engine's length conversion (mm → twips) so the editor layer can
 // build OOXML page geometry from mm presets without a direct @office-open/core
 // dependency. (@office-open/docx does not re-export this from core.) Sourced from
@@ -67,6 +73,43 @@ export {
   type DocxVariant,
   type RunPropMark,
 } from "./converters/docx";
+export { decodePassthroughData, encodePassthroughData } from "./extensions/passthrough";
+// Generated-field cache pipeline (SEQ/REF/page/TOC caches at generation time)
+// plus the pure instruction/format helpers the editor's update commands share.
+export {
+  fillGeneratedFields,
+  parseFieldInstruction,
+  fieldRef,
+  parseCustomStyles,
+  styleLevelsOf,
+  seqLabelOfData,
+  formatSeqNumber,
+  seqChapterLevel,
+  SEQ_NUMBER_FORMATS,
+  CAPTION_SEPARATOR_CHARS,
+  type ParsedFieldInstruction,
+  type FieldRef,
+  type FieldCacheOptions,
+} from "./converters/field-eval";
+export { DOCX_EPOCH } from "./converters/determinism";
+export {
+  ENCRYPTED_DOCUMENT_CODE,
+  EncryptedDocumentError,
+  isEncryptedContainerBytes,
+} from "./converters/encrypted";
+export {
+  UNSUPPORTED_CONTENT_KINDS,
+  detectUnsupportedContent,
+  type UnsupportedContentItem,
+  type UnsupportedContentKind,
+  type UnsupportedContentReport,
+} from "./converters/unsupported";
+export {
+  type TocSwitches,
+  tokenizeTocInstruction,
+  parseTocSwitches,
+  generateTocInstruction,
+} from "./converters/toc-switches";
 
 // Converters: DOCX template patching (placeholder replacement via office-open patchDocument)
 export { patchDOCX, type DocxPatchOptions, type DocxPatchContent } from "./converters/patch";
@@ -75,7 +118,13 @@ export { patchDOCX, type DocxPatchOptions, type DocxPatchContent } from "./conve
 export {
   prepareDocument,
   prepareImages,
+  prepareImageSizes,
   fetchImageHandler,
+  DEFAULT_IMAGE_MAX_BYTES,
+  DEFAULT_IMAGE_MAX_REDIRECTS,
+  DEFAULT_IMAGE_TIMEOUT_MS,
+  type PrepareImagesPolicy,
+  type FetchImageOptions,
   type PrepareStep,
   type ImageFetchHandler,
 } from "./converters/prepare";
@@ -114,7 +163,16 @@ export {
   mergeStyleChain,
   deepMergeInto,
   mergeTableStyleProps,
+  resolveTableLook,
+  resolveTableStyle,
+  resolveTableCellStyle,
+  activeConditionalTypes,
+  CONDITIONAL_FORMAT_PRIORITY,
   type StyleEntry,
+  type ResolvedTableLook,
+  type ResolvedTableStyle,
+  type TableCellPosition,
+  type EffectiveTableCellStyle,
 } from "./style-cascade";
 
 // Numbering (list) level index — the same reference → levels table the layout
@@ -127,6 +185,9 @@ export { indexNumberings, type NumberingLevel } from "./layout/project/numbering
 // shapes gallery (live SVG previews) so both render from one evaluator. The
 // evaluator itself is format-neutral and lives in @docen/core.
 export { presetShapePaths, type PresetShapeOutline } from "@docen/core/geometry";
+
+// Font embedding (ECMA-376 Part 4 §14.2.14 obfuscation & fontTable)
+export * from "./font-embedding";
 
 // Types
 export type * from "./types";

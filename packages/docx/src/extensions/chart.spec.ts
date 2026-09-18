@@ -122,4 +122,29 @@ describe("chart", () => {
     expect(xml2).toContain('name="chart-1"');
     expect(xml2).toContain('descr="Quarterly chart"');
   });
+
+  it("carries extended chart types (combo, surface, ofPie) and formatting through round-trip", () => {
+    const comboOptions = {
+      type: "combo" as const,
+      title: "Mixed Performance",
+      categories: ["Jan", "Feb"],
+      series: [
+        { name: "Revenue", chartType: "column" as const, values: [100, 150] },
+        {
+          name: "Growth",
+          chartType: "line" as const,
+          axisGroup: "secondary" as const,
+          values: [10, 20],
+        },
+      ],
+      secondaryValueAxis: { numberFormat: "0%" },
+      dataLabels: { showValue: true, position: "outsideEnd" as const },
+      style: 12,
+      transformation: { width: 4000000, height: 2500000 },
+    };
+    const { node, child } = roundTrip([{ chart: comboOptions as any }]);
+    expect(node?.type).toBe("chart");
+    expect((node?.attrs as { chart?: unknown })?.chart).toEqual(comboOptions);
+    expect(child).toEqual({ chart: comboOptions });
+  });
 });

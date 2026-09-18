@@ -148,6 +148,22 @@ export function paintTable(
       segStart = seg ? r : -1;
     }
   }
+
+  // Diagonal borders: tl2br (top-left to bottom-right) and tr2bl (top-right to bottom-left).
+  for (const p of cells) {
+    const borders = p.cell.borders;
+    if (!borders) continue;
+    const x0 = x + colX[p.col]!;
+    const y0 = y + rowY[p.row]!;
+    const x1 = x + colX[p.col + p.spanW]!;
+    const y1 = y + rowY[p.row + p.spanH]!;
+    if (borders.tl2br && edgeWeight(borders.tl2br) > 0) {
+      drawDiagonal(tree, x0, y0, x1, y1, borders.tl2br);
+    }
+    if (borders.tr2bl && edgeWeight(borders.tr2bl) > 0) {
+      drawDiagonal(tree, x1, y0, x0, y1, borders.tr2bl);
+    }
+  }
 }
 
 /** One border edge's conflict weight: nil/none/absent carry none. */
@@ -221,4 +237,29 @@ export function drawEdge(
     return;
   }
   stroke(0, px);
+}
+
+/** Draw a diagonal cell border from (x1, y1) to (x2, y2). */
+export function drawDiagonal(
+  tree: IGroup,
+  x1: number,
+  y1: number,
+  x2: number,
+  y2: number,
+  edge: LayoutBorderEdge,
+): void {
+  const px = Math.max(edge.px ?? 1, 1);
+  const color = edge.color ? `#${edge.color}` : "#000000";
+  const style = edge.style ?? "single";
+  const dash = DASH_PATTERN[style];
+  tree.add(
+    new Line({
+      x: x1,
+      y: y1,
+      points: [0, 0, x2 - x1, y2 - y1],
+      stroke: color,
+      strokeWidth: px,
+      dashPattern: dash,
+    }),
+  );
 }

@@ -1,0 +1,633 @@
+{
+  "meta": {
+    "generator": "packages/shaping/test/generate-goldens.mjs",
+    "oracle": "harfbuzzjs (HarfBuzz)",
+    "harfbuzzjs": "1.6.1",
+    "fonts": {
+      "latin": "OpenSans-Regular.ttf",
+      "arabic": "NotoNaskhArabic-Regular.ttf"
+    },
+    "texts": {
+      "latinAlphabet": "The quick brown fox jumps over the lazy dog.",
+      "kerningPairs": "AV To Wa LT",
+      "ligatures": "office flight waffle",
+      "arabicGreeting": "مرحبا"
+    }
+  },
+  "latinAlphabet": [
+    {
+      "glyphId": 55,
+      "cluster": 0,
+      "xAdvance": 1128,
+      "yAdvance": 0,
+      "xOffset": 0,
+      "yOffset": 0
+    },
+    {
+      "glyphId": 75,
+      "cluster": 1,
+      "xAdvance": 1256,
+      "yAdvance": 0,
+      "xOffset": 0,
+      "yOffset": 0
+    },
+    {
+      "glyphId": 72,
+      "cluster": 2,
+      "xAdvance": 1150,
+      "yAdvance": 0,
+      "xOffset": 0,
+      "yOffset": 0
+    },
+    {
+      "glyphId": 3,
+      "cluster": 3,
+      "xAdvance": 532,
+      "yAdvance": 0,
+      "xOffset": 0,
+      "yOffset": 0
+    },
+    {
+      "glyphId": 84,
+      "cluster": 4,
+      "xAdvance": 1253,
+      "yAdvance": 0,
+      "xOffset": 0,
+      "yOffset": 0
+    },
+    {
+      "glyphId": 88,
+      "cluster": 5,
+      "xAdvance": 1256,
+      "yAdvance": 0,
+      "xOffset": 0,
+      "yOffset": 0
+    },
+    {
+      "glyphId": 76,
+      "cluster": 6,
+      "xAdvance": 517,
+      "yAdvance": 0,
+      "xOffset": 0,
+      "yOffset": 0
+    },
+    {
+      "glyphId": 70,
+      "cluster": 7,
+      "xAdvance": 981,
+      "yAdvance": 0,
+      "xOffset": 0,
+      "yOffset": 0
+    },
+    {
+      "glyphId": 78,
+      "cluster": 8,
+      "xAdvance": 1076,
+      "yAdvance": 0,
+      "xOffset": 0,
+      "yOffset": 0
+    },
+    {
+      "glyphId": 3,
+      "cluster": 9,
+      "xAdvance": 532,
+      "yAdvance": 0,
+      "xOffset": 0,
+      "yOffset": 0
+    },
+    {
+      "glyphId": 69,
+      "cluster": 10,
+      "xAdvance": 1253,
+      "yAdvance": 0,
+      "xOffset": 0,
+      "yOffset": 0
+    },
+    {
+      "glyphId": 85,
+      "cluster": 11,
+      "xAdvance": 837,
+      "yAdvance": 0,
+      "xOffset": 0,
+      "yOffset": 0
+    },
+    {
+      "glyphId": 82,
+      "cluster": 12,
+      "xAdvance": 1232,
+      "yAdvance": 0,
+      "xOffset": 0,
+      "yOffset": 0
+    },
+    {
+      "glyphId": 90,
+      "cluster": 13,
+      "xAdvance": 1587,
+      "yAdvance": 0,
+      "xOffset": 0,
+      "yOffset": 0
+    },
+    {
+      "glyphId": 81,
+      "cluster": 14,
+      "xAdvance": 1256,
+      "yAdvance": 0,
+      "xOffset": 0,
+      "yOffset": 0
+    },
+    {
+      "glyphId": 3,
+      "cluster": 15,
+      "xAdvance": 532,
+      "yAdvance": 0,
+      "xOffset": 0,
+      "yOffset": 0
+    },
+    {
+      "glyphId": 73,
+      "cluster": 16,
+      "xAdvance": 689,
+      "yAdvance": 0,
+      "xOffset": 0,
+      "yOffset": 0
+    },
+    {
+      "glyphId": 82,
+      "cluster": 17,
+      "xAdvance": 1232,
+      "yAdvance": 0,
+      "xOffset": 0,
+      "yOffset": 0
+    },
+    {
+      "glyphId": 91,
+      "cluster": 18,
+      "xAdvance": 1072,
+      "yAdvance": 0,
+      "xOffset": 0,
+      "yOffset": 0
+    },
+    {
+      "glyphId": 3,
+      "cluster": 19,
+      "xAdvance": 532,
+      "yAdvance": 0,
+      "xOffset": 0,
+      "yOffset": 0
+    },
+    {
+      "glyphId": 77,
+      "cluster": 20,
+      "xAdvance": 517,
+      "yAdvance": 0,
+      "xOffset": 0,
+      "yOffset": 0
+    },
+    {
+      "glyphId": 88,
+      "cluster": 21,
+      "xAdvance": 1256,
+      "yAdvance": 0,
+      "xOffset": 0,
+      "yOffset": 0
+    },
+    {
+      "glyphId": 80,
+      "cluster": 22,
+      "xAdvance": 1896,
+      "yAdvance": 0,
+      "xOffset": 0,
+      "yOffset": 0
+    },
+    {
+      "glyphId": 83,
+      "cluster": 23,
+      "xAdvance": 1253,
+      "yAdvance": 0,
+      "xOffset": 0,
+      "yOffset": 0
+    },
+    {
+      "glyphId": 86,
+      "cluster": 24,
+      "xAdvance": 976,
+      "yAdvance": 0,
+      "xOffset": 0,
+      "yOffset": 0
+    },
+    {
+      "glyphId": 3,
+      "cluster": 25,
+      "xAdvance": 532,
+      "yAdvance": 0,
+      "xOffset": 0,
+      "yOffset": 0
+    },
+    {
+      "glyphId": 82,
+      "cluster": 26,
+      "xAdvance": 1232,
+      "yAdvance": 0,
+      "xOffset": 0,
+      "yOffset": 0
+    },
+    {
+      "glyphId": 89,
+      "cluster": 27,
+      "xAdvance": 1023,
+      "yAdvance": 0,
+      "xOffset": 0,
+      "yOffset": 0
+    },
+    {
+      "glyphId": 72,
+      "cluster": 28,
+      "xAdvance": 1150,
+      "yAdvance": 0,
+      "xOffset": 0,
+      "yOffset": 0
+    },
+    {
+      "glyphId": 85,
+      "cluster": 29,
+      "xAdvance": 837,
+      "yAdvance": 0,
+      "xOffset": 0,
+      "yOffset": 0
+    },
+    {
+      "glyphId": 3,
+      "cluster": 30,
+      "xAdvance": 532,
+      "yAdvance": 0,
+      "xOffset": 0,
+      "yOffset": 0
+    },
+    {
+      "glyphId": 87,
+      "cluster": 31,
+      "xAdvance": 730,
+      "yAdvance": 0,
+      "xOffset": 0,
+      "yOffset": 0
+    },
+    {
+      "glyphId": 75,
+      "cluster": 32,
+      "xAdvance": 1256,
+      "yAdvance": 0,
+      "xOffset": 0,
+      "yOffset": 0
+    },
+    {
+      "glyphId": 72,
+      "cluster": 33,
+      "xAdvance": 1150,
+      "yAdvance": 0,
+      "xOffset": 0,
+      "yOffset": 0
+    },
+    {
+      "glyphId": 3,
+      "cluster": 34,
+      "xAdvance": 532,
+      "yAdvance": 0,
+      "xOffset": 0,
+      "yOffset": 0
+    },
+    {
+      "glyphId": 79,
+      "cluster": 35,
+      "xAdvance": 517,
+      "yAdvance": 0,
+      "xOffset": 0,
+      "yOffset": 0
+    },
+    {
+      "glyphId": 68,
+      "cluster": 36,
+      "xAdvance": 1138,
+      "yAdvance": 0,
+      "xOffset": 0,
+      "yOffset": 0
+    },
+    {
+      "glyphId": 93,
+      "cluster": 37,
+      "xAdvance": 960,
+      "yAdvance": 0,
+      "xOffset": 0,
+      "yOffset": 0
+    },
+    {
+      "glyphId": 92,
+      "cluster": 38,
+      "xAdvance": 1026,
+      "yAdvance": 0,
+      "xOffset": 0,
+      "yOffset": 0
+    },
+    {
+      "glyphId": 3,
+      "cluster": 39,
+      "xAdvance": 532,
+      "yAdvance": 0,
+      "xOffset": 0,
+      "yOffset": 0
+    },
+    {
+      "glyphId": 71,
+      "cluster": 40,
+      "xAdvance": 1253,
+      "yAdvance": 0,
+      "xOffset": 0,
+      "yOffset": 0
+    },
+    {
+      "glyphId": 82,
+      "cluster": 41,
+      "xAdvance": 1232,
+      "yAdvance": 0,
+      "xOffset": 0,
+      "yOffset": 0
+    },
+    {
+      "glyphId": 74,
+      "cluster": 42,
+      "xAdvance": 1112,
+      "yAdvance": 0,
+      "xOffset": 0,
+      "yOffset": 0
+    },
+    {
+      "glyphId": 17,
+      "cluster": 43,
+      "xAdvance": 538,
+      "yAdvance": 0,
+      "xOffset": 0,
+      "yOffset": 0
+    }
+  ],
+  "kerningPairs": [
+    {
+      "glyphId": 36,
+      "cluster": 0,
+      "xAdvance": 1295,
+      "yAdvance": 0,
+      "xOffset": 0,
+      "yOffset": 0
+    },
+    {
+      "glyphId": 57,
+      "cluster": 1,
+      "xAdvance": 1221,
+      "yAdvance": 0,
+      "xOffset": 0,
+      "yOffset": 0
+    },
+    {
+      "glyphId": 3,
+      "cluster": 2,
+      "xAdvance": 532,
+      "yAdvance": 0,
+      "xOffset": 0,
+      "yOffset": 0
+    },
+    {
+      "glyphId": 55,
+      "cluster": 3,
+      "xAdvance": 1128,
+      "yAdvance": 0,
+      "xOffset": 0,
+      "yOffset": 0
+    },
+    {
+      "glyphId": 82,
+      "cluster": 4,
+      "xAdvance": 1232,
+      "yAdvance": 0,
+      "xOffset": 0,
+      "yOffset": 0
+    },
+    {
+      "glyphId": 3,
+      "cluster": 5,
+      "xAdvance": 532,
+      "yAdvance": 0,
+      "xOffset": 0,
+      "yOffset": 0
+    },
+    {
+      "glyphId": 58,
+      "cluster": 6,
+      "xAdvance": 1891,
+      "yAdvance": 0,
+      "xOffset": 0,
+      "yOffset": 0
+    },
+    {
+      "glyphId": 68,
+      "cluster": 7,
+      "xAdvance": 1138,
+      "yAdvance": 0,
+      "xOffset": 0,
+      "yOffset": 0
+    },
+    {
+      "glyphId": 3,
+      "cluster": 8,
+      "xAdvance": 532,
+      "yAdvance": 0,
+      "xOffset": 0,
+      "yOffset": 0
+    },
+    {
+      "glyphId": 47,
+      "cluster": 9,
+      "xAdvance": 1069,
+      "yAdvance": 0,
+      "xOffset": 0,
+      "yOffset": 0
+    },
+    {
+      "glyphId": 55,
+      "cluster": 10,
+      "xAdvance": 1128,
+      "yAdvance": 0,
+      "xOffset": 0,
+      "yOffset": 0
+    }
+  ],
+  "ligatures": [
+    {
+      "glyphId": 82,
+      "cluster": 0,
+      "xAdvance": 1232,
+      "yAdvance": 0,
+      "xOffset": 0,
+      "yOffset": 0
+    },
+    {
+      "glyphId": 909,
+      "cluster": 1,
+      "xAdvance": 1894,
+      "yAdvance": 0,
+      "xOffset": 0,
+      "yOffset": 0
+    },
+    {
+      "glyphId": 70,
+      "cluster": 4,
+      "xAdvance": 981,
+      "yAdvance": 0,
+      "xOffset": 0,
+      "yOffset": 0
+    },
+    {
+      "glyphId": 72,
+      "cluster": 5,
+      "xAdvance": 1150,
+      "yAdvance": 0,
+      "xOffset": 0,
+      "yOffset": 0
+    },
+    {
+      "glyphId": 3,
+      "cluster": 6,
+      "xAdvance": 532,
+      "yAdvance": 0,
+      "xOffset": 0,
+      "yOffset": 0
+    },
+    {
+      "glyphId": 908,
+      "cluster": 7,
+      "xAdvance": 1206,
+      "yAdvance": 0,
+      "xOffset": 0,
+      "yOffset": 0
+    },
+    {
+      "glyphId": 76,
+      "cluster": 9,
+      "xAdvance": 517,
+      "yAdvance": 0,
+      "xOffset": 0,
+      "yOffset": 0
+    },
+    {
+      "glyphId": 74,
+      "cluster": 10,
+      "xAdvance": 1112,
+      "yAdvance": 0,
+      "xOffset": 0,
+      "yOffset": 0
+    },
+    {
+      "glyphId": 75,
+      "cluster": 11,
+      "xAdvance": 1256,
+      "yAdvance": 0,
+      "xOffset": 0,
+      "yOffset": 0
+    },
+    {
+      "glyphId": 87,
+      "cluster": 12,
+      "xAdvance": 730,
+      "yAdvance": 0,
+      "xOffset": 0,
+      "yOffset": 0
+    },
+    {
+      "glyphId": 3,
+      "cluster": 13,
+      "xAdvance": 532,
+      "yAdvance": 0,
+      "xOffset": 0,
+      "yOffset": 0
+    },
+    {
+      "glyphId": 90,
+      "cluster": 14,
+      "xAdvance": 1587,
+      "yAdvance": 0,
+      "xOffset": 0,
+      "yOffset": 0
+    },
+    {
+      "glyphId": 68,
+      "cluster": 15,
+      "xAdvance": 1138,
+      "yAdvance": 0,
+      "xOffset": 0,
+      "yOffset": 0
+    },
+    {
+      "glyphId": 910,
+      "cluster": 16,
+      "xAdvance": 1894,
+      "yAdvance": 0,
+      "xOffset": 0,
+      "yOffset": 0
+    },
+    {
+      "glyphId": 72,
+      "cluster": 19,
+      "xAdvance": 1150,
+      "yAdvance": 0,
+      "xOffset": 0,
+      "yOffset": 0
+    }
+  ],
+  "arabicGreeting": [
+    {
+      "glyphId": 9,
+      "cluster": 4,
+      "xAdvance": 253,
+      "yAdvance": 0,
+      "xOffset": 0,
+      "yOffset": 0
+    },
+    {
+      "glyphId": 323,
+      "cluster": 3,
+      "xAdvance": 0,
+      "yAdvance": 0,
+      "xOffset": 90,
+      "yOffset": -31
+    },
+    {
+      "glyphId": 16,
+      "cluster": 3,
+      "xAdvance": 292,
+      "yAdvance": 0,
+      "xOffset": 0,
+      "yOffset": 0
+    },
+    {
+      "glyphId": 25,
+      "cluster": 2,
+      "xAdvance": 636,
+      "yAdvance": 0,
+      "xOffset": 0,
+      "yOffset": 0
+    },
+    {
+      "glyphId": 29,
+      "cluster": 1,
+      "xAdvance": 404,
+      "yAdvance": 0,
+      "xOffset": 0,
+      "yOffset": 0
+    },
+    {
+      "glyphId": 77,
+      "cluster": 0,
+      "xAdvance": 456,
+      "yAdvance": 0,
+      "xOffset": 0,
+      "yOffset": 0
+    }
+  ]
+}

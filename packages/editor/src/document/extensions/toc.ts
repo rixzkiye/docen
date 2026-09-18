@@ -1,4 +1,12 @@
-import { detectHeadingLevel, type StylesOptions } from "@docen/docx";
+import {
+  detectHeadingLevel,
+  fieldRef,
+  paragraphStyleNames,
+  parseCustomStyles,
+  seqLabelOfData,
+  styleLevelsOf,
+  type StylesOptions,
+} from "@docen/docx";
 import { Extension } from "@docen/docx/core";
 import type { Node as PMNode } from "@tiptap/pm/model";
 
@@ -40,29 +48,46 @@ function headingRangeOf(range: unknown): { min: number; max: number } {
   return min >= 1 && max >= min && max <= 9 ? { min, max } : { min: 1, max: 3 };
 }
 
-/** Parse \t switch custom styles mapping (e.g. "MyHeader,1,Subtitle,2" or { MyHeader: 1 }). */
-export function parseCustomStyles(raw: unknown): Map<string, number> {
-  const map = new Map<string, number>();
-  if (!raw) return map;
-  if (typeof raw === "object" && raw !== null && !Array.isArray(raw)) {
-    for (const [k, v] of Object.entries(raw)) {
-      const num = Number(v);
-      if (num >= 1 && num <= 9) map.set(k.toLowerCase(), num);
-    }
-    return map;
+/** Parse \t switch custom styles mapping (re-exported from @docen/docx —
+ *  shared with the generation-time TOC cache pass). */
+export { parseCustomStyles };
+
+/** The `\t` level for a paragraph style — matched against the style id and
+ *  every resolved name up its `basedOn` chain, because the switch lists names
+ *  ("My Heading,1") while paragraph attrs carry the id. */
+function customStyleLevel(
+  customStyles: Map<string, number>,
+  styles: StylesOptions | undefined,
+  styleId: unknown,
+): number | undefined {
+  if (typeof styleId !== "string" || !styleId) return undefined;
+  for (const name of paragraphStyleNames(styles, styleId)) {
+    const level = customStyles.get(name);
+    if (level != null) return level;
   }
-  if (typeof raw === "string") {
-    const parts = raw
-      .split(/[,;]/)
-      .map((s) => s.trim())
-      .filter(Boolean);
-    for (let i = 0; i < parts.length; i += 2) {
-      const name = parts[i];
-      const lvl = Number(parts[i + 1]);
-      if (name && lvl >= 1 && lvl <= 9) map.set(name.toLowerCase(), lvl);
-    }
+  return undefined;
+}
+
+/** The `\b` scope key on a tocField's options: the Word-faithful
+ *  `entriesFromBookmark` or the legacy editor `bookmark`. */
+function tocScopeOf(
+  options: { entriesFromBookmark?: unknown; bookmark?: unknown } | null | undefined,
+): string | undefined {
+  for (const value of [options?.entriesFromBookmark, options?.bookmark]) {
+    if (typeof value === "string" && value !== "") return value;
   }
-  return map;
+  return undefined;
+}
+
+/** The `\c` caption label on a tocField's options: the Word-faithful
+ *  `captionLabelIncludingNumbers` or the legacy editor `captionLabel`. */
+function tocCaptionLabelOf(
+  options: { captionLabelIncludingNumbers?: unknown; captionLabel?: unknown } | null | undefined,
+): string | undefined {
+  for (const value of [options?.captionLabelIncludingNumbers, options?.captionLabel]) {
+    if (typeof value === "string" && value !== "") return value;
+  }
+  return undefined;
 }
 
 /** Max bookmark id already carried in the document passthroughs. */
@@ -115,6 +140,46 @@ export interface HeadingBookmarkInfo {
   needsInsert: boolean;
 }
 
+/** The doc styles for a PM document (TOC style resolution). */
+const docStylesOf = (doc: PMNode): StylesOptions | undefined =>
+  (doc.attrs as { styles?: StylesOptions }).styles;
+
+/** Find the [start, end] positions of a bookmark by name. */
+export function findBookmarkRange(
+  doc: PMNode,
+  bookmarkName: string,
+): { from: number; to: number } | null {
+  let bookmarkId: number | null = null;
+  let from: number | null = null;
+  let to: number | null = null;
+
+  doc.descendants((node, pos) => {
+    if (node.type.name === "inlinePassthrough" || node.type.name === "passthrough") {
+      try {
+        const data = JSON.parse(String(node.attrs?.data ?? "{}")) as {
+          bookmarkStart?: { id?: number; name?: string };
+          bookmarkEnd?: { id?: number };
+        };
+        if (data.bookmarkStart && data.bookmarkStart.name === bookmarkName) {
+          bookmarkId = data.bookmarkStart.id ?? -1;
+          from = pos;
+        }
+        if (bookmarkId != null && data.bookmarkEnd && data.bookmarkEnd.id === bookmarkId) {
+          to = pos + node.nodeSize;
+        }
+      } catch {
+        /* skip */
+      }
+    }
+    return true;
+  });
+
+  if (from != null && to != null) {
+    return { from, to };
+  }
+  return null;
+}
+
 /** Entry paragraphs for the headings the TOC's level window covers. */
 function buildTocEntries(
   doc: PMNode,
@@ -127,6 +192,13 @@ function buildTocEntries(
     alignPageNumbers?: boolean;
     styles?: string;
     customStyles?: Record<string, number> | string;
+    stylesWithLevels?: unknown;
+    hyperlink?: boolean;
+    hyperlinks?: boolean;
+    bookmark?: string;
+    entriesFromBookmark?: string;
+    useAppliedParagraphOutlineLevel?: boolean;
+    outlineLevel?: boolean;
   } = {},
 ): {
   entries: { type: string; attrs?: Record<string, unknown>; content: unknown[] }[];
@@ -134,25 +206,37 @@ function buildTocEntries(
 } {
   const styles = (doc.attrs as { styles?: StylesOptions }).styles;
   const { leader = "dot", showPageNumbers = true, alignPageNumbers = true } = opts;
-  const customStyles = parseCustomStyles(opts.styles ?? opts.customStyles);
+  const useHyperlinks = opts.hyperlink !== false && opts.hyperlinks !== false;
+  const useOutline = opts.outlineLevel ?? opts.useAppliedParagraphOutlineLevel ?? true;
+  const customStyles = parseCustomStyles(opts.styles ?? opts.customStyles ?? opts.stylesWithLevels);
   const out: { type: string; attrs?: Record<string, unknown>; content: unknown[] }[] = [];
   const headingBookmarks: HeadingBookmarkInfo[] = [];
   let nextBookmarkId = maxBookmarkIdOf(doc);
 
+  let allowedRange: { from: number; to: number } | null = null;
+  const scope = tocScopeOf(opts);
+  if (scope) {
+    allowedRange = findBookmarkRange(doc, scope);
+    if (!allowedRange) return { entries: [], headingBookmarks: [] };
+  }
+
   doc.descendants((node, pos) => {
     if (node.type.name !== "paragraph") return true;
-    const customLevel = customStyles.get((node.attrs.style as string)?.toLowerCase());
+    if (allowedRange && (pos < allowedRange.from || pos > allowedRange.to)) return true;
+
+    const customLevel = customStyleLevel(customStyles, styles, node.attrs.style);
     const level =
       customLevel ??
       detectHeadingLevel(
         {
           heading: (node.attrs.heading as string) || undefined,
           style: (node.attrs.style as string) || undefined,
-          outlineLevel: node.attrs.outlineLevel as number | undefined,
+          outlineLevel: useOutline ? (node.attrs.outlineLevel as number | undefined) : undefined,
         },
         styles,
       );
-    if (level == null || level < levels.min || level > levels.max || node.textContent.length === 0)
+    const headingText = resolvedTextOf(node);
+    if (level == null || level < levels.min || level > levels.max || headingText.length === 0)
       return true;
 
     const existingName = existingTocBookmarkOf(node);
@@ -167,7 +251,9 @@ function buildTocEntries(
       bookmarkName = `_Toc${out.length + 1}`;
       needsInsert = true;
     }
-    headingBookmarks.push({ pos, node, bookmarkId, bookmarkName, needsInsert });
+    if (useHyperlinks) {
+      headingBookmarks.push({ pos, node, bookmarkId, bookmarkName, needsInsert });
+    }
 
     const page = showPageNumbers ? pageOf?.(pos + 1) : undefined;
     // Unaligned numbers trail the text after a space (Word's "Right align
@@ -178,6 +264,11 @@ function buildTocEntries(
           ? [{ type: "tab" }, { type: "text", text: String(page) }]
           : [{ type: "text", text: ` ${page}` }]
         : [];
+
+    const marks = useHyperlinks
+      ? [{ type: "link", attrs: { href: `#${bookmarkName}` } }]
+      : undefined;
+
     out.push({
       type: "paragraph",
       attrs: {
@@ -190,8 +281,8 @@ function buildTocEntries(
       content: [
         {
           type: "text",
-          text: node.textContent,
-          marks: [{ type: "link", attrs: { href: `#${bookmarkName}` } }],
+          text: headingText,
+          ...(marks ? { marks } : {}),
         },
         // A blank page (unmapped heading) omits the number run — an empty
         // text node is illegal in PM.
@@ -212,7 +303,7 @@ function findTocField(doc: PMNode): { node: PMNode; pos: number } | null {
     if (found) return false;
     if (
       node.type.name === "tocField" &&
-      !(node.attrs.options as { captionLabel?: string } | null)?.captionLabel
+      !tocCaptionLabelOf(node.attrs.options as Record<string, unknown> | null)
     ) {
       found = { node, pos };
       return false;
@@ -224,6 +315,33 @@ function findTocField(doc: PMNode): { node: PMNode; pos: number } | null {
 
 // ── Table of figures (the TOC field's \c switch) ──
 
+/** A paragraph's visible text with field atoms resolved to their cached
+ *  results — PM's `textContent` skips atom nodes, so a caption entry would
+ *  read "Figure : chart" instead of "Figure 1: chart" without this. */
+function resolvedTextOf(node: PMNode): string {
+  let out = "";
+  node.descendants((child) => {
+    if (child.type.name === "text") {
+      out += child.text ?? "";
+      return false;
+    }
+    if (child.type.name === "inlinePassthrough") {
+      const data = child.attrs?.data;
+      if (typeof data === "string") {
+        try {
+          const ref = fieldRef(JSON.parse(data) as Record<string, unknown>);
+          if (ref?.result != null && ref.kind !== "formField") out += ref.result;
+        } catch {
+          /* opaque payload */
+        }
+      }
+      return false;
+    }
+    return true;
+  });
+  return out;
+}
+
 /** The SEQ label a caption paragraph counts in — the `SEQ <label>` simple
  *  field the caption dialog inserts (attrs.data JSON inside an
  *  inlinePassthrough, invisible to textContent). Null for non-caption
@@ -233,15 +351,11 @@ function captionLabelOf(node: PMNode): string | null {
   let label: string | null = null;
   node.descendants((child) => {
     if (label || child.type.name !== "inlinePassthrough") return true;
-    try {
-      const data = JSON.parse(String(child.attrs.data ?? "{}")) as {
-        simpleField?: { instruction?: string };
-      };
-      const m = /^SEQ (\S+)/.exec(data.simpleField?.instruction ?? "");
-      if (m) label = m[1];
-    } catch {
-      /* opaque payload — not a SEQ field we can read */
-    }
+    const data = child.attrs.data;
+    // Shared with the generation-time fill: a parsed DOCX/SEQ instruction
+    // carries surrounding spaces (`" SEQ Figure \* ARABIC "`), and complex
+    // fields count too.
+    if (typeof data === "string") label = seqLabelOfData(data);
     return true;
   });
   return label;
@@ -263,7 +377,8 @@ function buildTofEntries(
   const leader = options?.leader ?? "dot";
   const showPageNumbers = options?.showPageNumbers ?? true;
   doc.descendants((node, pos) => {
-    if (captionLabelOf(node) !== label || node.textContent.length === 0) return true;
+    const captionText = resolvedTextOf(node);
+    if (captionLabelOf(node) !== label || captionText.length === 0) return true;
     const page = pageOf?.(pos + 1);
     out.push({
       type: "paragraph",
@@ -272,7 +387,7 @@ function buildTofEntries(
         tabStops: [{ type: "right", position: tabPositionTw, leader }],
       },
       content: [
-        { type: "text", text: node.textContent },
+        { type: "text", text: captionText },
         ...(showPageNumbers
           ? [
               { type: "tab" },
@@ -294,7 +409,7 @@ function findTofField(doc: PMNode): { node: PMNode; pos: number } | null {
     if (found) return false;
     if (
       node.type.name === "tocField" &&
-      !!(node.attrs.options as { captionLabel?: string } | null)?.captionLabel
+      tocCaptionLabelOf(node.attrs.options as Record<string, unknown> | null)
     ) {
       found = { node, pos };
       return false;
@@ -327,6 +442,9 @@ export const TocCommands = Extension.create({
             alignPageNumbers?: boolean;
             styles?: string;
             customStyles?: Record<string, number> | string;
+            hyperlink?: boolean;
+            bookmark?: string;
+            useAppliedParagraphOutlineLevel?: boolean;
           },
         ) =>
         ({ state, tr, dispatch }) => {
@@ -339,13 +457,21 @@ export const TocCommands = Extension.create({
             insert,
           );
           if (entries.length === 0) return false;
+          const customStyleLevels = styleLevelsOf(insert?.styles ?? insert?.customStyles);
           const node = state.schema.nodeFromJSON({
             type: "tocField",
             attrs: {
               options: {
                 headingStyleRange: insert?.headingRange ?? "1-3",
-                hyperlink: true,
-                ...(insert?.styles ? { styles: insert.styles } : {}),
+                hyperlink: insert?.hyperlink !== false,
+                // Stamped under office-open's option names so the compiled field
+                // instruction really carries \t / \b — the dialog's own keys
+                // ("styles"/"bookmark") are not part of TableOfContentsOptions.
+                ...(customStyleLevels.length > 0 ? { stylesWithLevels: customStyleLevels } : {}),
+                ...(insert?.bookmark ? { entriesFromBookmark: insert.bookmark } : {}),
+                ...(insert?.useAppliedParagraphOutlineLevel !== undefined
+                  ? { useAppliedParagraphOutlineLevel: insert.useAppliedParagraphOutlineLevel }
+                  : {}),
               },
             },
             content: entries,
@@ -383,9 +509,14 @@ export const TocCommands = Extension.create({
             headingStyleRange?: string;
             styles?: string;
             customStyles?: unknown;
+            stylesWithLevels?: unknown;
             leader?: string;
             showPageNumbers?: boolean;
             alignPageNumbers?: boolean;
+            hyperlink?: boolean;
+            bookmark?: string;
+            entriesFromBookmark?: string;
+            useAppliedParagraphOutlineLevel?: boolean;
           } | null;
           const levels = headingRangeOf(opts?.headingStyleRange);
           const { entries, headingBookmarks } = buildTocEntries(
@@ -397,8 +528,13 @@ export const TocCommands = Extension.create({
               leader: opts?.leader,
               styles: opts?.styles,
               customStyles: opts?.customStyles as Record<string, number> | string | undefined,
+              stylesWithLevels: opts?.stylesWithLevels,
               showPageNumbers: opts?.showPageNumbers,
               alignPageNumbers: opts?.alignPageNumbers,
+              hyperlink: opts?.hyperlink,
+              bookmark: opts?.bookmark,
+              entriesFromBookmark: opts?.entriesFromBookmark,
+              useAppliedParagraphOutlineLevel: opts?.useAppliedParagraphOutlineLevel,
             },
           );
           if (entries.length === 0) return false;
@@ -438,22 +574,37 @@ export const TocCommands = Extension.create({
             headingStyleRange?: string;
             styles?: string;
             customStyles?: unknown;
+            stylesWithLevels?: unknown;
+            bookmark?: string;
+            entriesFromBookmark?: string;
+            useAppliedParagraphOutlineLevel?: boolean;
           } | null;
           const levels = headingRangeOf(opts?.headingStyleRange);
-          const customStyles = parseCustomStyles(opts?.styles ?? opts?.customStyles);
-          const styles = (state.doc.attrs as { styles?: StylesOptions }).styles;
+          const customStyles = parseCustomStyles(
+            opts?.styles ?? opts?.customStyles ?? opts?.stylesWithLevels,
+          );
+          const styles = docStylesOf(state.doc);
+          let allowedRange: { from: number; to: number } | null = null;
+          const scope = opts ? tocScopeOf(opts) : undefined;
+          if (scope) {
+            allowedRange = findBookmarkRange(state.doc, scope);
+          }
+          const useOutline = opts?.useAppliedParagraphOutlineLevel ?? true;
           const bookmarkPages = new Map<string, number>();
           const textPages = new Map<string, number>();
           state.doc.descendants((node, pos) => {
             if (node.type.name !== "paragraph") return true;
-            const customLevel = customStyles.get((node.attrs.style as string)?.toLowerCase());
+            if (allowedRange && (pos < allowedRange.from || pos > allowedRange.to)) return true;
+            const customLevel = customStyleLevel(customStyles, styles, node.attrs.style);
             const level =
               customLevel ??
               detectHeadingLevel(
                 {
                   heading: (node.attrs.heading as string) || undefined,
                   style: (node.attrs.style as string) || undefined,
-                  outlineLevel: node.attrs.outlineLevel as number | undefined,
+                  outlineLevel: useOutline
+                    ? (node.attrs.outlineLevel as number | undefined)
+                    : undefined,
                 },
                 styles,
               );
@@ -532,7 +683,10 @@ export const TocCommands = Extension.create({
             type: "tocField",
             attrs: {
               options: {
-                captionLabel,
+                // The canonical Word table-of-figures switch is \c (office-open
+                // names it captionLabelIncludingNumbers); a bare \a makes Word
+                // omit label+number on update and LibreOffice drop the table.
+                captionLabelIncludingNumbers: captionLabel,
                 ...(insert?.leader ? { leader: insert.leader } : {}),
                 ...(insert?.showPageNumbers !== undefined
                   ? { showPageNumbers: insert.showPageNumbers }
@@ -557,11 +711,12 @@ export const TocCommands = Extension.create({
           if (!found) return false;
           const opts = found.node.attrs.options as {
             captionLabel?: string;
+            captionLabelIncludingNumbers?: string;
             leader?: string;
             showPageNumbers?: boolean;
             alignPageNumbers?: boolean;
           } | null;
-          const label = opts?.captionLabel ?? "Figure";
+          const label = (opts && tocCaptionLabelOf(opts)) ?? "Figure";
           const entries = buildTofEntries(
             state.doc,
             pageOf,
@@ -593,6 +748,9 @@ declare module "@tiptap/core" {
           alignPageNumbers?: boolean;
           styles?: string;
           customStyles?: Record<string, number> | string;
+          hyperlink?: boolean;
+          bookmark?: string;
+          useAppliedParagraphOutlineLevel?: boolean;
         },
       ) => ReturnType;
       "update-toc": (pageOf?: PageOf, tabPositionTw?: number) => ReturnType;

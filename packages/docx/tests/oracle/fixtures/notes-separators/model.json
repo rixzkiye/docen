@@ -1,0 +1,152 @@
+{
+  "sections": [
+    {
+      "properties": {
+        "pageSize": {
+          "width": 11906,
+          "height": 16838
+        },
+        "pageMargin": {
+          "top": 1440,
+          "bottom": 1440,
+          "left": 1800,
+          "right": 1800
+        }
+      },
+      "children": [
+        {
+          "paragraph": {
+            "children": [
+              {
+                "text": "BODY "
+              },
+              {
+                "footnoteReference": 1
+              },
+              {
+                "text": " END "
+              },
+              {
+                "endnoteReference": 1
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ],
+  "footnotes": [
+    {
+      "id": 1,
+      "children": [
+        {
+          "paragraph": {
+            "style": "FootnoteText",
+            "children": [
+              {
+                "footnoteRef": true
+              },
+              {
+                "text": " fn body"
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ],
+  "endnotes": [
+    {
+      "id": 1,
+      "children": [
+        {
+          "paragraph": {
+            "style": "EndnoteText",
+            "children": [
+              {
+                "endnoteRef": true
+              },
+              {
+                "text": " en body"
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ],
+  "footnoteSeparators": {
+    "separator": {
+      "id": -1,
+      "children": [
+        {
+          "paragraph": {
+            "children": [
+              {
+                "text": "FN-SEPARATOR"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "continuationSeparator": {
+      "id": 0,
+      "children": [
+        {
+          "paragraph": {
+            "children": [
+              {
+                "text": "FN-CONTINUATION"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "continuationNotice": {
+      "id": 1,
+      "children": [
+        {
+          "paragraph": {
+            "children": [
+              {
+                "text": "FN-CONTINUATION-NOTICE"
+              }
+            ]
+          }
+        }
+      ]
+    }
+  },
+  "endnoteSeparators": {
+    "separator": {
+      "id": -1,
+      "children": [
+        {
+          "paragraph": {
+            "children": [
+              {
+                "text": "EN-SEPARATOR"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "continuationSeparator": {
+      "id": 0,
+      "children": [
+        {
+          "paragraph": {
+            "children": [
+              {
+                "text": "EN-CONTINUATION"
+              }
+            ]
+          }
+        }
+      ]
+    }
+  }
+}

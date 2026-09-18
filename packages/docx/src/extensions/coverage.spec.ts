@@ -6,8 +6,11 @@ import { describe, expect, it } from "vitest";
 import { compileDocument, docxExtensions, resolveDocument } from "../index";
 import {
   PARAGRAPH_CHILD_DISPOSITIONS,
+  PRESERVE_ONLY_ELEMENTS,
+  PRESERVED_RUN_ELEMENTS,
   RUN_CHILDREN_DROPPED,
   SECTION_CHILD_DISPOSITIONS,
+  type Disposition,
 } from "./coverage";
 
 /**
@@ -267,15 +270,29 @@ const INLINE_FIXTURES: Record<keyof typeof PARAGRAPH_CHILD_DISPOSITIONS, () => P
   moveToRangeStart: () => ({ moveToRangeStart: { id: 1, name: "mv" } }),
   moveToRangeEnd: () => ({ moveToRangeEnd: { id: 1 } }),
   movedFrom: () => ({
-    movedFrom: { id: 1, author: "a", date: "2024-01-01T00:00:00Z", children: [] },
+    movedFrom: { id: 1, author: "a", date: "2024-01-01T00:00:00Z", children: [{ text: "mf" }] },
   }),
   movedTo: () => ({
-    movedTo: { id: 1, author: "a", date: "2024-01-01T00:00:00Z", children: [] },
+    movedTo: { id: 1, author: "a", date: "2024-01-01T00:00:00Z", children: [{ text: "mt" }] },
   }),
   moveFrom: () => ({
-    moveFrom: { author: "a", date: "2024-01-01T00:00:00Z", name: "mv" },
+    moveFrom: {
+      id: 1,
+      author: "a",
+      date: "2024-01-01T00:00:00Z",
+      name: "mv",
+      children: [{ text: "mf" }],
+    },
   }),
-  moveTo: () => ({ moveTo: { author: "a", date: "2024-01-01T00:00:00Z", name: "mv" } }),
+  moveTo: () => ({
+    moveTo: {
+      id: 1,
+      author: "a",
+      date: "2024-01-01T00:00:00Z",
+      name: "mv",
+      children: [{ text: "mt" }],
+    },
+  }),
   customXmlInsRangeStart: () => ({ customXmlInsRangeStart: { id: 1 } }),
   customXmlInsRangeEnd: () => ({ customXmlInsRangeEnd: 1 }),
   customXmlDelRangeStart: () => ({ customXmlDelRangeStart: { id: 1 } }),
@@ -423,6 +440,98 @@ const INLINE_EDITABLE: InlineEditable = {
       expect(out).toEqual({ math: { display: true } });
     },
   },
+  permStart: {
+    marker: "permStart",
+    probe: (out) => {
+      const ps = (out as { permStart: { id: number } }).permStart;
+      expect(ps.id).toBe(1);
+    },
+  },
+  permEnd: {
+    marker: "permEnd",
+    probe: (out) => {
+      expect((out as { permEnd: number }).permEnd).toBe(1);
+    },
+  },
+  formField: {
+    marker: "formField",
+    probe: (out) => {
+      const ff = (out as { formField: { name?: string } }).formField;
+      expect(ff.name).toBe("ff1");
+    },
+  },
+  dir: {
+    marker: "dir",
+    probe: (out) => {
+      const dir = (out as { dir: { val?: string; children?: unknown[] } }).dir;
+      expect(dir.val).toBe("ltr");
+    },
+  },
+  bdo: {
+    marker: "bdo",
+    probe: (out) => {
+      const bdo = (out as { bdo: { val?: string; children?: unknown[] } }).bdo;
+      expect(bdo.val).toBe("rtl");
+    },
+  },
+  moveFromRangeStart: {
+    marker: "moveFromRangeStart",
+    probe: (out) => {
+      const m = (out as { moveFromRangeStart: { id: number } }).moveFromRangeStart;
+      expect(m.id).toBe(1);
+    },
+  },
+  moveFromRangeEnd: {
+    marker: "moveFromRangeEnd",
+    probe: (out) => {
+      const m = (out as { moveFromRangeEnd: { id: number } }).moveFromRangeEnd;
+      expect(m.id).toBe(1);
+    },
+  },
+  moveToRangeStart: {
+    marker: "moveToRangeStart",
+    probe: (out) => {
+      const m = (out as { moveToRangeStart: { id: number } }).moveToRangeStart;
+      expect(m.id).toBe(1);
+    },
+  },
+  moveToRangeEnd: {
+    marker: "moveToRangeEnd",
+    probe: (out) => {
+      const m = (out as { moveToRangeEnd: { id: number } }).moveToRangeEnd;
+      expect(m.id).toBe(1);
+    },
+  },
+  movedFrom: {
+    marker: "moveFrom",
+    probe: (out) => {
+      const m = (out as { movedFrom: { id?: number; author?: string } }).movedFrom;
+      expect(m.id).toBe(1);
+      expect(m.author).toBe("a");
+    },
+  },
+  movedTo: {
+    marker: "moveTo",
+    probe: (out) => {
+      const m = (out as { movedTo: { id?: number; author?: string } }).movedTo;
+      expect(m.id).toBe(1);
+      expect(m.author).toBe("a");
+    },
+  },
+  moveFrom: {
+    marker: "moveFrom",
+    probe: (out) => {
+      const m = out as { movedFrom?: { id?: number }; moveFrom?: { id?: number } };
+      expect((m.movedFrom ?? m.moveFrom)?.id).toBe(1);
+    },
+  },
+  moveTo: {
+    marker: "moveTo",
+    probe: (out) => {
+      const m = out as { movedTo?: { id?: number }; moveTo?: { id?: number } };
+      expect((m.movedTo ?? m.moveTo)?.id).toBe(1);
+    },
+  },
 };
 
 describe("ParagraphChild dispositions", () => {
@@ -447,19 +556,53 @@ describe("ParagraphChild dispositions", () => {
   }
 });
 
-// ── Run children drops ──
+// ── Run children: preserved elements + remaining drops ──
 
-describe("run children drops", () => {
+/** Resolve → compile a run carrying `{ tag: true }` after some text. */
+function runChildRoundTrip(tag: string) {
+  const run: ParagraphChild = {
+    text: "x",
+    children: [{ [tag]: true } as NonNullable<RunOptions["children"]>[number]],
+  };
+  return roundTrip([{ paragraph: { children: [run] } }]);
+}
+
+describe("run children preservation", () => {
+  for (const [tag, entry] of Object.entries(PRESERVED_RUN_ELEMENTS)) {
+    it(`keeps {${tag}} nested in a run as a runMarker (${entry.element})`, () => {
+      const { json, compiled } = runChildRoundTrip(tag);
+      // The resolve leg claims the element with the dedicated atom.
+      const markers: { element?: string }[] = [];
+      const collect = (node: JSONContent): void => {
+        if (node.type === "runMarker") markers.push(node.attrs ?? {});
+        for (const child of node.content ?? []) collect(child);
+      };
+      collect(json);
+      expect(markers.map((m) => m.element)).toContain(tag);
+      // The compile leg emits the element back into the run children.
+      expect(JSON.stringify(compiled)).toContain(`"${tag}"`);
+    });
+  }
+
   for (const { tag, reason } of RUN_CHILDREN_DROPPED) {
     it(`drops {${tag}} nested in a run (${reason})`, () => {
-      const run: ParagraphChild = {
-        text: "x",
-        children: [{ [tag]: true } as NonNullable<RunOptions["children"]>[number]],
-      };
-      const { compiled } = roundTrip([{ paragraph: { children: [run] } }]);
+      const { compiled } = runChildRoundTrip(tag);
       expect(JSON.stringify(compiled)).not.toContain(`"${tag}"`);
     });
   }
+
+  it("still drops an unregistered run child (no writer support)", () => {
+    // A shape outside EG_RunInnerContent's empty set has no office-open
+    // writer; the walk must drop it rather than pass it into the writer.
+    const run: ParagraphChild = {
+      text: "x",
+      children: [
+        { unknownRunChild: true } as unknown as NonNullable<RunOptions["children"]>[number],
+      ],
+    };
+    const { compiled } = roundTrip([{ paragraph: { children: [run] } }]);
+    expect(JSON.stringify(compiled)).not.toContain("unknownRunChild");
+  });
 
   it("keeps rule-owned children nested in a run (pageBreak inside children)", () => {
     const run: ParagraphChild = {
@@ -634,5 +777,250 @@ describe("real-XML round-trip (generateDocument → parseDocument)", { timeout: 
     };
     expect(insertion.insertion.author).toBe("a");
     expect(insertion.insertion.children?.[0]?.text).toBe("ins");
+  });
+
+  it("hyphens (softHyphen and noBreakHyphen) survive real XML with editable routes", () => {
+    const compiled = throughXml([
+      {
+        paragraph: {
+          children: [
+            {
+              children: [
+                "word",
+                { softHyphen: true } as any,
+                "break",
+                { noBreakHyphen: true } as any,
+                "hyphen",
+              ],
+            },
+          ],
+        },
+      },
+    ]);
+    const para = (compiled[0] as { paragraph: { children?: ParagraphChild[] } }).paragraph;
+    const run = para.children?.[0] as { children?: unknown[] };
+    expect(JSON.stringify(run)).toContain("softHyphen");
+    expect(JSON.stringify(run)).toContain("noBreakHyphen");
+  });
+
+  it("carriageReturn survives real XML as hardBreak variant", () => {
+    const compiled = throughXml([
+      {
+        paragraph: {
+          children: [
+            { text: "hello" },
+            { children: [{ carriageReturn: true } as any] },
+            { text: "world" },
+          ],
+        },
+      },
+    ]);
+    const json = resolveDocument({ sections: [{ children: compiled }] }, docxExtensions);
+    const hardBreak = (json.content?.[0] as any)?.content?.find((c: any) => c.type === "hardBreak");
+    expect(hardBreak?.attrs?.variant).toBe("carriageReturn");
+
+    const recompiled = compileDocument(json, docxExtensions).sections[0].children;
+    expect(JSON.stringify(recompiled)).toContain("carriageReturn");
+  });
+
+  it("bidi marks (dir and bdo) survive real XML", () => {
+    const compiled = throughXml([
+      {
+        paragraph: {
+          children: [
+            { dir: { val: "rtl", children: [{ text: "عربي" }] } } as any,
+            { bdo: { val: "ltr", children: [{ text: "english" }] } } as any,
+          ],
+        },
+      },
+    ]);
+    const json = resolveDocument({ sections: [{ children: compiled }] }, docxExtensions);
+    const runs = (json.content?.[0] as any)?.content;
+    const dirRun = runs?.find((c: any) => c.marks?.some((m: any) => m.type === "dir"));
+    const bdoRun = runs?.find((c: any) => c.marks?.some((m: any) => m.type === "bdo"));
+    expect(dirRun?.marks?.find((m: any) => m.type === "dir")?.attrs?.val).toBe("rtl");
+    expect(bdoRun?.marks?.find((m: any) => m.type === "bdo")?.attrs?.val).toBe("ltr");
+  });
+
+  it("permission ranges (permStart and permEnd) survive real XML", () => {
+    const compiled = throughXml([
+      {
+        paragraph: {
+          children: [
+            { permStart: { id: 42, editGroup: "everyone" } } as any,
+            { text: "editable region" },
+            { permEnd: 42 } as any,
+          ],
+        },
+      },
+    ]);
+    const json = resolveDocument({ sections: [{ children: compiled }] }, docxExtensions);
+    const content = (json.content?.[0] as any)?.content;
+    const pStart = content?.find((c: any) => c.type === "permStart");
+    const pEnd = content?.find((c: any) => c.type === "permEnd");
+    expect(pStart?.attrs?.id).toBe(42);
+    expect(pStart?.attrs?.editGroup).toBe("everyone");
+    expect(pEnd?.attrs?.id).toBe(42);
+  });
+
+  it("formField survives real XML and syncs values", () => {
+    const compiled = throughXml([
+      {
+        paragraph: {
+          children: [
+            {
+              formField: {
+                name: "field_cb",
+                checkBox: { checked: true },
+              },
+            } as any,
+          ],
+        },
+      },
+    ]);
+    const json = resolveDocument({ sections: [{ children: compiled }] }, docxExtensions);
+    const ffNode = (json.content?.[0] as any)?.content?.find((c: any) => c.type === "formField");
+    expect(ffNode).toBeDefined();
+    expect(ffNode?.attrs?.formField?.name).toBe("field_cb");
+    expect(ffNode?.attrs?.formField?.checkBox?.checked).toBe(true);
+  });
+
+  // ── Preserve-only elements through real XML ──
+  // The audited passthrough shapes that office-open can round-trip from bytes:
+  // resolve → compile → generate → parse → resolve keeps the branch. Shapes
+  // office-open cannot stringify from a synthetic options object (SmartArt
+  // needs its diagram parts, subDoc its relationship, OLE its embed payload)
+  // are covered at the model level by the fixture suite above and by
+  // docs/passthrough.md.
+  function throughXmlAndBack(children: SectionChild[]): JSONContent {
+    const first = throughXml(children);
+    const binary = generateDocumentSync({ sections: [{ children: first }] });
+    return resolveDocument(parseDocumentSync(new Uint8Array(binary as Buffer)), docxExtensions);
+  }
+
+  it("symbolRun survives real XML and stays an inlinePassthrough atom", () => {
+    const json = throughXmlAndBack([
+      {
+        paragraph: {
+          children: [{ symbolRun: { char: "F0A7", symbolFont: "Symbol" } } as any],
+        },
+      },
+    ]);
+    expect(collectTypes(json).has("inlinePassthrough")).toBe(true);
+    const compiled = compileDocument(json, docxExtensions).sections[0].children;
+    expect(JSON.stringify(compiled)).toContain("F0A7");
+  });
+
+  it("inline customXml survives real XML verbatim", () => {
+    const json = throughXmlAndBack([
+      {
+        paragraph: {
+          children: [
+            { text: "before " },
+            { customXml: { element: "CX", children: ["body"] } } as any,
+            { text: " after" },
+          ],
+        },
+      },
+    ]);
+    const types = collectTypes(json);
+    expect(types.has("inlinePassthrough")).toBe(true);
+    const compiled = compileDocument(json, docxExtensions).sections[0].children;
+    expect(JSON.stringify(compiled)).toContain('"CX"');
+  });
+
+  it("inline rawXml survives real XML verbatim", () => {
+    const json = throughXmlAndBack([
+      { paragraph: { children: [{ rawXml: '<w:fldSimple w:instr="PAGE"/>' } as any] } },
+    ]);
+    expect(collectTypes(json).has("inlinePassthrough")).toBe(true);
+  });
+
+  it("proofErr survives real XML as zero-width metadata", () => {
+    const json = throughXmlAndBack([
+      {
+        paragraph: {
+          children: [{ proofErr: "spellStart" } as any, { text: "wrd" }],
+        },
+      },
+    ]);
+    // A proofing range marker has no editable node; it rides the atom (or is
+    // dropped by office-open when it has no valid spelling state — either way
+    // the text content survives).
+    const text = JSON.stringify(json);
+    expect(text).toContain("wrd");
+  });
+
+  it("comment anchors survive real XML with the comment body intact", () => {
+    const json = throughXmlAndBack([
+      {
+        paragraph: {
+          children: [
+            { commentRangeStart: { id: 7 } } as any,
+            { text: "reviewed" },
+            { commentRangeEnd: { id: 7 } } as any,
+            { commentReference: 7 } as any,
+          ],
+        },
+      },
+    ]);
+    expect(JSON.stringify(compileDocument(json, docxExtensions))).toContain("reviewed");
+    expect(collectTypes(json).has("inlinePassthrough")).toBe(true);
+  });
+
+  it("altChunk survives real XML as a block passthrough", () => {
+    const json = throughXmlAndBack([
+      { altChunk: { data: "PGh0bWw+", contentType: "text/html", extension: "html" } },
+    ]);
+    expect(collectTypes(json).has("passthrough")).toBe(true);
+    const compiled = compileDocument(json, docxExtensions).sections[0].children;
+    expect(JSON.stringify(compiled)).toContain("text/html");
+  });
+});
+
+// ── Preserve-only registry ──
+
+describe("preserve-only registry", () => {
+  /** The elements named by the R8 audit. Each must be documented, and each
+   *  documented entry must agree with the disposition tables. */
+  const AUDITED = [
+    "smartArt",
+    "object",
+    "symbolRun",
+    "commentRangeStart",
+    "commentRangeEnd",
+    "commentReference",
+    "customXml",
+    "subDoc",
+    "proofErr",
+    "rawXml",
+    "altChunk",
+  ] as const;
+
+  it("documents every audited element", () => {
+    const documented = new Set(PRESERVE_ONLY_ELEMENTS.map((e) => e.tag));
+    for (const tag of AUDITED) {
+      expect(documented.has(tag), `${tag} must have a preserve-only note`).toBe(true);
+    }
+  });
+
+  it("every note matches the disposition tables", () => {
+    const dispositions: Record<string, Disposition> = {
+      ...SECTION_CHILD_DISPOSITIONS,
+      ...PARAGRAPH_CHILD_DISPOSITIONS,
+    };
+    for (const note of PRESERVE_ONLY_ELEMENTS) {
+      const disposition = dispositions[note.tag];
+      expect(disposition, `${note.tag} has no disposition entry`).toBeDefined();
+      expect(
+        "passthrough" in disposition!,
+        `${note.tag} is documented as preserve-only but ${JSON.stringify(disposition)}`,
+      ).toBe(true);
+    }
+  });
+
+  it("states the SmartArt authoring exclusion explicitly", () => {
+    const note = PRESERVE_ONLY_ELEMENTS.find((e) => e.tag === "smartArt")!;
+    expect(note.reason).toMatch(/explicit.*exclusion/i);
   });
 });

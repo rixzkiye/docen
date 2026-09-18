@@ -184,9 +184,30 @@ export class SdtCommands {
     if (!editor) return false;
 
     const { $from } = editor.state.selection;
-    // Check if within sdtInline with checkbox properties
+    // Check if within sdtInline or formField with checkbox properties
     for (let depth = $from.depth; depth > 0; depth--) {
       const node = $from.node(depth);
+      if (node.type.name === "formField") {
+        const ff = (node.attrs.formField as Record<string, unknown> | undefined) ?? {};
+        if (ff.checkBox) {
+          const currentChecked = Boolean((ff.checkBox as { checked?: boolean }).checked);
+          const newChecked = !currentChecked;
+          const pos = $from.before(depth);
+          const newFf = {
+            ...ff,
+            checkBox: {
+              ...(ff.checkBox as object),
+              checked: newChecked,
+            },
+          };
+          const newText = newChecked ? "☒" : "☐";
+          const tr = editor.state.tr;
+          tr.setNodeMarkup(pos, undefined, { ...node.attrs, formField: newFf });
+          tr.replaceWith(pos + 1, pos + node.nodeSize - 1, editor.schema.text(newText));
+          editor.view.dispatch(tr);
+          return true;
+        }
+      }
       if (node.type.name === "sdtInline") {
         const props = (node.attrs.properties as Record<string, unknown> | undefined) ?? {};
         if (props.checkbox || node.text?.includes("☐") || node.text?.includes("☒")) {

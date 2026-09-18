@@ -3,6 +3,7 @@ import type { JSONContent } from "@tiptap/core";
 
 import { cleanAttrs } from "../converters/styles";
 import { Node } from "../core";
+import { parseVmlShapeLayout } from "./drawing-shape-layout";
 import type { ParseBlockRule } from "./types";
 import { attrNative } from "./utils";
 
@@ -26,7 +27,11 @@ export const parseDocxBlock: ParseBlockRule<TextboxBranch> = {
     if (content.length === 0) content.push({ type: "paragraph" });
     const node: JSONContent = { type: "textbox", content };
     const attrs = cleanAttrs(box as Record<string, unknown>);
-    if (Object.keys(attrs).length > 0) node.attrs = { textbox: attrs };
+    const layout = parseVmlShapeLayout((attrs as any).style);
+    const nodeAttrs: Record<string, unknown> = {};
+    if (Object.keys(attrs).length > 0) nodeAttrs.textbox = attrs;
+    if (layout) nodeAttrs.layout = layout;
+    if (Object.keys(nodeAttrs).length > 0) node.attrs = nodeAttrs;
     return node;
   },
 };
@@ -44,6 +49,7 @@ export const Textbox = Node.create({
   addAttributes() {
     return {
       textbox: attrNative(),
+      layout: attrNative(),
     };
   },
 
