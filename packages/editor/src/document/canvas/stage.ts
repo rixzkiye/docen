@@ -513,14 +513,14 @@ export class CanvasStage {
    *  background); web/read = the section laid as ONE continuous page rendered
    *  through a viewport window (see {@link WINDOW_PX}), read additionally
    *  read-only with the chrome trimmed by the host. */
-  #viewMode: "print" | "draft" | "web" | "read" = "print";
+  #viewMode: "print" | "draft" | "web" | "read" | "outline" = "print";
 
   /** Print snapshots repaint without the page color (Word's "Print
    *  background colors and images" ships off) — set only inside
    *  {@link printSnapshots}. */
   #suppressBackground = false;
 
-  setViewMode(mode: "print" | "draft" | "web" | "read"): void {
+  setViewMode(mode: "print" | "draft" | "web" | "read" | "outline"): void {
     if (mode === this.#viewMode) return;
     const wasContinuous = this.#viewMode === "web" || this.#viewMode === "read";
     this.#viewMode = mode;
@@ -528,7 +528,7 @@ export class CanvasStage {
     this.#repaintViewFlagStaleRest();
   }
 
-  get viewMode(): "print" | "draft" | "web" | "read" {
+  get viewMode(): "print" | "draft" | "web" | "read" | "outline" {
     return this.#viewMode;
   }
 

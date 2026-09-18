@@ -52,7 +52,7 @@ export interface IOHostView {
   sectionOfPage(): readonly number[];
   flow(): ProjectedFlowBox | undefined;
   lastRun(): { sections: (ProjectedSection & CanvasStageSection)[] } | undefined;
-  viewMode(): "print" | "web" | "draft" | "read";
+  viewMode(): "print" | "web" | "draft" | "read" | "outline";
   lang(): string;
   docxVariant(): DocxVariant;
   setDocxVariant(variant: DocxVariant): void;

@@ -107,10 +107,9 @@ export class NavigationViewsHostCommands implements HostCommandDomain {
       this.host.toggleFocusMode?.();
       return true;
     }
-    // View → Outline: Word's outline view maps to the document-structure
-    // pane here (the same tree the navigation pane shows).
+    // View → Outline: Word's outline view mode
     if (event === "outline") {
-      this.host.togglePane("navigation");
+      this.host.setView("outline");
       return true;
     }
     // Find (ribbon Home → Editing → Find, or Ctrl+F) → open the nav-pane search.
@@ -187,6 +186,7 @@ export class NavigationViewsHostCommands implements HostCommandDomain {
       "print-layout": "print",
       "web-layout": "web",
       "read-mode": "read",
+      outline: "outline",
       draft: "draft",
     };
     if (viewOf[event]) {

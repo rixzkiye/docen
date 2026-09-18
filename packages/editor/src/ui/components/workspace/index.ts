@@ -70,3 +70,6 @@ export { DocenMergeRecipientsDialog } from "./merge-recipients-dialog";
 export { DocenVersionHistoryDialog } from "./version-history-dialog";
 export { DocenA11yCheckerPane } from "./a11y-checker-pane";
 export { DocenMiniToolbar, default as DocenMiniToolbarDefault } from "./mini-toolbar";
+export { DocenOutlineView, default as DocenOutlineViewDefault } from "./outline-view";
+export { DocenRuler, default as DocenRulerDefault } from "./ruler";
+export { DocenNavPane, default as DocenNavPaneDefault } from "./nav-pane";

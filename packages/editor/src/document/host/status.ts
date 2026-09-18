@@ -35,7 +35,7 @@ export interface StatusHostView {
   /** The first section's flow box (page-size presets read its geometry). */
   flow(): ProjectedFlowBox | undefined;
   /** The active view, normalized. */
-  viewMode(): "print" | "web" | "draft" | "read";
+  viewMode(): "print" | "web" | "draft" | "read" | "outline";
   /** The caret's proofing language. */
   caretLanguage(): { value: string; noProof: boolean };
   /** Whether the given task pane is currently open. */

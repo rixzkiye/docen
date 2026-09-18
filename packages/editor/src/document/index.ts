@@ -2585,8 +2585,11 @@ class DocenDocument extends AddinHost<Editor> {
   }
 
   /** The active view, normalized (an unknown attr value reads as print). */
-  #viewMode(): "print" | "web" | "draft" | "read" {
-    return this.view === "web" || this.view === "draft" || this.view === "read"
+  #viewMode(): "print" | "web" | "draft" | "read" | "outline" {
+    return this.view === "web" ||
+      this.view === "draft" ||
+      this.view === "read" ||
+      this.view === "outline"
       ? this.view
       : "print";
   }
@@ -2600,6 +2603,12 @@ class DocenDocument extends AddinHost<Editor> {
     this.#stage?.setViewMode(mode);
     this.#syncReadChrome(mode === "read");
     this.#syncEditable();
+    const outlineView = this.shadowRoot?.querySelector("docen-outline-view") as
+      | (HTMLElement & { setEditor: (e: any) => void; syncFromEditor: () => void })
+      | null;
+    if (outlineView && this.editor) {
+      outlineView.setEditor(this.editor);
+    }
     this.#renderDoc(this.getJSON());
     this.#updateStatus();
   }
@@ -2663,7 +2672,7 @@ class DocenDocument extends AddinHost<Editor> {
   #armStage(p: {
     sections: (ProjectedSection & CanvasStageSection)[];
     background?: ProjectedPageBackground;
-    viewMode: "print" | "web" | "draft" | "read";
+    viewMode: "print" | "web" | "draft" | "read" | "outline";
   }): CanvasStage {
     this.#stage ??= new CanvasStage(this.#stageHost!, {
       metrics: browserFontMetrics,
@@ -2705,7 +2714,7 @@ class DocenDocument extends AddinHost<Editor> {
     sectionOfPage: number[];
     sections: (ProjectedSection & CanvasStageSection)[];
     background?: ProjectedPageBackground;
-    viewMode?: "print" | "web" | "draft" | "read";
+    viewMode?: "print" | "web" | "draft" | "read" | "outline";
   };
 
   /** Bumped by every render — an incremental layout walk compares its capture
