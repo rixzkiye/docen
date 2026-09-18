@@ -15,6 +15,9 @@ export interface DesignHostView {
   setWatermark(preset?: string): void;
   /** Open the page background's Fill Effects dialog. */
   openFillEffectsDialog(): void;
+  /** Design → Set as Default: persist the document's theme + style set for
+   *  newly created documents. */
+  setAsDefault(): void;
   /** Restore the styles model the document opened with. */
   restoreStylesSnapshot(): void;
 }
@@ -35,6 +38,7 @@ export class DesignHostCommands implements HostCommandDomain {
     "watermark",
     "fill-effects",
     "style-set",
+    "set-default",
   ];
 
   run(event: string, value?: string): boolean {
@@ -70,6 +74,12 @@ export class DesignHostCommands implements HostCommandDomain {
     // Page Color → Fill Effects; the dialog commits via fill-effects:ok).
     if (event === "fill-effects") {
       this.host.openFillEffectsDialog();
+      return true;
+    }
+    // Set as Default — persist the current theme + style set for new
+    // documents (Word's Design → Document Formatting → Set as Default).
+    if (event === "set-default") {
+      this.host.setAsDefault();
       return true;
     }
     // The style-set gallery's "document default" entry restores the styles

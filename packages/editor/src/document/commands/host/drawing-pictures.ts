@@ -26,6 +26,8 @@ export interface DrawingPicturesHostView {
     | undefined;
   /** Open the picture file picker (Insert → Picture). */
   pickImage(): void;
+  /** Open the Online Pictures address dialog (Insert → Pictures). */
+  openOnlinePictures(): void;
   /** Open the change-picture file picker (Picture Format → Adjust). */
   pickPicture(): void;
   /** Hand the keyboard back to the editing surface. */
@@ -63,6 +65,7 @@ export class DrawingPicturesHostCommands implements HostCommandDomain {
 
   readonly editor: readonly string[] = [
     "insert-picture",
+    "online-picture",
     "change-picture",
     "reset-picture-size",
     "drawing-properties",
@@ -113,6 +116,13 @@ export class DrawingPicturesHostCommands implements HostCommandDomain {
     // Picture needs a file picker — open it, then insert the chosen image.
     if (event === "insert-picture") {
       this.host.pickImage();
+      return true;
+    }
+    // Online Pictures — the address dialog (Word's Insert Pictures window;
+    // no picture service here, so the dialog takes an image URL). The dialog
+    // commit arrives as `online-picture:ok` on the element.
+    if (event === "online-picture") {
+      this.host.openOnlinePictures();
       return true;
     }
     // Change Picture — a picker over the selected image; the picked source

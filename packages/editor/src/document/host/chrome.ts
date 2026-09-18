@@ -115,6 +115,8 @@ export interface ChromeHostView {
   getAttribute(name: string): string | null;
   hasAttribute(name: string): boolean;
   markdown(): boolean;
+  /** Mailings → Highlight Merge Fields host flag (view-only toggle). */
+  highlightMergeFields(): boolean;
   markupView(): "simple" | "all" | "none" | "original";
   markupAuthors(): string[] | null;
   markupColors(): "author" | "changeType";
@@ -629,6 +631,9 @@ export class ChromeDomain {
       // Markdown input mode — the host flag is its truth (the Options
       // dialog writes it without a click, so the sync re-stamps both ways).
       ["markdown-input", this.host.markdown()],
+      // Highlight Merge Fields (Mailings) — a view toggle; the host flag is
+      // its truth, same as the other view-state buttons.
+      ["highlight-merge", this.host.highlightMergeFields()],
     ];
     const key = rows.map(([event, on]) => (on ? `${event}|` : `${event},`)).join("");
     if (key === this.#formatButtonsKey) return;

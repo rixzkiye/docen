@@ -78,7 +78,7 @@ vi.mock("leafer-ui", () => {
 });
 
 const { Group } = await import("leafer-ui");
-const { paintParagraph } = await import("./paragraph");
+const { paintParagraph, MERGE_FIELD_HIGHLIGHT } = await import("./paragraph");
 
 // ── tracked-format-change margin bars ──────────────────────────────────────
 
@@ -449,6 +449,30 @@ describe("paintParagraph character effects", () => {
     expect(texts).toHaveLength(2);
     expect(texts[1].props.scaleY).toBe(-0.6);
     expect(texts[1].props.opacity).toBe(0.5);
+  });
+
+  it("tints MERGEFIELD runs for Highlight Merge Fields and leaves other fields alone", () => {
+    const paintWith = (inline: LayoutInline, context: PaintContext): StubNode => {
+      const root = new Group({}) as unknown as StubNode;
+      paintParagraph(root as never, paraOf(inline), 0, 0, context);
+      return root;
+    };
+    const merge: LayoutInline = {
+      kind: "text",
+      text: "«Name»",
+      style: style(),
+      instruction: " MERGEFIELD Name \\* MERGEFORMAT ",
+    };
+    const page: LayoutInline = { kind: "text", text: "1", style: style(), field: "page" };
+
+    const tinted = paintWith(merge, { ...ctxOf(), highlightMergeFields: true });
+    expect(nodesOf(tinted, "Rect").map((r) => r.props.fill)).toContain(MERGE_FIELD_HIGHLIGHT);
+
+    // Off by default, and a non-merge field stays untinted with the flag on.
+    expect(nodesOf(paintWith(merge, ctxOf()), "Rect")).toHaveLength(0);
+    expect(
+      nodesOf(paintWith(page, { ...ctxOf(), highlightMergeFields: true }), "Rect"),
+    ).toHaveLength(0);
   });
 
   it("paints vertical bar tab line at stop position", () => {

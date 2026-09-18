@@ -59,6 +59,20 @@ function underlinePatternOf(style: LayoutTextStyle): string | undefined {
   return !s || s === "single" ? undefined : s;
 }
 
+/** Mailings → Highlight Merge Fields tint (Word's pale yellow field
+ *  highlight) — painted under the run's glyphs when the host view flag is on. */
+export const MERGE_FIELD_HIGHLIGHT = "rgba(255, 229, 100, 0.55)";
+
+/** Whether an inline atom carries a MERGEFIELD instruction (the mail merge
+ *  field `Highlight Merge Fields` tints). */
+export function isMergeField(inline: LayoutInline): boolean {
+  return (
+    inline.kind === "text" &&
+    typeof inline.instruction === "string" &&
+    /^\s*MERGEFIELD\b/i.test(inline.instruction)
+  );
+}
+
 /** w:u dash patterns in px (Leafer dashPattern stroke-gap pairs). */
 const UNDERLINE_DASHES: Record<string, number[] | undefined> = {
   dotted: [1, 2],
@@ -491,6 +505,12 @@ export function paintParagraph(
         // highlight is present — OOXML precedence puts the highlight on top.
         const hl = inline.style.highlight ? HIGHLIGHT_COLOR[inline.style.highlight] : undefined;
         let runFill = hl ?? (inline.style.shadingFill ? `#${inline.style.shadingFill}` : undefined);
+        // Mailings → Highlight Merge Fields: the view-only yellow tint on
+        // every MERGEFIELD run (an explicit character highlight still wins —
+        // it is real formatting, the merge highlight is UI state).
+        if (!runFill && ctx.highlightMergeFields && isMergeField(inline)) {
+          runFill = MERGE_FIELD_HIGHLIGHT;
+        }
         if (!runFill && ctx.fieldShading && ctx.fieldShading !== "never") {
           const isCalculatedField =
             inline.field === "page" ||

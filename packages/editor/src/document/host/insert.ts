@@ -275,6 +275,36 @@ export class InsertDomain {
     input.click();
   }
 
+  /** Insert → Online Pictures: insert the dialog's embedded picture at the
+   *  caret as a normal image node. The natural size clamps to the content
+   *  width (Word inserts at natural size but never wider than the frame,
+   *  keeping the aspect); a missing size leaves the attrs unset — the image
+   *  painter falls back to its default box and the DOCX prepare step fills
+   *  the dimensions from the image header on export. */
+  insertOnlinePicture(picture: {
+    src: string;
+    width?: number;
+    height?: number;
+    alt?: string;
+  }): void {
+    const editor = this.host.bridge()?.activeEditor() ?? this.host.editor();
+    if (!editor || !picture.src) return;
+    const contentW = this.host.flow()?.contentWidthPx ?? 620;
+    const naturalW = picture.width && picture.width > 0 ? picture.width : undefined;
+    const naturalH = picture.height && picture.height > 0 ? picture.height : undefined;
+    const scale = naturalW ? Math.min(1, contentW / naturalW) : 1;
+    editor.commands.insertContent({
+      type: "image",
+      attrs: {
+        src: picture.src,
+        ...(picture.alt ? { alt: picture.alt } : {}),
+        ...(naturalW != null ? { width: Math.round(naturalW * scale) } : {}),
+        ...(naturalH != null ? { height: Math.round(naturalH * scale) } : {}),
+      },
+    });
+    this.host.bridge()?.focus();
+  }
+
   /** Insert → Equation — drop one placeholder template (fraction / script /
    *  radical / sum / integral) at the caret as a mathInline atom (Word's
    *  Insert → Symbols → Equation gallery). Each argument is an empty run —

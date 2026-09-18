@@ -341,6 +341,22 @@ export const ribbonEn: AdditionalLanguage = {
     "fillEffects.remove": "Remove",
     "fillEffects.cancel": "Cancel",
     "fillEffects.ok": "OK",
+    // --- Online Pictures (Insert → Pictures) ---
+    "onlinePictures.title": "Online Pictures",
+    "onlinePictures.address": "Address",
+    "onlinePictures.placeholder": "https://… or data:image/…",
+    "onlinePictures.insert": "Insert",
+    "onlinePictures.inserting": "Downloading…",
+    "onlinePictures.checking": "Downloading the image…",
+    "onlinePictures.hint": "Paste the address of an image, then insert it.",
+    "onlinePictures.error.empty-url": "Enter the address of an image.",
+    "onlinePictures.error.invalid-url": "That image address is not a valid URL.",
+    "onlinePictures.error.unsupported-url": "Only http(s) and data:image addresses are supported.",
+    "onlinePictures.error.fetch-failed":
+      "The image could not be downloaded. Check the address and whether the server allows cross-origin requests.",
+    "onlinePictures.error.too-large": "The image is too large (the limit is 10 MB).",
+    "onlinePictures.error.unsupported-type":
+      "The address does not point to a supported image type (PNG, JPEG, GIF, WebP, BMP, TIFF, ICO, AVIF or SVG).",
     // --- Commands: Layout ---
     "ribbon.cmd.margins": "Margins",
     "ribbon.cmd.orientation": "Orientation",
@@ -2166,6 +2182,21 @@ export const ribbonZhCN: AdditionalLanguage = {
     "fillEffects.remove": "移除",
     "fillEffects.cancel": "取消",
     "fillEffects.ok": "确定",
+    // --- Online Pictures (Insert → Pictures) ---
+    "onlinePictures.title": "联机图片",
+    "onlinePictures.address": "地址",
+    "onlinePictures.placeholder": "https://… 或 data:image/…",
+    "onlinePictures.insert": "插入",
+    "onlinePictures.inserting": "正在下载…",
+    "onlinePictures.checking": "正在下载图片…",
+    "onlinePictures.hint": "粘贴图片地址，然后插入。",
+    "onlinePictures.error.empty-url": "请输入图片地址。",
+    "onlinePictures.error.invalid-url": "该图片地址不是有效的 URL。",
+    "onlinePictures.error.unsupported-url": "仅支持 http(s) 和 data:image 地址。",
+    "onlinePictures.error.fetch-failed": "无法下载该图片。请检查地址以及服务器是否允许跨域请求。",
+    "onlinePictures.error.too-large": "图片过大（上限为 10 MB）。",
+    "onlinePictures.error.unsupported-type":
+      "该地址指向的图片类型不受支持（PNG、JPEG、GIF、WebP、BMP、TIFF、ICO、AVIF 或 SVG）。",
     // --- Commands: Layout ---
     "ribbon.cmd.margins": "页边距",
     "ribbon.cmd.orientation": "纸张方向",

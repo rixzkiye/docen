@@ -117,6 +117,14 @@ import { RevisionsCommands } from "./commands/revisions";
 import { SectionCommands } from "./commands/sections";
 import { SpellingCommands } from "./commands/spelling";
 import { THEMES } from "./commands/themes";
+import {
+  applyDocumentDefaults,
+  clearDocumentDefaults,
+  documentDefaultsOf,
+  newDocumentJSON,
+  readDocumentDefaults,
+  writeDocumentDefaults,
+} from "./defaults";
 import type { NewStyleDefinition } from "./extensions/commands";
 import type { ModifyStylePatch, ParagraphDialogPatch } from "./extensions/commands";
 import { type FieldFrame } from "./fields";
@@ -126,9 +134,9 @@ import { InsertDomain } from "./host/insert";
 import { IODomain } from "./host/io";
 import { RenderDomain } from "./host/render";
 import { StatusDomain } from "./host/status";
-import { pageInsets, StoriesDomain } from "./host/stories";
 // Side-effect import: registers the ribbon/header translation tables.
 import "./i18n";
+import { pageInsets, StoriesDomain } from "./host/stories";
 import { StylesDomain } from "./host/styles";
 import { mergeSectionProperties } from "./page-setup";
 import { compressPictureSrc, pickTransparentColor, type CropRect } from "./pixels";
@@ -351,6 +359,8 @@ class DocenDocument extends AddinHost<Editor> {
    *  spelling toggle: the bridge reads it per keystroke via a getter. */
   #markdown = true;
   #fieldShading: "never" | "always" | "whenSelected" = "whenSelected";
+  /** Mailings → Highlight Merge Fields (view-only, per-document session). */
+  #highlightMergeFields = false;
   #updateFieldsBeforePrint = false;
   #printMarkup = false;
   /** Whether the document's settings.xml carries a read-only editing
@@ -476,6 +486,7 @@ class DocenDocument extends AddinHost<Editor> {
     getAttribute: (name) => this.getAttribute(name),
     hasAttribute: (name) => this.hasAttribute(name),
     markdown: () => this.#markdown,
+    highlightMergeFields: () => this.#highlightMergeFields,
     markupView: () => this.#markupView,
     markupAuthors: () => this.#markupAuthors,
     markupColors: () => this.#markupColors,
@@ -1763,6 +1774,34 @@ class DocenDocument extends AddinHost<Editor> {
     this.#styles.restoreStylesSnapshot();
   }
 
+  /** Design → Set as Default: persist this document's theme + style set as the
+   *  formatting newly created documents start from. Word stores it on the
+   *  Normal template; the browser element stores it in localStorage (see
+   *  {@link readDocumentDefaults}) because it has no filesystem template. */
+  #setAsDefault(): void {
+    const editor = this.editor;
+    if (!editor) return;
+    writeDocumentDefaults(documentDefaultsOf(editor.state.doc.attrs));
+  }
+
+  /** Record the style set a `style-set` dispatch applied (or cleared, for the
+   *  "Document Default" entry) so Set as Default can persist it. The value
+   *  rides documentExtras.settings — the same channel the theme uses — and is
+   *  ignored by the DOCX writer (office-open emits only known settings). */
+  #rememberStyleSet(styleSet: string | null): void {
+    const editor = this.editor;
+    if (!editor) return;
+    const attrs = (editor.state.doc.attrs ?? {}) as { documentExtras?: Record<string, unknown> };
+    const extras = attrs.documentExtras ?? {};
+    const settings = (extras.settings as Record<string, unknown>) ?? {};
+    if ((settings.styleSet ?? null) === styleSet) return;
+    const next = { ...settings, ...(styleSet ? { styleSet } : {}) };
+    if (!styleSet) delete next.styleSet;
+    editor.view.dispatch(
+      editor.state.tr.setDocAttribute("documentExtras", { ...extras, settings: next }),
+    );
+  }
+
   async connectedCallback(): Promise<void> {
     super.connectedCallback();
     // Forward this host's `lang` attribute to the internal <docen-workspace>
@@ -2542,6 +2581,11 @@ class DocenDocument extends AddinHost<Editor> {
       "fill-effects:ok",
       this.#design.onFillEffectsOk as EventListener,
     );
+    // Online Pictures dialog — insert the fetched/embedded image.
+    this.shadowRoot!.querySelector("docen-online-pictures-dialog")?.addEventListener(
+      "online-picture:ok",
+      this.#onOnlinePictureOk as EventListener,
+    );
     this.shadowRoot!.querySelector("docen-status-bar")?.addEventListener(
       "zoom:open",
       this.#status.onZoomOpen as EventListener,
@@ -2947,6 +2991,7 @@ class DocenDocument extends AddinHost<Editor> {
       sectionBreakOddPage: t("marks.sectionBreakOddPage", this),
     });
     this.#stage.setFieldShading(this.#fieldShading);
+    this.#stage.setHighlightMergeFields(this.#highlightMergeFields);
     // A `zoom` attribute parsed before the stage existed only recorded the
     // level here — push it in before the first sync sizes the slots. The
     // `show-marks` and `view` attributes get the same once-over (idempotent
@@ -3135,6 +3180,9 @@ class DocenDocument extends AddinHost<Editor> {
     this.shadowRoot
       ?.querySelector("docen-fill-effects-dialog")
       ?.removeEventListener("fill-effects:ok", this.#design.onFillEffectsOk as EventListener);
+    this.shadowRoot
+      ?.querySelector("docen-online-pictures-dialog")
+      ?.removeEventListener("online-picture:ok", this.#onOnlinePictureOk as EventListener);
     this.shadowRoot
       ?.querySelector("docen-page-setup-dialog")
       ?.removeEventListener("page-setup:ok", this.#sections.onPageSetupOk as EventListener);
@@ -4078,6 +4126,31 @@ class DocenDocument extends AddinHost<Editor> {
     this.#insert.insertFileText();
   }
 
+  /** Insert → Online Pictures: open the address dialog (the picture is
+   *  downloaded by the dialog and arrives back via `online-picture:ok`). */
+  #openOnlinePicturesDialog(): void {
+    (
+      this.shadowRoot?.querySelector("docen-online-pictures-dialog") as {
+        show(): void;
+      } | null
+    )?.show();
+  }
+
+  /** The Online Pictures dialog's commit — insert the embedded picture as a
+   *  normal image node at the caret. */
+  readonly #onOnlinePictureOk = (
+    event: CustomEvent<{ src: string; width?: number; height?: number; alt?: string }>,
+  ): void => {
+    const detail = event.detail;
+    if (!detail?.src) return;
+    this.#insert.insertOnlinePicture({
+      src: detail.src,
+      width: detail.width,
+      height: detail.height,
+      alt: detail.alt || t("onlinePictures.title", this),
+    });
+  };
+
   /** Event → handler tables for the extracted host-command domains. Built on
    *  first dispatch (the adapter closures read live element state), then
    *  cached. Each domain receives only the narrow view its bodies call. */
@@ -4181,6 +4254,8 @@ class DocenDocument extends AddinHost<Editor> {
           lastRecord: () => this.#merge.lastRecord(),
           setMergeType: (type) => this.#merge.setMergeType(type),
           finishMerge: (mode) => void this.#finishMerge(mode),
+          toggleHighlightMergeFields: () =>
+            this.setHighlightMergeFields(!this.#highlightMergeFields),
         },
         comments: {
           insertComment: () => this.#comments.insertComment(),
@@ -4261,6 +4336,7 @@ class DocenDocument extends AddinHost<Editor> {
           armTransparentPick: () => this.#armTransparentPick(),
           drawingMulti: () => this.#bridge?.drawingMulti(),
           pickImage: () => this.#imageInput?.click(),
+          openOnlinePictures: () => this.#openOnlinePicturesDialog(),
           pickPicture: () => this.#pictureInput?.click(),
           focusBridge: () => this.#bridge?.focus(),
           drawingState: () => this.#drawingStateOf(),
@@ -4320,6 +4396,7 @@ class DocenDocument extends AddinHost<Editor> {
           pickFile: () => this.#pickFile(),
           print: () => this.#print(),
           insertFileText: () => this.#insertFileText(),
+          newDocument: () => this.newDocument(),
         },
         headerFooter: {
           editor: () => this.editor,
@@ -4337,6 +4414,7 @@ class DocenDocument extends AddinHost<Editor> {
           openWatermarkDialog: () => this.#design.openWatermarkDialog(),
           setWatermark: (preset) => this.#design.setWatermark(preset),
           openFillEffectsDialog: () => this.#design.openFillEffectsDialog(),
+          setAsDefault: () => this.#setAsDefault(),
           restoreStylesSnapshot: () => this.#restoreStylesSnapshot(),
         },
       },
@@ -4754,6 +4832,12 @@ class DocenDocument extends AddinHost<Editor> {
         }
       }
     }
+    // Set as Default needs the current style set; the command itself only
+    // writes the styles model, so record which preset was applied (or clear
+    // it for the "Document Default" restore).
+    if (name === "style-set" && typeof value === "string") {
+      this.#rememberStyleSet(value === "default" ? null : value);
+    }
     // Local host commands (chrome actions plus document actions the engine
     // can't express) route through the per-domain registry — chrome handlers
     // need no editor, the rest run once a document has opened. The wired
@@ -4884,8 +4968,10 @@ class DocenDocument extends AddinHost<Editor> {
         this.#closeDocument();
         break;
       case "new":
-        // No built-in "new" — always hand to the host (docen:new).
-        this.#emitCancelable("docen:new");
+        // A host may take the action over (docen:new, cancelable); otherwise
+        // the element creates the blank document itself — with the stored
+        // Set as Default formatting (Word's Normal-template behavior).
+        if (!this.#emitCancelable("docen:new")) this.newDocument();
         break;
       case "new-from-template":
         this.#openTemplateDialog();
@@ -5702,6 +5788,16 @@ class DocenDocument extends AddinHost<Editor> {
     this.#stage?.setFieldShading(mode);
   }
 
+  /** Mailings → Highlight Merge Fields — the live view-only toggle. */
+  getHighlightMergeFields(): boolean {
+    return this.#highlightMergeFields;
+  }
+
+  setHighlightMergeFields(on: boolean): void {
+    this.#highlightMergeFields = on;
+    this.#stage?.setHighlightMergeFields(on);
+  }
+
   getUpdateFieldsBeforePrint(): boolean {
     return this.#updateFieldsBeforePrint;
   }
@@ -5779,6 +5875,33 @@ class DocenDocument extends AddinHost<Editor> {
 
   async open(file: File): Promise<void> {
     return this.#io.open(file);
+  }
+
+  /**
+   * File → New: reset to a blank document. The stored `Set as Default`
+   * formatting (theme + style set) is applied, so new documents start from
+   * the user's chosen document formatting — Word's Normal-template behavior.
+   * A host may take the action over through the cancelable `docen:new` event
+   * (the ribbon path does); this method always creates the document.
+   */
+  newDocument(): void {
+    if (!this.editor) return;
+    const defaults = readDocumentDefaults();
+    const name = t("header.doc-name", this);
+    this.setAttribute("filename", name);
+    this.#docxVariant = "docx";
+    this.#io.applyOpenedJSON(newDocumentJSON(defaults), name);
+    applyDocumentDefaults(this.editor, defaults);
+  }
+
+  /**
+   * Reset `Set as Default` to the factory formatting (the Office theme, no
+   * style set) — the escape hatch for the Design → Set as Default action,
+   * which Word itself only reverses by setting a blank document's formatting.
+   * The next {@link newDocument} then opens on the factory template.
+   */
+  resetDocumentDefaults(): void {
+    clearDocumentDefaults();
   }
 
   async openDOCX(
