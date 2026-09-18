@@ -85,6 +85,7 @@ export {
   type FieldRef,
   type FieldCacheOptions,
 } from "./converters/field-eval";
+export { DOCX_EPOCH } from "./converters/determinism";
 export {
   type TocSwitches,
   tokenizeTocInstruction,
@@ -99,7 +100,13 @@ export { patchDOCX, type DocxPatchOptions, type DocxPatchContent } from "./conve
 export {
   prepareDocument,
   prepareImages,
+  prepareImageSizes,
   fetchImageHandler,
+  DEFAULT_IMAGE_MAX_BYTES,
+  DEFAULT_IMAGE_MAX_REDIRECTS,
+  DEFAULT_IMAGE_TIMEOUT_MS,
+  type PrepareImagesPolicy,
+  type FetchImageOptions,
   type PrepareStep,
   type ImageFetchHandler,
 } from "./converters/prepare";

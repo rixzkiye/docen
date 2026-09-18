@@ -8,6 +8,9 @@ export interface FileIoHostView {
   pickFile(): void;
   print(): Promise<void>;
   insertFileText(): void;
+  /** File → New: reset to a blank document carrying the stored Set as Default
+   *  formatting (called when no host handles `docen:new`). */
+  newDocument(): void;
 }
 
 /**
@@ -31,7 +34,7 @@ export class FileIoHostCommands implements HostCommandDomain {
     // (those menu items ride change events instead) — same bodies as the
     // matching #onChange cases.
     if (event === "new") {
-      this.host.emitCancelable("docen:new");
+      if (!this.host.emitCancelable("docen:new")) this.host.newDocument();
       return true;
     }
     if (event === "open") {

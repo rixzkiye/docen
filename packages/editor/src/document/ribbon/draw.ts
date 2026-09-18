@@ -15,7 +15,9 @@ export const drawTab = (): RibbonTab =>
     ]),
     group("draw-tools", [
       btn("lasso", "lasso-select", { size: "large" }),
-      col([grid([btn("board", "select-objects"), btn("action-pen", "action-pen")])]),
+      col([
+        grid([btn("board", "select-objects", { toggle: true }), btn("action-pen", "action-pen")]),
+      ]),
     ]),
     group("ink-convert", [
       btn("ink-shape", "ink-to-shape", { size: "large" }),

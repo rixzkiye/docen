@@ -76,6 +76,10 @@ class DocenRibbonCombobox extends FASTElement {
   @attr event?: string;
   @attr size?: string;
   @attr source?: string;
+  /** Accessible name applied to the inner control (the role="combobox" input
+   *  Fluent renders takes the name; the host element's aria-label would not
+   *  reach it). */
+  @attr label?: string;
 
   @observable dd?: HTMLElement;
   @observable lb?: HTMLElement;
@@ -106,6 +110,16 @@ class DocenRibbonCombobox extends FASTElement {
   hostValueChanged(): void {
     this.syncValue();
   }
+  labelChanged(): void {
+    this.#applyLabel();
+  }
+
+  #applyLabel(): void {
+    const label = this.label ?? "";
+    if (this.input) this.input.setAttribute("aria-label", label);
+    const control = (this.dd as unknown as { control?: HTMLInputElement } | undefined)?.control;
+    if (control) control.setAttribute("aria-label", label);
+  }
 
   connectedCallback(): void {
     super.connectedCallback();
@@ -116,6 +130,7 @@ class DocenRibbonCombobox extends FASTElement {
     }
     if (this.input) this.input.setAttribute("aria-controls", this.popoverId);
     if (this.dd) this.dd.style.anchorName = this.popoverAnchor;
+    this.#applyLabel();
     this.renderItems();
     this.syncValue();
     this.dd?.addEventListener("change", () => this.emit());
@@ -210,6 +225,7 @@ class DocenRibbonCombobox extends FASTElement {
         requestAnimationFrame(apply);
         return;
       }
+      dd.control.setAttribute("aria-label", this.label ?? "");
       const opts = lb.querySelectorAll("fluent-option");
       let idx = -1;
       opts.forEach((opt, i) => {
