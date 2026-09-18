@@ -25,6 +25,7 @@ import { DocAttrStep } from "@tiptap/pm/transform";
 import { freshChildEmu, memberEmuOf, unionBox, type Box } from "../../drawing";
 import { autotextMatch, blocksOfDocAttrs, type BuildingBlock } from "../building-blocks";
 import { CellSelection, cellsInRect } from "../canvas/cell-selection";
+import { ExtendModeManager, MultiSelectionManager } from "../canvas/selection";
 import {
   demoteHeadingAtCaret,
   moveBlockDown,
@@ -178,6 +179,9 @@ declare module "@tiptap/core" {
       // expansion (replace the typed block name with its content).
       "insert-building-block": (id?: string) => ReturnType;
       "autotext-f3": () => ReturnType;
+      "extend-selection": () => ReturnType;
+      "shrink-selection": () => ReturnType;
+      "cancel-selection": () => ReturnType;
       // Table context commands (the Table Design / Layout contextual tabs).
       "insert-row-above": () => ReturnType;
       "insert-row-below": () => ReturnType;
@@ -364,6 +368,9 @@ export const WIRED_DISPATCH: ReadonlySet<string> = new Set([
   "insert-excel",
   "chart",
   "delete-table",
+  "extend-selection",
+  "shrink-selection",
+  "cancel-selection",
   "insert-row-above",
   "insert-row-below",
   "insert-column-left",
@@ -6056,6 +6063,44 @@ export const DocumentCommands = Extension.create({
           }
           if (dispatch) dispatch(tr.scrollIntoView());
           return true;
+        },
+      "extend-selection":
+        () =>
+        ({ editor }) => {
+          const storage = editor.storage as unknown as Record<string, unknown>;
+          const mgr =
+            (storage.extendMode as ExtendModeManager | undefined) ??
+            ((storage.extendMode = new ExtendModeManager()) as ExtendModeManager);
+          mgr.step(editor);
+          return true;
+        },
+      "shrink-selection":
+        () =>
+        ({ editor }) => {
+          const storage = editor.storage as unknown as Record<string, unknown>;
+          const mgr = storage.extendMode as ExtendModeManager | undefined;
+          if (mgr?.isActive) {
+            mgr.shrink(editor);
+            return true;
+          }
+          return false;
+        },
+      "cancel-selection":
+        () =>
+        ({ editor }) => {
+          let handled = false;
+          const storage = editor.storage as unknown as Record<string, unknown>;
+          const mgr = storage.extendMode as ExtendModeManager | undefined;
+          if (mgr?.isActive) {
+            mgr.cancel();
+            handled = true;
+          }
+          const multi = storage.multiSelection as MultiSelectionManager | undefined;
+          if (multi?.hasRanges()) {
+            multi.clear();
+            handled = true;
+          }
+          return handled;
         },
     };
   },

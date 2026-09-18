@@ -98,9 +98,12 @@ export const KEYBOARD_SHORTCUTS: Readonly<Record<string, string>> = {
   "Alt-Shift-ArrowDown": "move-row-down",
   "Alt-Shift-Down": "move-row-down",
 
-  // Function keys (W4.3)
+  // Function keys (W4.3, W2.4)
   F3: "autotext-f3",
   "Shift-F3": "change-case:cycle",
+  F8: "extend-selection",
+  "Shift-F8": "shrink-selection",
+  Escape: "cancel-selection",
 };
 
 export const DocenKeymap = Extension.create({

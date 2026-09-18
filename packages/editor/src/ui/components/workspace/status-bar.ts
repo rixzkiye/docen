@@ -170,9 +170,15 @@ const styles = css`
       width: 48px;
     }
   }
+  .extend-mode {
+    font-weight: 600;
+    padding: 0 4px;
+    color: var(--docen-color-accent, #0f6cbd);
+  }
   @media (max-width: 560px) {
     .views,
-    .lang-text {
+    .lang-text,
+    .extend-mode {
       display: none;
     }
   }
@@ -209,6 +215,7 @@ const template = html<DocenStatusBar>`
       </svg>
     </button>
     <span class="lang-text" ${ref("langBtn")}></span>
+    <span class="extend-mode" ${ref("extendModeEl")}></span>
   </span>
   <span class="zoom">
     <span class="views" ${ref("viewsEl")}>
@@ -306,6 +313,8 @@ class DocenStatusBar extends FASTElement {
   /** The caret's proofing-language display name (Word shows the selection's
    *  w:lang in the status bar); a click opens the language dialog. */
   @attr language?: string;
+  /** Extend selection mode ("EXT" Word status indicator). */
+  @attr extend?: string;
 
   @observable sectionEl?: HTMLElement;
   @observable pagesEl?: HTMLElement;
@@ -316,8 +325,13 @@ class DocenStatusBar extends FASTElement {
   @observable outBtn?: HTMLButtonElement;
   @observable inBtn?: HTMLButtonElement;
   @observable langBtn?: HTMLElement;
+  @observable extendModeEl?: HTMLElement;
   @observable spellBtn?: HTMLButtonElement;
   #unsubscribe?: () => void;
+
+  extendChanged(): void {
+    this.#renderExtend();
+  }
 
   sectionChanged(): void {
     this.#renderSection();
@@ -475,6 +489,13 @@ class DocenStatusBar extends FASTElement {
     this.#renderPages();
     this.#renderWords();
     this.#renderZoom();
+    this.#renderExtend();
+  }
+
+  #renderExtend(): void {
+    if (!this.extendModeEl) return;
+    this.extendModeEl.textContent = this.extend ? "EXT" : "";
+    this.extendModeEl.style.display = this.extend ? "inline-block" : "none";
   }
 
   #renderSection(): void {

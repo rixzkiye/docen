@@ -58,6 +58,13 @@ import { installChartHover, type ChartTip } from "./chart-hover";
 import { createDocJsonCache, pmNodeToJSON, type DocJsonCache } from "./doc-json";
 import { followLink, installLinkHover, type LinkHit } from "./link-hover";
 import { blockRuleOf, enterRuleOf, inlineRuleOf, isHyphenRun } from "./markdown-input";
+import {
+  MultiSelectionManager,
+  ExtendModeManager,
+  computeBlockRanges,
+  MARGIN_SELECTION_CURSOR,
+  BLOCK_SELECT_CURSOR,
+} from "./selection";
 import type { BalloonHit } from "./stage";
 import { sameChildPath } from "./stage";
 
@@ -243,6 +250,8 @@ export interface EditBridgeOptions {
   /** A keyboard paste landed rich content (the docen slice or styled HTML
    *  lane) — the host shows Word's paste-options bar over the pasted text. */
   onRichPaste?: (source: { kind: "slice" | "html" | "rtf"; raw: string; text: string }) => void;
+  /** Extended selection mode change (Word's F8 extend mode indicator "EXT"). */
+  onExtendModeChange?: (active: boolean, label: string) => void;
   /** The border painter's armed state (Table Design → Draw Border). While
    *  active the canvas presses start edge sweeps instead of text selection. */
   borderPaint?: () => { active: boolean; eraser: boolean };
@@ -397,6 +406,10 @@ export interface EditBridge {
    *  no copy event (ribbon / context-menu buttons). Pins the slice payload
    *  exactly like the keyboard path, so every paste entry recovers marks. */
   copySelection(cut: boolean): Promise<void>;
+  /** Non-contiguous selection manager. */
+  multiSelection: MultiSelectionManager;
+  /** F8 extend selection mode manager. */
+  extendMode: ExtendModeManager;
   /** The editor input currently routes into — the main editor, or the
    *  furniture story's when one is open. Ribbon commands must target the same
    *  editor the caret lives in, or they stamp the main document's stale
@@ -771,12 +784,44 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
   } | null = null;
   let overlayRaf = 0;
 
+  const multiSel: MultiSelectionManager =
+    ((main.editor.storage as unknown as Record<string, unknown>).multiSelection as
+      | MultiSelectionManager
+      | undefined) ??
+    (((main.editor.storage as unknown as Record<string, unknown>).multiSelection =
+      new MultiSelectionManager()) as MultiSelectionManager);
+
+  const getExtendMode = (): ExtendModeManager => {
+    const storage = active().editor.storage as unknown as Record<string, unknown>;
+    return (
+      (storage.extendMode as ExtendModeManager | undefined) ??
+      ((storage.extendMode = new ExtendModeManager()) as ExtendModeManager)
+    );
+  };
+
+  let marginDrag: {
+    page: number;
+    anchorLine: { from: number; to: number; paraFrom?: number; paraTo?: number };
+    mode: "line" | "para";
+  } | null = null;
+
+  let blockDrag: {
+    page: number;
+    startX: number;
+    startY: number;
+  } | null = null;
+
+  let ctrlDrag = false;
+
   const placeSelection = (): void => {
     const s = active();
     const sel = s.editor.state.selection;
+    const multiKey = multiSel?.hasRanges()
+      ? multiSel.ranges.map((r) => `${r.from}-${r.to}`).join(",")
+      : "";
     const key = `${sel.from}:${sel.to}:${
       sel instanceof CellSelection ? "c" : sel instanceof NodeSelection ? "n" : "t"
-    }`;
+    }:${multiKey}`;
     if (
       selectionCache &&
       selectionCache.key === key &&
@@ -805,6 +850,25 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
           height: r.heightPx,
           background: "rgba(0,120,215,.25)",
         });
+      }
+      if (multiSel?.hasRanges()) {
+        for (const r of multiSel.ranges) {
+          if (r.from !== r.to) {
+            const extra = s.map.selectionRects(r.from, r.to);
+            for (const sp of extra) {
+              const page = framePage(s, sp.page);
+              if (!isLive(page)) continue;
+              rects.push({
+                page,
+                x: sp.xPx,
+                y: sp.yPx,
+                width: sp.widthPx,
+                height: sp.heightPx,
+                background: "rgba(0,120,215,.25)",
+              });
+            }
+          }
+        }
       }
     }
     selectionCache = { key, map: s.map, liveGen: liveGeneration, rects };
@@ -1172,7 +1236,11 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
           setSel(to, from);
         }
       };
-      if (clicks >= 3) {
+      if (clicks >= 4) {
+        extend(0, doc.content.size);
+        return;
+      }
+      if (clicks === 3) {
         extend(base, base + $pos.parent.content.size);
         return;
       }
@@ -1221,6 +1289,11 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
    *  that same selection from the anchor. A plain click drops a caret and
    *  arms the drag from it. */
   const clickSelection = (pos: number, event: MouseEvent, clicks: number): void => {
+    const ext = getExtendMode();
+    if (ext.isActive) {
+      setSel(pos, ext.anchor);
+      return;
+    }
     const anchor = event.shiftKey ? active().editor.state.selection.anchor : undefined;
     if (clicks >= 2) {
       setSelClick(pos, clicks, anchor);
@@ -1912,6 +1985,14 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
       return;
     }
     const hit = story ? null : hitPage(event.clientX, event.clientY);
+    if (hit && main.map?.isLeftMargin(hit.page, hit.lx, hit.ly)) {
+      opts.host.style.cursor = MARGIN_SELECTION_CURSOR;
+      return;
+    }
+    if (event.altKey && !tableResize && !tableDragMove && !shapeGhost && !tableDrawGhost) {
+      opts.host.style.cursor = BLOCK_SELECT_CURSOR;
+      return;
+    }
     const drawHit = hit && opts.drawingAt ? opts.drawingAt(hit.page, hit.lx, hit.ly) : null;
     const balloonHit = hit && opts.balloonAt ? opts.balloonAt(hit.page, hit.lx, hit.ly) : null;
     let want = "";
@@ -2002,6 +2083,42 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
           Math.abs(px - g.ax),
           Math.abs(py - g.ay),
         );
+      }
+      return;
+    }
+    if (marginDrag) {
+      const hit = story ? null : hitPage(event.clientX, event.clientY);
+      if (hit && main.map) {
+        const curLine = main.map.lineRangeAtPoint(hit.page, hit.ly);
+        if (curLine) {
+          if (marginDrag.mode === "para") {
+            const minPos = Math.min(marginDrag.anchorLine.from, curLine.paraFrom);
+            const maxPos = Math.max(marginDrag.anchorLine.to, curLine.paraTo);
+            setSel(maxPos, minPos);
+          } else {
+            const minPos = Math.min(marginDrag.anchorLine.from, curLine.from);
+            const maxPos = Math.max(marginDrag.anchorLine.to, curLine.to);
+            setSel(maxPos, minPos);
+          }
+          placeSelection();
+          placeCaret();
+        }
+      }
+      return;
+    }
+    if (blockDrag) {
+      const hit = story ? null : hitPage(event.clientX, event.clientY);
+      if (hit && main.map && hit.page === blockDrag.page) {
+        const ranges = computeBlockRanges(
+          main.map,
+          blockDrag.page,
+          blockDrag.startX,
+          blockDrag.startY,
+          hit.lx,
+          hit.ly,
+        );
+        multiSel.setRanges(ranges);
+        placeSelection();
       }
       return;
     }
@@ -2117,6 +2234,7 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
       return;
     }
     if (textDrag) {
+      textDrag.copy = event.ctrlKey || event.altKey;
       if (
         !textDrag.moved &&
         Math.hypot(event.clientX - textDrag.startX, event.clientY - textDrag.startY) >= 3
@@ -2124,6 +2242,9 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
         textDrag.moved = true;
       }
       if (textDrag.moved) {
+        dragPoint.x = event.clientX;
+        dragPoint.y = event.clientY;
+        startDragAutoScroll();
         opts.host.style.cursor = textDrag.copy ? "copy" : "move";
         const dropPos = posAtClient(event.clientX, event.clientY, true);
         placeDropCaret(dropPos);
@@ -2366,6 +2487,22 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
       }
       placeCaret();
       return;
+    }
+    if (marginDrag) {
+      marginDrag = null;
+      return;
+    }
+    if (blockDrag) {
+      blockDrag = null;
+      return;
+    }
+    if (ctrlDrag) {
+      const cur = active().editor.state.selection;
+      if (cur.from !== cur.to) {
+        multiSel.addRange({ from: cur.from, to: cur.to });
+        placeSelection();
+      }
+      ctrlDrag = false;
     }
     dragAnchor = null;
     dragMoved = false;
@@ -2902,6 +3039,51 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
     }
     draw.clear();
     draw.place();
+    if (hit && main.map?.isLeftMargin(hit.page, hit.lx, hit.ly)) {
+      const lineRange = main.map.lineRangeAtPoint(hit.page, hit.ly);
+      if (lineRange) {
+        if (clicks >= 3) {
+          const { doc } = active().editor.state;
+          setSel(doc.content.size, 0);
+          marginDrag = null;
+        } else if (clicks === 2) {
+          setSel(lineRange.paraTo, lineRange.paraFrom);
+          marginDrag = {
+            page: hit.page,
+            anchorLine: { from: lineRange.paraFrom, to: lineRange.paraTo },
+            mode: "para",
+          };
+        } else {
+          setSel(lineRange.to, lineRange.from);
+          marginDrag = {
+            page: hit.page,
+            anchorLine: { from: lineRange.from, to: lineRange.to },
+            mode: "line",
+          };
+        }
+        dragAnchor = null;
+        dragStart = null;
+        dragMoved = false;
+        ta.focus();
+        ta.value = "";
+        return;
+      }
+    }
+    if (event.altKey && hit && !tableResize && !borderSweep) {
+      blockDrag = {
+        page: hit.page,
+        startX: hit.lx,
+        startY: hit.ly,
+      };
+      multiSel.clear();
+      placeSelection();
+      dragAnchor = null;
+      dragStart = null;
+      dragMoved = false;
+      ta.focus();
+      ta.value = "";
+      return;
+    }
     const pos = posAtClient(event.clientX, event.clientY);
     if (pos != null) {
       // Word's Ctrl+Click follows the link instead of dropping a caret; a
@@ -2947,6 +3129,18 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
               return;
             }
           } catch {}
+        }
+      }
+      if (event.ctrlKey && !event.altKey && !event.shiftKey) {
+        const cur = active().editor.state.selection;
+        if (cur.from !== cur.to && multiSel.ranges.length === 0) {
+          multiSel.addRange({ from: cur.from, to: cur.to });
+        }
+        ctrlDrag = true;
+      } else if (!event.shiftKey && !event.altKey && !getExtendMode().isActive) {
+        if (multiSel.hasRanges()) {
+          multiSel.clear();
+          placeSelection();
         }
       }
       clickSelection(pos, event, clicks);
@@ -3595,6 +3789,13 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
     // otherwise (the grid survives). The default join path would tear cell
     // content across the range, so this must run before it.
     if (editable && (event.key === "Backspace" || event.key === "Delete")) {
+      if (multiSel.hasRanges()) {
+        event.preventDefault();
+        multiSel.deleteContents(active().editor);
+        placeSelection();
+        placeCaret();
+        return;
+      }
       const sel = active().editor.state.selection;
       if (sel instanceof NodeSelection) {
         event.preventDefault();
@@ -3639,6 +3840,34 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
         });
         return;
       }
+    }
+    if (event.key === "Escape") {
+      const ext = getExtendMode();
+      if (ext.isActive) {
+        event.preventDefault();
+        ext.cancel();
+        opts.onExtendModeChange?.(false, "");
+        return;
+      }
+      if (multiSel.hasRanges()) {
+        event.preventDefault();
+        multiSel.clear();
+        placeSelection();
+        return;
+      }
+    }
+    if (event.key === "F8" && !event.ctrlKey && !event.metaKey && !event.altKey) {
+      event.preventDefault();
+      const ext = getExtendMode();
+      if (event.shiftKey) {
+        ext.shrink(active().editor);
+      } else {
+        ext.step(active().editor);
+      }
+      opts.onExtendModeChange?.(ext.isActive, ext.statusLabel());
+      placeSelection();
+      placeCaret();
+      return;
     }
     // Shift+Enter inserts a soft line break (w:br inside the paragraph) —
     // captured here because the textarea reports both Enter flavors to
@@ -3705,13 +3934,50 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
         active().editor.commands.redo();
         return;
       }
-      // Select all — without this the browser default selects the 1px
-      // textarea's (empty) contents and the press is lost.
+      // Word Ctrl+A cycling: Cell -> Table -> Document
       if (lower === "a" && !event.altKey && !event.shiftKey) {
         event.preventDefault();
-        active().editor.commands.command(({ state, dispatch }) =>
-          selectAll(state as never, dispatch),
-        );
+        active().editor.commands.command(({ state, dispatch }) => {
+          const sel = state.selection;
+          const $cell = cellAt(sel.$from);
+          if ($cell) {
+            const cellNode = $cell.nodeAfter;
+            if (cellNode) {
+              const cellStart = $cell.pos + 1;
+              const cellEnd = $cell.pos + cellNode.nodeSize - 1;
+              const coversCell =
+                sel instanceof TextSelection && sel.from <= cellStart && sel.to >= cellEnd;
+
+              if (!coversCell && !(sel instanceof CellSelection)) {
+                if (dispatch) {
+                  dispatch(
+                    state.tr.setSelection(
+                      TextSelection.between(
+                        state.doc.resolve(cellStart),
+                        state.doc.resolve(cellEnd),
+                      ) as never,
+                    ),
+                  );
+                }
+                return true;
+              }
+
+              const tableSel = CellSelection.tableSelection($cell);
+              const alreadyTable =
+                sel instanceof CellSelection &&
+                sel.anchorCell === tableSel.anchorCell &&
+                sel.headCell === tableSel.headCell;
+
+              if (!alreadyTable) {
+                if (dispatch) {
+                  dispatch(state.tr.setSelection(tableSel as never));
+                }
+                return true;
+              }
+            }
+          }
+          return selectAll(state as never, dispatch);
+        });
         return;
       }
       // Mod-K: Insert / edit hyperlink (Word standard).
@@ -3730,6 +3996,21 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
     const command = resolveShortcutCommand(event);
     if (command) {
       if (!editable) return;
+      if (multiSel.hasRanges()) {
+        const markMap: Record<string, string> = {
+          "toggle-bold": "bold",
+          "toggle-italic": "italic",
+          "toggle-underline": "underline",
+          "toggle-strike": "strike",
+        };
+        const markName = markMap[command];
+        if (markName) {
+          event.preventDefault();
+          multiSel.applyMark(active().editor, markName);
+          placeSelection();
+          return;
+        }
+      }
       event.preventDefault();
       const [name, arg] = command.split(":");
       const cmds = active().editor.commands as unknown as Record<
@@ -3753,7 +4034,27 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
       storage.repeatAction = { type: "command", name, value: arg };
       return;
     }
-    const extend = event.shiftKey;
+    const extend = event.shiftKey || getExtendMode().isActive;
+    if (
+      getExtendMode().isActive &&
+      event.key.length === 1 &&
+      !event.ctrlKey &&
+      !event.altKey &&
+      !event.metaKey
+    ) {
+      const char = event.key;
+      const { doc, selection } = active().editor.state;
+      const textAfter = doc.textBetween(selection.head, doc.content.size, undefined, " ");
+      const idx = textAfter.indexOf(char);
+      if (idx >= 0) {
+        event.preventDefault();
+        const targetPos = selection.head + idx + 1;
+        setSel(targetPos, getExtendMode().anchor);
+        placeSelection();
+        placeCaret();
+        return;
+      }
+    }
     const head = () => active().editor.state.selection.head;
     switch (event.key) {
       case "ArrowLeft":
@@ -4109,6 +4410,7 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
   };
 
   const selectionText = (): string | null => {
+    if (multiSel.hasRanges()) return multiSel.copyText(active().editor);
     const { from, to } = active().editor.state.selection;
     return from === to ? null : active().editor.state.doc.textBetween(from, to, "\n");
   };
@@ -4474,6 +4776,8 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
       placeCaret();
     },
     cellAtPoint: (page, x, y) => main.map?.cellAtPoint(page, x, y) ?? null,
+    multiSelection: multiSel,
+    extendMode: getExtendMode(),
     /** Hand the host's fresh spell-check results to the overlay (the check
      *  itself runs in the host, debounced per transaction). Placement is
      *  coalesced onto the overlay rAF: a transaction both remaps the issue

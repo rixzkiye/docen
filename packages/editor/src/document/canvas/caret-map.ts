@@ -786,6 +786,45 @@ export class CaretMap {
     return boxes;
   }
 
+  /** Checks if a coordinate sits within the page's left margin zone (Word margin selection). */
+  isLeftMargin(page: number, x: number, y: number): boolean {
+    const boxes = this.columnBoxes(page);
+    const contentLeft = boxes.length ? boxes[0]!.left : 72;
+    if (x < 0 || x >= contentLeft) return false;
+    const pageLines = this.lines.filter((l) => l.page === page);
+    if (!pageLines.length) return false;
+    const top = pageLines[0]!.yPx - 10;
+    const bottom =
+      pageLines[pageLines.length - 1]!.yPx + pageLines[pageLines.length - 1]!.line.heightPx + 10;
+    return y >= top && y <= bottom;
+  }
+
+  /** Finds the line and paragraph range at a vertical coordinate (for margin selection). */
+  lineRangeAtPoint(
+    page: number,
+    y: number,
+  ): { from: number; to: number; paraFrom: number; paraTo: number } | null {
+    let bestDist = Infinity;
+    let bestLine: LineEntry | null = null;
+    for (const entry of this.lines) {
+      if (entry.page !== page) continue;
+      const within = y >= entry.yPx && y <= entry.yPx + entry.line.heightPx;
+      const dist = within
+        ? 0
+        : Math.min(Math.abs(y - entry.yPx), Math.abs(y - (entry.yPx + entry.line.heightPx)));
+      if (dist < bestDist) {
+        bestDist = dist;
+        bestLine = entry;
+      }
+    }
+    if (!bestLine) return null;
+    const lineFrom = this.posOfChar(bestLine.owner, bestLine.startChar);
+    const lineTo = this.posOfChar(bestLine.owner, bestLine.endChar);
+    const paraFrom = bestLine.owner.innerPos;
+    const paraTo = bestLine.owner.innerPos + bestLine.owner.node.content.size;
+    return { from: lineFrom, to: lineTo, paraFrom, paraTo };
+  }
+
   /** One line up/down at the same character column (within the paragraph or
    *  crossing into adjacent paragraphs across the document). Null at document edge. */
   posVertical(pos: number, dir: -1 | 1): number | null {
