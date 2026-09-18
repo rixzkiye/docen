@@ -1,0 +1,59 @@
+{
+  "type": "doc",
+  "attrs": {
+    "styles": {
+      "paragraphStyles": [
+        {
+          "id": "MyHeading",
+          "name": "My Heading",
+          "basedOn": "Normal"
+        }
+      ]
+    }
+  },
+  "content": [
+    {
+      "type": "paragraph",
+      "attrs": {
+        "heading": "Heading1"
+      },
+      "content": [
+        {
+          "type": "text",
+          "text": "Normal Heading"
+        }
+      ]
+    },
+    {
+      "type": "paragraph",
+      "attrs": {
+        "style": "MyHeading"
+      },
+      "content": [
+        {
+          "type": "text",
+          "text": "Custom Heading"
+        }
+      ]
+    },
+    {
+      "type": "tocField",
+      "attrs": {
+        "options": {
+          "headingStyleRange": "1-3",
+          "stylesWithLevels": [
+            {
+              "styleName": "My Heading",
+              "level": 2
+            }
+          ]
+        }
+      },
+      "content": [
+        {
+          "type": "paragraph"
+        }
+      ]
+    }
+  ]
+}

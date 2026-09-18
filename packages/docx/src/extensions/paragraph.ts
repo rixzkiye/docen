@@ -56,6 +56,30 @@ function headingLevelFromName(name: string | undefined): number | undefined {
   return /^title$/i.test(name) ? 1 : undefined;
 }
 
+/** Every name a paragraph style is known by, lowercased: the style id itself
+ *  plus each resolved name up the `basedOn` chain. A TOC `\t` switch lists
+ *  style NAMES ("My Heading,2") while paragraph attrs carry the style id, so
+ *  matching has to try both. Empty when `styles` carries no definitions. */
+export function paragraphStyleNames(
+  styles: StylesOptions | undefined,
+  styleId: string | undefined,
+): string[] {
+  if (!styleId) return [];
+  const names = new Set<string>([styleId.toLowerCase()]);
+  if (!styles) return [...names];
+  const byId = indexParagraphStyles(styles);
+  const visited = new Set<string>();
+  let curId: string | undefined = styleId;
+  while (curId && !visited.has(curId)) {
+    visited.add(curId);
+    const style = byId.get(curId);
+    if (!style) break;
+    if (typeof style.name === "string" && style.name) names.add(style.name.toLowerCase());
+    curId = style.basedOn ?? undefined;
+  }
+  return [...names];
+}
+
 /** Heading level (1-9) for a paragraph, or undefined when it isn't a heading.
  *  DOCX marks a heading several ways, checked in priority order:
  *  1. office-open lifts a HeadingLevel pStyle ("Heading1".."Title") into `heading`.

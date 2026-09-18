@@ -1,0 +1,56 @@
+{
+  "description": "\\o window and \\u outline semantics filter the filled entries",
+  "fields": {
+    "pageCount": 1,
+    "tocPageOf": {
+      "heading:0": 1,
+      "heading:2": 1,
+      "heading:3": 1
+    }
+  },
+  "python": {
+    "simple": [],
+    "instrTexts": [" TOC \\o \"2-3\" ", " TOC \\o \"1-3\" "],
+    "tocEntries": [
+      {
+        "style": "TOC2",
+        "text": "Two",
+        "page": "1"
+      },
+      {
+        "style": "TOC3",
+        "text": "Three",
+        "page": "1"
+      },
+      {
+        "style": "TOC1",
+        "text": "One",
+        "page": "1"
+      },
+      {
+        "style": "TOC2",
+        "text": "Two",
+        "page": "1"
+      },
+      {
+        "style": "TOC3",
+        "text": "Three",
+        "page": "1"
+      }
+    ]
+  },
+  "xmlPresent": ["TOC \\o \"2-3\"", "TOC \\o \"1-3\""],
+  "tocSliceAbsent": ["Outline"],
+  "pdf": {
+    "contains": ["Two", "Three", "One"]
+  },
+  "update": {
+    "contains": ["One", "Two", "Three"]
+  },
+  "loLimitations": [
+    "LibreOffice's explicit update ignores the \\o level window and \\u outline semantics (it rebuilds 1-3 plus outline-level paragraphs) and rewrites the first field's instruction to \\o \"1-3\" on resave."
+  ],
+  "resavePython": {
+    "instrTexts": ["TOC \\o \"1-3\""]
+  }
+}

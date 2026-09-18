@@ -1,0 +1,26 @@
+{
+  "description": "SEQ ordinals with \\s chapter restarts, formats and separators",
+  "python": {
+    "simple": [
+      ["SEQ Figure \\* ARABIC \\s 1", "1.1"],
+      ["SEQ Figure \\* ARABIC \\s 1", "1.2"],
+      ["SEQ Table \\* ARABIC", "1"],
+      ["SEQ Figure \\* ROMAN \\s 1", "2.I"]
+    ],
+    "instrTexts": [],
+    "tocEntries": []
+  },
+  "xmlPresent": ["w:instr=\" SEQ Figure \\* ARABIC \\s 1 \"", "1.1", "2.I"],
+  "pdf": {
+    "contains": ["Figure 1: first", "Figure 2: second", "Table 1: grid", "Figure III: third"]
+  },
+  "update": {
+    "contains": ["Figure 1: first", "Figure 2: second", "Figure III: third"]
+  },
+  "loLimitations": [
+    "LibreOffice ignores \\s chapter restarts and the chapter prefix (renders continuous ordinals: Figure 1, Figure 2, Figure III) and drops the \\s switch from the instruction on resave. Word's own update writes the chapter as a separate STYLEREF field; docen caches the prefix inside the SEQ result (documented Word interop deviation)."
+  ],
+  "resavePython": {
+    "instrTexts": ["SEQ Figure \\* ARABIC"]
+  }
+}

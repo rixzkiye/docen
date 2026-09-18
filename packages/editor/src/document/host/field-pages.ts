@@ -1,4 +1,4 @@
-import { fieldRef } from "@docen/docx";
+import { detectHeadingLevel, fieldRef, seqLabelOfData, type StylesOptions } from "@docen/docx";
 import type { Node as PMNode } from "@tiptap/pm/model";
 
 /**
@@ -74,4 +74,54 @@ export function collectBookmarkPages(doc: PMNode, view: FieldPageView): Map<stri
 function displayPageOf(view: FieldPageView, physical: number): number {
   const section = view.sectionOfPage[physical] ?? 0;
   return physical + 1 + (view.pageOffsets[section] ?? 0);
+}
+
+/**
+ * TOC entry collection index → displayed page, mirroring the generation-time
+ * fill's candidate rules so the numbers line up: a heading candidate is any
+ * paragraph a heading level/style marks (custom `\t` styles included), a
+ * caption candidate a Caption-styled paragraph carrying a SEQ field — both in
+ * document order, TOC entry subtrees excluded (they are cached results, not
+ * headings).
+ */
+export function collectTocTargetPages(
+  doc: PMNode,
+  view: FieldPageView,
+): { headingPages: Map<number, number>; captionPages: Map<number, number> } {
+  const headingPages = new Map<number, number>();
+  const captionPages = new Map<number, number>();
+  const styles = (doc.attrs as { styles?: StylesOptions }).styles;
+  let headingIndex = 0;
+  let captionIndex = 0;
+  doc.descendants((node, pos) => {
+    if (node.type.name === "tocField") return false;
+    if (node.type.name !== "paragraph") return true;
+    const attrs = node.attrs as { heading?: string; style?: string; outlineLevel?: number };
+    const level = detectHeadingLevel(
+      { heading: attrs.heading, style: attrs.style, outlineLevel: attrs.outlineLevel },
+      styles,
+    );
+    if (level != null || (typeof attrs.style === "string" && attrs.style !== "")) {
+      const index = headingIndex++;
+      const physical = view.physicalPageOf(pos);
+      if (physical != null && physical >= 0) headingPages.set(index, displayPageOf(view, physical));
+    }
+    if (attrs.style === "Caption") {
+      let label: string | null = null;
+      node.descendants((child) => {
+        if (label || child.type.name !== "inlinePassthrough") return true;
+        const data = child.attrs?.data;
+        if (typeof data === "string") label = seqLabelOfData(data);
+        return true;
+      });
+      if (label) {
+        const index = captionIndex++;
+        const physical = view.physicalPageOf(pos);
+        if (physical != null && physical >= 0)
+          captionPages.set(index, displayPageOf(view, physical));
+      }
+    }
+    return true;
+  });
+  return { headingPages, captionPages };
 }

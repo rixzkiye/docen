@@ -89,6 +89,104 @@ const entriesOf = (editor: EditorType): EntryInfo[] => {
   return out;
 };
 
+describe("parsed DOCX TOC options (item 8)", () => {
+  it("stamps \\t and \\b under office-open's option names on insert", () => {
+    const editor = build(
+      docOf(
+        heading(1, "Outside"),
+        {
+          type: "paragraph",
+          content: [
+            {
+              type: "inlinePassthrough",
+              attrs: { data: JSON.stringify({ bookmarkStart: { id: 9, name: "Scope" } }) },
+            },
+            { type: "text", text: "Scope" },
+          ],
+        },
+        {
+          type: "paragraph",
+          attrs: { style: "SpecialTitle" },
+          content: [{ type: "text", text: "Custom Inside" }],
+        },
+        {
+          type: "paragraph",
+          content: [
+            {
+              type: "inlinePassthrough",
+              attrs: { data: JSON.stringify({ bookmarkEnd: { id: 9 } }) },
+            },
+          ],
+        },
+      ),
+    );
+    editor.commands.setTextSelection(1);
+    expect(
+      editor.commands.toc(undefined, undefined, {
+        styles: "SpecialTitle,1",
+        bookmark: "Scope",
+      }),
+    ).toBe(true);
+    editor.state.doc.descendants((node) => {
+      if (node.type.name === "tocField") {
+        expect(node.attrs.options).toEqual({
+          headingStyleRange: "1-3",
+          hyperlink: true,
+          stylesWithLevels: [{ styleName: "SpecialTitle", level: 1 }],
+          entriesFromBookmark: "Scope",
+        });
+      }
+      return true;
+    });
+    // Only the bookmarked custom style joins the entries.
+    expect(entriesOf(editor).map((e) => e.text)).toEqual(["Custom Inside"]);
+    editor.destroy();
+  });
+
+  it("update-toc honors parsed stylesWithLevels and entriesFromBookmark", () => {
+    const seed = (data: object) => ({
+      type: "inlinePassthrough",
+      attrs: { data: JSON.stringify(data) },
+    });
+    const editor = build(
+      docOf(
+        heading(1, "Before"),
+        {
+          type: "paragraph",
+          content: [seed({ bookmarkStart: { id: 10, name: "Scope" } })],
+        },
+        {
+          type: "paragraph",
+          attrs: { style: "MyStyle" },
+          content: [{ type: "text", text: "Custom Inside" }],
+        },
+        heading(2, "Inside Heading"),
+        {
+          type: "paragraph",
+          content: [seed({ bookmarkEnd: { id: 10 } })],
+        },
+        heading(1, "After"),
+        {
+          type: "tocField",
+          attrs: {
+            options: {
+              headingStyleRange: "1-3",
+              entriesFromBookmark: "Scope",
+              stylesWithLevels: [{ styleName: "MyStyle", level: 2 }],
+            },
+          },
+          content: [{ type: "paragraph" }],
+        },
+      ),
+    );
+    expect(editor.commands["update-toc"]()).toBe(true);
+    const entries = entriesOf(editor);
+    expect(entries.map((e) => e.text)).toEqual(["Custom Inside", "Inside Heading"]);
+    expect(entries.map((e) => e.style)).toEqual(["TOC2", "TOC2"]);
+    editor.destroy();
+  });
+});
+
 describe("toc command", () => {
   it("builds one entry per heading 1-3 with style, tab, link, and page", () => {
     const editor = build(
@@ -301,11 +399,16 @@ describe("table-of-figures command", () => {
     const entries = entriesOf(editor);
     // Only the Figure caption counts — Table captions belong to another \c.
     expect(entries).toHaveLength(1);
-    expect(entries[0]).toMatchObject({ style: "TOC1", text: "Figure : Alpha chart", page: "4" });
+    // The entry text resolves the SEQ atom's cached value — Word's table of
+    // figures shows the number ("Figure 1: Alpha chart"), not "Figure : ...".
+    expect(entries[0]).toMatchObject({ style: "TOC1", text: "Figure 1: Alpha chart", page: "4" });
     expect(entries[0].linkHref).toBeNull();
     editor.state.doc.descendants((node) => {
       if (node.type.name === "tocField") {
-        expect(node.attrs.options).toEqual({ captionLabel: "Figure" });
+        // Word's table-of-figures switch is \c (office-open's
+        // captionLabelIncludingNumbers); \a drops the label+number on a Word
+        // update and LibreOffice discards the table entirely.
+        expect(node.attrs.options).toEqual({ captionLabelIncludingNumbers: "Figure" });
       }
       return true;
     });
@@ -334,8 +437,8 @@ describe("update-figures command", () => {
     });
     expect(editor.commands["update-figures"]()).toBe(true);
     expect(entriesOf(editor).map((e) => e.text)).toEqual([
-      "Figure : Alpha chart",
-      "Figure : Second chart",
+      "Figure 1: Alpha chart",
+      "Figure 1: Second chart",
     ]);
     editor.destroy();
   });
@@ -403,8 +506,8 @@ describe("figure table with chapter-numbered captions", () => {
     editor.commands.setTextSelection(1);
     expect(editor.commands["table-of-figures"](() => 4, undefined, "Figure")).toBe(true);
     expect(entriesOf(editor).map((e) => e.text)).toEqual([
-      "Figure : Alpha chart",
-      "Figure : Beta chart",
+      "Figure 1-1: Alpha chart",
+      "Figure 2-1: Beta chart",
     ]);
 
     // A new chapter-numbered caption joins the rebuilt table.
@@ -416,9 +519,9 @@ describe("figure table with chapter-numbered captions", () => {
     expect(editor.commands["update-figures"](() => 7)).toBe(true);
     const entries = entriesOf(editor);
     expect(entries.map((e) => e.text)).toEqual([
-      "Figure : Alpha chart",
-      "Figure : Beta chart",
-      "Figure : Gamma chart",
+      "Figure 1-1: Alpha chart",
+      "Figure 2-1: Beta chart",
+      "Figure 2-1: Gamma chart",
     ]);
     expect(entries.map((e) => e.page)).toEqual(["7", "7", "7"]);
     editor.destroy();

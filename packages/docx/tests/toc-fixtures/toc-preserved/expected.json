@@ -1,0 +1,45 @@
+{
+  "description": "Non-empty TOC/TOF caches are never recomputed",
+  "python": {
+    "simple": [],
+    "instrTexts": [" TOC \\o \"1-3\" ", " TOC \\c \"Figure\" "],
+    "tocEntries": [
+      {
+        "style": "TOC1",
+        "text": "Existing entry",
+        "page": "7"
+      },
+      {
+        "style": "TOC1",
+        "text": "Figure 9: preserved",
+        "page": ""
+      }
+    ]
+  },
+  "xmlPresent": ["TOC \\o \"1-3\"", "TOC \\c \"Figure\""],
+  "tocSliceAbsent": ["New Heading"],
+  "pdf": {
+    "contains": ["Existing entry 7", "Figure 9: preserved"]
+  },
+  "update": {
+    "contains": ["New Heading"]
+  },
+  "loLimitations": [
+    "An explicit update recomputes a non-empty TOC (Word's F9 semantics); the generation-time never-recompute rule only protects the saved cache."
+  ],
+  "resavePython": {
+    "tocEntries": [
+      {
+        "style": "TOC1",
+        "text": "Existing entry",
+        "page": "7"
+      },
+      {
+        "style": "TOC1",
+        "text": "Figure 9: preserved",
+        "page": ""
+      }
+    ]
+  },
+  "updatePython": {}
+}

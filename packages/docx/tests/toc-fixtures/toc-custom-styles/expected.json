@@ -1,0 +1,38 @@
+{
+  "description": "A parsed \\t stylesWithLevels switch maps a custom style by name",
+  "fields": {
+    "pageCount": 1,
+    "tocPageOf": {
+      "heading:0": 1,
+      "heading:1": 1
+    }
+  },
+  "python": {
+    "simple": [],
+    "instrTexts": [" TOC \\o \"1-3\" \\t \"My Heading,2\" "],
+    "tocEntries": [
+      {
+        "style": "TOC1",
+        "text": "Normal Heading",
+        "page": "1"
+      },
+      {
+        "style": "TOC2",
+        "text": "Custom Heading",
+        "page": "1"
+      }
+    ]
+  },
+  "xmlPresent": ["\\t \"My Heading,2\""],
+  "pdf": {
+    "contains": ["Normal Heading", "Custom Heading"],
+    "patterns": ["Custom Heading\\.{2,}1"]
+  },
+  "update": {
+    "contains": ["Normal Heading", "Custom Heading"],
+    "patterns": ["Custom Heading\\.{2,}1"]
+  },
+  "resavePython": {
+    "instrTexts": ["TOC \\o \"1-3\" \\t \"My Heading,2\""]
+  }
+}

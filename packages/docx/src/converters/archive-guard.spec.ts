@@ -1,3 +1,5 @@
+import { crc32 } from "node:zlib";
+
 import { zipSync } from "fflate";
 import { describe, expect, it } from "vitest";
 
@@ -16,6 +18,63 @@ function zip(files: Record<string, Uint8Array | string | number>): Uint8Array {
   const data: Record<string, Uint8Array> = {};
   for (const [name, value] of Object.entries(files)) data[name] = bytes(value);
   return zipSync(data, { level: 6 });
+}
+
+/**
+ * A minimal stored-entry ZIP whose single entry streams through a data
+ * descriptor (general-purpose bit 3): local header CRC/sizes zeroed, the true
+ * values after the payload, no ZIP64. Mirrors what LibreOffice's DOCX export
+ * produces (`_rels/.rels`, `word/document.xml`, … all carry bit 3).
+ */
+function zipWithDataDescriptor(name: string, content: Uint8Array): Uint8Array {
+  const nameBytes = encoder.encode(name);
+  const checksum = crc32(content) >>> 0;
+  const local = new Uint8Array(30 + nameBytes.length);
+  const lv = new DataView(local.buffer);
+  lv.setUint32(0, 0x04034b50, true);
+  lv.setUint16(4, 20, true); // version needed
+  lv.setUint16(6, 0x08, true); // flags: data descriptor
+  lv.setUint16(8, 0, true); // stored
+  lv.setUint32(14, 0, true); // CRC deferred
+  lv.setUint32(18, 0, true); // compressed size deferred
+  lv.setUint32(22, 0, true); // uncompressed size deferred
+  lv.setUint16(26, nameBytes.length, true);
+  local.set(nameBytes, 30);
+  const descriptor = new Uint8Array(16);
+  const dv = new DataView(descriptor.buffer);
+  dv.setUint32(0, 0x08074b50, true);
+  dv.setUint32(4, checksum, true);
+  dv.setUint32(8, content.length, true);
+  dv.setUint32(12, content.length, true);
+  const central = new Uint8Array(46 + nameBytes.length);
+  const cv = new DataView(central.buffer);
+  cv.setUint32(0, 0x02014b50, true);
+  cv.setUint16(4, 20, true); // version made by
+  cv.setUint16(6, 20, true); // version needed
+  cv.setUint16(8, 0x08, true); // flags
+  cv.setUint16(10, 0, true); // stored
+  cv.setUint32(16, checksum, true);
+  cv.setUint32(20, content.length, true);
+  cv.setUint32(24, content.length, true);
+  cv.setUint16(28, nameBytes.length, true);
+  cv.setUint32(42, 0, true); // local header offset
+  central.set(nameBytes, 46);
+  const eocd = new Uint8Array(22);
+  const ev = new DataView(eocd.buffer);
+  ev.setUint32(0, 0x06054b50, true);
+  ev.setUint16(8, 1, true); // entries on disk
+  ev.setUint16(10, 1, true); // entries total
+  ev.setUint32(12, central.length, true);
+  ev.setUint32(16, local.length + content.length + descriptor.length, true);
+  const archive = new Uint8Array(
+    local.length + content.length + descriptor.length + central.length + 22,
+  );
+  let cursor = 0;
+  for (const part of [local, content, descriptor, central, eocd]) {
+    archive.set(part, cursor);
+    cursor += part.length;
+  }
+  return archive;
 }
 
 interface EntryHeader {
@@ -171,16 +230,28 @@ describe("archive admission limits", () => {
     );
   });
 
-  it("rejects encrypted entries and data descriptors", () => {
+  it("rejects encrypted entries", () => {
     const archive = zip({ "word/document.xml": "<a/>" });
     expectRejection(
       () => assertArchiveWithinLimits(patchEntry(archive, "word/document.xml", { flags: 1 })),
       "ZIP_ENCRYPTED_ENTRY",
     );
-    expectRejection(
-      () => assertArchiveWithinLimits(patchEntry(archive, "word/document.xml", { flags: 8 })),
-      "ZIP_DATA_DESCRIPTOR_UNSUPPORTED",
-    );
+  });
+
+  it("accepts streamed data-descriptor entries (the LibreOffice export shape)", () => {
+    // LibreOffice writes every part with general-purpose bit 3: local CRC and
+    // sizes are zeroed and a data descriptor follows the payload.
+    const archive = zipWithDataDescriptor("word/document.xml", bytes("<a/>"));
+    expect(() => assertArchiveWithinLimits(archive)).not.toThrow();
+  });
+
+  it("rejects a data descriptor that disagrees with the central directory", () => {
+    const archive = zipWithDataDescriptor("word/document.xml", bytes("<a/>"));
+    // Byte 4 of the descriptor is the CRC-32 — flip it.
+    const descriptorCrc = 30 + "word/document.xml".length + "<a/>".length + 4;
+    const corrupted = archive.slice();
+    corrupted[descriptorCrc] = (corrupted[descriptorCrc]! ^ 0xff) & 0xff;
+    expectRejection(() => assertArchiveWithinLimits(corrupted), "ZIP_LOCAL_HEADER_INVALID");
   });
 
   it("rejects unsupported compression methods", () => {

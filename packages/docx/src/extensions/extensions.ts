@@ -161,7 +161,7 @@ export {
 } from "./marks";
 export { Document, createDocument } from "./document";
 export { Paragraph } from "./paragraph";
-export { detectHeadingLevel, HEADING_COMPILE_MAP } from "./paragraph";
+export { detectHeadingLevel, HEADING_COMPILE_MAP, paragraphStyleNames } from "./paragraph";
 // Flat list model: generated numbering references + level builders shared by
 // compile (definition registration) and the editor list commands.
 export {

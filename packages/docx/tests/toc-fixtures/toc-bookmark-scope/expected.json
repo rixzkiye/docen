@@ -1,0 +1,52 @@
+{
+  "description": "A \\b bookmark scope limits the filled TOC entries",
+  "fields": {
+    "pageCount": 1,
+    "tocPageOf": {
+      "heading:1": 1,
+      "heading:2": 1
+    }
+  },
+  "python": {
+    "simple": [],
+    "instrTexts": [" TOC \\b \"Scope\" \\o \"1-3\" "],
+    "tocEntries": [
+      {
+        "style": "TOC1",
+        "text": "Inside A",
+        "page": "1"
+      },
+      {
+        "style": "TOC2",
+        "text": "Inside B",
+        "page": "1"
+      }
+    ]
+  },
+  "xmlPresent": ["TOC \\b \"Scope\""],
+  "tocSliceAbsent": ["Before", "After"],
+  "pdf": {
+    "contains": ["Inside A", "Inside B"]
+  },
+  "update": {
+    "contains": ["Inside A", "Inside B"]
+  },
+  "loLimitations": [
+    "LibreOffice's explicit update ignores the \\b bookmark scope and rebuilds every heading (the field instruction keeps \\b for Word)."
+  ],
+  "resavePython": {
+    "instrTexts": ["\\b \"Scope\""],
+    "tocEntries": [
+      {
+        "style": "TOC1",
+        "text": "Inside A",
+        "page": "1"
+      },
+      {
+        "style": "TOC2",
+        "text": "Inside B",
+        "page": "1"
+      }
+    ]
+  }
+}
