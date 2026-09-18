@@ -73,7 +73,6 @@ export type ArchiveRejectionCode =
   | "ZIP_FILENAME_INVALID"
   | "ZIP_DUPLICATE_PATH"
   | "ZIP_ENCRYPTED_ENTRY"
-  | "ZIP_DATA_DESCRIPTOR_UNSUPPORTED"
   | "ZIP_COMPRESSION_UNSUPPORTED"
   | "ZIP_ENTRY_SIZE_EXCEEDED"
   | "ZIP_AGGREGATE_SIZE_EXCEEDED"
@@ -289,13 +288,6 @@ function centralDirectory(input: Uint8Array, limits: ArchiveLimits): ZipEntry[] 
     if ((flags & 0x41) !== 0) {
       reject("ZIP_ENCRYPTED_ENTRY", `Encrypted ZIP entry is unsupported: ${path}`, path);
     }
-    if ((flags & 0x08) !== 0) {
-      reject(
-        "ZIP_DATA_DESCRIPTOR_UNSUPPORTED",
-        `ZIP data descriptors are unsupported: ${path}`,
-        path,
-      );
-    }
     if (method !== 0 && method !== 8) {
       reject("ZIP_COMPRESSION_UNSUPPORTED", `Unsupported ZIP compression method in ${path}`, path);
     }
@@ -411,13 +403,24 @@ function validateLocalHeader(
     "ZIP_LOCAL_HEADER_INVALID",
     "ZIP local entry filename is invalid",
   );
+  if (localName !== path || localFlags !== flags || localMethod !== method) {
+    reject(
+      "ZIP_LOCAL_HEADER_INVALID",
+      `ZIP local header does not match central directory for ${path}`,
+      path,
+    );
+  }
+  // Bit 3 marks a streaming write: the local sizes/CRC are placeholders (zero)
+  // and the real values live in a data descriptor after the payload; the
+  // central directory stays authoritative for bounds, inflation and CRC. The
+  // descriptor must still agree with it (see readDataDescriptor), and a
+  // writer that fills both must fill them exactly.
+  const streamed = (flags & 0x08) !== 0;
   if (
-    localName !== path ||
-    localFlags !== flags ||
-    localMethod !== method ||
-    localCrc !== crc32 ||
-    localCompressed !== compressedBytes ||
-    localUncompressed !== uncompressedBytes
+    !streamed &&
+    (localCrc !== crc32 ||
+      localCompressed !== compressedBytes ||
+      localUncompressed !== uncompressedBytes)
   ) {
     reject(
       "ZIP_LOCAL_HEADER_INVALID",
@@ -429,7 +432,59 @@ function validateLocalHeader(
   if (dataStart > centralDirectoryOffset || compressedBytes > centralDirectoryOffset - dataStart) {
     reject("ZIP_LOCAL_HEADER_INVALID", `ZIP payload bounds are invalid for ${path}`, path);
   }
-  return { dataStart, dataEnd: dataStart + compressedBytes };
+  const dataEnd = dataStart + compressedBytes;
+  if (streamed) {
+    const descriptor = readDataDescriptor(input, dataEnd, centralDirectoryOffset, path);
+    if (
+      descriptor.crc32 !== crc32 ||
+      descriptor.compressedBytes !== compressedBytes ||
+      descriptor.uncompressedBytes !== uncompressedBytes
+    ) {
+      reject(
+        "ZIP_LOCAL_HEADER_INVALID",
+        `ZIP data descriptor does not match central directory for ${path}`,
+        path,
+      );
+    }
+  }
+  return { dataStart, dataEnd };
+}
+
+/**
+ * Read and return the data descriptor that follows a streaming entry's
+ * payload. The 0x08074b50 signature is optional (APPNOTE 4.3.9.3); writers
+ * that emit it (LibreOffice, Info-ZIP) and writers that omit it are both
+ * accepted, with the descriptor required to fit before the central directory.
+ */
+function readDataDescriptor(
+  input: Uint8Array,
+  offset: number,
+  centralDirectoryOffset: number,
+  path: string,
+): { crc32: number; compressedBytes: number; uncompressedBytes: number } {
+  const signed =
+    offset + 4 <= centralDirectoryOffset &&
+    u32(input, offset, "ZIP_LOCAL_HEADER_INVALID", "ZIP data descriptor is truncated") ===
+      0x08074b50;
+  const cursor = signed ? offset + 4 : offset;
+  if (cursor + 12 > centralDirectoryOffset) {
+    reject("ZIP_LOCAL_HEADER_INVALID", `ZIP data descriptor is truncated for ${path}`, path);
+  }
+  return {
+    crc32: u32(input, cursor, "ZIP_LOCAL_HEADER_INVALID", "ZIP data descriptor is truncated"),
+    compressedBytes: u32(
+      input,
+      cursor + 4,
+      "ZIP_LOCAL_HEADER_INVALID",
+      "ZIP data descriptor is truncated",
+    ),
+    uncompressedBytes: u32(
+      input,
+      cursor + 8,
+      "ZIP_LOCAL_HEADER_INVALID",
+      "ZIP data descriptor is truncated",
+    ),
+  };
 }
 
 const CRC_TABLE = (() => {
