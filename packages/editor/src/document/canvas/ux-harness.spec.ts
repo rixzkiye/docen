@@ -49,9 +49,41 @@ describe("UX Interaction Harness (Headless Chromium + CDP)", () => {
       expect(parsed.modifiers).toBe(CDP_MODIFIERS.ALT | CDP_MODIFIERS.SHIFT);
       expect(parsed.keyCode).toBe(38);
     });
+
+    it("parses named navigation keys, digits, and function keys", () => {
+      expect(parseShortcut("Ctrl+Home")).toMatchObject({ key: "Home", keyCode: 36 });
+      expect(parseShortcut("Ctrl+End")).toMatchObject({ key: "End", keyCode: 35 });
+      expect(parseShortcut("Ctrl+PageDown")).toMatchObject({ key: "PageDown", keyCode: 34 });
+      expect(parseShortcut("Ctrl+1")).toMatchObject({
+        key: "1",
+        code: "Digit1",
+        keyCode: 49,
+        modifiers: CDP_MODIFIERS.CTRL,
+      });
+      expect(parseShortcut("F8")).toMatchObject({ key: "F8", code: "F8", keyCode: 119 });
+      expect(parseShortcut("Shift+F3")).toMatchObject({
+        key: "F3",
+        keyCode: 114,
+        modifiers: CDP_MODIFIERS.SHIFT,
+      });
+      expect(parseShortcut("Tab")).toMatchObject({ key: "Tab", keyCode: 9 });
+    });
+
+    it("parses a bare modifier press as its own key", () => {
+      expect(parseShortcut("Alt")).toMatchObject({ key: "Alt", code: "AltLeft", modifiers: 0 });
+      expect(parseShortcut("Shift")).toMatchObject({ key: "Shift", modifiers: 0 });
+      expect(parseShortcut("Ctrl")).toMatchObject({ key: "Control", modifiers: 0 });
+    });
   });
 
   describe("Screenshot Diffing & Visual State Verification", () => {
+    it("resolves async page expressions through evaluateAsync", async () => {
+      if (!session.isLive) return; // the emulated fallback has no page runtime
+      await session.setContent(`<html><body><script>window.__async = 1;</script></body></html>`);
+      const value = await session.evaluateAsync<number>("Promise.resolve(42)");
+      expect(value).toBe(42);
+    });
+
     it("detects identical screenshots", () => {
       const a = new Uint8Array([1, 2, 3, 4, 5]);
       const b = new Uint8Array([1, 2, 3, 4, 5]);

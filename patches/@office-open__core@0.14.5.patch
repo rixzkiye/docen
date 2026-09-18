@@ -1,3 +1,40 @@
+diff --git a/dist/ext-uri-CCwd6FZE.mjs b/dist/ext-uri-CCwd6FZE.mjs
+index 0709312d05749cfd21abe0830f1a037024fc9ef1..4ff39cfb4cedfad3d6b8a116affe8b1e138192e9 100644
+--- a/dist/ext-uri-CCwd6FZE.mjs
++++ b/dist/ext-uri-CCwd6FZE.mjs
+@@ -2463,9 +2463,20 @@ const uniqueNumericIdCreator = (initial = 0) => {
+ };
+ const URL_ALPHABET = "useandom-26T198340PX75pxJACKVERYMINDBUSHWOLF_GQZbfghjklqvwyzrict";
+ /**
++* docen determinism seam (patched). When @docen/docx opens a generation
++* scope under `globalThis[Symbol.for("docen.ooxml.determinism")]`, every
++* identifier/clock read below resolves deterministically for that generation
++* (the same input yields the same bytes) instead of touching process-global
++* counters, crypto randomness or the wall clock. Outside a scope the original
++* behavior is unchanged. See @docen/docx `docs/determinism.md`.
++*/
++const docenGenerationScope = () => globalThis[Symbol.for("docen.ooxml.determinism")];
++/**
+ * Generates a unique lowercase alphanumeric ID using crypto.getRandomValues.
+ */
+ const uniqueId = () => {
++	const scope = docenGenerationScope();
++	if (scope) return scope.nextToken();
+ 	const bytes = /* @__PURE__ */ new Uint8Array(21);
+ 	crypto.getRandomValues(bytes);
+ 	let id = "";
+@@ -2482,7 +2493,10 @@ const hashedId = (data) => {
+ /**
+ * Generates a UUID v4-style unique identifier using crypto.randomUUID.
+ */
+-const uniqueUuid = () => crypto.randomUUID();
++const uniqueUuid = () => {
++	const scope = docenGenerationScope();
++	return scope ? scope.nextUuid() : crypto.randomUUID();
++};
+ //#endregion
+ //#region src/util/image-type.ts
+ /** Map a media path's file extension to an image type token. */
 diff --git a/dist/index.mjs b/dist/index.mjs
 index 410ae640f0584a85da256717f8d3b73a48cf57a6..da0fc27955005b2fff5e3c863e9041af3009b539 100644
 --- a/dist/index.mjs
@@ -17,3 +54,118 @@ index 410ae640f0584a85da256717f8d3b73a48cf57a6..da0fc27955005b2fff5e3c863e9041af
  		const stripped = xml.slice(0, match.index) + xml.slice(match.index + match[1].length);
  		const rewritten = encoder.encode(stripped);
  		files[relsPath] = Array.isArray(entry) ? [rewritten, entry[1]] : rewritten;
+diff --git a/dist/patch-AkQY17CD.mjs b/dist/patch-AkQY17CD.mjs
+index 2d6513136b365f893e51409ba07b1070889c7e3a..91a9c38ee975fb676ac5d06a2bd05fba5ce8abac 100644
+--- a/dist/patch-AkQY17CD.mjs
++++ b/dist/patch-AkQY17CD.mjs
+@@ -106,7 +106,10 @@ function buildCorePropertiesXmlString(opts) {
+ 	if (opts.lastPrinted !== void 0) p.push(`<${cp("lastPrinted")}>${escapeXml(opts.lastPrinted)}</${cp("lastPrinted")}>`);
+ 	if (opts.lastModifiedBy !== void 0) p.push(`<${cp("lastModifiedBy")}>${escapeXml(opts.lastModifiedBy)}</${cp("lastModifiedBy")}>`);
+ 	if (opts.revision !== void 0) p.push(`<${cp("revision")}>${opts.revision}</${cp("revision")}>`);
+-	const now = (/* @__PURE__ */ new Date()).toISOString();
++	const now = (() => {
++		const scope = globalThis[Symbol.for("docen.ooxml.determinism")];
++		return scope && scope.now ? scope.now : (/* @__PURE__ */ new Date()).toISOString();
++	})();
+ 	if (opts.created !== null) p.push(`<dcterms:created xsi:type="dcterms:W3CDTF">${opts.created ?? now}</dcterms:created>`);
+ 	if (opts.modified !== null) p.push(`<dcterms:modified xsi:type="dcterms:W3CDTF">${opts.modified ?? now}</dcterms:modified>`);
+ 	if (opts.category !== void 0) p.push(`<${cp("category")}>${escapeXml(opts.category)}</${cp("category")}>`);
+diff --git a/dist/smartart-BMDH5tRW.mjs b/dist/smartart-BMDH5tRW.mjs
+index 32548f26f79e82eb31a5e5d8bc4c2101e4644771..44643d0c055e74d0b7338e3857d2dc47718ae994 100644
+--- a/dist/smartart-BMDH5tRW.mjs
++++ b/dist/smartart-BMDH5tRW.mjs
+@@ -1613,7 +1613,11 @@ function stringifyDocPoint(layout, style, color) {
+ 		"</dgm:pt>"
+ 	].join("");
+ }
++/** docen determinism seam (patched) — see core `ext-uri` for the protocol. */
++const docenGenerationScope = () => globalThis[Symbol.for("docen.ooxml.determinism")];
+ function uuid() {
++	const scope = docenGenerationScope();
++	if (scope) return `{${scope.nextUuid().toUpperCase()}}`;
+ 	return `{${crypto.randomUUID().toUpperCase()}}`;
+ }
+ /**
+diff --git a/dist/util-CeVahkDr.mjs b/dist/util-CeVahkDr.mjs
+index d75c05a55136d35bcac76ea923917f637cab321e..c76dcef0ee83ed03ba4546f4336fba6cefde3c7f 100644
+--- a/dist/util-CeVahkDr.mjs
++++ b/dist/util-CeVahkDr.mjs
+@@ -331,7 +331,12 @@ try {
+ 	_nativeCrc32 = typeof zlib.crc32 === "function" ? (data) => zlib.crc32(data) : computeCrc32;
+ 	if (typeof zlib.inflateRawSync === "function" && _nativeInflate === void 0) _nativeInflate = (data) => zlib.inflateRawSync(data);
+ } catch {}
+-const hasNativeDeflate = () => _nativeDeflate !== void 0;
++/**
++* A @docen/docx reproducibility test may force the pure-JS (fflate) DEFLATE
++* path by setting `globalThis[Symbol.for("docen.ooxml.force-js-deflate")]`, so
++* the browser/Deno fallback's fixed-mtime normalization is exercised on Node.
++*/
++const hasNativeDeflate = () => _nativeDeflate !== void 0 && !globalThis[Symbol.for("docen.ooxml.force-js-deflate")];
+ /**
+ * True when incremental DEFLATE should run on the main thread instead of
+ * fflate's per-entry workers (Node/Bun). See {@link ZipStreamWriter} in
+@@ -763,11 +768,14 @@ const levelForMediaName = (fileName, mediaLevel) => {
+ * are STOREd, everything else uses the `media` level (default Normal).
+ * Set `{ media: ZIP_STORED_LEVEL }` to STORE all compressible media too.
+ */
++/** Fixed DOS-epoch timestamp for reproducible archives (docen determinism). */
++const DOCEN_ZIP_MTIME = /* @__PURE__ */ new Date(1980, 0, 1);
+ const zipAndConvert = async (files, type, mimeType, level = 1) => {
+ 	const zipped = hasNativeDeflate() ? await nativeZipAsync(files, level) : await new Promise((resolve, reject) => {
+ 		zip(files, {
+ 			level,
+-			consume: true
++			consume: true,
++			mtime: DOCEN_ZIP_MTIME
+ 		}, (err, data) => {
+ 			if (err) reject(err);
+ 			else resolve(data);
+@@ -782,7 +790,7 @@ const zipAndConvert = async (files, type, mimeType, level = 1) => {
+ * Blocks the event loop — prefer {@link zipAndConvert} in server contexts.
+ */
+ const zipSyncAndConvert = (files, type, mimeType, level = 1) => {
+-	const zipped = hasNativeDeflate() ? nativeZip(files, level) : zipSync(files, { level });
++	const zipped = hasNativeDeflate() ? nativeZip(files, level) : zipSync(files, { level, mtime: DOCEN_ZIP_MTIME });
+ 	return convertOutput(zipped, type, mimeType);
+ };
+ /**
+@@ -810,6 +818,7 @@ const createZipStream = (files, defaultLevel = 1) => {
+ 				const level = Array.isArray(data) ? data[1].level ?? defaultLevel : defaultLevel;
+ 				const workerPath = level !== 0 && !mainThread;
+ 				const entry = level === 0 ? new ZipPassThrough(name) : workerPath ? new AsyncZipDeflate(name, { level }) : new ZipDeflate(name, { level });
++				entry.mtime = DOCEN_ZIP_MTIME;
+ 				zip.add(entry);
+ 				entry.push(workerPath ? raw.slice() : raw, true);
+ 			}
+@@ -846,6 +855,7 @@ var ZipStreamWriter = class {
+ 		const deflatePath = level !== 0;
+ 		const workerPath = deflatePath && !this.mainThread;
+ 		const entry = !deflatePath ? new ZipPassThrough(name) : this.nativeEntry ? new NativeZipDeflate(name, { level }) : workerPath ? new AsyncZipDeflate(name, { level }) : new ZipDeflate(name, { level });
++		entry.mtime = DOCEN_ZIP_MTIME;
+ 		this.zip.add(entry);
+ 		this.current = entry;
+ 		return {
+diff --git a/dist/vector-BhETDAdp.mjs b/dist/vector-BhETDAdp.mjs
+index 4d1e67c3606590192028ca270ed3abbda9ee4279..c9a37eb6e89699169bc59bfdaaabeb3bf0fa82c6 100644
+--- a/dist/vector-BhETDAdp.mjs
++++ b/dist/vector-BhETDAdp.mjs
+@@ -2207,13 +2207,17 @@ function parseVmlBorder(el) {
+ //#region src/vector/shapes.ts
+ /** Next spid in the `_x0000_s` segment (Word hands out shape ids from 1025). */
+ let nextSpid = 1024;
++/** docen determinism seam (patched) — see core `ext-uri` for the protocol. */
++const docenGenerationScope = () => globalThis[Symbol.for("docen.ooxml.determinism")];
+ /**
+ * Allocate the next VML shape id (`_x0000_s1025`, `_x0000_s1026`, …).
+ * Ids only need to be unique within a document; the counter is process-global
+-* so concurrent generations never collide.
++* so concurrent generations never collide. Inside a @docen/docx generation
++* scope the id comes from the per-generation counter instead.
+ */
+ function nextVmlShapeId() {
+-	return `_x0000_s${++nextSpid}`;
++	const scope = docenGenerationScope();
++	return `_x0000_s${scope ? scope.nextVml() : ++nextSpid}`;
+ }
+ const GROUP_FILL_ATTRS = [{
+ 	field: "filled",

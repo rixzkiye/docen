@@ -26,9 +26,10 @@ export interface DocxPatchOptions<T extends OutputType = OutputType> {
   /** Placeholder name → replacement content. */
   patches: Record<string, DocxPatchContent>;
   /**
-   * Pre-compilation steps run on each patch's content in place (default:
-   * `prepareImages()`). `false` skips; `PrepareStep[]` runs custom steps.
-   * Required when patch content references http image URLs.
+   * Pre-compilation steps run on each patch's content copy (default:
+   * local-only preparation — never touches the network). `false` skips;
+   * `PrepareStep[]` runs custom steps (e.g. `prepareImages({ allow: [...] })`
+   * for http image URLs). The input content is never mutated.
    */
   prepare?: boolean | PrepareStep[];
   /** Custom placeholder delimiters (default `{{` / `}}`). */
@@ -44,10 +45,10 @@ export interface DocxPatchOptions<T extends OutputType = OutputType> {
 /**
  * Patch a DOCX template by replacing placeholders with Tiptap-JSON content.
  *
- * Each patch's `content` is prepared (default: `prepareImages`, in place) then
- * compiled (`compileDocument` → `DocumentOptions`); its first section's
- * `children` become the replacement. Patching is delegated to
- * `@office-open/docx`'s `patchDocument`.
+ * Each patch's `content` is prepared on a copy (default: local-only
+ * preparation, no network) then compiled (`compileDocument` → `DocumentOptions`);
+ * its first section's `children` become the replacement. Patching is delegated
+ * to `@office-open/docx`'s `patchDocument`.
  */
 export async function patchDOCX<T extends OutputType>(
   options: DocxPatchOptions<T>,
@@ -65,10 +66,11 @@ export async function patchDOCX<T extends OutputType>(
   const patchesObject: Record<string, { type: "document"; children: SectionChild[] }> = {};
 
   for (const [key, patchContent] of Object.entries(patches)) {
-    if (prepare !== false) {
-      await prepareDocument(patchContent.content, prepare === true ? undefined : prepare);
-    }
-    const docOpts = compileDocument(patchContent.content);
+    const content =
+      prepare === false
+        ? patchContent.content
+        : await prepareDocument(patchContent.content, prepare === true ? undefined : prepare);
+    const docOpts = compileDocument(content);
     const children = (docOpts.sections?.[0]?.children ?? []) as SectionChild[];
     patchesObject[key] = { type: "document", children };
   }

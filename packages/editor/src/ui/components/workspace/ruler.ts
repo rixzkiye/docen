@@ -7,9 +7,11 @@ import {
   html,
   observable,
   ref,
+  repeat,
 } from "@microsoft/fast-element";
 
-import { observeLang, resolveDir } from "../../i18n/localize";
+import { observeLang, resolveDir, t } from "../../i18n/localize";
+import { RULER_TICK_LEN, rulerTicks } from "./ruler-ticks";
 
 export interface RulerTabStop {
   position: number; // in twips
@@ -23,83 +25,89 @@ export interface RulerIndent {
   hanging?: number; // twips
 }
 
+/** SVG path (viewBox 0 0 9 10) per Word tab-stop type: left ⌊, center ⊤,
+ *  right ⌋, decimal ⌊ with a point, bar |. */
+function tabGlyphPath(type: RulerTabStop["type"]): string {
+  switch (type) {
+    case "center":
+      return "M0.5 1.5 H8.5 M4.5 1.5 V9";
+    case "right":
+      return "M8.5 1 V9 H0.5";
+    case "bar":
+      return "M4.5 0 V10";
+    case "decimal":
+      return "M0.5 1 V9 H8.5";
+    default:
+      return "M0.5 1 V9 H8.5";
+  }
+}
+
 const styles = css`
   :host {
     display: block;
-    height: 24px;
-    background: #f0f0f0;
-    border-bottom: 1px solid var(--docen-color-divider, #c8c8c8);
+    height: 20px;
+    background: var(--docen-ruler-bg, #f3f3f3);
+    border-top: 1px solid var(--docen-ruler-border, #e3e3e3);
+    border-bottom: 1px solid var(--docen-ruler-border-strong, #c8c8c8);
     box-sizing: border-box;
     position: relative;
     user-select: none;
     font-family: var(--docen-font-family, "Segoe UI", -apple-system, sans-serif);
     font-size: 10px;
-    color: #404040;
+    color: #444444;
+    /* The Alt-precision tooltip floats above the strip. */
     overflow: visible;
-  }
-
-  :host([dir="rtl"]) .unit-toggle-btn,
-  :host([data-dir="rtl"]) .unit-toggle-btn,
-  :host-context([dir="rtl"]) .unit-toggle-btn {
-    left: auto;
-    right: 0;
-    border-right: none;
-    border-left: 1px solid #c8c8c8;
-  }
-
-  .ruler-container {
-    position: relative;
-    height: 100%;
-    width: 100%;
-    display: flex;
-    align-items: stretch;
-  }
-
-  .unit-toggle-btn {
-    position: absolute;
-    left: 0;
-    top: 0;
-    bottom: 0;
-    width: 24px;
-    background: #e0e0e0;
-    border: none;
-    border-right: 1px solid #c8c8c8;
-    font-size: 9px;
-    font-weight: 700;
-    color: #505050;
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    z-index: 5;
-    padding: 0;
-  }
-
-  .unit-toggle-btn:hover {
-    background: #d0d0d0;
   }
 
   .ruler-track {
     position: relative;
     height: 100%;
-    flex: 1;
-    overflow: hidden;
+    width: 100%;
+    cursor: crosshair;
   }
 
-  .margin-left-bg,
-  .margin-right-bg {
-    position: absolute;
-    top: 0;
-    bottom: 0;
-    background: #e4e4e4;
-  }
-
+  /* Word's margin gutter is the neutral strip; the text column is the white
+     panel between the two margin hairlines. */
   .content-bg {
     position: absolute;
     top: 0;
     bottom: 0;
-    background: #ffffff;
-    cursor: crosshair;
+    background: var(--docen-ruler-content-bg, #ffffff);
+    border-left: 1px solid var(--docen-ruler-margin-line, #d0d0d0);
+    border-right: 1px solid var(--docen-ruler-margin-line, #d0d0d0);
+    box-sizing: border-box;
+  }
+
+  /* Unit badge — Word's small CM/IN label sits in the start margin, not in a
+     toolbar-like button. Clicking it switches the unit. */
+  .unit-label {
+    position: absolute;
+    left: 0;
+    top: 1px;
+    width: 22px;
+    height: 12px;
+    padding: 0;
+    border: none;
+    background: transparent;
+    color: #5a5a5a;
+    font-family: inherit;
+    font-size: 8px;
+    font-weight: 700;
+    line-height: 12px;
+    text-align: center;
+    cursor: pointer;
+    z-index: 6;
+  }
+
+  :host([dir="rtl"]) .unit-label,
+  :host([data-dir]) .unit-label {
+    left: auto;
+    right: 0;
+  }
+
+  .unit-label:hover {
+    color: #0f6cbd;
+    text-decoration: underline;
   }
 
   .ticks-svg {
@@ -109,9 +117,12 @@ const styles = css`
     width: 100%;
     height: 100%;
     pointer-events: none;
+    z-index: 1;
   }
 
-  /* Indent Markers */
+  /* Indent markers — Word's stacked hourglass: first-line triangle at the top,
+     hanging triangle below it, left-indent square at the bottom. The right
+     indent marker mirrors the hanging triangle at the end margin. */
   .marker {
     position: absolute;
     z-index: 10;
@@ -121,62 +132,51 @@ const styles = css`
 
   .first-line-marker {
     top: 0;
-    width: 10px;
+    width: 11px;
     height: 8px;
     clip-path: polygon(0 0, 100% 0, 50% 100%);
-    background: #4a4a4a;
-  }
-
-  .first-line-marker:hover,
-  .first-line-marker.active {
-    background: #0f6cbd;
+    background: var(--docen-ruler-marker, #4a4a4a);
   }
 
   .hanging-marker {
-    top: 8px;
-    width: 10px;
+    top: 7px;
+    width: 11px;
     height: 8px;
     clip-path: polygon(50% 0, 0 100%, 100% 100%);
-    background: #4a4a4a;
-  }
-
-  .hanging-marker:hover,
-  .hanging-marker.active {
-    background: #0f6cbd;
+    background: var(--docen-ruler-marker, #4a4a4a);
   }
 
   .left-marker {
-    top: 16px;
-    width: 10px;
-    height: 7px;
-    background: #4a4a4a;
+    top: 13px;
+    width: 11px;
+    height: 5px;
     border-radius: 1px;
-  }
-
-  .left-marker:hover,
-  .left-marker.active {
-    background: #0f6cbd;
+    background: var(--docen-ruler-marker, #4a4a4a);
   }
 
   .right-marker {
-    top: 10px;
-    width: 10px;
-    height: 12px;
+    top: 9px;
+    width: 11px;
+    height: 9px;
     clip-path: polygon(50% 0, 0 100%, 100% 100%);
-    background: #4a4a4a;
+    background: var(--docen-ruler-marker, #4a4a4a);
   }
 
-  .right-marker:hover,
-  .right-marker.active {
-    background: #0f6cbd;
+  .marker:hover,
+  .marker.active {
+    background: var(--docen-color-accent, #0f6cbd);
   }
 
-  /* Tab Stops */
+  .marker.active {
+    filter: brightness(0.92);
+  }
+
+  /* Tab stops */
   .tab-stop-item {
     position: absolute;
-    top: 10px;
-    width: 8px;
-    height: 12px;
+    top: 5px;
+    width: 11px;
+    height: 13px;
     cursor: ew-resize;
     z-index: 9;
     transform: translateX(-50%);
@@ -186,54 +186,26 @@ const styles = css`
     opacity: 0.3;
   }
 
-  .tab-stop-icon {
-    width: 100%;
-    height: 100%;
-    display: flex;
+  .tab-stop-item .tab-glyph {
+    display: block;
+    width: 11px;
+    height: 13px;
+    stroke: #404040;
+    stroke-width: 1.4;
+    fill: none;
+    stroke-linecap: square;
+    shape-rendering: crispEdges;
   }
 
-  .tab-stop-icon.type-left {
-    border-left: 2px solid #0f6cbd;
-    border-bottom: 2px solid #0f6cbd;
-    height: 7px;
-    width: 5px;
-  }
-
-  .tab-stop-icon.type-right {
-    border-right: 2px solid #0f6cbd;
-    border-bottom: 2px solid #0f6cbd;
-    height: 7px;
-    width: 5px;
-    margin-left: 3px;
-  }
-
-  .tab-stop-icon.type-center {
-    border-left: 2px solid #0f6cbd;
-    border-bottom: 2px solid #0f6cbd;
-    border-right: 2px solid #0f6cbd;
-    height: 7px;
-    width: 6px;
-  }
-
-  .tab-stop-icon.type-decimal {
-    border-left: 2px solid #0f6cbd;
-    border-bottom: 2px solid #0f6cbd;
-    border-right: 2px solid #0f6cbd;
-    height: 7px;
-    width: 6px;
-    position: relative;
-  }
-
-  .tab-stop-icon.type-bar {
-    border-left: 2px solid #0f6cbd;
-    height: 11px;
-    width: 2px;
+  .tab-stop-item:hover .tab-glyph,
+  .tab-stop-item.active .tab-glyph {
+    stroke: var(--docen-color-accent, #0f6cbd);
   }
 
   /* Tooltip & Guideline */
   .alt-tooltip {
     position: absolute;
-    top: -24px;
+    top: -22px;
     transform: translateX(-50%);
     background: #242424;
     color: #ffffff;
@@ -249,7 +221,7 @@ const styles = css`
 
   .guide-line {
     position: absolute;
-    top: 24px;
+    top: 18px;
     bottom: -2000px;
     width: 1px;
     border-left: 1px dashed #0f6cbd;
@@ -259,89 +231,87 @@ const styles = css`
 `;
 
 const template = html<DocenRuler>`
-  <div class="ruler-container" part="container">
+  <div
+    class="ruler-track"
+    part="track"
+    @click="${(x, c) => x.onTrackClick(c.event as MouseEvent)}"
+    @dblclick="${(x, c) => x.onTrackDblClick(c.event as MouseEvent)}"
+  >
+    <div
+      class="content-bg"
+      style="left: ${(x) => x.contentStartPx}px; width: ${(x) => x.contentWidthPx}px;"
+    ></div>
+
+    <svg class="ticks-svg" part="ticks" ${ref("ticksSvg")}></svg>
+
     <button
-      class="unit-toggle-btn"
+      type="button"
+      class="unit-label"
       part="unit-toggle"
-      title="Toggle Unit (in / cm)"
+      title="${(x) => t("ruler.unitToggle", x)}"
+      aria-label="${(x) => t("ruler.unitToggle", x)}"
       @click="${(x) => x.toggleUnit()}"
     >
       ${(x) => x.unit.toUpperCase()}
     </button>
+
+    <!-- First-Line Indent Marker -->
     <div
-      class="ruler-track"
-      part="track"
-      @click="${(x, c) => x.onTrackClick(c.event as MouseEvent)}"
-    >
-      <div
-        class="margin-left-bg"
-        style="left: 0; width: ${(x) => x.marginLeftPx * x.scale}px;"
-      ></div>
-      <div
-        class="content-bg"
-        style="left: ${(x) => x.marginLeftPx * x.scale}px; width: ${(x) => (x.pageWidthPx - x.marginLeftPx - x.marginRightPx) * x.scale}px;"
-      ></div>
-      <div
-        class="margin-right-bg"
-        style="left: ${(x) => (x.pageWidthPx - x.marginRightPx) * x.scale}px; width: ${(x) => x.marginRightPx * x.scale}px;"
-      ></div>
+      class="marker first-line-marker ${(x) => (x.dragActiveMarker === "firstLine" ? "active" : "")}"
+      part="marker-first-line"
+      title="${(x) => t("ruler.firstLine", x)}"
+      style="left: ${(x) => x.firstLineMarkerX}px;"
+      @pointerdown="${(x, c) => x.onMarkerPointerDown("firstLine", c.event as PointerEvent)}"
+    ></div>
 
-      <svg class="ticks-svg" part="ticks" ${ref("ticksSvg")}></svg>
+    <!-- Hanging Indent Marker -->
+    <div
+      class="marker hanging-marker ${(x) => (x.dragActiveMarker === "hanging" ? "active" : "")}"
+      part="marker-hanging"
+      title="${(x) => t("ruler.hanging", x)}"
+      style="left: ${(x) => x.hangingMarkerX}px;"
+      @pointerdown="${(x, c) => x.onMarkerPointerDown("hanging", c.event as PointerEvent)}"
+    ></div>
 
-      <!-- First-Line Indent Marker -->
-      <div
-        class="marker first-line-marker ${(x) => (x.dragActiveMarker === "firstLine" ? "active" : "")}"
-        part="marker-first-line"
-        title="First Line Indent"
-        style="left: ${(x) => x.firstLineMarkerX}px;"
-        @pointerdown="${(x, c) => x.onMarkerPointerDown("firstLine", c.event as PointerEvent)}"
-      ></div>
+    <!-- Left Indent Base Marker -->
+    <div
+      class="marker left-marker ${(x) => (x.dragActiveMarker === "left" ? "active" : "")}"
+      part="marker-left"
+      title="${(x) => t("ruler.leftIndent", x)}"
+      style="left: ${(x) => x.hangingMarkerX}px;"
+      @pointerdown="${(x, c) => x.onMarkerPointerDown("left", c.event as PointerEvent)}"
+    ></div>
 
-      <!-- Hanging Indent Marker -->
-      <div
-        class="marker hanging-marker ${(x) => (x.dragActiveMarker === "hanging" ? "active" : "")}"
-        part="marker-hanging"
-        title="Hanging Indent"
-        style="left: ${(x) => x.hangingMarkerX}px;"
-        @pointerdown="${(x, c) => x.onMarkerPointerDown("hanging", c.event as PointerEvent)}"
-      ></div>
+    <!-- Right Indent Marker -->
+    <div
+      class="marker right-marker ${(x) => (x.dragActiveMarker === "right" ? "active" : "")}"
+      part="marker-right"
+      title="${(x) => t("ruler.rightIndent", x)}"
+      style="left: ${(x) => x.rightMarkerX}px;"
+      @pointerdown="${(x, c) => x.onMarkerPointerDown("right", c.event as PointerEvent)}"
+    ></div>
 
-      <!-- Left Indent Base Marker -->
-      <div
-        class="marker left-marker ${(x) => (x.dragActiveMarker === "left" ? "active" : "")}"
-        part="marker-left"
-        title="Left Indent"
-        style="left: ${(x) => x.hangingMarkerX}px;"
-        @pointerdown="${(x, c) => x.onMarkerPointerDown("left", c.event as PointerEvent)}"
-      ></div>
+    <!-- Tab Stops -->
+    ${(x) => x.renderTabStops()}
 
-      <!-- Right Indent Marker -->
-      <div
-        class="marker right-marker ${(x) => (x.dragActiveMarker === "right" ? "active" : "")}"
-        part="marker-right"
-        title="Right Indent"
-        style="left: ${(x) => x.rightMarkerX}px;"
-        @pointerdown="${(x, c) => x.onMarkerPointerDown("right", c.event as PointerEvent)}"
-      ></div>
-
-      <!-- Tab Stops -->
-      ${(x) => x.renderTabStops()}
-
-      <!-- Alt Precision Tooltip & Guideline -->
-      ${(x) =>
-        x.showTooltip && x.tooltipText
-          ? html`
-              <div class="alt-tooltip" style="left: ${x.tooltipX}px;">${x.tooltipText}</div>
-              <div class="guide-line" style="left: ${x.tooltipX}px;"></div>
-            `
-          : ""}
-    </div>
+    <!-- Alt Precision Tooltip & Guideline -->
+    ${(x) =>
+      x.showTooltip && x.tooltipText
+        ? html`
+            <div class="alt-tooltip" style="left: ${x.tooltipX}px;">${x.tooltipText}</div>
+            <div class="guide-line" style="left: ${x.tooltipX}px;"></div>
+          `
+        : ""}
   </div>
 `;
 
 /**
- * `<docen-ruler>` — Interactive horizontal ruler with draggable indent markers,
- * tab stops, Alt-key precision measurement, and 2-way ProseMirror sync.
+ * `<docen-ruler>` — Word's horizontal ruler: a 20px page-aligned strip with
+ * the four-level tick hierarchy, margin gutter, draggable indent markers
+ * (first-line / hanging / left / right), typed tab-stop glyphs, and 2-way
+ * ProseMirror sync. The container spans the page exactly (the host sets its
+ * width to the zoomed page width and mounts it above the page column); the
+ * unit label overlays the start margin instead of displacing the track.
  */
 @customElement({ name: "docen-ruler", template, styles })
 export class DocenRuler extends FASTElement {
@@ -366,7 +336,7 @@ export class DocenRuler extends FASTElement {
     if (isRtl) {
       this.setAttribute("dir", "rtl");
     } else if (this.getAttribute("dir") === "rtl" && !this.getAttribute("data-dir")) {
-      // keep explicit attr
+      // keep an explicitly-set dir attribute
     } else {
       this.removeAttribute("dir");
     }
@@ -387,6 +357,9 @@ export class DocenRuler extends FASTElement {
   @observable dragActiveMarker: "firstLine" | "hanging" | "left" | "right" | "tabStop" | null =
     null;
   @observable dragTabIdx = -1;
+  /** The stop object under the pointer — repeat reuses DOM nodes, so the
+   *  child scope's index can go stale after an array edit; identity survives. */
+  @observable dragStop: RulerTabStop | null = null;
   @observable dragOffRuler = false;
   @observable showTooltip = false;
   @observable tooltipText = "";
@@ -429,6 +402,12 @@ export class DocenRuler extends FASTElement {
   #initialRightTwips = 0;
   #initialTabTwips = 0;
 
+  /** The auto-added tab stop from the last single click — a double-click on
+   *  the ruler removes it before opening the Tabs dialog (Word's double-click
+   *  is a dialog gesture, not two tab-stop creations). */
+  #lastAutoStop: { position: number; at: number } | null = null;
+  #liveFrame = 0;
+
   override connectedCallback(): void {
     super.connectedCallback();
     if (!this.getAttribute("unit")) {
@@ -443,6 +422,7 @@ export class DocenRuler extends FASTElement {
   override disconnectedCallback(): void {
     this.#unobserveLang?.();
     this.#unobserveLang = undefined;
+    this.#cancelLiveFrame();
     if (this.#editor) {
       this.#editor.off("transaction", this.#onTransaction);
     }
@@ -473,6 +453,7 @@ export class DocenRuler extends FASTElement {
 
   // ── Coordinates & Markers Math ──
 
+  /** The content-origin (margin line) in strip px — Word's 0. */
   get zeroXPx(): number {
     if (this.isRtl) {
       return (this.pageWidthPx - this.marginRightPx) * this.scale;
@@ -482,6 +463,12 @@ export class DocenRuler extends FASTElement {
 
   get contentWidthPx(): number {
     return (this.pageWidthPx - this.marginLeftPx - this.marginRightPx) * this.scale;
+  }
+
+  /** The content panel's physical screen start — margins stay physical in RTL;
+   *  only the tick scale and the markers mirror around the right margin line. */
+  get contentStartPx(): number {
+    return this.marginLeftPx * this.scale;
   }
 
   get hangingMarkerX(): number {
@@ -524,101 +511,68 @@ export class DocenRuler extends FASTElement {
   renderTicks(): void {
     const svg = this.ticksSvg;
     if (!svg) return;
-    const isCm = this.unit === "cm";
-    const unitPx = (isCm ? 96 / 2.54 : 96) * this.scale;
-    const minorPx = isCm ? unitPx / 10 : unitPx / 8;
-    const zeroX = this.zeroXPx;
-    const totalW = this.pageWidthPx * this.scale;
-
+    const ticks = rulerTicks({
+      lengthPx: this.pageWidthPx * this.scale,
+      zeroPx: this.zeroXPx,
+      unit: this.unit,
+      scale: this.scale,
+      mirror: this.isRtl,
+    });
+    // The strip's content box is 18px (20px minus the two hairlines); ticks
+    // grow upward from its bottom edge like Word's.
+    const height = 18;
     let lines = "";
     let texts = "";
-
-    if (this.isRtl) {
-      // Mirrored to right margin: 0 is at zeroX, numbers increase moving leftwards
-      for (let x = zeroX; x >= 0; x -= minorPx) {
-        const offset = zeroX - x;
-        const unitsVal = offset / unitPx;
-        const isMajor = Math.abs(unitsVal - Math.round(unitsVal)) < 1e-4;
-        const isHalf = Math.abs(unitsVal * 2 - Math.round(unitsVal * 2)) < 1e-4;
-
-        const tickHeight = isMajor ? 10 : isHalf ? 6 : 3;
-        const y1 = 24 - tickHeight;
-        const y2 = 24;
-
-        lines += `<line x1="${x.toFixed(1)}" y1="${y1}" x2="${x.toFixed(1)}" y2="${y2}" stroke="#a0a0a0" stroke-width="1"/>`;
-
-        if (isMajor) {
-          const num = Math.round(unitsVal);
-          const label = String(Math.abs(num));
-          texts += `<text x="${x.toFixed(1)}" y="10" font-size="8" text-anchor="middle" fill="#606060">${label}</text>`;
-        }
-      }
-      for (let x = zeroX + minorPx; x <= totalW; x += minorPx) {
-        const offset = x - zeroX;
-        const unitsVal = offset / unitPx;
-        const isMajor = Math.abs(unitsVal - Math.round(unitsVal)) < 1e-4;
-        const isHalf = Math.abs(unitsVal * 2 - Math.round(unitsVal * 2)) < 1e-4;
-
-        const tickHeight = isMajor ? 10 : isHalf ? 6 : 3;
-        const y1 = 24 - tickHeight;
-        const y2 = 24;
-
-        lines += `<line x1="${x.toFixed(1)}" y1="${y1}" x2="${x.toFixed(1)}" y2="${y2}" stroke="#a0a0a0" stroke-width="1"/>`;
-
-        if (isMajor) {
-          const num = Math.round(unitsVal);
-          const label = String(Math.abs(num));
-          texts += `<text x="${x.toFixed(1)}" y="10" font-size="8" text-anchor="middle" fill="#606060">${label}</text>`;
-        }
-      }
-    } else {
-      const startOffset = Math.ceil(-zeroX / minorPx) * minorPx;
-      const endOffset = totalW - zeroX;
-
-      for (let offset = startOffset; offset <= endOffset; offset += minorPx) {
-        const x = zeroX + offset;
-        const unitsVal = offset / unitPx;
-        const isMajor = Math.abs(unitsVal - Math.round(unitsVal)) < 1e-4;
-        const isHalf = Math.abs(unitsVal * 2 - Math.round(unitsVal * 2)) < 1e-4;
-
-        const tickHeight = isMajor ? 10 : isHalf ? 6 : 3;
-        const y1 = 24 - tickHeight;
-        const y2 = 24;
-
-        lines += `<line x1="${x.toFixed(1)}" y1="${y1}" x2="${x.toFixed(1)}" y2="${y2}" stroke="#a0a0a0" stroke-width="1"/>`;
-
-        if (isMajor) {
-          const num = Math.round(unitsVal);
-          const label = String(Math.abs(num));
-          texts += `<text x="${x.toFixed(1)}" y="10" font-size="8" text-anchor="middle" fill="#606060">${label}</text>`;
-        }
+    for (const tick of ticks) {
+      const x = Math.round(tick.pos) + 0.5;
+      const len = RULER_TICK_LEN[tick.level];
+      lines += `<line x1="${x}" y1="${height}" x2="${x}" y2="${height - len}"/>`;
+      if (tick.label !== undefined) {
+        texts += `<text x="${x}" y="8" text-anchor="middle">${tick.label}</text>`;
       }
     }
-
-    svg.innerHTML = `<g>${lines}</g><g>${texts}</g>`;
+    svg.setAttribute("shape-rendering", "crispEdges");
+    svg.innerHTML =
+      `<g stroke="#8f8f8f" stroke-width="1" fill="none">${lines}</g>` +
+      `<g fill="#555555" font-size="7" font-family="inherit">${texts}</g>`;
   }
 
   // ── Tab Stops Rendering ──
 
   renderTabStops(): ReturnType<typeof html> {
     return html`
-      ${this.tabStops.map((stop, idx) => {
-        const x = this.isRtl
-          ? this.zeroXPx - this.twipsToContentPx(stop.position)
-          : this.zeroXPx + this.twipsToContentPx(stop.position);
-        const isDraggingThis = this.dragActiveMarker === "tabStop" && this.dragTabIdx === idx;
-        return html`
+      ${repeat(
+        () => this.tabStops,
+        html<RulerTabStop, DocenRuler>`
           <div
-            class="tab-stop-item ${isDraggingThis && this.dragOffRuler ? "drag-off" : ""}"
-            style="left: ${x}px;"
-            title="Tab Stop: ${this.formatMeasurement(stop.position)} (${stop.type})"
-            @pointerdown="${(ruler: DocenRuler, c) => ruler.onTabPointerDown(idx, c.event as PointerEvent)}"
-            @dblclick="${(ruler: DocenRuler, c) => ruler.onTabDblClick(idx, c.event as MouseEvent)}"
+            class="tab-stop-item ${(stop, c) =>
+              c.parent.dragActiveMarker === "tabStop" &&
+              c.parent.dragStop === stop &&
+              c.parent.dragOffRuler
+                ? "drag-off"
+                : ""}"
+            style="left: ${(stop, c) =>
+              c.parent.isRtl
+                ? c.parent.zeroXPx - c.parent.twipsToContentPx(stop.position)
+                : c.parent.zeroXPx + c.parent.twipsToContentPx(stop.position)}px;"
+            title="${(stop, c) =>
+              `${t("ruler.tabStop", c.parent)}: ${c.parent.formatMeasurement(stop.position)} (${stop.type})`}"
+            aria-label="${(stop, c) =>
+              `${t("ruler.tabStop", c.parent)}: ${c.parent.formatMeasurement(stop.position)}`}"
+            @pointerdown="${(stop, c) => c.parent.onTabPointerDown(stop, c.event as PointerEvent)}"
+            @click="${(_stop, c) => c.event.stopPropagation()}"
+            @dblclick="${(stop, c) => c.parent.onTabDblClick(stop, c.event as MouseEvent)}"
           >
-            <div class="tab-stop-icon type-${stop.type}"></div>
+            <svg class="tab-glyph" viewBox="0 0 9 10" aria-hidden="true">
+              <path d="${(stop) => tabGlyphPath(stop.type)}"></path>
+              ${(stop) =>
+                stop.type === "decimal"
+                  ? html`<circle cx="6.5" cy="5" r="1.2" fill="#404040" stroke="none"></circle>`
+                  : ""}
+            </svg>
           </div>
-        `;
-      })}
+        `,
+      )}
     `;
   }
 
@@ -665,6 +619,8 @@ export class DocenRuler extends FASTElement {
       this.showTooltip = e.altKey;
       this.#updateTooltip(e.clientX);
       this.#emitIndentChange();
+      // Word reflows the paragraph under the dragged marker live.
+      this.#queueLiveCommit();
     };
 
     const onPointerUp = (_e: PointerEvent): void => {
@@ -672,6 +628,7 @@ export class DocenRuler extends FASTElement {
       window.removeEventListener("pointerup", onPointerUp);
       this.dragActiveMarker = null;
       this.showTooltip = false;
+      this.#cancelLiveFrame();
       this.commitIndentToEditor();
     };
 
@@ -679,16 +636,18 @@ export class DocenRuler extends FASTElement {
     window.addEventListener("pointerup", onPointerUp);
   }
 
-  onTabPointerDown(idx: number, event: PointerEvent): void {
+  onTabPointerDown(ref: number | RulerTabStop, event: PointerEvent): void {
+    const idx = typeof ref === "number" ? ref : this.tabStops.indexOf(ref);
+    const stop = this.tabStops[idx];
+    if (!stop) return;
     event.preventDefault();
     event.stopPropagation();
     (event.target as HTMLElement).setPointerCapture(event.pointerId);
 
     this.dragActiveMarker = "tabStop";
     this.dragTabIdx = idx;
+    this.dragStop = stop;
     this.#dragStartX = event.clientX;
-    const stop = this.tabStops[idx];
-    if (!stop) return;
     this.#initialTabTwips = stop.position;
     this.dragOffRuler = false;
 
@@ -711,6 +670,8 @@ export class DocenRuler extends FASTElement {
 
       if (this.tabStops[idx]) {
         this.tabStops = this.tabStops.map((s, i) => (i === idx ? { ...s, position: newTwips } : s));
+        // The dragged object was replaced — keep the identity highlight fresh.
+        this.dragStop = this.tabStops[idx] ?? null;
       }
 
       this.showTooltip = e.altKey;
@@ -732,6 +693,7 @@ export class DocenRuler extends FASTElement {
 
       this.dragActiveMarker = null;
       this.dragTabIdx = -1;
+      this.dragStop = null;
       this.dragOffRuler = false;
       this.showTooltip = false;
       this.commitTabStopsToEditor();
@@ -741,28 +703,51 @@ export class DocenRuler extends FASTElement {
     window.addEventListener("pointerup", onPointerUp);
   }
 
-  onTabDblClick(idx: number, event: MouseEvent): void {
+  /** `ref` is the stop object from the repeat's child scope (the scoped index
+   *  can be stale after an array edit); a raw index stays accepted. */
+  onTabDblClick(ref: number | RulerTabStop, event: MouseEvent): void {
     event.stopPropagation();
-    const stop = this.tabStops[idx];
+    const stop = typeof ref === "number" ? this.tabStops[ref] : ref;
     this.$emit("ruler:open-tabs", { tabStop: stop });
     this.#dispatchTabsDialog();
   }
 
+  /** Double-clicking the ruler's open strip is Word's dialog gesture: drop the
+   *  tab stop the preceding single click just auto-added, then open Tabs. */
+  onTrackDblClick(event: MouseEvent): void {
+    const target = event.target as Element | null;
+    if (target?.closest?.(".marker, .tab-stop-item, .unit-label")) return;
+    const auto = this.#lastAutoStop;
+    if (auto && Date.now() - auto.at < 700) {
+      this.tabStops = this.tabStops.filter((s) => s.position !== auto.position);
+      this.#lastAutoStop = null;
+      this.commitTabStopsToEditor();
+    }
+    this.$emit("ruler:open-tabs", {});
+    this.#dispatchTabsDialog();
+  }
+
   onTrackClick(event: MouseEvent): void {
+    const target = event.target as Element | null;
+    if (target?.closest?.(".marker, .tab-stop-item, .unit-label")) return;
+    if (event.detail > 1) return; // second click of a double-click: dialog gesture
     const track = event.currentTarget as HTMLElement | null;
     if (!track) return;
     const rect = track.getBoundingClientRect();
     const clickX = event.clientX - rect.left;
 
-    // Check if clicked inside content zone
-    const contentLeft = this.marginLeftPx * this.scale;
-    const contentRight = (this.pageWidthPx - this.marginRightPx) * this.scale;
+    // Check if clicked inside content zone (RTL: zero sits at the right line)
+    const contentLeft = this.isRtl ? this.zeroXPx - this.contentWidthPx : this.zeroXPx;
+    const contentRight = contentLeft + this.contentWidthPx;
 
     if (clickX >= contentLeft && clickX <= contentRight) {
       const offsetPx = this.isRtl ? contentRight - clickX : clickX - contentLeft;
       const twips = this.contentPxToTwips(offsetPx);
+      // Word never stacks two stops on the same spot — an existing stop wins.
+      if (this.tabStops.some((s) => Math.abs(s.position - twips) < 30)) return;
       const newStop: RulerTabStop = { position: twips, type: "left" };
       this.tabStops = [...this.tabStops, newStop].sort((a, b) => a.position - b.position);
+      this.#lastAutoStop = { position: twips, at: Date.now() };
       this.$emit("ruler:tabstop-add", { tabStop: newStop });
       this.commitTabStopsToEditor();
     }
@@ -774,14 +759,16 @@ export class DocenRuler extends FASTElement {
     this.tooltipX = clientX - track.left;
 
     if (this.dragActiveMarker === "firstLine") {
-      this.tooltipText = `First Line: ${this.formatMeasurement(this.firstLineTwips)}`;
+      this.tooltipText = `${t("ruler.firstLine", this)}: ${this.formatMeasurement(this.firstLineTwips)}`;
     } else if (this.dragActiveMarker === "hanging" || this.dragActiveMarker === "left") {
-      this.tooltipText = `Left Indent: ${this.formatMeasurement(this.leftIndentTwips)}`;
+      this.tooltipText = `${t("ruler.leftIndent", this)}: ${this.formatMeasurement(this.leftIndentTwips)}`;
     } else if (this.dragActiveMarker === "right") {
-      this.tooltipText = `Right Indent: ${this.formatMeasurement(this.rightIndentTwips)}`;
+      this.tooltipText = `${t("ruler.rightIndent", this)}: ${this.formatMeasurement(this.rightIndentTwips)}`;
     } else if (this.dragActiveMarker === "tabStop" && this.dragTabIdx >= 0) {
       const stop = this.tabStops[this.dragTabIdx];
-      this.tooltipText = stop ? `Tab: ${this.formatMeasurement(stop.position)} (${stop.type})` : "";
+      this.tooltipText = stop
+        ? `${t("ruler.tabStop", this)}: ${this.formatMeasurement(stop.position)} (${stop.type})`
+        : "";
     }
   }
 
@@ -796,51 +783,95 @@ export class DocenRuler extends FASTElement {
     });
   }
 
-  commitIndentToEditor(): void {
-    this.#emitIndentChange();
-    if (!this.#editor) return;
-    const { tr, selection } = this.#editor.state;
-    const { $from } = selection;
-    for (let d = $from.depth; d > 0; d--) {
-      const node = $from.node(d);
-      if (node.type.name === "paragraph" || node.type.name === "heading") {
-        const pos = $from.before(d);
-        const indentObj: Record<string, number | undefined> = {
-          left: this.leftIndentTwips || undefined,
-          right: this.rightIndentTwips || undefined,
-          firstLine: this.firstLineTwips > 0 ? this.firstLineTwips : undefined,
-          hanging: this.firstLineTwips < 0 ? -this.firstLineTwips : undefined,
-        };
-        const cleanIndent = Object.values(indentObj).some((v) => v !== undefined)
-          ? indentObj
-          : null;
-        tr.setNodeMarkup(pos, undefined, {
-          ...node.attrs,
-          indent: cleanIndent,
-        });
-        this.#editor.view.dispatch(tr);
-        return;
+  /** The paragraphs a ruler edit lands on — every textblock the selection
+   *  touches (Word applies ruler changes to the whole selection), falling
+   *  back to the caret's own paragraph for a collapsed selection. */
+  #paragraphTargets(): Array<{ pos: number; attrs: Record<string, unknown> }> {
+    const editor = this.#editor;
+    if (!editor) return [];
+    const { state } = editor;
+    const { from, to } = state.selection;
+    const found = new Map<number, Record<string, unknown>>();
+    state.doc.nodesBetween(from, to, (node, pos) => {
+      const name = node.type.name;
+      if (name === "paragraph" || name === "heading") {
+        found.set(pos, node.attrs as Record<string, unknown>);
+        return false;
+      }
+      return true;
+    });
+    if (found.size === 0) {
+      const { $from } = state.selection;
+      for (let d = $from.depth; d > 0; d--) {
+        const node = $from.node(d);
+        if (node.type.name === "paragraph" || node.type.name === "heading") {
+          found.set($from.before(d), node.attrs as Record<string, unknown>);
+          break;
+        }
       }
     }
+    return [...found].map(([pos, attrs]) => ({ pos, attrs }));
+  }
+
+  #indentAttrs(): Record<string, number> | null {
+    const indent: Record<string, number> = {};
+    if (this.leftIndentTwips) indent.left = this.leftIndentTwips;
+    if (this.rightIndentTwips) indent.right = this.rightIndentTwips;
+    if (this.firstLineTwips > 0) indent.firstLine = this.firstLineTwips;
+    if (this.firstLineTwips < 0) indent.hanging = -this.firstLineTwips;
+    return Object.keys(indent).length > 0 ? indent : null;
+  }
+
+  #queueLiveCommit(): void {
+    if (!this.#editor || this.#liveFrame) return;
+    const run = (): void => {
+      this.#liveFrame = 0;
+      this.commitIndentToEditor();
+    };
+    this.#liveFrame =
+      typeof requestAnimationFrame === "function"
+        ? requestAnimationFrame(run)
+        : (setTimeout(run, 16) as unknown as number);
+  }
+
+  #cancelLiveFrame(): void {
+    if (!this.#liveFrame) return;
+    if (typeof cancelAnimationFrame === "function") cancelAnimationFrame(this.#liveFrame);
+    else clearTimeout(this.#liveFrame);
+    this.#liveFrame = 0;
+  }
+
+  commitIndentToEditor(): void {
+    this.#emitIndentChange();
+    const editor = this.#editor;
+    if (!editor) return;
+    const targets = this.#paragraphTargets();
+    if (targets.length === 0) return;
+    const indent = this.#indentAttrs();
+    const { tr } = editor.state;
+    for (const { pos, attrs } of targets) {
+      tr.setNodeMarkup(pos, undefined, {
+        ...attrs,
+        indent: indent ? { ...indent } : null,
+      });
+    }
+    editor.view.dispatch(tr);
   }
 
   commitTabStopsToEditor(): void {
     this.$emit("ruler:tabstop-change", { tabStops: this.tabStops });
-    if (!this.#editor) return;
-    const { tr, selection } = this.#editor.state;
-    const { $from } = selection;
-    for (let d = $from.depth; d > 0; d--) {
-      const node = $from.node(d);
-      if (node.type.name === "paragraph" || node.type.name === "heading") {
-        const pos = $from.before(d);
-        tr.setNodeMarkup(pos, undefined, {
-          ...node.attrs,
-          tabStops: this.tabStops.length > 0 ? this.tabStops : null,
-        });
-        this.#editor.view.dispatch(tr);
-        return;
-      }
+    const editor = this.#editor;
+    if (!editor) return;
+    const targets = this.#paragraphTargets();
+    if (targets.length === 0) return;
+    const { tr } = editor.state;
+    for (const { pos, attrs } of targets) {
+      tr.setNodeMarkup(pos, undefined, {
+        ...attrs,
+        tabStops: this.tabStops.length > 0 ? [...this.tabStops] : null,
+      });
     }
+    editor.view.dispatch(tr);
   }
 
   #dispatchTabsDialog(): void {

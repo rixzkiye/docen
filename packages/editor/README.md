@@ -17,6 +17,7 @@
 - 🌐 **i18n** — Built-in Chinese (zh-CN) and English (en); add more via `registerTranslation` / `localizationInfo`. Switch live from the status bar (cycles every registered locale) or the Options dialog
 - 🌓 **Light/dark theme** — Fluent design tokens drive the chrome; switch via the `theme` attribute
 - 🔄 **DOCX round-trip** — Open/save `.docx` through the underlying @docen/docx engine
+- 🔤 **Deterministic shaping fonts** — Bundled metric-compatible faces (Calibri→Carlito, Cambria→Caladea, Arial→Liberation Sans, Times New Roman→Liberation Serif) register automatically on connect, so page metrics don't depend on the host's installed fonts; `registerFont()`/`registerDefaultFonts()` override or extend the set
 - 🔌 **Add-ins** — Plug in ribbon tabs, task panes, and commands without touching host internals
 
 ## Installation
@@ -122,6 +123,14 @@ class DocenDocument extends HTMLElement {
   // The underlying @docen/docx Tiptap Editor — the full Tiptap API surface.
   getEditor(): Editor | undefined;
   repaginate(): void;
+
+  // Deterministic shaping fonts: register raw bytes for a family (PDF/DOCX
+  // export embeds them when the license allows), or (re)register the bundled
+  // metric-compatible production set. The element calls registerDefaultFonts()
+  // automatically on connect; pass { baseUrl } when your bundler does not
+  // emit the package's asset URLs.
+  registerFont(family: string, data: Uint8Array, fontIndex?: number): Promise<void>;
+  registerDefaultFonts(options?: RegisterDefaultFontsOptions): Promise<string[]>;
 
   // Task-pane visibility (Office.addin.showAsTaskpane / hide equivalent).
   // `id` is "navigation" | "properties"; flips fire docen:taskpane-visibility-change.

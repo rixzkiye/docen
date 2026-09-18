@@ -155,6 +155,48 @@ describe("W1.1 table border interaction & resize", () => {
       expect(restored.attrs.columnWidths).toEqual([2000, 2000]);
     });
 
+    it("autofit-contents fits a merged table (spanning cells distributed per grid column)", () => {
+      const merged = {
+        type: "table",
+        attrs: { columnWidths: [2000, 2000, 2000] },
+        content: [
+          {
+            type: "tableRow",
+            content: [
+              {
+                type: "tableCell",
+                attrs: { columnSpan: 3 },
+                content: [{ type: "paragraph", content: [{ type: "text", text: "A" }] }],
+              },
+            ],
+          },
+          {
+            type: "tableRow",
+            content: ["BBBBBBBBBB", "", ""].map((text) => ({
+              type: "tableCell",
+              content: [{ type: "paragraph", content: text ? [{ type: "text", text }] : [] }],
+            })),
+          },
+        ],
+      };
+      const editor = build(merged);
+      editor.commands.setTextSelection(3);
+      expect(editor.commands["autofit-contents"]()).toBe(true);
+      const table = tablesOf(editor)[0]!;
+      // One width per GRID column (3), not per row child.
+      expect(table.attrs.columnWidths).toHaveLength(3);
+      // The long second-row cell drives column 0's width, clamped to its
+      // current width and the 720-twip floor.
+      expect(table.attrs.columnWidths[0]).toBe(1220); // 10 chars * 110 + 120
+      expect(table.attrs.columnWidths[0]).toBeLessThan(2000);
+      // The spanning header cell's width is the sum of the three columns.
+      const spanWidth = table.child(0).child(0).attrs.width.value;
+      expect(spanWidth).toBe(table.attrs.columnWidths.reduce((a: number, b: number) => a + b, 0));
+      // Every single cell carries its own grid column's width.
+      expect(table.child(1).child(0).attrs.width.value).toBe(table.attrs.columnWidths[0]);
+      expect(table.child(1).child(2).attrs.width.value).toBe(table.attrs.columnWidths[2]);
+    });
+
     it("autofit-contents with targetCol updates only that column", () => {
       const editor = build(makeTableJSON([2000, 2000], [["甲乙丙", "丁"]]));
       editor.commands.setTextSelection(3);

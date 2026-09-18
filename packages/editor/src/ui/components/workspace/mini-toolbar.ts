@@ -1,42 +1,41 @@
-import {
-  FASTElement,
-  css,
-  customElement,
-  html,
-  observable,
-  ref,
-  repeat,
-} from "@microsoft/fast-element";
+import { FASTElement, css, customElement, html, observable, ref } from "@microsoft/fast-element";
 
+import { FONT_NAMES, FONT_SIZES_PT } from "../../../document/font-lists";
+import { observeLang, t } from "../../i18n/localize";
+// Side-effect import: registers <docen-ribbon-combobox> so the mini toolbar's
+// typeable font/size controls work even where the ribbon bundle is absent.
+import "../ribbon/ribbon-combobox";
 import { renderIcon } from "../ribbon/command-helpers";
 
-const FONTS = [
-  "Calibri",
-  "Arial",
-  "Times New Roman",
-  "Segoe UI",
-  "Georgia",
-  "Tahoma",
-  "Verdana",
-  "Courier New",
-];
+/** Word's point-size range (the Font dialog's accepted span). */
+const MIN_SIZE_PT = 1;
+const MAX_SIZE_PT = 1638;
 
-const FONT_SIZES = [
-  "8",
-  "9",
-  "10",
-  "11",
-  "12",
-  "14",
-  "16",
-  "18",
-  "20",
-  "24",
-  "28",
-  "36",
-  "48",
-  "72",
-];
+const RECENT_FONTS_KEY = "docen.recent-fonts";
+const RECENT_FONTS_MAX = 5;
+
+/** Recently applied font families, most-recent first (Word's "Recently Used
+ *  Fonts" group). Persisted so the list survives reloads; storage failures
+ *  (private mode) degrade to an in-memory list. */
+function recentFonts(): string[] {
+  try {
+    const raw = localStorage.getItem(RECENT_FONTS_KEY);
+    const parsed: unknown = raw ? JSON.parse(raw) : [];
+    if (Array.isArray(parsed)) return parsed.filter((f): f is string => typeof f === "string");
+  } catch {
+    // ignore malformed/blocked storage
+  }
+  return [];
+}
+
+function rememberFont(font: string): void {
+  const list = [font, ...recentFonts().filter((f) => f !== font)].slice(0, RECENT_FONTS_MAX);
+  try {
+    localStorage.setItem(RECENT_FONTS_KEY, JSON.stringify(list));
+  } catch {
+    // ignore blocked storage
+  }
+}
 
 const styles = css`
   :host {
@@ -91,36 +90,16 @@ const styles = css`
     border-color: var(--docen-color-accent, #0f6cbd);
   }
 
+  .btn[aria-disabled="true"] {
+    opacity: 0.4;
+    cursor: default;
+  }
+
   .btn svg {
     display: block;
     width: 16px;
     height: 16px;
     fill: currentColor;
-  }
-
-  .select {
-    height: 24px;
-    border: 1px solid var(--docen-color-stroke-1, #d1d1d1);
-    border-radius: 3px;
-    background: var(--docen-color-bg, #ffffff);
-    color: inherit;
-    font-size: 11px;
-    font-family: inherit;
-    padding: 0 2px;
-    margin: 0;
-    cursor: pointer;
-  }
-
-  .select:focus {
-    outline: 1px solid var(--docen-color-accent, #0f6cbd);
-  }
-
-  .font-select {
-    width: 100px;
-  }
-
-  .size-select {
-    width: 44px;
   }
 
   .sep {
@@ -163,15 +142,22 @@ const styles = css`
 `;
 
 const template = html<DocenMiniToolbar>`
-  <select class="select font-select" ${ref("fontSelect")} title="Font family">
-    ${repeat(() => FONTS, html`<option :value="${(x) => x}">${(x) => x}</option>`)}
-  </select>
+  <docen-ribbon-combobox
+    class="font-combo"
+    ${ref("fontCombo")}
+    event="font-name"
+    style="width:132px;flex:none"
+  ></docen-ribbon-combobox>
 
-  <select class="select size-select" ${ref("sizeSelect")} title="Font size">
-    ${repeat(() => FONT_SIZES, html`<option :value="${(x) => x}">${(x) => x}</option>`)}
-  </select>
+  <docen-ribbon-combobox
+    class="size-combo"
+    ${ref("sizeCombo")}
+    event="font-size"
+    size="short"
+    style="width:56px;flex:none"
+  ></docen-ribbon-combobox>
 
-  <button type="button" class="btn" ${ref("growBtn")} data-cmd="grow-font" title="Grow font">
+  <button type="button" class="btn" ${ref("growBtn")} data-cmd="grow-font">
     <svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor">
       <path
         d="M7.5 2.5l-4 9.5h1.7l.9-2.2h3.8l.9 2.2h1.7l-4-9.5h-1zm-.1 2.3l1.4 3.6H6l1.4-3.6zM13 3l-2.5 3h5L13 3z"
@@ -179,7 +165,7 @@ const template = html<DocenMiniToolbar>`
     </svg>
   </button>
 
-  <button type="button" class="btn" ${ref("shrinkBtn")} data-cmd="shrink-font" title="Shrink font">
+  <button type="button" class="btn" ${ref("shrinkBtn")} data-cmd="shrink-font">
     <svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor">
       <path
         d="M7 4.5l-3.5 8h1.5l.8-1.9h3.4l.8 1.9h1.5l-3.5-8h-1zm-.1 2l1.2 3.1H5.7l1.2-3.1zM12.5 9l-2-2.5h4L12.5 9z"
@@ -189,85 +175,58 @@ const template = html<DocenMiniToolbar>`
 
   <span class="sep"></span>
 
-  <button type="button" class="btn" ${ref("boldBtn")} data-cmd="bold" title="Bold">
+  <button type="button" class="btn" ${ref("boldBtn")} data-cmd="bold">
     <span ${ref("boldIcon")}></span>
   </button>
 
-  <button type="button" class="btn" ${ref("italicBtn")} data-cmd="italic" title="Italic">
+  <button type="button" class="btn" ${ref("italicBtn")} data-cmd="italic">
     <span ${ref("italicIcon")}></span>
   </button>
 
-  <button type="button" class="btn" ${ref("underlineBtn")} data-cmd="underline" title="Underline">
+  <button type="button" class="btn" ${ref("underlineBtn")} data-cmd="underline">
     <span ${ref("underlineIcon")}></span>
   </button>
 
   <span class="sep"></span>
 
   <div class="color-wrap">
-    <button
-      type="button"
-      class="btn"
-      ${ref("textColorBtn")}
-      data-cmd="font-color"
-      title="Font color"
-    >
+    <button type="button" class="btn" ${ref("textColorBtn")} data-cmd="font-color">
       <span ${ref("fontColorIcon")}></span>
       <span class="color-indicator" ${ref("textColorBar")}></span>
     </button>
-    <input
-      type="color"
-      class="color-input"
-      ${ref("textColorInput")}
-      value="#000000"
-      title="Choose font color"
-    />
+    <input type="color" class="color-input" ${ref("textColorInput")} value="#000000" />
   </div>
 
   <div class="color-wrap">
-    <button
-      type="button"
-      class="btn"
-      ${ref("highlightBtn")}
-      data-cmd="highlight"
-      title="Highlight color"
-    >
+    <button type="button" class="btn" ${ref("highlightBtn")} data-cmd="highlight">
       <span ${ref("highlightIcon")}></span>
       <span class="color-indicator highlight-indicator" ${ref("highlightColorBar")}></span>
     </button>
-    <input
-      type="color"
-      class="color-input"
-      ${ref("highlightInput")}
-      value="#ffff00"
-      title="Choose highlight color"
-    />
+    <input type="color" class="color-input" ${ref("highlightInput")} value="#ffff00" />
   </div>
 
   <span class="sep"></span>
 
-  <button type="button" class="btn" ${ref("bulletBtn")} data-cmd="bullet-list" title="Bullet list">
+  <button type="button" class="btn" ${ref("bulletBtn")} data-cmd="bullet-list">
     <span ${ref("bulletIcon")}></span>
   </button>
 
-  <button
-    type="button"
-    class="btn"
-    ${ref("formatPainterBtn")}
-    data-cmd="format-painter"
-    title="Format painter"
-  >
+  <button type="button" class="btn" ${ref("formatPainterBtn")} data-cmd="format-painter">
     <span ${ref("painterIcon")}></span>
   </button>
 `;
 
 /**
  * `<docen-mini-toolbar>` — Word-style floating mini toolbar that appears near
- * a text selection, fading in smoothly and fading out as the pointer moves away.
+ * a text selection, fading in smoothly and fading out as the pointer moves
+ * away. Font family and size are typeable comboboxes sharing the ribbon's
+ * font catalog (plus theme fonts and recently used families); every other
+ * control acts on the selection, and formatting state follows the caret.
  */
 @customElement({ name: "docen-mini-toolbar", template, styles })
 export class DocenMiniToolbar extends FASTElement {
-  @observable fontSelect?: HTMLSelectElement;
-  @observable sizeSelect?: HTMLSelectElement;
+  @observable fontCombo?: HTMLElement;
+  @observable sizeCombo?: HTMLElement;
   @observable growBtn?: HTMLButtonElement;
   @observable shrinkBtn?: HTMLButtonElement;
   @observable boldBtn?: HTMLButtonElement;
@@ -293,6 +252,11 @@ export class DocenMiniToolbar extends FASTElement {
   #isOpen = false;
   #targetRect: { left: number; top: number; right: number; bottom: number } | null = null;
   #fadeTimeout = 0;
+  #unobserveLang?: () => void;
+  /** The last font/size pushed into the comboboxes — avoids re-seeding the
+   *  option lists while the user is picking in them. */
+  #lastFont = "";
+  #lastSize = "";
 
   get isOpen(): boolean {
     return this.#isOpen;
@@ -300,38 +264,61 @@ export class DocenMiniToolbar extends FASTElement {
 
   connectedCallback(): void {
     super.connectedCallback();
-    this.#populateOptions();
     this.#renderIcons();
     this.#bindEvents();
+    this.#applyLabels();
+    this.#unobserveLang = observeLang(() => this.#applyLabels());
+    this.setAttribute("role", "toolbar");
   }
 
   disconnectedCallback(): void {
     this.#unbindEvents();
+    this.#unobserveLang?.();
+    this.#unobserveLang = undefined;
     if (this.#fadeTimeout) clearTimeout(this.#fadeTimeout);
     super.disconnectedCallback();
   }
 
-  #populateOptions(): void {
-    const fontSelect =
-      this.fontSelect ?? this.shadowRoot?.querySelector<HTMLSelectElement>(".font-select");
-    if (fontSelect && fontSelect.options.length === 0) {
-      for (const font of FONTS) {
-        const opt = document.createElement("option");
-        opt.value = font;
-        opt.textContent = font;
-        fontSelect.appendChild(opt);
+  #fontItems(current?: string): string {
+    const seen = new Set<string>();
+    const names: string[] = [];
+    for (const name of [
+      ...(current ? [current] : []),
+      ...recentFonts(),
+      ...this.#themeFonts(),
+      ...FONT_NAMES,
+    ]) {
+      if (name && !seen.has(name)) {
+        seen.add(name);
+        names.push(name);
       }
     }
-    const sizeSelect =
-      this.sizeSelect ?? this.shadowRoot?.querySelector<HTMLSelectElement>(".size-select");
-    if (sizeSelect && sizeSelect.options.length === 0) {
-      for (const size of FONT_SIZES) {
-        const opt = document.createElement("option");
-        opt.value = size;
-        opt.textContent = size;
-        sizeSelect.appendChild(opt);
+    return JSON.stringify(names.map((text) => ({ text })));
+  }
+
+  /** The document theme's heading/body families (host CSS variables) — Word
+   *  lists these at the top of the font gallery. */
+  #themeFonts(): string[] {
+    const style = getComputedStyle(this);
+    return ["--docen-theme-font-major", "--docen-theme-font-minor"]
+      .map((name) =>
+        (style.getPropertyValue(name) || this.style.getPropertyValue(name))
+          .trim()
+          .replace(/^["']|["']$/g, ""),
+      )
+      .filter(Boolean);
+  }
+
+  #sizeItems(current?: string): string {
+    const seen = new Set<string>();
+    const sizes: string[] = [];
+    for (const size of [...(current ? [current] : []), ...FONT_SIZES_PT.map(String)]) {
+      if (!seen.has(size)) {
+        seen.add(size);
+        sizes.push(size);
       }
     }
+    return JSON.stringify(sizes.map((text) => ({ text, value: text })));
   }
 
   #renderIcons(): void {
@@ -344,25 +331,56 @@ export class DocenMiniToolbar extends FASTElement {
     if (this.painterIcon) renderIcon(this.painterIcon, "format-painter");
   }
 
+  /** Localized tooltips and accessible names for every control — the mini
+   *  toolbar ships its own component-local translations so it works wherever
+   *  the ribbon's business tables are not loaded. */
+  #applyLabels(): void {
+    const name = (el: Element | undefined, key: string): void => {
+      if (!el) return;
+      const text = t(key, this);
+      el.setAttribute("aria-label", text);
+      el.setAttribute("title", text);
+    };
+    name(this.boldBtn, "miniToolbar.bold");
+    name(this.italicBtn, "miniToolbar.italic");
+    name(this.underlineBtn, "miniToolbar.underline");
+    name(this.growBtn, "miniToolbar.growFont");
+    name(this.shrinkBtn, "miniToolbar.shrinkFont");
+    name(this.textColorBtn, "miniToolbar.fontColor");
+    name(this.highlightBtn, "miniToolbar.highlight");
+    name(this.bulletBtn, "miniToolbar.bulletList");
+    name(this.formatPainterBtn, "miniToolbar.formatPainter");
+    this.setAttribute("aria-label", t("miniToolbar.label", this));
+    const fontLabel = t("miniToolbar.fontName", this);
+    this.fontCombo?.setAttribute("aria-label", fontLabel);
+    this.fontCombo?.setAttribute("title", fontLabel);
+    this.fontCombo?.setAttribute("label", fontLabel);
+    const sizeLabel = t("miniToolbar.fontSize", this);
+    this.sizeCombo?.setAttribute("aria-label", sizeLabel);
+    this.sizeCombo?.setAttribute("title", sizeLabel);
+    this.sizeCombo?.setAttribute("label", sizeLabel);
+    name(this.textColorInput, "miniToolbar.fontColorPicker");
+    name(this.highlightInput, "miniToolbar.highlightPicker");
+  }
+
   #bindEvents(): void {
     this.addEventListener("mousedown", this.#onMouseDown);
+    this.addEventListener("command", this.#onComboCommand);
     document.addEventListener("pointermove", this.#onDocPointerMove);
 
-    const fontSelect =
-      this.fontSelect ?? this.shadowRoot?.querySelector<HTMLSelectElement>(".font-select");
-    fontSelect?.addEventListener("change", () => {
-      this.#emit("font-name", fontSelect.value);
-    });
-
-    const sizeSelect =
-      this.sizeSelect ?? this.shadowRoot?.querySelector<HTMLSelectElement>(".size-select");
-    sizeSelect?.addEventListener("change", () => {
-      this.#emit("font-size", sizeSelect.value);
-    });
+    const fontCombo = this.fontCombo ?? this.shadowRoot?.querySelector<HTMLElement>(".font-combo");
+    if (fontCombo) {
+      this.#lastFont = "";
+      fontCombo.setAttribute("items", this.#fontItems());
+    }
+    const sizeCombo = this.sizeCombo ?? this.shadowRoot?.querySelector<HTMLElement>(".size-combo");
+    if (sizeCombo) {
+      this.#lastSize = "";
+      sizeCombo.setAttribute("items", this.#sizeItems());
+    }
 
     const textColorInput =
-      this.textColorInput ??
-      this.shadowRoot?.querySelector<HTMLInputElement>(".color-wrap:nth-of-type(1) .color-input");
+      this.textColorInput ?? this.shadowRoot?.querySelector<HTMLInputElement>(".color-input");
     const textColorBar =
       this.textColorBar ??
       this.shadowRoot?.querySelector<HTMLElement>(".color-indicator:not(.highlight-indicator)");
@@ -386,6 +404,7 @@ export class DocenMiniToolbar extends FASTElement {
     this.shadowRoot?.querySelectorAll<HTMLButtonElement>("button[data-cmd]").forEach((btn) => {
       btn.addEventListener("click", (e) => {
         e.stopPropagation();
+        if (btn.getAttribute("aria-disabled") === "true") return;
         const cmd = btn.dataset.cmd;
         if (cmd) {
           if (cmd === "format-painter") {
@@ -400,17 +419,60 @@ export class DocenMiniToolbar extends FASTElement {
 
   #unbindEvents(): void {
     this.removeEventListener("mousedown", this.#onMouseDown);
+    this.removeEventListener("command", this.#onComboCommand);
     document.removeEventListener("pointermove", this.#onDocPointerMove);
   }
 
-  /** Prevent toolbar clicks from blurring the editor and collapsing selection. */
+  /** Prevent toolbar button clicks from blurring the editor and collapsing the
+   *  selection. Focusable controls (the typeable comboboxes, the color
+   *  pickers) must keep their default mousedown so they can take focus and
+   *  open. */
   #onMouseDown = (e: MouseEvent): void => {
-    e.preventDefault();
+    const target = e.composedPath()[0] as HTMLElement | undefined;
+    if (target?.tagName === "BUTTON" && target.hasAttribute("data-cmd")) e.preventDefault();
   };
 
-  /** Smooth fade-out as pointer moves away from the toolbar and selection. */
+  /** Commands from the two comboboxes: apply Word's point-size clamp, keep the
+   *  recently-used font list fresh, and re-emit from the toolbar so the host
+   *  sees one event source (the child's own event never escapes the toolbar). */
+  #onComboCommand = (e: Event): void => {
+    // `e.target` is retargeted to this host for events observed outside the
+    // shadow tree, so identify our own re-emission by the original target.
+    if (e.composedPath()[0] === this) return;
+    const detail = (e as CustomEvent<{ event?: string; value?: string }>).detail;
+    if (!detail?.event) return;
+    // The child's raw event must not escape the toolbar (immediate: listeners
+    // on this host itself are skipped too, so the clamp can't be bypassed).
+    e.stopImmediatePropagation();
+    if (detail.event === "font-name") {
+      const font = (detail.value ?? "").trim();
+      if (!font) return;
+      rememberFont(font);
+      const combo = this.fontCombo ?? this.shadowRoot?.querySelector<HTMLElement>(".font-combo");
+      combo?.setAttribute("items", this.#fontItems(font));
+      this.#emit("font-name", font);
+      return;
+    }
+    if (detail.event === "font-size") {
+      const text = (detail.value ?? "").trim();
+      if (!text) return;
+      const raw = Number(text);
+      if (!Number.isFinite(raw)) return;
+      const size = Math.min(MAX_SIZE_PT, Math.max(MIN_SIZE_PT, raw));
+      // Reflect a clamped/mis-typed value back into the box immediately.
+      this.#lastSize = String(size);
+      this.sizeCombo?.setAttribute("value", String(size));
+      this.#emit("font-size", String(size));
+    }
+  };
+
+  /** Smooth fade-out as pointer moves away from the toolbar and selection.
+   *  While a control holds focus (typing in a combo, picking a color) the
+   *  toolbar stays put — Word keeps the mini toolbar anchored during use. */
   #onDocPointerMove = (e: PointerEvent): void => {
     if (!this.#isOpen) return;
+    const active = this.shadowRoot?.activeElement;
+    if (active && this.shadowRoot?.contains(active)) return;
 
     const tbRect = this.getBoundingClientRect();
     if (tbRect.width === 0 || tbRect.height === 0) return;
@@ -445,9 +507,9 @@ export class DocenMiniToolbar extends FASTElement {
     this.#isOpen = true;
     this.setAttribute("data-open", "");
 
-    // Layout dimensions
-    const tbWidth = 340;
-    const tbHeight = 34;
+    // Measure after the display flip so the placement uses the real box.
+    const tbWidth = this.offsetWidth || 420;
+    const tbHeight = this.offsetHeight || 32;
 
     // Position above selection if space permits, otherwise below
     let top = rect.top - tbHeight - 8;
@@ -492,29 +554,46 @@ export class DocenMiniToolbar extends FASTElement {
     fontSize?: string;
     fontColor?: string;
     highlightColor?: string;
+    /** False in read-only/protected contexts — every control greys out. */
+    editable?: boolean;
   }): void {
-    if (this.boldBtn) {
-      this.boldBtn.setAttribute("aria-pressed", state.bold ? "true" : "false");
-      this.boldBtn.classList.toggle("active", Boolean(state.bold));
+    const setPressed = (el: HTMLElement | undefined, on?: boolean): void => {
+      if (!el) return;
+      el.setAttribute("aria-pressed", on ? "true" : "false");
+      el.classList.toggle("active", Boolean(on));
+    };
+    setPressed(this.boldBtn, state.bold);
+    setPressed(this.italicBtn, state.italic);
+    setPressed(this.underlineBtn, state.underline);
+
+    const editable = state.editable !== false;
+    const size = Number(state.fontSize);
+    const setDisabled = (el: HTMLButtonElement | undefined, off: boolean): void => {
+      if (!el) return;
+      el.setAttribute("aria-disabled", off ? "true" : "false");
+    };
+    setDisabled(this.growBtn, !editable || (Number.isFinite(size) && size >= MAX_SIZE_PT));
+    setDisabled(this.shrinkBtn, !editable || (Number.isFinite(size) && size <= MIN_SIZE_PT));
+
+    // Word clears the boxes for a mixed selection — never leave a stale value
+    // from the previous caret position.
+    const fontCombo = this.fontCombo ?? this.shadowRoot?.querySelector<HTMLElement>(".font-combo");
+    const font = state.fontName?.trim() ?? "";
+    if (fontCombo && font !== this.#lastFont) {
+      this.#lastFont = font;
+      fontCombo.setAttribute("items", this.#fontItems(font || undefined));
+      if (font) fontCombo.setAttribute("value", font);
+      else fontCombo.removeAttribute("value");
     }
-    if (this.italicBtn) {
-      this.italicBtn.setAttribute("aria-pressed", state.italic ? "true" : "false");
-      this.italicBtn.classList.toggle("active", Boolean(state.italic));
+    const sizeCombo = this.sizeCombo ?? this.shadowRoot?.querySelector<HTMLElement>(".size-combo");
+    const sizeText = state.fontSize?.trim() ?? "";
+    if (sizeCombo && sizeText !== this.#lastSize) {
+      this.#lastSize = sizeText;
+      sizeCombo.setAttribute("items", this.#sizeItems(sizeText || undefined));
+      if (sizeText) sizeCombo.setAttribute("value", sizeText);
+      else sizeCombo.removeAttribute("value");
     }
-    if (this.underlineBtn) {
-      this.underlineBtn.setAttribute("aria-pressed", state.underline ? "true" : "false");
-      this.underlineBtn.classList.toggle("active", Boolean(state.underline));
-    }
-    const fontSelect =
-      this.fontSelect ?? this.shadowRoot?.querySelector<HTMLSelectElement>(".font-select");
-    if (fontSelect && state.fontName) {
-      fontSelect.value = state.fontName;
-    }
-    const sizeSelect =
-      this.sizeSelect ?? this.shadowRoot?.querySelector<HTMLSelectElement>(".size-select");
-    if (sizeSelect && state.fontSize) {
-      sizeSelect.value = state.fontSize;
-    }
+
     if (this.textColorBar && state.fontColor) {
       this.textColorBar.style.backgroundColor = state.fontColor.startsWith("#")
         ? state.fontColor

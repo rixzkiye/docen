@@ -33,6 +33,8 @@ export interface ClipboardFormatHostView {
   jumpToBookmark(name: string): void;
   /** Editing → Select (all/objects/similar). */
   select(value?: string): void;
+  /** Select Objects toggle (the Draw tab's button and the Select menu entry). */
+  toggleObjectSelect(): void;
   /** Toggle the format painter's capture/apply mode. */
   toggleFormatPainter(): void;
 }
@@ -59,6 +61,7 @@ export class ClipboardFormatHostCommands implements HostCommandDomain {
     "clipboard-dialog",
     "styles-pane",
     "select",
+    "select-objects",
     "format-painter",
   ];
 
@@ -161,6 +164,12 @@ export class ClipboardFormatHostCommands implements HostCommandDomain {
     // Editing → Select: selectAll() spans the whole document.
     if (event === "select") {
       this.host.select(value);
+      return true;
+    }
+    // Select Objects (Home → Editing → Select; Draw tab) — toggles the
+    // object-selection mode.
+    if (event === "select-objects") {
+      this.host.toggleObjectSelect();
       return true;
     }
     // Format Painter — toggle capture/apply of the current run's marks.

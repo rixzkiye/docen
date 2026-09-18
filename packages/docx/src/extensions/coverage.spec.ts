@@ -6,8 +6,11 @@ import { describe, expect, it } from "vitest";
 import { compileDocument, docxExtensions, resolveDocument } from "../index";
 import {
   PARAGRAPH_CHILD_DISPOSITIONS,
+  PRESERVE_ONLY_ELEMENTS,
+  PRESERVED_RUN_ELEMENTS,
   RUN_CHILDREN_DROPPED,
   SECTION_CHILD_DISPOSITIONS,
+  type Disposition,
 } from "./coverage";
 
 /**
@@ -553,19 +556,53 @@ describe("ParagraphChild dispositions", () => {
   }
 });
 
-// ── Run children drops ──
+// ── Run children: preserved elements + remaining drops ──
 
-describe("run children drops", () => {
+/** Resolve → compile a run carrying `{ tag: true }` after some text. */
+function runChildRoundTrip(tag: string) {
+  const run: ParagraphChild = {
+    text: "x",
+    children: [{ [tag]: true } as NonNullable<RunOptions["children"]>[number]],
+  };
+  return roundTrip([{ paragraph: { children: [run] } }]);
+}
+
+describe("run children preservation", () => {
+  for (const [tag, entry] of Object.entries(PRESERVED_RUN_ELEMENTS)) {
+    it(`keeps {${tag}} nested in a run as a runMarker (${entry.element})`, () => {
+      const { json, compiled } = runChildRoundTrip(tag);
+      // The resolve leg claims the element with the dedicated atom.
+      const markers: { element?: string }[] = [];
+      const collect = (node: JSONContent): void => {
+        if (node.type === "runMarker") markers.push(node.attrs ?? {});
+        for (const child of node.content ?? []) collect(child);
+      };
+      collect(json);
+      expect(markers.map((m) => m.element)).toContain(tag);
+      // The compile leg emits the element back into the run children.
+      expect(JSON.stringify(compiled)).toContain(`"${tag}"`);
+    });
+  }
+
   for (const { tag, reason } of RUN_CHILDREN_DROPPED) {
     it(`drops {${tag}} nested in a run (${reason})`, () => {
-      const run: ParagraphChild = {
-        text: "x",
-        children: [{ [tag]: true } as NonNullable<RunOptions["children"]>[number]],
-      };
-      const { compiled } = roundTrip([{ paragraph: { children: [run] } }]);
+      const { compiled } = runChildRoundTrip(tag);
       expect(JSON.stringify(compiled)).not.toContain(`"${tag}"`);
     });
   }
+
+  it("still drops an unregistered run child (no writer support)", () => {
+    // A shape outside EG_RunInnerContent's empty set has no office-open
+    // writer; the walk must drop it rather than pass it into the writer.
+    const run: ParagraphChild = {
+      text: "x",
+      children: [
+        { unknownRunChild: true } as unknown as NonNullable<RunOptions["children"]>[number],
+      ],
+    };
+    const { compiled } = roundTrip([{ paragraph: { children: [run] } }]);
+    expect(JSON.stringify(compiled)).not.toContain("unknownRunChild");
+  });
 
   it("keeps rule-owned children nested in a run (pageBreak inside children)", () => {
     const run: ParagraphChild = {
@@ -846,5 +883,144 @@ describe("real-XML round-trip (generateDocument → parseDocument)", { timeout: 
     expect(ffNode).toBeDefined();
     expect(ffNode?.attrs?.formField?.name).toBe("field_cb");
     expect(ffNode?.attrs?.formField?.checkBox?.checked).toBe(true);
+  });
+
+  // ── Preserve-only elements through real XML ──
+  // The audited passthrough shapes that office-open can round-trip from bytes:
+  // resolve → compile → generate → parse → resolve keeps the branch. Shapes
+  // office-open cannot stringify from a synthetic options object (SmartArt
+  // needs its diagram parts, subDoc its relationship, OLE its embed payload)
+  // are covered at the model level by the fixture suite above and by
+  // docs/passthrough.md.
+  function throughXmlAndBack(children: SectionChild[]): JSONContent {
+    const first = throughXml(children);
+    const binary = generateDocumentSync({ sections: [{ children: first }] });
+    return resolveDocument(parseDocumentSync(new Uint8Array(binary as Buffer)), docxExtensions);
+  }
+
+  it("symbolRun survives real XML and stays an inlinePassthrough atom", () => {
+    const json = throughXmlAndBack([
+      {
+        paragraph: {
+          children: [{ symbolRun: { char: "F0A7", symbolFont: "Symbol" } } as any],
+        },
+      },
+    ]);
+    expect(collectTypes(json).has("inlinePassthrough")).toBe(true);
+    const compiled = compileDocument(json, docxExtensions).sections[0].children;
+    expect(JSON.stringify(compiled)).toContain("F0A7");
+  });
+
+  it("inline customXml survives real XML verbatim", () => {
+    const json = throughXmlAndBack([
+      {
+        paragraph: {
+          children: [
+            { text: "before " },
+            { customXml: { element: "CX", children: ["body"] } } as any,
+            { text: " after" },
+          ],
+        },
+      },
+    ]);
+    const types = collectTypes(json);
+    expect(types.has("inlinePassthrough")).toBe(true);
+    const compiled = compileDocument(json, docxExtensions).sections[0].children;
+    expect(JSON.stringify(compiled)).toContain('"CX"');
+  });
+
+  it("inline rawXml survives real XML verbatim", () => {
+    const json = throughXmlAndBack([
+      { paragraph: { children: [{ rawXml: '<w:fldSimple w:instr="PAGE"/>' } as any] } },
+    ]);
+    expect(collectTypes(json).has("inlinePassthrough")).toBe(true);
+  });
+
+  it("proofErr survives real XML as zero-width metadata", () => {
+    const json = throughXmlAndBack([
+      {
+        paragraph: {
+          children: [{ proofErr: "spellStart" } as any, { text: "wrd" }],
+        },
+      },
+    ]);
+    // A proofing range marker has no editable node; it rides the atom (or is
+    // dropped by office-open when it has no valid spelling state — either way
+    // the text content survives).
+    const text = JSON.stringify(json);
+    expect(text).toContain("wrd");
+  });
+
+  it("comment anchors survive real XML with the comment body intact", () => {
+    const json = throughXmlAndBack([
+      {
+        paragraph: {
+          children: [
+            { commentRangeStart: { id: 7 } } as any,
+            { text: "reviewed" },
+            { commentRangeEnd: { id: 7 } } as any,
+            { commentReference: 7 } as any,
+          ],
+        },
+      },
+    ]);
+    expect(JSON.stringify(compileDocument(json, docxExtensions))).toContain("reviewed");
+    expect(collectTypes(json).has("inlinePassthrough")).toBe(true);
+  });
+
+  it("altChunk survives real XML as a block passthrough", () => {
+    const json = throughXmlAndBack([
+      { altChunk: { data: "PGh0bWw+", contentType: "text/html", extension: "html" } },
+    ]);
+    expect(collectTypes(json).has("passthrough")).toBe(true);
+    const compiled = compileDocument(json, docxExtensions).sections[0].children;
+    expect(JSON.stringify(compiled)).toContain("text/html");
+  });
+});
+
+// ── Preserve-only registry ──
+
+describe("preserve-only registry", () => {
+  /** The elements named by the R8 audit. Each must be documented, and each
+   *  documented entry must agree with the disposition tables. */
+  const AUDITED = [
+    "smartArt",
+    "object",
+    "symbolRun",
+    "commentRangeStart",
+    "commentRangeEnd",
+    "commentReference",
+    "customXml",
+    "subDoc",
+    "proofErr",
+    "rawXml",
+    "altChunk",
+  ] as const;
+
+  it("documents every audited element", () => {
+    const documented = new Set(PRESERVE_ONLY_ELEMENTS.map((e) => e.tag));
+    for (const tag of AUDITED) {
+      expect(documented.has(tag), `${tag} must have a preserve-only note`).toBe(true);
+    }
+  });
+
+  it("every note matches the disposition tables", () => {
+    const dispositions: Record<string, Disposition> = {
+      ...SECTION_CHILD_DISPOSITIONS,
+      ...PARAGRAPH_CHILD_DISPOSITIONS,
+    };
+    for (const note of PRESERVE_ONLY_ELEMENTS) {
+      const disposition = dispositions[note.tag];
+      expect(disposition, `${note.tag} has no disposition entry`).toBeDefined();
+      expect(
+        "passthrough" in disposition!,
+        `${note.tag} is documented as preserve-only but ${JSON.stringify(disposition)}`,
+      ).toBe(true);
+    }
+  });
+
+  it("states the SmartArt authoring exclusion explicitly", () => {
+    const note = PRESERVE_ONLY_ELEMENTS.find((e) => e.tag === "smartArt")!;
+    expect(note.reason).toMatch(/explicit.*exclusion/i);
   });
 });

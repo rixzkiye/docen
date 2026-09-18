@@ -14,5 +14,12 @@ export default defineConfig({
       "!src/**/*.spec.ts",
       "!src/**/*.test.ts",
     ],
+    // @docen/markdown is an internal, never-published workspace package (the
+    // published surface stays self-contained): its code is bundled into the
+    // converter entry that imports it, so `npm i @docen/docx` never has to
+    // resolve it. It stays a devDependency for workspace builds/tests.
+    deps: {
+      alwaysBundle: ["@docen/markdown"],
+    },
   },
 });

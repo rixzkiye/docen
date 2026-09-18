@@ -7,7 +7,11 @@ import { DocenRuler } from "./ruler";
 
 const created: DocenRuler[] = [];
 afterEach(() => {
-  while (created.length) created.pop()!.remove();
+  // Hide rather than remove: happy-dom's queued disconnect reaction can fire
+  // on the next test's freshly mounted ruler and tear down its template
+  // bindings. (Removal is covered at runtime and in the element's own tests.)
+  for (const el of created) el.style.display = "none";
+  created.length = 0;
 });
 
 async function settle(): Promise<void> {
@@ -108,6 +112,46 @@ describe("DocenRuler (<docen-ruler>) (W5.2)", () => {
     // Release pointer
     window.dispatchEvent(new PointerEvent("pointerup"));
     expect(ruler.dragActiveMarker).toBeNull();
+  });
+
+  it("binds each rendered tab-stop row to its own stop object", async () => {
+    // Rows must carry the stop itself (not a repeat-scoped index, which can go
+    // stale when the array is replaced): dragging row 2 moves stop 2 only.
+    const ruler = new DocenRuler();
+    created.push(ruler);
+    ruler.marginLeftPx = 96;
+    ruler.pageWidthPx = 816;
+    ruler.tabStops = [
+      { position: 1440, type: "left" },
+      { position: 2880, type: "center" },
+      { position: 4320, type: "right" },
+    ];
+    document.body.append(ruler);
+    // FAST batches DOM updates (repeat rows) behind rAF; let the queue flush.
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    const items = ruler.shadowRoot!.querySelectorAll<HTMLElement>(".tab-stop-item");
+    expect(items.length).toBe(3);
+    const target = items[2]!; // the right stop
+    target.setPointerCapture = () => {};
+    target.dispatchEvent(
+      new PointerEvent("pointerdown", {
+        bubbles: true,
+        composed: true,
+        clientX: 300,
+        pointerId: 5,
+      }),
+    );
+    expect(ruler.dragActiveMarker).toBe("tabStop");
+    expect(ruler.dragTabIdx).toBe(2);
+    expect(ruler.dragStop).toBe(ruler.tabStops[2]);
+
+    window.dispatchEvent(new PointerEvent("pointermove", { clientX: 324, clientY: 10 }));
+    expect(ruler.tabStops[2]!.position).toBe(4680); // +360 twips = +24px
+    expect(ruler.tabStops[0]!.position).toBe(1440); // untouched
+    expect(ruler.tabStops[1]!.position).toBe(2880); // untouched
+    window.dispatchEvent(new PointerEvent("pointerup"));
+    expect(ruler.dragStop).toBeNull();
   });
 
   it("handles tab stops: click to add, drag to move, drag off to delete, dblclick to open dialog", async () => {
@@ -218,6 +262,26 @@ describe("DocenRuler (<docen-ruler>) (W5.2)", () => {
     expect(ruler.showTooltip).toBe(false);
   });
 
+  it("renders a marker element per tab stop (repeat binding)", async () => {
+    // tabStops set before connect: the first render must already emit one
+    // marker per stop (a plain array binding renders nothing).
+    const ruler = new DocenRuler();
+    created.push(ruler);
+    ruler.tabStops = [
+      { position: 1440, type: "left" },
+      { position: 2880, type: "right" },
+    ];
+    document.body.append(ruler);
+    await settle();
+    expect(ruler.shadowRoot!.querySelectorAll(".tab-stop-item").length).toBe(2);
+
+    const empty = new DocenRuler();
+    created.push(empty);
+    document.body.append(empty);
+    await settle();
+    expect(empty.shadowRoot!.querySelectorAll(".tab-stop-item").length).toBe(0);
+  });
+
   it("synchronizes two-way with ProseMirror active paragraph", async () => {
     const editor = new Editor({
       element: null,
@@ -254,5 +318,148 @@ describe("DocenRuler (<docen-ruler>) (W5.2)", () => {
     const paraAttrs = editor.state.doc.child(0).attrs;
     expect(paraAttrs.indent?.left).toBe(1440);
     expect(paraAttrs.indent?.firstLine).toBe(720);
+  });
+
+  it("renders the four-level tick hierarchy crisply with signed margin numbers", async () => {
+    const ruler = await mountRuler();
+    ruler.unit = "in";
+    ruler.pageWidthPx = 816;
+    ruler.marginLeftPx = 96;
+    ruler.marginRightPx = 96;
+    ruler.scale = 1;
+    ruler.renderTicks();
+
+    const svg = ruler.shadowRoot!.querySelector(".ticks-svg") as SVGSVGElement;
+    expect(svg.getAttribute("shape-rendering")).toBe("crispEdges");
+    const ticks = Array.from(svg.querySelectorAll("line")).map((line) => ({
+      // Lines sit on the half-pixel crisp grid; compare whole pixels.
+      x: Math.floor(Number(line.getAttribute("x1"))),
+      len: Number(line.getAttribute("y1")) - Number(line.getAttribute("y2")),
+    }));
+    // Word's hierarchy: major (unit, 7px), half (5px), quarter (3px), eighth (2px).
+    expect(new Set(ticks.map((t) => t.len))).toEqual(new Set([7, 5, 3, 2]));
+    // Eight subdivisions per inch at 100%: one every 12px.
+    const oneInch = ticks.filter((t) => t.x >= 96 && t.x < 192).map((t) => t.x);
+    expect(oneInch).toEqual([96, 108, 120, 132, 144, 156, 168, 180]);
+    // The margin gutter carries negative unit labels.
+    expect(svg.textContent).toContain("-1");
+  });
+
+  it("ignores clicks on markers, and double-clicking the ruler opens Tabs without a stray stop", async () => {
+    const ruler = await mountRuler();
+    ruler.marginLeftPx = 96;
+    ruler.pageWidthPx = 816;
+    const track = ruler.shadowRoot!.querySelector(".ruler-track") as HTMLElement;
+    track.getBoundingClientRect = () => ({
+      left: 0,
+      top: 0,
+      width: 816,
+      height: 20,
+      right: 816,
+      bottom: 20,
+      x: 0,
+      y: 0,
+      toJSON: () => {},
+    });
+    const marker = ruler.shadowRoot!.querySelector(".first-line-marker") as HTMLElement;
+
+    // Clicking an indent marker must not create a tab stop.
+    ruler.onTrackClick({ clientX: 200, currentTarget: track, target: marker } as any);
+    expect(ruler.tabStops).toHaveLength(0);
+
+    let opened = 0;
+    ruler.addEventListener("ruler:open-tabs", () => {
+      opened++;
+    });
+
+    // Single click adds a stop; the double-click that follows removes the
+    // auto-added stop and opens the Tabs dialog.
+    ruler.onTrackClick({ clientX: 240, currentTarget: track, target: track } as any);
+    expect(ruler.tabStops).toHaveLength(1);
+    ruler.onTrackDblClick({ target: track } as any);
+    expect(ruler.tabStops).toHaveLength(0);
+    expect(opened).toBe(1);
+  });
+
+  it("applies ruler edits to every selected paragraph (Word's selection scope)", async () => {
+    const editor = new Editor({
+      element: null,
+      extensions: docxExtensions,
+      content: {
+        type: "doc",
+        content: [
+          { type: "paragraph", content: [{ type: "text", text: "First paragraph" }] },
+          { type: "paragraph", content: [{ type: "text", text: "Second paragraph" }] },
+        ],
+      },
+    });
+    const ruler = await mountRuler();
+    ruler.bindEditor(editor);
+    editor.commands.setTextSelection({ from: 1, to: editor.state.doc.content.size - 1 });
+
+    ruler.leftIndentTwips = 720;
+    ruler.commitIndentToEditor();
+    expect(editor.state.doc.child(0).attrs.indent?.left).toBe(720);
+    expect(editor.state.doc.child(1).attrs.indent?.left).toBe(720);
+
+    ruler.tabStops = [{ position: 1440, type: "left" }];
+    ruler.commitTabStopsToEditor();
+    expect(editor.state.doc.child(0).attrs.tabStops?.[0]?.position).toBe(1440);
+    expect(editor.state.doc.child(1).attrs.tabStops?.[0]?.position).toBe(1440);
+  });
+
+  it("commits indent changes live while dragging (Word reflows during the drag)", async () => {
+    const editor = new Editor({
+      element: null,
+      extensions: docxExtensions,
+      content: {
+        type: "doc",
+        content: [{ type: "paragraph", content: [{ type: "text", text: "Live drag" }] }],
+      },
+    });
+    const ruler = await mountRuler();
+    ruler.marginLeftPx = 96;
+    ruler.pageWidthPx = 816;
+    ruler.bindEditor(editor);
+
+    const firstLineEl = ruler.shadowRoot!.querySelector(".first-line-marker") as HTMLElement;
+    firstLineEl.setPointerCapture = () => {};
+    ruler.onMarkerPointerDown("firstLine", {
+      preventDefault: () => {},
+      stopPropagation: () => {},
+      clientX: 96,
+      pointerId: 7,
+      target: firstLineEl,
+    } as any);
+
+    window.dispatchEvent(new PointerEvent("pointermove", { clientX: 144 }));
+    // The live commit rides requestAnimationFrame.
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    expect(editor.state.doc.child(0).attrs.indent?.firstLine).toBe(720);
+
+    window.dispatchEvent(new PointerEvent("pointerup"));
+    expect(ruler.dragActiveMarker).toBeNull();
+  });
+
+  it("mirrors ticks, content panel and markers for RTL paragraphs", async () => {
+    const ruler = new DocenRuler();
+    created.push(ruler);
+    ruler.dir = "rtl";
+    ruler.pageWidthPx = 816;
+    ruler.marginLeftPx = 72; // physical left
+    ruler.marginRightPx = 120; // physical right = start margin in RTL
+    ruler.scale = 1;
+    ruler.setParagraphAttrs({ left: 720, firstLine: 360, right: 1440 });
+    document.body.append(ruler);
+    await settle();
+
+    expect(ruler.zeroXPx).toBe(696); // 816 - 120
+    expect(ruler.contentStartPx).toBe(72); // margins stay physical in RTL
+    expect(ruler.hangingMarkerX).toBe(648); // zero - 48
+    expect(ruler.firstLineMarkerX).toBe(624); // zero - 72
+    expect(ruler.rightMarkerX).toBe(168); // marginLeft + 96
+    const contentBg = ruler.shadowRoot!.querySelector(".content-bg") as HTMLElement;
+    expect(contentBg.style.left).toBe("72px");
+    expect(contentBg.style.width).toBe("624px");
   });
 });

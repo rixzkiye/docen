@@ -89,6 +89,15 @@ export interface LayoutTextStyle {
   glow?: { radiusPx?: number; color?: string };
   /** Reflection effect (Word 2010+ / DrawingML). */
   reflection?: { blur?: number; distancePx?: number; opacity?: number };
+  /** 3-D Format bevels (w14:props3d bevelT/bevelB) — the painter raises the
+   *  glyphs with a light top edge and a dark bottom edge. */
+  bevel?: {
+    top?: { widthPx?: number; heightPx?: number; preset?: string };
+    bottom?: { widthPx?: number; heightPx?: number; preset?: string };
+  };
+  /** 3-D rotation (w14:scene3d) in degrees: x = lat, y = lon, z = rev. The
+   *  painter approximates the projection (z rotates, x/y squash the run). */
+  rotation3d?: { x?: number; y?: number; z?: number };
   /** OpenType ligatures setting (w:ligatures). */
   ligatures?: "none" | "standard" | "contextual" | "historical" | "discretionary" | "all";
   /** OpenType number form (w:numForm). */

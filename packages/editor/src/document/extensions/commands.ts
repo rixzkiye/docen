@@ -40,6 +40,7 @@ import {
   getQuickTableBuildingBlocks,
   getQuickTableJson,
 } from "../quick-tables";
+import { applyEffectsPatch, applyPreset } from "../text-effects";
 
 /**
  * Document editor commands (Office.js-style "add-in commands") as native
@@ -125,6 +126,8 @@ declare module "@tiptap/core" {
       "underline-words": () => ReturnType;
       "underline-double": () => ReturnType;
       "small-caps": () => ReturnType;
+      "text-effects": (value?: string) => ReturnType;
+      "text-effects-apply": (value?: string) => ReturnType;
       "font-name": (font?: string) => ReturnType;
       "font-size": (size?: string) => ReturnType;
       "grow-font": () => ReturnType;
@@ -171,6 +174,7 @@ declare module "@tiptap/core" {
       "horizontal-rule": () => ReturnType;
       "page-break": () => ReturnType;
       "column-break": () => ReturnType;
+      "text-wrapping": () => ReturnType;
       "section-break": () => ReturnType;
       "section-break-next": () => ReturnType;
       "section-break-continuous": () => ReturnType;
@@ -335,6 +339,8 @@ export const WIRED_DISPATCH: ReadonlySet<string> = new Set([
   "underline-words",
   "underline-double",
   "small-caps",
+  "text-effects",
+  "text-effects-apply",
   "font-name",
   "font-size",
   "grow-font",
@@ -370,6 +376,7 @@ export const WIRED_DISPATCH: ReadonlySet<string> = new Set([
   "horizontal-rule",
   "page-break",
   "column-break",
+  "text-wrapping",
   "section-break",
   "section-break-next",
   "section-break-continuous",
@@ -939,6 +946,31 @@ function formattableBlock(
   return parent.type.name === "paragraph"
     ? { type: parent.type.name, attrs: (parent.attrs ?? {}) as Record<string, unknown> }
     : null;
+}
+
+/** Dispatch a host-owned chrome command (a ribbon action with no Tiptap
+ *  document body: Font dialog, Show/Hide ¶, New Comment, Insert Footnote) to
+ *  the editor element. The host listens on its SHADOW ROOT, so the event must
+ *  be dispatched there — an event fired on the light-DOM host element never
+ *  reaches the shadow root's listener. */
+function dispatchHostCommand(
+  editor: { options: { element?: unknown } },
+  event: string,
+  value?: string,
+): boolean {
+  const viaClosest = (editor.options.element as HTMLElement | null)?.closest?.("docen-document");
+  const hostEl =
+    viaClosest ??
+    (typeof document !== "undefined" ? document.querySelector("docen-document") : null);
+  if (!hostEl) return false;
+  (hostEl.shadowRoot ?? hostEl).dispatchEvent(
+    new CustomEvent("command", {
+      bubbles: true,
+      composed: true,
+      detail: value === undefined ? { event } : { event, value },
+    }),
+  );
+  return true;
 }
 
 // ── Flat list helpers (a list paragraph carries bullet/numbering attrs) ──
@@ -2549,10 +2581,71 @@ function blockSliceOf(schema: Schema, block: BuildingBlock): Slice | null {
   }
 }
 
+/** Stamp run-property patches onto the styles model: "document" targets the
+ *  docDefaults run, any other key resolves to the paragraph style whose id is
+ *  the capitalized key (heading1 → Heading1), patching the explicit definition
+ *  when present and the built-in default slot otherwise (an explicit
+ *  definition wins — the built-in slot never reaches styles.xml). A null
+ *  patch value clears the property. Shared by the style-set gallery and the
+ *  Design tab's Text Effects themes. */
+export function stampStyleRunPatches(
+  styles: Record<string, unknown>,
+  patches: Readonly<Record<string, unknown>>,
+): Record<string, unknown> {
+  const next = { ...styles };
+  const defaults = { ...((next.default ?? {}) as Record<string, unknown>) };
+  const list = [...((next.paragraphStyles ?? []) as Record<string, unknown>[])];
+  const merge = (
+    run: Record<string, unknown>,
+    patch: Readonly<Record<string, unknown>>,
+  ): Record<string, unknown> => {
+    const merged = { ...run };
+    for (const [key, value] of Object.entries(patch)) {
+      if (value == null) delete merged[key];
+      else merged[key] = value;
+    }
+    return merged;
+  };
+  for (const [key, rawPatch] of Object.entries(patches)) {
+    if (rawPatch == null || typeof rawPatch !== "object") continue;
+    const runPatch = rawPatch as Readonly<Record<string, unknown>>;
+    // "document" is the docDefaults run itself — write it there.
+    if (key === "document") {
+      const doc = { ...((defaults.document ?? {}) as Record<string, unknown>) };
+      doc.run = merge((doc.run ?? {}) as Record<string, unknown>, runPatch);
+      defaults.document = doc;
+      continue;
+    }
+    const id = key.charAt(0).toUpperCase() + key.slice(1);
+    const at = list.findIndex((ps) => ps.id === id);
+    if (at >= 0) {
+      const entry = { ...list[at] };
+      entry.run = merge((entry.run ?? {}) as Record<string, unknown>, runPatch);
+      list[at] = entry;
+      next.paragraphStyles = list;
+      delete defaults[key];
+    } else {
+      const entry = { ...((defaults[key] ?? {}) as Record<string, unknown>) };
+      entry.run = merge((entry.run ?? {}) as Record<string, unknown>, runPatch);
+      defaults[key] = entry;
+    }
+  }
+  next.default = defaults;
+  return next;
+}
+
 let copiedFormatting: {
   marks: readonly Mark[];
   paraAttrs?: Record<string, unknown>;
 } | null = null;
+
+/** The TextStyle mark's w14RawXml at the selection — the Text Effects
+ *  gallery's current-value read (null when the run carries none). */
+function currentW14RawXml(state: EditorState): string | null {
+  const mark = state.selection.$from.marks().find((m) => m.type.name === "textStyle");
+  const raw = mark?.attrs.w14RawXml;
+  return typeof raw === "string" && raw ? raw : null;
+}
 
 export const DocumentCommands = Extension.create({
   name: "documentCommands",
@@ -2620,6 +2713,35 @@ export const DocumentCommands = Extension.create({
           });
           const next = !current;
           return commands.setMark("textStyle", { smallCaps: next ? true : null });
+        },
+      // Home → Font → Text Effects and Typography. The gallery's `kind:token`
+      // value applies (or clears at `:0`) one w14 effect family on the
+      // selection's TextStyle carrier; the existing raw XML is preserved for
+      // every family the value does not name.
+      "text-effects":
+        (value) =>
+        ({ state, commands }) => {
+          if (typeof value !== "string" || !value || value.endsWith(":options")) return false;
+          const current = currentW14RawXml(state);
+          const next = applyPreset(current, value);
+          if (next === undefined) return false;
+          return commands.setMark("textStyle", { w14RawXml: next });
+        },
+      // The custom Text Effects dialog commits all sections at once (JSON
+      // `{ outline?: …, shadow?: null, … }`); null clears that family.
+      "text-effects-apply":
+        (value) =>
+        ({ state, commands }) => {
+          if (typeof value !== "string" || !value) return false;
+          let patch: Record<string, Record<string, unknown> | null>;
+          try {
+            patch = JSON.parse(value) as Record<string, Record<string, unknown> | null>;
+          } catch {
+            return false;
+          }
+          if (!patch || typeof patch !== "object") return false;
+          const next = applyEffectsPatch(currentW14RawXml(state), patch);
+          return commands.setMark("textStyle", { w14RawXml: next });
         },
       "copy-format":
         () =>
@@ -2886,76 +3008,20 @@ export const DocumentCommands = Extension.create({
           moveBlockDown(editor, tr),
       "font-dialog":
         () =>
-        ({ editor }) => {
-          const hostEl =
-            (editor.options.element as HTMLElement | null)?.closest?.("docen-document") ??
-            (typeof document !== "undefined" ? document.querySelector("docen-document") : null);
-          if (hostEl) {
-            hostEl.dispatchEvent(
-              new CustomEvent("command", {
-                bubbles: true,
-                composed: true,
-                detail: { event: "font-dialog" },
-              }),
-            );
-            return true;
-          }
-          return false;
-        },
+        ({ editor }) =>
+          dispatchHostCommand(editor, "font-dialog"),
       "show-marks":
         () =>
-        ({ editor }) => {
-          const hostEl =
-            (editor.options.element as HTMLElement | null)?.closest?.("docen-document") ??
-            (typeof document !== "undefined" ? document.querySelector("docen-document") : null);
-          if (hostEl) {
-            hostEl.dispatchEvent(
-              new CustomEvent("command", {
-                bubbles: true,
-                composed: true,
-                detail: { event: "show-marks" },
-              }),
-            );
-            return true;
-          }
-          return false;
-        },
+        ({ editor }) =>
+          dispatchHostCommand(editor, "show-marks"),
       "new-comment":
         () =>
-        ({ editor }) => {
-          const hostEl =
-            (editor.options.element as HTMLElement | null)?.closest?.("docen-document") ??
-            (typeof document !== "undefined" ? document.querySelector("docen-document") : null);
-          if (hostEl) {
-            hostEl.dispatchEvent(
-              new CustomEvent("command", {
-                bubbles: true,
-                composed: true,
-                detail: { event: "new-comment" },
-              }),
-            );
-            return true;
-          }
-          return false;
-        },
+        ({ editor }) =>
+          dispatchHostCommand(editor, "new-comment"),
       "insert-footnote":
         (type) =>
-        ({ editor }) => {
-          const hostEl =
-            (editor.options.element as HTMLElement | null)?.closest?.("docen-document") ??
-            (typeof document !== "undefined" ? document.querySelector("docen-document") : null);
-          if (hostEl) {
-            hostEl.dispatchEvent(
-              new CustomEvent("command", {
-                bubbles: true,
-                composed: true,
-                detail: { event: "insert-footnote", value: type },
-              }),
-            );
-            return true;
-          }
-          return false;
-        },
+        ({ editor }) =>
+          dispatchHostCommand(editor, "insert-footnote", type),
       "direction-ltr":
         () =>
         ({ state, tr }) =>
@@ -3273,6 +3339,22 @@ export const DocumentCommands = Extension.create({
             );
           }
           return commands.setColumnBreak();
+        },
+      // Word's Insert → Breaks → Text Wrapping: the soft line break (w:br
+      // type="textWrapping", the hardBreak node's default variant) that ends
+      // text wrapping around a floating object.
+      "text-wrapping":
+        () =>
+        ({ state, dispatch }: { state: EditorState; dispatch?: (tr: Transaction) => void }) => {
+          const br = state.schema.nodes.hardBreak?.create();
+          if (!br) return false;
+          if (dispatch) {
+            const tr = state.tr;
+            if (!state.selection.empty) tr.deleteSelection();
+            tr.insert(state.selection.from, br);
+            dispatch(tr.scrollIntoView());
+          }
+          return true;
         },
       "section-break":
         () =>
@@ -4457,26 +4539,49 @@ export const DocumentCommands = Extension.create({
           if (!anchor) return false;
           const { $from } = state.selection;
           const tableNode = $from.node(anchor.tableAt);
-          const widths = tableNode.attrs.columnWidths as number[] | null;
-          if (!widths || widths.length === 0) return false;
-          const cols = widths.length;
+          const declared =
+            (tableNode.attrs.columnWidths as number[] | null)?.filter((w) => w > 0) ?? [];
+          // The grid can be wider than columnWidths (a hand-built merged
+          // table) — walk the rows' spans for the real column count.
+          let gridCols = declared.length;
           for (let r = 0; r < tableNode.childCount; r += 1) {
-            const row = tableNode.child(r);
-            if (row.childCount !== cols) return false;
-            for (let c = 0; c < cols; c += 1) {
-              const cell = row.child(c);
-              if (cell.attrs.columnSpan || cell.attrs.verticalMerge) return false;
-            }
+            let span = 0;
+            tableNode.child(r).forEach((cell) => {
+              span += Math.max(1, (cell.attrs.columnSpan as number) || 1);
+            });
+            gridCols = Math.max(gridCols, span);
           }
+          if (gridCols === 0) return false;
           if (dispatch) {
             const onlyCol = targetCol != null && targetCol !== "" ? Number(targetCol) : null;
-            const next = widths.map((w, c) => {
+            // Per grid column, the widest content. A spanning cell's width is
+            // split evenly across the columns it covers — Word's fit pass
+            // still shrinks every grid column under a merge.
+            const measured = Array.from({ length: gridCols }, () => 0);
+            for (let r = 0; r < tableNode.childCount; r += 1) {
+              let col = 0;
+              tableNode.child(r).forEach((cell) => {
+                const span = Math.max(1, (cell.attrs.columnSpan as number) || 1);
+                const need = measureTextTwip(cell.textContent);
+                if (span === 1) {
+                  measured[col] = Math.max(measured[col]!, need);
+                } else {
+                  const per = Math.ceil(need / span);
+                  for (let i = 0; i < span && col + i < gridCols; i += 1) {
+                    measured[col + i] = Math.max(measured[col + i]!, per);
+                  }
+                }
+                col += span;
+              });
+            }
+            const fallback =
+              declared.length > 0
+                ? Math.round(declared.reduce((a, b) => a + b, 0) / declared.length)
+                : MIN_COL_TWIP;
+            const next = Array.from({ length: gridCols }, (_, c) => {
+              const w = declared[c] ?? Math.max(MIN_COL_TWIP, fallback);
               if (onlyCol != null && !Number.isNaN(onlyCol) && onlyCol !== c) return w;
-              let widest = 0;
-              for (let r = 0; r < tableNode.childCount; r += 1) {
-                widest = Math.max(widest, measureTextTwip(tableNode.child(r).child(c).textContent));
-              }
-              return Math.max(MIN_COL_TWIP, Math.min(w, widest));
+              return Math.max(MIN_COL_TWIP, Math.min(w, measured[c]!));
             });
             const tr = state.tr.setNodeMarkup($from.before(anchor.tableAt), undefined, {
               ...tableNode.attrs,
@@ -4487,14 +4592,20 @@ export const DocumentCommands = Extension.create({
             for (let r = 0; r < tableNode.childCount; r += 1) {
               const row = tableNode.child(r);
               let curCellPos = curRowPos + 1;
-              for (let c = 0; c < row.childCount; c += 1) {
-                const cell = row.child(c);
+              let col = 0;
+              row.forEach((cell) => {
+                const span = Math.max(1, (cell.attrs.columnSpan as number) || 1);
+                let widthTw = 0;
+                for (let i = 0; i < span && col + i < gridCols; i += 1) {
+                  widthTw += next[col + i]!;
+                }
                 tr.setNodeMarkup(curCellPos, undefined, {
                   ...cell.attrs,
-                  width: { value: next[c], type: "dxa" },
+                  width: { value: widthTw, type: "dxa" },
                 });
                 curCellPos += cell.nodeSize;
-              }
+                col += span;
+              });
               curRowPos += row.nodeSize;
             }
             dispatch(tr.scrollIntoView());
@@ -4850,47 +4961,8 @@ export const DocumentCommands = Extension.create({
         ({ tr }) => {
           const preset = STYLE_SET_PRESETS[value ?? ""];
           if (!preset) return false;
-          const styles = { ...((tr.doc.attrs.styles ?? {}) as Record<string, unknown>) };
-          const defaults = { ...((styles.default ?? {}) as Record<string, unknown>) };
-          const list = [...((styles.paragraphStyles ?? []) as Record<string, unknown>[])];
-          for (const [key, runPatch] of Object.entries(preset)) {
-            // "document" is the docDefaults run itself — write it there.
-            if (key === "document") {
-              const doc = { ...((defaults.document ?? {}) as Record<string, unknown>) };
-              doc.run = {
-                ...((doc.run ?? {}) as Record<string, unknown>),
-                ...(runPatch as Record<string, unknown>),
-              };
-              defaults.document = doc;
-              continue;
-            }
-            const id = key.charAt(0).toUpperCase() + key.slice(1);
-            const at = list.findIndex((ps) => ps.id === id);
-            if (at >= 0) {
-              // Same rule as modify-style: an explicit definition wins — patch
-              // it and drop the built-in slot. The built-in slot never reaches
-              // styles.xml on export (the roundTripped path emits
-              // paragraphStyles verbatim), so parking the patch there diverges
-              // Word from the rendered page.
-              const entry = { ...list[at] };
-              entry.run = {
-                ...((entry.run ?? {}) as Record<string, unknown>),
-                ...(runPatch as Record<string, unknown>),
-              };
-              list[at] = entry;
-              styles.paragraphStyles = list;
-              delete defaults[key];
-            } else {
-              const entry = { ...((defaults[key] ?? {}) as Record<string, unknown>) };
-              entry.run = {
-                ...((entry.run ?? {}) as Record<string, unknown>),
-                ...(runPatch as Record<string, unknown>),
-              };
-              defaults[key] = entry;
-            }
-          }
-          styles.default = defaults;
-          tr.step(new DocAttrStep("styles", styles));
+          const styles = (tr.doc.attrs.styles ?? {}) as Record<string, unknown>;
+          tr.step(new DocAttrStep("styles", stampStyleRunPatches(styles, preset)));
           return true;
         },
       // Word's References > Add Text: mark every selected paragraph as a TOC

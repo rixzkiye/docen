@@ -1,0 +1,49 @@
+{
+  "description": "different-first-page header and footer (titlePg + first/default references)",
+  "xml": [
+    {
+      "part": "word/document.xml",
+      "contains": [
+        "<w:titlePg/>",
+        "<w:headerReference r:id=\"rId",
+        "w:type=\"first\"",
+        "w:type=\"default\"",
+        "<w:footerReference r:id=\"rId"
+      ]
+    }
+  ],
+  "python": [
+    {
+      "path": "document.sections[0].titlePg",
+      "equals": true
+    },
+    {
+      "path": "document.sections[0].headerRefs.first",
+      "truthy": true
+    },
+    {
+      "path": "document.sections[0].headerRefs.default",
+      "truthy": true
+    },
+    {
+      "path": "document.sections[0].footerRefs.first",
+      "truthy": true
+    },
+    {
+      "path": "document.sections[0].footerRefs.default",
+      "truthy": true
+    }
+  ],
+  "pdf": [
+    {
+      "page": 1,
+      "contains": ["FIRST HEADER", "FIRST FOOTER"],
+      "notContains": ["DEFAULT HEADER", "DEFAULT FOOTER"]
+    },
+    {
+      "page": 2,
+      "contains": ["DEFAULT HEADER", "DEFAULT FOOTER"],
+      "notContains": ["FIRST HEADER", "FIRST FOOTER"]
+    }
+  ]
+}

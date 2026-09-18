@@ -31,6 +31,7 @@ import { flattenExtensions, getExtensionField, getSchema } from "@tiptap/core";
 
 import type { Extensions, JSONContent } from "../core";
 import { docxExtensions } from "../core";
+import { PRESERVED_RUN_ELEMENTS } from "../extensions/coverage";
 import {
   type DrawingShapeLayout,
   stringifyVmlShapeLayout,
@@ -45,7 +46,16 @@ import {
   revertWpsShapeToVmlPict,
 } from "../extensions/vml-promotion";
 import { foldWpsShapeName } from "../extensions/wps-shape";
+import {
+  assertArchiveWithinLimits,
+  normalizeArchiveInput,
+  normalizeArchiveInputSync,
+} from "./archive-guard";
+import { DOCX_EPOCH, toIsoDate, withGenerationScope } from "./determinism";
+import { EncryptedDocumentError, assertNotEncryptedContainer } from "./encrypted";
+import { fillGeneratedFields, type FieldCacheOptions } from "./field-eval";
 import { prepareDocument, type PrepareStep } from "./prepare";
+import { docenDefaultSectionProperties } from "./section-defaults";
 import { buildTextBlock } from "./styles";
 
 export type { DocumentOptions };
@@ -191,12 +201,14 @@ type SectionHeaderFooterGroup = {
   default?: SectionChild[];
   first?: SectionChild[];
   even?: SectionChild[];
+  partNames?: { default?: string; first?: string; even?: string };
 };
 
 interface HeaderFooterSlots {
   default?: JSONContent[];
   first?: JSONContent[];
   even?: JSONContent[];
+  partNames?: { default?: string; first?: string; even?: string };
 }
 
 // ── DocxManager ──
@@ -525,7 +537,11 @@ export class DocxManager {
     };
   }
 
-  /** Assemble a SectionOptions from compiled children + optional layout/headers/footers. */
+  /** Assemble a SectionOptions from compiled children + optional layout/headers/footers.
+   *  A section the model gives no properties is stamped with the docen
+   *  defaults — every generated document carries its own explicit page
+   *  geometry instead of inheriting office-open's zh-CN
+   *  `sectionMarginDefaults` at stringify time. */
   private buildSection(
     children: SectionChild[],
     properties: SectionPropertiesOptions | null,
@@ -534,7 +550,7 @@ export class DocxManager {
   ): DocumentOptions["sections"][number] {
     return {
       children,
-      ...(properties ? { properties } : {}),
+      properties: properties ?? docenDefaultSectionProperties(),
       ...(headers ? { headers } : {}),
       ...(footers ? { footers } : {}),
     };
@@ -560,6 +576,15 @@ export class DocxManager {
       }
       if (children.length > 0) group[slot] = children;
     }
+    // Source part names ride back only for slots that still carry content, so
+    // generate can reuse the opened package's headerN.xml parts (and their
+    // relationship ids) instead of allocating fresh ones each save.
+    const names: NonNullable<SectionHeaderFooterGroup["partNames"]> = {};
+    for (const slot of ["default", "first", "even"] as const) {
+      const name = slots.partNames?.[slot];
+      if (name && group[slot]) names[slot] = name;
+    }
+    if (Object.keys(names).length > 0) group.partNames = names;
     return Object.keys(group).length > 0 ? group : undefined;
   }
 
@@ -578,7 +603,14 @@ export class DocxManager {
         slots[slot] = this.resolveSectionChildren(children);
       }
     }
-    return Object.keys(slots).length > 0 ? slots : null;
+    if (Object.keys(slots).length === 0) return null;
+    const names: NonNullable<HeaderFooterSlots["partNames"]> = {};
+    for (const slot of ["default", "first", "even"] as const) {
+      const name = group.partNames?.[slot];
+      if (name && slots[slot]) names[slot] = name;
+    }
+    if (Object.keys(names).length > 0) slots.partNames = names;
+    return slots;
   }
 
   resolve(docOpts: DocumentOptions): JSONContent {
@@ -625,7 +657,11 @@ export class DocxManager {
       const sectionContent = this.resolveSectionChildren(section.children ?? []);
       if (i < lastIndex) {
         const sectAttrs: Record<string, unknown> = {
-          sectionProperties: section.properties ?? null,
+          // A propertyless non-final section still IS a section break (an
+          // empty sectPr inherits the defaults); compile closes the section
+          // only for a non-null marker, so stamp `{}` rather than null or the
+          // break — and the whole section — silently merges into the next.
+          sectionProperties: section.properties ?? {},
           sectionHeaders: this.resolveHeaderFooter(section.headers),
           sectionFooters: this.resolveHeaderFooter(section.footers),
         };
@@ -704,7 +740,16 @@ export class DocxManager {
           if (!compiled) continue;
           pushAll(entries, compiled);
         }
-        return { toc: { ...options, entries } };
+        // The block+ schema's placeholder paragraph is not a rendered entry.
+        // Hand office-open the no-entries shape instead: it emits the dirty
+        // field head/end pair (which Word/LibreOffice update on open), while an
+        // empty paragraph stringifies as a self-closing <w:p/> that
+        // injectFieldHead cannot carry the field runs into — dropping the
+        // field instruction entirely.
+        const hasRenderedEntry = (node.content ?? []).some(
+          (child) => child.type !== "paragraph" || (child.content?.length ?? 0) > 0,
+        );
+        return { toc: hasRenderedEntry ? { ...options, entries } : { ...options } };
       }
       case "sdtBlock": {
         // Content-control container (reverse of the sdt block rule): children
@@ -1144,6 +1189,17 @@ export class DocxManager {
         case "columnBreak":
           children.push({ columnBreak: true });
           break;
+        case "runMarker": {
+          // Reverse of RunMarker's parseDocxInline rule: the preserved empty
+          // run element re-emits as the run's only child (office-open's
+          // EMPTY_RUN_ELEMENTS writer). Tags outside the preserve table are
+          // dropped — the writer has no XML for them.
+          const element = node.attrs?.element as string | undefined;
+          if (element && element in PRESERVED_RUN_ELEMENTS) {
+            children.push({ children: [{ [element]: true }] } as unknown as ParagraphChild);
+          }
+          break;
+        }
         case "tab":
           // office-open emits <w:tab/> from a top-level tab:true run, but its
           // ParagraphChild union doesn't list the top-level shape — double
@@ -1165,10 +1221,19 @@ export class DocxManager {
         }
         case "mathInline": {
           // Reverse of MathInline's parseDocxInline rule: the MathInput rides
-          // the `math` attr verbatim.
+          // the `math` attr verbatim. A bare single-construct struct (the
+          // convertLinearToOMML shape) is wrapped into the paragraph shape
+          // office-open's m:oMath writer reads — otherwise the formula
+          // silently serializes empty.
           const math = node.attrs?.math;
           if (math && typeof math === "object") {
-            children.push({ math } as Record<string, unknown> as ParagraphChild);
+            // The office-open paragraph shape carries children/display/
+            // justification; anything else is a bare single construct (the
+            // convertLinearToOMML shape) and gets wrapped so the m:oMath
+            // writer sees its child — otherwise the formula serializes empty.
+            const isParagraph = "children" in math || "display" in math || "justification" in math;
+            const paragraph = isParagraph ? math : { children: [math as Record<string, unknown>] };
+            children.push({ math: paragraph } as Record<string, unknown> as ParagraphChild);
           }
           break;
         }
@@ -1726,9 +1791,11 @@ export class DocxManager {
             flushText();
             nodes.push({ type: "hardBreak" });
           }
-          // {lastRenderedPageBreak} is a Word render hint — drop (office-open
-          // does not emit it on output). date fields/separator/pgNum
-          // are unsupported inline elements, dropped for now.
+          // {lastRenderedPageBreak}, the date-field placeholders
+          // (dayShort/monthLong/…), pgNum, the note auto-marks and
+          // separators are claimed by the RunMarker inline rule above and
+          // preserved as atoms; only unregistered run children still drop
+          // here (office-open has no writer for them).
         }
       }
       flushText();
@@ -1840,23 +1907,41 @@ export function formatMarkNames(extensions?: Extensions): string[] {
  * with `DocxManager.resolve` (DocumentOptions → Tiptap JSON). Async since
  * office-open 0.14, so `Blob` (including `File`) and `ReadableStream` inputs
  * are accepted alongside raw bytes; `parseDOCXSync` covers synchronous bytes.
+ *
+ * The input is untrusted: before parsing, the ZIP package is validated against
+ * {@link ARCHIVE_LIMITS} (entry/size/ratio/media caps, bounded actual
+ * inflation and XML budgets — see converters/archive-guard.ts) and throws
+ * {@link ArchiveRejection} on violation.
  */
 export async function parseDOCX(
   data: Parameters<typeof parseDocument>[0],
   extensions?: Extensions,
 ): Promise<JSONContent> {
-  return getDocxManager(extensions).resolve(await parseDocument(data));
+  const bytes = await normalizeArchiveInput(data);
+  assertNotEncryptedContainer(bytes);
+  assertArchiveWithinLimits(bytes);
+  const parsed = await parseDocument(bytes);
+  // Belt-and-braces: a container office-open recognized as encrypted without
+  // the CFB signature (or a future input path we do not read bytes for).
+  if (parsed.encrypted) throw new EncryptedDocumentError();
+  return getDocxManager(extensions).resolve(parsed);
 }
 
 /**
  * Synchronous counterpart of {@link parseDOCX} for already-normalized bytes —
- * `Blob` and `ReadableStream` inputs throw (use the async entry).
+ * `Blob` and `ReadableStream` inputs throw (use the async entry). The same
+ * untrusted-input admission guard applies.
  */
 export function parseDOCXSync(
   data: Parameters<typeof parseDocumentSync>[0],
   extensions?: Extensions,
 ): JSONContent {
-  return getDocxManager(extensions).resolve(parseDocumentSync(data));
+  const bytes = normalizeArchiveInputSync(data);
+  assertNotEncryptedContainer(bytes);
+  assertArchiveWithinLimits(bytes);
+  const parsed = parseDocumentSync(bytes);
+  if (parsed.encrypted) throw new EncryptedDocumentError();
+  return getDocxManager(extensions).resolve(parsed);
 }
 
 /**
@@ -1953,13 +2038,16 @@ export interface DocxGenerateOptions<T extends OutputType = "nodebuffer"> {
    */
   variant?: DocxVariant;
   /**
-   * Pre-compilation steps run on the JSON in place (default: `prepareImages()`).
-   * - `true` / `undefined`: default image pre-fetch (http(s) → embedded data URL)
+   * Pre-compilation steps run on a copy of the JSON (default:
+   * `[prepareImageSizes()]` — local-only, never touches the network).
+   * - `true` / `undefined`: default local preparation (no network)
    * - `false`: skip preparation
-   * - `PrepareStep[]`: custom steps
+   * - `PrepareStep[]`: custom steps (e.g.
+   *   `[prepareImages({ allow: ["cdn.example.com"] }), prepareImageSizes()]`)
    *
-   * Required for http image URLs — image `renderDocx` drops images without
-   * embedded data (see extensions/image.ts). Mutates the JSON, like `prepareDocument`.
+   * External `http(s)` images require an explicit {@link prepareImages}
+   * `allow` list — the default drops them at render time (see
+   * extensions/image.ts). The input JSON is never mutated.
    */
   prepare?: boolean | PrepareStep[];
   /** Packer options; `type` controls the output format (default `"nodebuffer"` → Buffer). */
@@ -1980,6 +2068,32 @@ export interface DocxGenerateOptions<T extends OutputType = "nodebuffer"> {
    * mark/node into compile/resolve via its renderDocx/parseDocx hooks.
    */
   extensions?: Extensions;
+  /**
+   * Generated-field cache context (SEQ/REF/TOC are always re-derived; the
+   * page-dependent fields need this). `pageOf` returns the 1-based displayed
+   * page for the field atom at the given document-order index — the editor
+   * passes its canvas pagination, standalone callers a known page map. Omit
+   * it and page fields keep their model cache (never a guessed number).
+   */
+  fields?: FieldCacheOptions;
+  /**
+   * Fixed clock for this generation — the reproducibility switch.
+   *
+   * Every date the document does not already carry (core properties
+   * `created`/`modified`, new comment dates) resolves to this value, and every
+   * generated id sequence (drawing/shape/SmartArt ids, font keys, altChunk
+   * part names) restarts deterministically, so two generations of the same
+   * input are byte-identical — same process or a fresh one.
+   *
+   * - `string | Date`: use this timestamp.
+   * - `undefined` (default): {@link DOCX_EPOCH} (`1980-01-01T00:00:00.000Z`).
+   * - `null`: omit generated dates entirely (source-carried dates still win).
+   *
+   * Dates/ids the source document already carries are preserved — this only
+   * replaces values the generator would otherwise take from the wall clock,
+   * `crypto.randomUUID()` or process-global counters.
+   */
+  date?: string | Date | null;
 }
 
 /**
@@ -2000,26 +2114,57 @@ function applyDocumentOptions(
 }
 
 /**
+ * Fill core-properties dates the compiled options do not carry with the
+ * generation clock. `undefined` means "the source carried no value" and gets
+ * the fixed date (or `null` to omit); an explicit source value — including
+ * `null`, office-open's "source had no date" — is preserved.
+ */
+function applyGenerationDate(
+  compiled: DocumentOptions,
+  date: string | Date | null | undefined,
+): DocumentOptions {
+  if (compiled.created !== undefined && compiled.modified !== undefined) return compiled;
+  const fallback = date === null ? null : toIsoDate(date ?? DOCX_EPOCH);
+  return {
+    ...compiled,
+    created: compiled.created !== undefined ? compiled.created : fallback,
+    modified: compiled.modified !== undefined ? compiled.modified : fallback,
+  };
+}
+
+/** The scope clock for a `date` option — `null` opens the scope date-less. */
+function scopeDate(date: string | Date | null | undefined): string | undefined {
+  return date === null ? undefined : toIsoDate(date ?? DOCX_EPOCH);
+}
+
+/**
  * Generate a DOCX file from Tiptap JSON (runtime model), asynchronously.
  *
- * Pipeline: `prepareDocument` (default: fetch http images, in place) →
- * `DocxManager.compile` → @office-open/docx's `generateDocument`. `packer.type`
- * controls the output format (default: `"nodebuffer"` → Buffer). Non-blocking
- * (fflate Web Workers). With the default `prepare`, the input `json` is mutated
- * in place (http image URLs become embedded data URLs).
+ * Pipeline: `prepareDocument` (default: local preparation on a copy; no
+ * network) → `DocxManager.compile` → @office-open/docx's `generateDocument`.
+ * `packer.type` controls the output format (default: `"nodebuffer"` → Buffer).
+ * Non-blocking (fflate Web Workers). The input `json` is never mutated; see
+ * `options.prepare` for fetching external images and `options.date` for the
+ * fixed reproducibility clock (default {@link DOCX_EPOCH}).
  */
 export async function generateDOCX<T extends OutputType = "nodebuffer">(
   json: JSONContent,
   options?: DocxGenerateOptions<T>,
 ): Promise<OutputByType[T]> {
-  const { prepare = true, packer, document, extensions, variant } = options ?? {};
-  if (prepare !== false) {
-    await prepareDocument(json, prepare === true ? undefined : prepare);
-  }
-  return generateDocument(
-    applyVariant(applyDocumentOptions(compileDocument(json, extensions), document), variant),
-    packer,
+  const { prepare = true, packer, document, extensions, variant, date, fields } = options ?? {};
+  const prepared =
+    prepare === false ? json : await prepareDocument(json, prepare === true ? undefined : prepare);
+  const compiled = applyGenerationDate(
+    applyVariant(
+      applyDocumentOptions(
+        compileDocument(fillGeneratedFields(prepared, fields), extensions),
+        document,
+      ),
+      variant,
+    ),
+    date,
   );
+  return withGenerationScope(scopeDate(date), () => generateDocument(compiled, packer));
 }
 
 /**
@@ -2027,38 +2172,53 @@ export async function generateDOCX<T extends OutputType = "nodebuffer">(
  *
  * Pipeline: `DocxManager.compile` → `generateDocumentSync`. Does **not** run
  * `prepareDocument` (it is async); call `await prepareDocument(json)` first
- * when http images need embedding. `options.document` is still applied.
+ * when images need embedding. `options.document` and `options.date` are
+ * applied; the input `json` is never mutated.
  */
 export function generateDOCXSync<T extends OutputType = "nodebuffer">(
   json: JSONContent,
   options?: DocxGenerateOptions<T>,
 ): OutputByType[T] {
-  const { packer, document, extensions, variant } = options ?? {};
-  return generateDocumentSync(
-    applyVariant(applyDocumentOptions(compileDocument(json, extensions), document), variant),
-    packer,
+  const { packer, document, extensions, variant, date, fields } = options ?? {};
+  const compiled = applyGenerationDate(
+    applyVariant(
+      applyDocumentOptions(
+        compileDocument(fillGeneratedFields(json, fields), extensions),
+        document,
+      ),
+      variant,
+    ),
+    date,
   );
+  return withGenerationScope(scopeDate(date), () => generateDocumentSync(compiled, packer));
 }
 
 /**
  * Generate a DOCX file as a `ReadableStream<Uint8Array>` — for large documents
  * or streaming HTTP responses.
  *
- * Pipeline: `prepareDocument` (default: fetch http images, in place) →
- * `DocxManager.compile` → `generateDocumentStream`. Async due to preparation.
+ * Pipeline: `prepareDocument` (default: local preparation on a copy; no
+ * network) → `DocxManager.compile` → `generateDocumentStream`. Async due to
+ * preparation; `options.date` controls the fixed reproducibility clock.
  */
 export async function generateDOCXStream(
   json: JSONContent,
   options?: DocxGenerateOptions,
 ): Promise<ReadableStream<Uint8Array>> {
-  const { prepare = true, packer, document, extensions, variant } = options ?? {};
-  if (prepare !== false) {
-    await prepareDocument(json, prepare === true ? undefined : prepare);
-  }
-  return generateDocumentStream(
-    applyVariant(applyDocumentOptions(compileDocument(json, extensions), document), variant),
-    packer,
+  const { prepare = true, packer, document, extensions, variant, date, fields } = options ?? {};
+  const prepared =
+    prepare === false ? json : await prepareDocument(json, prepare === true ? undefined : prepare);
+  const compiled = applyGenerationDate(
+    applyVariant(
+      applyDocumentOptions(
+        compileDocument(fillGeneratedFields(prepared, fields), extensions),
+        document,
+      ),
+      variant,
+    ),
+    date,
   );
+  return withGenerationScope(scopeDate(date), () => generateDocumentStream(compiled, packer));
 }
 
 /**
@@ -2080,7 +2240,7 @@ export function compileDocument(
 }
 
 /**
- * Fill in office-open's ECMA-376 schema defaults that a hand-built JSON lacks.
+ * Fill in the document-level defaults that a hand-built JSON lacks.
  *
  * A document constructed by hand (not via {@link parseDOCX}) carries no
  * `doc.attrs.styles` (docDefaults: body font/size/spacing + the built-in style
@@ -2090,12 +2250,13 @@ export function compileDocument(
  * page geometry, and no document grid for snapToGrid to pitch against, and
  * rendering/pagination drift.
  *
- * Harvests the defaults by round-tripping an EMPTY document through office-open
- * (`generateDOCXSync` → `parseDOCX`) and taking exactly those two attrs — the
- * empty doc's remaining attrs (documentExtras with passthrough binaries,
- * settings, contentTypes) are round-trip artifacts a hand-built doc must not
- * inherit: rawParts carries Uint8Array bytes that break JSON serialization of
- * the attrs (a host embedding `JSON.stringify(normalizeDocument(...))` then
+ * Harvests the style table by round-tripping an EMPTY document through
+ * office-open (`generateDOCXSync` → `parseDOCX`) and takes that attr plus
+ * docen's own {@link docenDefaultSectionProperties} — the empty doc's
+ * remaining attrs (documentExtras with passthrough binaries, settings,
+ * contentTypes) are round-trip artifacts a hand-built doc must not inherit:
+ * rawParts carries Uint8Array bytes that break JSON serialization of the
+ * attrs (a host embedding `JSON.stringify(normalizeDocument(...))` then
  * crashes the next save-as in office-open's media reader). Content nodes
  * (paragraphs/runs/marks) pass through verbatim, avoiding the mark pollution a
  * full-content round-trip would cause (a paragraph's default run props leak
@@ -2118,7 +2279,10 @@ export function normalizeDocument(json: JSONContent, extensions?: Extensions): J
   );
   const harvested = {
     styles: baseAttrs.styles,
-    sectionProperties: baseAttrs.sectionProperties,
+    // Our own explicit geometry — never the empty round-trip's (absent)
+    // sectionProperties, which made a hand-built doc depend on office-open's
+    // implicit zh-CN `sectionMarginDefaults` for its page box.
+    sectionProperties: docenDefaultSectionProperties(),
   };
   return { ...json, attrs: { ...harvested, ...userAttrs } };
 }

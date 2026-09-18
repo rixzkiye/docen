@@ -7,6 +7,7 @@
  */
 
 import {
+  EncryptedDocumentError,
   generateDOCX,
   generateHTML,
   generateMarkdown,
@@ -20,12 +21,13 @@ import {
   parseRTF,
   prepareEmbeddedFonts,
   type DocxVariant,
+  type FieldCacheOptions,
   type HtmlGenerateOptions,
   type JSONContent,
 } from "@docen/docx";
 import type { Editor } from "@docen/docx/core";
 import type { ProjectedFlowBox, ProjectedSection } from "@docen/docx/layout";
-import type { FlowPage } from "@docen/layout";
+import { computePageNumberOffsets, type FlowPage } from "@docen/layout";
 import { EditorState } from "@tiptap/pm/state";
 
 import { t } from "../../ui";
@@ -41,6 +43,7 @@ import {
   type SaveFormat,
 } from "../file-formats";
 import { findTemplate, templateLocale } from "../templates";
+import { collectBookmarkPages, collectFieldPages, collectTocTargetPages } from "./field-pages";
 
 /** The file-I/O domain's view of the host — only what its bodies touch. */
 export interface IOHostView {
@@ -100,6 +103,9 @@ export class IODomain {
    *  through the editor i18n table (en/zh), anything else surfaces its own
    *  message. */
   openRefusalMessage(err: unknown): string {
+    if (err instanceof EncryptedDocumentError) {
+      return t("open.encrypted", this.host.element());
+    }
     if (err instanceof OpenFormatError) {
       if (err.code === "flat-opc") return t("open.flat-opc-unsupported", this.host.element());
       return t("open.unsupported", this.host.element()).replace("{name}", err.file ?? "(unknown)");
@@ -550,11 +556,56 @@ export class IODomain {
             })),
           )
         : [];
+    // Generated-field caches: the builder re-derives SEQ/REF/TOC from the
+    // model, and the live canvas pagination supplies the page context for
+    // PAGE/NUMPAGES/PAGEREF/SECTION so Word never opens on a stale number.
+    const fields = this.#fieldCacheOptions();
     const buffer = await generateDOCX(this.getJSON(), {
       variant,
       ...(embedded.length > 0 ? { document: { fonts: embedded } } : {}),
+      ...(fields ? { fields } : {}),
     });
     return buffer as unknown as Uint8Array;
+  }
+
+  /** Page context for the generated-field pass, from the host's pagination
+   *  (null when headless/not yet laid out). */
+  #fieldCacheOptions(): FieldCacheOptions | undefined {
+    const editor = this.host.editor();
+    const pages = this.host.pages();
+    if (!editor || pages.length === 0) return undefined;
+    const sections = this.host.lastRun()?.sections ?? [];
+    const sectionOfPage = this.host.sectionOfPage();
+    const pageOffsets = computePageNumberOffsets(sections, sectionOfPage);
+    const view = {
+      sectionOfPage,
+      pageOffsets,
+      physicalPageOf: (pos: number) => this.host.bridge()?.pageOf(pos),
+    };
+    const fieldPages = collectFieldPages(editor.state.doc, view);
+    const bookmarkPages = collectBookmarkPages(editor.state.doc, view);
+    const tocPages = collectTocTargetPages(editor.state.doc, view);
+    return {
+      // PAGEREF resolves against the bookmark's page; everything else against
+      // the field's own.
+      ...(fieldPages.size > 0 || bookmarkPages.size > 0
+        ? {
+            pageOf: ({ index, bookmark }: { index: number; bookmark?: string }) =>
+              bookmark != null ? bookmarkPages.get(bookmark) : fieldPages.get(index),
+          }
+        : {}),
+      pageCount: pages.length,
+      // A saved TOC whose cached entries were missing gets real page numbers
+      // from the live canvas pagination instead of Word's empty slots.
+      ...(tocPages.headingPages.size > 0 || tocPages.captionPages.size > 0
+        ? {
+            tocPageOf: ({ index, kind }: { index: number; kind: "heading" | "caption" }) =>
+              kind === "heading"
+                ? tocPages.headingPages.get(index)
+                : tocPages.captionPages.get(index),
+          }
+        : {}),
+    };
   }
 
   /** Serialize the current document to a Markdown string. */

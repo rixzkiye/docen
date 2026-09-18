@@ -1,0 +1,128 @@
+{
+  "type": "doc",
+  "content": [
+    {
+      "type": "paragraph",
+      "content": [
+        {
+          "type": "inlinePassthrough",
+          "attrs": {
+            "data": "{\"bookmarkStart\":{\"id\":1,\"name\":\"_Ref1\"}}"
+          }
+        },
+        {
+          "type": "text",
+          "text": "Alpha"
+        },
+        {
+          "type": "inlinePassthrough",
+          "attrs": {
+            "data": "{\"bookmarkEnd\":{\"id\":1}}"
+          }
+        }
+      ]
+    },
+    {
+      "type": "paragraph",
+      "content": [
+        {
+          "type": "text",
+          "text": "Back "
+        },
+        {
+          "type": "inlinePassthrough",
+          "attrs": {
+            "data": "{\"simpleField\":{\"instruction\":\" REF _Ref1 \\\\h \",\"cachedValue\":\"stale\"}}"
+          }
+        },
+        {
+          "type": "text",
+          "text": " forward "
+        },
+        {
+          "type": "inlinePassthrough",
+          "attrs": {
+            "data": "{\"simpleField\":{\"instruction\":\" REF _Ref2 \\\\h \",\"cachedValue\":\"stale\"}}"
+          }
+        }
+      ]
+    },
+    {
+      "type": "paragraph",
+      "content": [
+        {
+          "type": "inlinePassthrough",
+          "attrs": {
+            "data": "{\"bookmarkStart\":{\"id\":2,\"name\":\"_Ref2\"}}"
+          }
+        },
+        {
+          "type": "text",
+          "text": "Omega"
+        },
+        {
+          "type": "inlinePassthrough",
+          "attrs": {
+            "data": "{\"bookmarkEnd\":{\"id\":2}}"
+          }
+        }
+      ]
+    },
+    {
+      "type": "paragraph",
+      "content": [
+        {
+          "type": "text",
+          "text": "Note "
+        },
+        {
+          "type": "inlinePassthrough",
+          "attrs": {
+            "data": "{\"simpleField\":{\"instruction\":\" NOTEREF _Ref3 \\\\h \",\"cachedValue\":\"stale\"}}"
+          }
+        },
+        {
+          "type": "text",
+          "text": " above "
+        },
+        {
+          "type": "inlinePassthrough",
+          "attrs": {
+            "data": "{\"simpleField\":{\"instruction\":\" REF _Ref1 \\\\p \",\"cachedValue\":\"cached-position\"}}"
+          }
+        },
+        {
+          "type": "text",
+          "text": " numbered "
+        },
+        {
+          "type": "inlinePassthrough",
+          "attrs": {
+            "data": "{\"simpleField\":{\"instruction\":\" REF _Ref1 \\\\n \",\"cachedValue\":\"cached-number\"}}"
+          }
+        }
+      ]
+    },
+    {
+      "type": "paragraph",
+      "content": [
+        {
+          "type": "inlinePassthrough",
+          "attrs": {
+            "data": "{\"bookmarkStart\":{\"id\":3,\"name\":\"_Ref3\"}}"
+          }
+        },
+        {
+          "type": "text",
+          "text": "3"
+        },
+        {
+          "type": "inlinePassthrough",
+          "attrs": {
+            "data": "{\"bookmarkEnd\":{\"id\":3}}"
+          }
+        }
+      ]
+    }
+  ]
+}

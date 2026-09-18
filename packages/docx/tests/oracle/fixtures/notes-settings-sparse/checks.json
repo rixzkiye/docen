@@ -1,0 +1,67 @@
+{
+  "description": "settings-level note defaults, section override, sparse/duplicate note ids, table+image inside a note",
+  "xml": [
+    {
+      "part": "word/settings.xml",
+      "contains": [
+        "<w:footnotePr><w:numFmt w:val=\"lowerLetter\"/><w:numStart w:val=\"3\"/><w:numRestart w:val=\"eachPage\"/></w:footnotePr>",
+        "<w:endnotePr><w:numFmt w:val=\"upperLetter\"/><w:numStart w:val=\"2\"/></w:endnotePr>"
+      ]
+    },
+    {
+      "part": "word/document.xml",
+      "contains": [
+        "<w:footnotePr><w:numFmt w:val=\"decimal\"/><w:numStart w:val=\"1\"/></w:footnotePr>"
+      ]
+    },
+    {
+      "part": "word/footnotes.xml",
+      "contains": [
+        "<w:footnote w:id=\"1\">",
+        "<w:footnote w:id=\"5\">",
+        "<w:footnote w:id=\"9\">",
+        "<w:tbl>"
+      ]
+    },
+    {
+      "part": "word/endnotes.xml",
+      "contains": ["<w:endnote w:id=\"3\">"]
+    }
+  ],
+  "python": [
+    {
+      "path": "document.sections[0].footnotePr.formatType",
+      "equals": "decimal"
+    },
+    {
+      "path": "notes.footnotes.ids",
+      "equals": [1, 5, 9]
+    },
+    {
+      "path": "notes.endnotes.ids",
+      "equals": [3]
+    },
+    {
+      "path": "document.footnoteRefs",
+      "equals": [5, 1, 9, 5]
+    },
+    {
+      "path": "document.endnoteRefs",
+      "equals": [3]
+    },
+    {
+      "path": "notes.footnotes.imageTargets",
+      "length": 1
+    },
+    {
+      "path": "notes.footnotes.refMarks",
+      "equals": 3
+    }
+  ],
+  "pdf": [
+    {
+      "page": 1,
+      "contains": ["note one", "note five", "note nine", "end three", "para two", "end para two"]
+    }
+  ]
+}

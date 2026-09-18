@@ -58,6 +58,7 @@ import { installChartHover, type ChartTip } from "./chart-hover";
 import { createDocJsonCache, pmNodeToJSON, type DocJsonCache } from "./doc-json";
 import { followLink, installLinkHover, type LinkHit } from "./link-hover";
 import { blockRuleOf, enterRuleOf, inlineRuleOf, isHyphenRun } from "./markdown-input";
+import { ObjectSelectionMode } from "./object-selection";
 import {
   MultiSelectionManager,
   ExtendModeManager,
@@ -195,6 +196,12 @@ export interface EditBridgeOptions {
    *  selects the drawing (Word: clicking a picture grabs it) instead of
    *  placing the caret behind it; absent, every click is text. */
   drawingAt?: (page: number, lx: number, ly: number) => DrawingHit | null;
+  /** Every painted drawing box across pages — Select Objects' marquee
+   *  candidate set. Absent, the marquee selects nothing. */
+  drawingBoxes?: () => DrawingHit[];
+  /** Select Objects mode changed (including Esc/empty-click exits inside the
+   *  bridge) — the host mirrors the ribbon toggle and cursor. */
+  onObjectSelectChange?: (on: boolean) => void;
   /** Balloon hit-test (page-local px) — the stage's painted card table. A hit
    *  selects/opens the comment or reveals the revision (Word's balloon
    *  click); absent, balloon clicks fall through to the text. */
@@ -393,6 +400,15 @@ export interface EditBridge {
    *  instead of running the select chains; a press off any drawing disarms
    *  and clicks through. Pass null to disarm (Esc does too). */
   setTransparentPick(onPick: ((hit: DrawingHit, nx: number, ny: number) => void) | null): void;
+  /** Select Objects mode — the host's ribbon toggle. While on, every left
+   *  press selects/marquees floating objects and typing/paste is consumed. */
+  setObjectSelect(on: boolean): void;
+  /** Whether Select Objects mode is on. */
+  readonly objectSelect: boolean;
+  /** How many objects the mode currently holds selected. */
+  objectSelectCount(): number;
+  /** Delete the current object selection (the Delete key's transaction). */
+  deleteObjectSelection(): boolean;
   /** The multi-selection's members (primary + Shift+Click set) with their PM
    *  positions and page boxes — the host assembles the group/distribute
    *  payloads from it. Null when fewer than two resolve. */
@@ -1442,6 +1458,26 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
   });
   draw.mount(opts.host);
 
+  /** Select Objects mode (Home → Editing → Select): clicks select floating
+   *  objects, a drag marquees them, Ctrl toggles, Delete removes, Esc exits.
+   *  While active the mode consumes every left press (and typing/paste), so
+   *  text editing is suppressed exactly like Word's object mode. */
+  const objectSel = new ObjectSelectionMode({
+    drawingAt: (page, lx, ly) => opts.drawingAt?.(page, lx, ly) ?? null,
+    allDrawingBoxes: () => opts.drawingBoxes?.() ?? [],
+    resolveBox: (hit) => opts.drawingBoxOf?.(hit.para, hit.index, hit.kind, hit.childPath) ?? null,
+    nodePosOf: (hit) => opts.drawingSelection?.(hit) ?? null,
+    pageHost: (page) => opts.pageHost?.(page) ?? null,
+    overlayHost: () => opts.inputHost,
+    onChange: (on) => {
+      opts.host.style.cursor = on ? "default" : "";
+      opts.onObjectSelectChange?.(on);
+    },
+    scale: () => opts.scale?.() ?? 1,
+    editor: () => main.editor,
+  });
+  objectSel.mount(opts.inputHost);
+
   /** A viewport point → the active story's doc position (furniture stories
    *  map through their single pseudo page). Clamping drags resolve the
    *  nearest line regardless of distance — a drag overshooting past the
@@ -1757,6 +1793,7 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
   const tableQuickInsertEl = document.createElement("div");
   tableQuickInsertEl.style.cssText =
     "position:absolute;display:none;z-index:38;cursor:pointer;width:16px;height:16px;border-radius:50%;" +
+    "pointer-events:auto;" +
     "background:#ffffff;border:1px solid #2b579a;box-shadow:0 1px 4px rgba(0,0,0,0.25);" +
     "align-items:center;justify-content:center;color:#2b579a;";
   tableQuickInsertEl.innerHTML =
@@ -2001,6 +2038,12 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
   // furniture story deactivates the body's objects, so their cursors go
   // with it (the story's own links keep the hand).
   const applyCursor = (event: MouseEvent): void => {
+    // Select Objects mode shows the plain arrow (Word's object pointer) — the
+    // canvas stylesheet's I-beam would promise text editing the mode refuses.
+    if (!story && objectSel.active) {
+      opts.host.style.cursor = "default";
+      return;
+    }
     // The armed Shapes drawer owns the cursor outright (Word's fine-plus).
     if (!story && opts.shapeDraw?.()) {
       opts.host.style.cursor = "crosshair";
@@ -2090,6 +2133,10 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
   };
 
   const onMouseMove = (event: MouseEvent): void => {
+    if (objectSel.pressed) {
+      objectSel.move(event.clientX, event.clientY);
+      return;
+    }
     if (tableDrawGhost) {
       const g = tableDrawGhost;
       if (!g.moved && Math.hypot(event.clientX - g.sx, event.clientY - g.sy) < 3) return;
@@ -2328,6 +2375,10 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
     if (head != null) setDragSelection(dragAnchor, head);
   };
   const onMouseUp = (event: MouseEvent): void => {
+    if (objectSel.pressed) {
+      objectSel.release();
+      return;
+    }
     if (tableResize) {
       const trState = tableResize;
       tableResize = null;
@@ -2744,6 +2795,24 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
       const nx = Math.min(Math.max((px - drawHit.x) / drawHit.width, 0), 1);
       const ny = Math.min(Math.max((py - drawHit.y) / drawHit.height, 0), 1);
       onPick(drawHit, nx, ny);
+      ta.focus();
+      ta.value = "";
+      return;
+    }
+    // Select Objects mode: every left press belongs to the object selection —
+    // a hit selects (Ctrl toggles), empty canvas arms the marquee. Runs after
+    // the armed transparent pick but before the table/shape tools so the mode
+    // is a genuine text-editing substitute (Word's arrow-pointer mode).
+    if (event.button === 0 && objectSel.active && !story) {
+      objectSel.press({
+        page: hit?.page ?? -1,
+        lx: hit?.lx ?? 0,
+        ly: hit?.ly ?? 0,
+        clientX: event.clientX,
+        clientY: event.clientY,
+        ctrlKey: event.ctrlKey,
+        metaKey: event.metaKey,
+      });
       ta.focus();
       ta.value = "";
       return;
@@ -3425,6 +3494,12 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
       event.preventDefault();
       return;
     }
+    // Select Objects mode owns the pointer/keys — typing must not mutate the
+    // document behind the object selection (Word's object mode has no caret).
+    if (objectSel.active) {
+      event.preventDefault();
+      return;
+    }
     event.preventDefault();
     switch (event.inputType) {
       case "insertText": {
@@ -3903,6 +3978,12 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
     // otherwise (the grid survives). The default join path would tear cell
     // content across the range, so this must run before it.
     if (editable && (event.key === "Backspace" || event.key === "Delete")) {
+      // Select Objects mode: Delete removes every selected object (Word).
+      if (objectSel.count > 0) {
+        event.preventDefault();
+        objectSel.deleteSelection();
+        return;
+      }
       if (multiSel.hasRanges()) {
         event.preventDefault();
         multiSel.deleteContents(active().editor);
@@ -3956,6 +4037,13 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
       }
     }
     if (event.key === "Escape") {
+      // Select Objects mode: Esc cancels the marquee, then clears the
+      // selection, then leaves the mode (Word's stepdown).
+      if (objectSel.active) {
+        event.preventDefault();
+        objectSel.escape();
+        return;
+      }
       const ext = getExtendMode();
       if (ext.isActive) {
         event.preventDefault();
@@ -4200,7 +4288,7 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
               const prev = TextSelection.near(active().editor.state.doc.resolve(beforePos - 1), -1);
               target = prev.$from.start();
             } else {
-              target = 0;
+              target = TextSelection.near(active().editor.state.doc.resolve(0), 1).from;
             }
           }
           apply(target, extend);
@@ -4235,7 +4323,10 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
         if (event.altKey && cellAt(active().editor.state.selection.$from)) {
           target = firstCellInRowPos(active().editor.state) ?? 0;
         } else if (event.ctrlKey || event.metaKey) {
-          target = 0;
+          // Word's Ctrl+Home: the body's first caret position — the first
+          // valid text position, not the doc boundary (PM position 0 sits
+          // before the first block and cannot hold a text caret).
+          target = TextSelection.near(active().editor.state.doc.resolve(0), 1).from;
         } else {
           target = edgeTarget(active().editor.state, head(), false);
         }
@@ -4435,7 +4526,7 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
     composing = false;
     const data = ta.value;
     ta.value = "";
-    if (data && canEditActive()) insertText(data);
+    if (data && canEditActive() && !objectSel.active) insertText(data);
   };
   // A cancelled composition (IME dismissed, focus stolen mid-composition —
   // paths where some browsers never fire compositionend) still must clear the
@@ -4492,6 +4583,7 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
   const onPaste = (event: ClipboardEvent): void => {
     event.preventDefault();
     if (!canEditActive()) return;
+    if (objectSel.active) return;
     // The docen lane first (a copy from a docen editor round-trips losslessly);
     // then styled HTML through the schema's parse rules so external rich text
     // maps to its DOCX equivalents; RTF; plain text is the last resort.
@@ -4894,6 +4986,21 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
     insertSlicePayload(raw: string): boolean {
       return insertSlicePayload(raw);
     },
+    /** Select Objects mode — the host's ribbon toggle. */
+    setObjectSelect(on: boolean): void {
+      objectSel.setActive(on);
+    },
+    get objectSelect(): boolean {
+      return objectSel.active;
+    },
+    objectSelectCount(): number {
+      return objectSel.count;
+    },
+    /** Delete the current object selection (the same transaction the Delete
+     *  key runs) — exposed for host commands/tests. */
+    deleteObjectSelection(): boolean {
+      return objectSel.deleteSelection();
+    },
     focus(): void {
       ta.focus();
     },
@@ -4912,6 +5019,7 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
       // drawing layer drops the mode and re-places its overlays (the drag
       // commits through Enter/click, never mid-transaction).
       draw.replaceOverlays();
+      objectSel.refresh();
       placeCaret();
     },
     cellAtPoint: (page, x, y) => main.map?.cellAtPoint(page, x, y) ?? null,
@@ -4976,6 +5084,7 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
       document.removeEventListener("mousemove", onMouseMove);
       document.removeEventListener("mouseup", onMouseUp);
       draw.destroy();
+      objectSel.destroy();
       pooledPlace(selectionPool, [], {});
       pooledPlace(searchPool, [], {});
       pooledPlace(spellingPool, [], {});

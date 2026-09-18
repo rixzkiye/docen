@@ -1,0 +1,55 @@
+{
+  "sections": [
+    {
+      "children": [
+        {
+          "paragraph": {
+            "children": [{ "text": "page: " }, { "children": [{ "pgNum": true }] }]
+          }
+        },
+        {
+          "paragraph": {
+            "children": [
+              { "text": "date: " },
+              {
+                "children": [
+                  { "dayShort": true },
+                  { "text": ", " },
+                  { "dayLong": true },
+                  { "text": " " },
+                  { "monthShort": true },
+                  { "text": " " },
+                  { "monthLong": true },
+                  { "text": " " },
+                  { "yearShort": true },
+                  { "text": " " },
+                  { "yearLong": true }
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "paragraph": {
+            "children": [
+              { "text": "marks: " },
+              { "children": [{ "annotationRef": true }] },
+              { "children": [{ "footnoteRef": true }] },
+              { "children": [{ "endnoteRef": true }] }
+            ]
+          }
+        },
+        {
+          "paragraph": {
+            "children": [
+              { "text": "separators: " },
+              { "children": [{ "separator": true }] },
+              { "children": [{ "continuationSeparator": true }] },
+              { "children": [{ "lastRenderedPageBreak": true }] }
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

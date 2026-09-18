@@ -1,0 +1,77 @@
+{
+  "description": "footnote/endnote numbering format and start value (section footnotePr/endnotePr)",
+  "xml": [
+    {
+      "part": "word/document.xml",
+      "contains": [
+        "<w:footnotePr><w:pos w:val=\"pageBottom\"/><w:numFmt w:val=\"upperRoman\"/><w:numStart w:val=\"10\"/></w:footnotePr>",
+        "<w:endnotePr><w:numFmt w:val=\"lowerRoman\"/><w:numStart w:val=\"5\"/></w:endnotePr>",
+        "<w:footnoteReference",
+        "<w:endnoteReference"
+      ],
+      "order": [
+        ["<w:footnotePr>", "<w:pgSz"],
+        ["<w:endnotePr>", "<w:pgSz"]
+      ]
+    },
+    {
+      "part": "word/footnotes.xml",
+      "contains": [
+        "<w:footnote w:type=\"separator\" w:id=\"-1\">",
+        "<w:footnote w:type=\"continuationSeparator\" w:id=\"0\">",
+        "<w:footnote w:id=\"1\">",
+        "<w:footnote w:id=\"2\">",
+        "<w:footnoteRef/>"
+      ]
+    },
+    {
+      "part": "word/endnotes.xml",
+      "contains": ["<w:endnote w:id=\"1\">", "<w:endnoteRef/>"]
+    }
+  ],
+  "python": [
+    {
+      "path": "document.sections[0].footnotePr.formatType",
+      "equals": "upperRoman"
+    },
+    {
+      "path": "document.sections[0].footnotePr.numStart",
+      "equals": 10
+    },
+    {
+      "path": "document.sections[0].footnotePr.pos",
+      "equals": "pageBottom"
+    },
+    {
+      "path": "document.sections[0].endnotePr.formatType",
+      "equals": "lowerRoman"
+    },
+    {
+      "path": "document.sections[0].endnotePr.numStart",
+      "equals": 5
+    },
+    {
+      "path": "notes.footnotes.ids",
+      "equals": [1, 2]
+    },
+    {
+      "path": "notes.endnotes.ids",
+      "equals": [1]
+    },
+    {
+      "path": "notes.footnotes.separatorIds",
+      "equals": [-1, 0]
+    },
+    {
+      "path": "document.footnoteRefs",
+      "equals": [1, 2]
+    }
+  ],
+  "pdf": [
+    {
+      "page": 1,
+      "contains": ["ALPHA", "BETA", "GAMMA", "note one", "note two", "endnote one"],
+      "regex": ["ALPHA\\s*X\\s*BETA\\s*XI", "GAMMA\\s*v"]
+    }
+  ]
+}
