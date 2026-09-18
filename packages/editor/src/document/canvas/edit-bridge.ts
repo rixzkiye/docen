@@ -229,6 +229,18 @@ export interface EditBridgeOptions {
    *  re-objects the boxes, so a deleted series drops out and moved ones
    *  follow). */
   chartPartBoxes?: (para: unknown, index: number, kind: "drawing" | "inline") => DrawingHit[];
+  pageFlow?: (page: number) => {
+    pageWidthPx: number;
+    pageHeightPx: number;
+    contentLeftPx: number;
+    contentTopPx: number;
+    contentWidthPx: number;
+    contentHeightPx: number;
+  } | null;
+  siblingBoxes?: (
+    page: number,
+    excludeHit?: DrawingHit,
+  ) => Array<{ x: number; y: number; width: number; height: number }>;
   /** The paint pass's editable text-box stacks — registered with each fresh
    *  caret map so a double click edits the shape's text in place. */
   shapeTextStacks?: () => readonly ShapeTextStack[];
@@ -368,6 +380,9 @@ export interface EditBridge {
    *  crop handles; Enter / a press outside commits, Esc cancels. False when
    *  the selection isn't a source-carrying image. */
   enterCropMode(): boolean;
+  /** Enter edit points mode on the selected shape — vertex handles allow
+   *  dragging path points live. False when selection isn't a wpsShape. */
+  enterEditPointsMode(): boolean;
   /** Arm Set Transparent Color: the next canvas press on a drawing samples
    *  the pixel under the pointer (display-normalized 0..1) and calls back
    *  instead of running the select chains; a press off any drawing disarms
@@ -1399,6 +1414,8 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
     },
     pageHost: (page) => opts.pageHost?.(page) ?? null,
     scale: () => opts.scale?.() ?? 1,
+    pageFlow: (page) => opts.pageFlow?.(page) ?? null,
+    siblingBoxes: (page, excludeHit) => opts.siblingBoxes?.(page, excludeHit) ?? [],
     // The value-drag commit: one data point on the chart the NodeSelection
     // holds (the gesture only arms while the chart is framed).
     applyChartValue: (series, point, value) => {
@@ -4724,6 +4741,9 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
     },
     enterCropMode(): boolean {
       return draw.enterCropMode();
+    },
+    enterEditPointsMode(): boolean {
+      return draw.enterEditPointsMode();
     },
     setTransparentPick(onPick) {
       transparentPick = onPick;

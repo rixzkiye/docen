@@ -1895,6 +1895,25 @@ export class CanvasStage {
     return null;
   }
 
+  /** The section flow for a specific page. */
+  flowOf(page: number): ProjectedFlowBox {
+    return this.sectionAt(page).flow;
+  }
+
+  /** Drawing hit boxes on a specific page, optionally excluding a specific hit box. */
+  pageDrawingBoxes(page: number, excludeHit?: DrawingHitBox): DrawingHitBox[] {
+    return (this.hitBoxes.get(page) ?? []).filter(
+      (b) =>
+        !excludeHit ||
+        (b !== excludeHit &&
+          !(
+            b.para === excludeHit.para &&
+            b.index === excludeHit.index &&
+            sameChildPath(b.childPath, excludeHit.childPath)
+          )),
+    );
+  }
+
   /** Every page's drawing boxes — the host's stale-hit fallback scans these
    *  against the PM selection (the reference-identity match above cannot
    *  survive a re-layout, which re-objects every paragraph). */

@@ -39,6 +39,11 @@ import { memberNodeToGroupChild } from "../extensions/group-members";
 import { buildListLevels, isGeneratedListReference } from "../extensions/list-numbering";
 import { decodePassthroughData, encodePassthroughData } from "../extensions/passthrough";
 import type { ParseBlockRule, ParseInlineRule, ResolveContext } from "../extensions/types";
+import {
+  isPromotableVmlPict,
+  promoteVmlPictToWpsShape,
+  revertWpsShapeToVmlPict,
+} from "../extensions/vml-promotion";
 import { foldWpsShapeName } from "../extensions/wps-shape";
 import { prepareDocument, type PrepareStep } from "./prepare";
 import { buildTextBlock } from "./styles";
@@ -1220,9 +1225,13 @@ export class DocxManager {
           // `name` folds into the OOXML slot (wps:cNvSpPr/@name).
           // Same .d.ts gap as tab:true above for the ParagraphChild union.
           const geometry = (node.attrs?.wpsShape ?? {}) as Record<string, unknown>;
-          children.push({
-            wpsShape: { ...foldWpsShapeName(geometry), children: this.compileShapeBody(node) },
-          } as unknown as ParagraphChild);
+          if (geometry.vmlOrigin) {
+            children.push(revertWpsShapeToVmlPict(geometry));
+          } else {
+            children.push({
+              wpsShape: { ...foldWpsShapeName(geometry), children: this.compileShapeBody(node) },
+            } as unknown as ParagraphChild);
+          }
           break;
         }
       }
@@ -1591,6 +1600,15 @@ export class DocxManager {
     // is the fallback every non-owned shape reaches, not an owned shape itself.
     if ("text" in child || "children" in child || "break" in child) {
       return this.resolveRun(child as RunOptions);
+    }
+    // Non-textbox VML shapes in <w:pict> are promoted to structured wpsShape
+    if (
+      "pict" in child &&
+      child.pict &&
+      isPromotableVmlPict(child.pict as Record<string, unknown>)
+    ) {
+      const promoted = promoteVmlPictToWpsShape(child.pict as Record<string, unknown>);
+      if (promoted) return promoted;
     }
     // Any remaining inline shape (an inline SDT, bookmark/range
     // markers, proofErr, …) carries verbatim via inlinePassthrough so the

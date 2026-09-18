@@ -28,8 +28,10 @@ export {
 // edits it as one — same rationale as SectionPropertiesOptions above. The
 // @office-open/docx barrel doesn't re-export the core chart value-domain
 // names, so they come straight from @office-open/core (already a dependency).
+import type { ChartType as OfficeChartType } from "@office-open/core";
+export type ChartType = OfficeChartType | "combo";
 export type { ChartOptions } from "@office-open/docx";
-export type { ChartType, ChartSeriesData, LegendPosition } from "@office-open/core";
+export type { ChartSeriesData, LegendPosition } from "@office-open/core";
 // Re-export the engine's section-geometry defaults (MS Office zh-CN "Normal":
 // A4 + top/bottom 1440tw, left/right 1800tw) so editor-side geometry fallbacks
 // — content-width for image capping, page measurement — reuse the SAME defaults

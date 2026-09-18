@@ -2637,3 +2637,64 @@ describe("modify-style command", () => {
     editor.destroy();
   });
 });
+
+describe("shape-custom-geometry-apply", () => {
+  it("applies customGeometry to a selected wpsShape and deletes presetGeometry", () => {
+    const editor = build();
+    editor.commands.setContent({
+      type: "doc",
+      content: [
+        {
+          type: "paragraph",
+          content: [
+            {
+              type: "wpsShape",
+              attrs: {
+                wpsShape: {
+                  presetGeometry: { preset: "rect" },
+                  transformation: { width: 914400, height: 914400 },
+                },
+              },
+              content: [{ type: "paragraph" }],
+            },
+          ],
+        },
+      ],
+    } as never);
+    let pos = -1;
+    editor.state.doc.descendants((node, nodePos) => {
+      if (node.type.name === "wpsShape") {
+        pos = nodePos;
+        return false;
+      }
+      return true;
+    });
+    editor.commands.setNodeSelection(pos);
+    const cg = {
+      pathList: [
+        {
+          w: 100,
+          h: 100,
+          commands: [
+            { command: "moveTo", point: { x: "0", y: "0" } },
+            { command: "lnTo", point: { x: "100", y: "100" } },
+            { command: "close" },
+          ],
+        },
+      ],
+    };
+    expect(editor.commands["shape-custom-geometry-apply"](JSON.stringify(cg))).toBe(true);
+    const shape = firstNodeOf(editor, "wpsShape").attrs.wpsShape as Record<string, unknown>;
+    expect(shape.customGeometry).toEqual(cg);
+    expect(shape.presetGeometry).toBeUndefined();
+    editor.destroy();
+  });
+
+  it("returns false if no shape is selected or payload is invalid", () => {
+    const editor = build();
+    editor.commands.setTextSelection(1);
+    expect(editor.commands["shape-custom-geometry-apply"]("invalid")).toBe(false);
+    expect(editor.commands["shape-custom-geometry-apply"]()).toBe(false);
+    editor.destroy();
+  });
+});
