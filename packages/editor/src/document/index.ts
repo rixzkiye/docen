@@ -361,6 +361,9 @@ class DocenDocument extends AddinHost<Editor> {
   #fieldShading: "never" | "always" | "whenSelected" = "whenSelected";
   /** Mailings → Highlight Merge Fields (view-only, per-document session). */
   #highlightMergeFields = false;
+  /** Home → Editing → Select → Select Objects: the object-selection mode the
+   *  bridge enforces (clicks select drawings, text editing is suppressed). */
+  #objectSelect = false;
   #updateFieldsBeforePrint = false;
   #printMarkup = false;
   /** Whether the document's settings.xml carries a read-only editing
@@ -487,6 +490,7 @@ class DocenDocument extends AddinHost<Editor> {
     hasAttribute: (name) => this.hasAttribute(name),
     markdown: () => this.#markdown,
     highlightMergeFields: () => this.#highlightMergeFields,
+    objectSelectActive: () => this.#objectSelect,
     markupView: () => this.#markupView,
     markupAuthors: () => this.#markupAuthors,
     markupColors: () => this.#markupColors,
@@ -1316,6 +1320,11 @@ class DocenDocument extends AddinHost<Editor> {
       selectSimilarFormatting(editor);
       return;
     }
+    // Select Objects: toggles the object-selection mode (Word's arrow mode).
+    if (value === "objects") {
+      this.setObjectSelect(!this.#objectSelect);
+      return;
+    }
     if ((value ?? "all") !== "all") return;
     this.#bridge?.focus();
     editor.commands.selectAll();
@@ -1607,6 +1616,7 @@ class DocenDocument extends AddinHost<Editor> {
     // what the selection points at, which no static pass sees.
     this.#syncArrangeGreying();
     this.#syncFormatButtons();
+    this.#syncSelectMenu();
     this.#syncDrawingMenus();
     this.#syncQuickPartsMenu();
     this.#syncMiniToolbar();
@@ -1986,6 +1996,8 @@ class DocenDocument extends AddinHost<Editor> {
       // NodeSelection (projectDrawings collects drawings in run order, the
       // same order the paragraph's content carries the nodes).
       drawingAt: (page, lx, ly) => this.#stage?.drawingAt(page, lx, ly) ?? null,
+      // Select Objects' marquee scans every painted drawing box.
+      drawingBoxes: () => this.#stage?.drawingBoxes() ?? [],
       // Margin balloons: the stage's painted card table routes clicks to the
       // comment/revision commands and the hover tone back to the stage.
       balloonAt: (page, lx, ly) => this.#stage?.balloonAt(page, lx, ly) ?? null,
@@ -2086,6 +2098,9 @@ class DocenDocument extends AddinHost<Editor> {
       },
     });
     if (this.getAttribute("editable") === "false") this.#bridge.editor.setEditable(false);
+    // A Select Objects toggle that was on when the document (re)opened carries
+    // over to the fresh bridge.
+    if (this.#objectSelect) this.#bridge.setObjectSelect(true);
     // First paint + caret map feed (transactions re-render via the bridge's
     // raf-merged onDoc from here on).
     this.#snapshotStyles();
@@ -3308,6 +3323,10 @@ class DocenDocument extends AddinHost<Editor> {
     this.#chrome.syncFormatButtons();
   }
 
+  #syncSelectMenu(): void {
+    this.#chrome.syncSelectMenu();
+  }
+
   #syncDrawingMenus(): void {
     this.#chrome.syncDrawingMenus();
   }
@@ -4326,6 +4345,7 @@ class DocenDocument extends AddinHost<Editor> {
           hrefAtCaret: () => this.#hrefAtCaret(),
           jumpToBookmark: (name) => this.#jumpToBookmark(name),
           select: (value) => this.#select(value),
+          toggleObjectSelect: () => this.setObjectSelect(!this.#objectSelect),
           toggleFormatPainter: () => this.#toggleFormatPainter(),
         },
         drawing: {
@@ -5796,6 +5816,25 @@ class DocenDocument extends AddinHost<Editor> {
   setHighlightMergeFields(on: boolean): void {
     this.#highlightMergeFields = on;
     this.#stage?.setHighlightMergeFields(on);
+  }
+
+  /**
+   * Home → Editing → Select → Select Objects (and the Draw tab's Select):
+   * toggle the object-selection mode. While on, a click selects a floating
+   * object, a drag marquees several, Ctrl+click toggles, Delete removes the
+   * selection, and Esc/empty click deselects and then leaves the mode — text
+   * editing is suppressed exactly like Word's arrow-pointer mode.
+   */
+  setObjectSelect(on: boolean): void {
+    if (on === this.#objectSelect) return;
+    this.#objectSelect = on;
+    this.#bridge?.setObjectSelect(on);
+    this.#syncSelectMenu();
+    this.#syncFormatButtons();
+  }
+
+  objectSelectActive(): boolean {
+    return this.#objectSelect;
   }
 
   getUpdateFieldsBeforePrint(): boolean {

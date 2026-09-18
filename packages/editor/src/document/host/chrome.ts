@@ -117,6 +117,8 @@ export interface ChromeHostView {
   markdown(): boolean;
   /** Mailings → Highlight Merge Fields host flag (view-only toggle). */
   highlightMergeFields(): boolean;
+  /** Home → Editing → Select → Select Objects mode flag. */
+  objectSelectActive(): boolean;
   markupView(): "simple" | "all" | "none" | "original";
   markupAuthors(): string[] | null;
   markupColors(): "author" | "changeType";
@@ -634,6 +636,8 @@ export class ChromeDomain {
       // Highlight Merge Fields (Mailings) — a view toggle; the host flag is
       // its truth, same as the other view-state buttons.
       ["highlight-merge", this.host.highlightMergeFields()],
+      // Select Objects (Home → Editing / Draw tab) — the mode's lit state.
+      ["select-objects", this.host.objectSelectActive()],
     ];
     const key = rows.map(([event, on]) => (on ? `${event}|` : `${event},`)).join("");
     if (key === this.#formatButtonsKey) return;
@@ -668,6 +672,21 @@ export class ChromeDomain {
     } catch {
       return [];
     }
+  }
+
+  /** Re-stamp the Home → Editing → Select split with the live Select Objects
+   *  checkmark (Word's menu entry shows a check while the mode is on). */
+  syncSelectMenu(): void {
+    const el = this.host
+      .root()
+      ?.querySelector<HTMLElement>('docen-ribbon-split-button[event="select"]');
+    if (!el) return;
+    const active = this.host.objectSelectActive();
+    const items = this.ribbonMenuItems(el).map((item) =>
+      item.value === "objects" ? { ...item, checked: active } : item,
+    );
+    const json = JSON.stringify(items);
+    if (json !== el.getAttribute("items")) el.setAttribute("items", json);
   }
 
   /** Re-stamp the drawing state menus' checked rows against the selection —

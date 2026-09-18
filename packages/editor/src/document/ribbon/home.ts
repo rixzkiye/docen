@@ -113,8 +113,9 @@ export const findItems = (): string =>
 export const selectItems = (): string =>
   JSON.stringify([
     { text: opt("select-all"), value: "all" },
-    // Need a canvas selection model for objects / similar-format picks.
-    { text: opt("select-objects"), value: "objects", disabled: true },
+    // Object-selection mode: clicks select drawings, drags marquee, Ctrl
+    // toggles, Delete removes (Word's Select Objects).
+    { text: opt("select-objects"), value: "objects", event: "select-objects" },
     { text: opt("select-similar"), value: "similar" },
   ]);
 
