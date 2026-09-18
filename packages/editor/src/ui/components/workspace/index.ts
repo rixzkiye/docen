@@ -73,3 +73,5 @@ export { DocenMiniToolbar, default as DocenMiniToolbarDefault } from "./mini-too
 export { DocenOutlineView, default as DocenOutlineViewDefault } from "./outline-view";
 export { DocenRuler, default as DocenRulerDefault } from "./ruler";
 export { DocenNavPane, default as DocenNavPaneDefault } from "./nav-pane";
+export { DocenPrintPreview, default as DocenPrintPreviewDefault } from "./print-preview";
+

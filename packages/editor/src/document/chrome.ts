@@ -302,6 +302,7 @@ export const documentTemplate = html`
   <docen-fill-effects-dialog part="fill-effects"></docen-fill-effects-dialog>
   <docen-inspect-dialog part="inspect"></docen-inspect-dialog>
   <docen-template-dialog part="template"></docen-template-dialog>
+  <docen-print-preview part="print-preview"></docen-print-preview>
   <docen-modify-style-dialog part="modify-style"></docen-modify-style-dialog>
   <docen-new-style-dialog part="new-style"></docen-new-style-dialog>
   <docen-hyphenation-dialog part="hyphenation"></docen-hyphenation-dialog>

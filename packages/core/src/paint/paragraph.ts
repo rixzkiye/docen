@@ -489,8 +489,22 @@ export function paintParagraph(
         // shading (w:shd) fills the same box with an arbitrary color when no
         // highlight is present — OOXML precedence puts the highlight on top.
         const hl = inline.style.highlight ? HIGHLIGHT_COLOR[inline.style.highlight] : undefined;
-        const runFill =
-          hl ?? (inline.style.shadingFill ? `#${inline.style.shadingFill}` : undefined);
+        let runFill = hl ?? (inline.style.shadingFill ? `#${inline.style.shadingFill}` : undefined);
+        if (!runFill && ctx.fieldShading && ctx.fieldShading !== "never") {
+          const isCalculatedField =
+            inline.field === "page" ||
+            inline.field === "numPages" ||
+            inline.fieldShading === true ||
+            (typeof inline.instruction === "string" && inline.instruction.trim().length > 0);
+          if (isCalculatedField) {
+            if (
+              ctx.fieldShading === "always" ||
+              (ctx.fieldShading === "whenSelected" && ctx.isFieldSelected?.(inline))
+            ) {
+              runFill = "#d9d9d9";
+            }
+          }
+        }
         if (runFill) {
           tree.add(
             new Rect({

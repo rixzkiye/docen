@@ -75,6 +75,7 @@ export interface IOHostView {
   applyDocumentTheme(kind: string, value?: string, persist?: boolean): void;
   snapshotStyles(): void;
   syncEditable(): void;
+  syncDocumentSettings?(settings: Record<string, unknown>): void;
 }
 
 /**
@@ -625,6 +626,7 @@ export class IODomain {
     // re-derive editability. Word also forces revision tracking on when a
     // document opens under a tracked-changes restriction.
     const settings = this.documentSettings();
+    this.host.syncDocumentSettings?.(settings);
     const docProtection = settings.documentProtection as
       | {
           edit?: string;
