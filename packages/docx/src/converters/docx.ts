@@ -31,6 +31,7 @@ import { flattenExtensions, getExtensionField, getSchema } from "@tiptap/core";
 
 import type { Extensions, JSONContent } from "../core";
 import { docxExtensions } from "../core";
+import { PRESERVED_RUN_ELEMENTS } from "../extensions/coverage";
 import {
   type DrawingShapeLayout,
   stringifyVmlShapeLayout,
@@ -45,6 +46,13 @@ import {
   revertWpsShapeToVmlPict,
 } from "../extensions/vml-promotion";
 import { foldWpsShapeName } from "../extensions/wps-shape";
+import {
+  assertArchiveWithinLimits,
+  normalizeArchiveInput,
+  normalizeArchiveInputSync,
+} from "./archive-guard";
+import { DOCX_EPOCH, toIsoDate, withGenerationScope } from "./determinism";
+import { fillGeneratedFields, type FieldCacheOptions } from "./field-eval";
 import { prepareDocument, type PrepareStep } from "./prepare";
 import { buildTextBlock } from "./styles";
 
@@ -1162,6 +1170,17 @@ export class DocxManager {
         case "columnBreak":
           children.push({ columnBreak: true });
           break;
+        case "runMarker": {
+          // Reverse of RunMarker's parseDocxInline rule: the preserved empty
+          // run element re-emits as the run's only child (office-open's
+          // EMPTY_RUN_ELEMENTS writer). Tags outside the preserve table are
+          // dropped — the writer has no XML for them.
+          const element = node.attrs?.element as string | undefined;
+          if (element && element in PRESERVED_RUN_ELEMENTS) {
+            children.push({ children: [{ [element]: true }] } as unknown as ParagraphChild);
+          }
+          break;
+        }
         case "tab":
           // office-open emits <w:tab/> from a top-level tab:true run, but its
           // ParagraphChild union doesn't list the top-level shape — double
@@ -1183,10 +1202,19 @@ export class DocxManager {
         }
         case "mathInline": {
           // Reverse of MathInline's parseDocxInline rule: the MathInput rides
-          // the `math` attr verbatim.
+          // the `math` attr verbatim. A bare single-construct struct (the
+          // convertLinearToOMML shape) is wrapped into the paragraph shape
+          // office-open's m:oMath writer reads — otherwise the formula
+          // silently serializes empty.
           const math = node.attrs?.math;
           if (math && typeof math === "object") {
-            children.push({ math } as Record<string, unknown> as ParagraphChild);
+            // The office-open paragraph shape carries children/display/
+            // justification; anything else is a bare single construct (the
+            // convertLinearToOMML shape) and gets wrapped so the m:oMath
+            // writer sees its child — otherwise the formula serializes empty.
+            const isParagraph = "children" in math || "display" in math || "justification" in math;
+            const paragraph = isParagraph ? math : { children: [math as Record<string, unknown>] };
+            children.push({ math: paragraph } as Record<string, unknown> as ParagraphChild);
           }
           break;
         }
@@ -1744,9 +1772,11 @@ export class DocxManager {
             flushText();
             nodes.push({ type: "hardBreak" });
           }
-          // {lastRenderedPageBreak} is a Word render hint — drop (office-open
-          // does not emit it on output). date fields/separator/pgNum
-          // are unsupported inline elements, dropped for now.
+          // {lastRenderedPageBreak}, the date-field placeholders
+          // (dayShort/monthLong/…), pgNum, the note auto-marks and
+          // separators are claimed by the RunMarker inline rule above and
+          // preserved as atoms; only unregistered run children still drop
+          // here (office-open has no writer for them).
         }
       }
       flushText();
@@ -1858,23 +1888,33 @@ export function formatMarkNames(extensions?: Extensions): string[] {
  * with `DocxManager.resolve` (DocumentOptions → Tiptap JSON). Async since
  * office-open 0.14, so `Blob` (including `File`) and `ReadableStream` inputs
  * are accepted alongside raw bytes; `parseDOCXSync` covers synchronous bytes.
+ *
+ * The input is untrusted: before parsing, the ZIP package is validated against
+ * {@link ARCHIVE_LIMITS} (entry/size/ratio/media caps, bounded actual
+ * inflation and XML budgets — see converters/archive-guard.ts) and throws
+ * {@link ArchiveRejection} on violation.
  */
 export async function parseDOCX(
   data: Parameters<typeof parseDocument>[0],
   extensions?: Extensions,
 ): Promise<JSONContent> {
-  return getDocxManager(extensions).resolve(await parseDocument(data));
+  const bytes = await normalizeArchiveInput(data);
+  assertArchiveWithinLimits(bytes);
+  return getDocxManager(extensions).resolve(await parseDocument(bytes));
 }
 
 /**
  * Synchronous counterpart of {@link parseDOCX} for already-normalized bytes —
- * `Blob` and `ReadableStream` inputs throw (use the async entry).
+ * `Blob` and `ReadableStream` inputs throw (use the async entry). The same
+ * untrusted-input admission guard applies.
  */
 export function parseDOCXSync(
   data: Parameters<typeof parseDocumentSync>[0],
   extensions?: Extensions,
 ): JSONContent {
-  return getDocxManager(extensions).resolve(parseDocumentSync(data));
+  const bytes = normalizeArchiveInputSync(data);
+  assertArchiveWithinLimits(bytes);
+  return getDocxManager(extensions).resolve(parseDocumentSync(bytes));
 }
 
 /**
@@ -1971,13 +2011,16 @@ export interface DocxGenerateOptions<T extends OutputType = "nodebuffer"> {
    */
   variant?: DocxVariant;
   /**
-   * Pre-compilation steps run on the JSON in place (default: `prepareImages()`).
-   * - `true` / `undefined`: default image pre-fetch (http(s) → embedded data URL)
+   * Pre-compilation steps run on a copy of the JSON (default:
+   * `[prepareImageSizes()]` — local-only, never touches the network).
+   * - `true` / `undefined`: default local preparation (no network)
    * - `false`: skip preparation
-   * - `PrepareStep[]`: custom steps
+   * - `PrepareStep[]`: custom steps (e.g.
+   *   `[prepareImages({ allow: ["cdn.example.com"] }), prepareImageSizes()]`)
    *
-   * Required for http image URLs — image `renderDocx` drops images without
-   * embedded data (see extensions/image.ts). Mutates the JSON, like `prepareDocument`.
+   * External `http(s)` images require an explicit {@link prepareImages}
+   * `allow` list — the default drops them at render time (see
+   * extensions/image.ts). The input JSON is never mutated.
    */
   prepare?: boolean | PrepareStep[];
   /** Packer options; `type` controls the output format (default `"nodebuffer"` → Buffer). */
@@ -1998,6 +2041,32 @@ export interface DocxGenerateOptions<T extends OutputType = "nodebuffer"> {
    * mark/node into compile/resolve via its renderDocx/parseDocx hooks.
    */
   extensions?: Extensions;
+  /**
+   * Generated-field cache context (SEQ/REF/TOC are always re-derived; the
+   * page-dependent fields need this). `pageOf` returns the 1-based displayed
+   * page for the field atom at the given document-order index — the editor
+   * passes its canvas pagination, standalone callers a known page map. Omit
+   * it and page fields keep their model cache (never a guessed number).
+   */
+  fields?: FieldCacheOptions;
+  /**
+   * Fixed clock for this generation — the reproducibility switch.
+   *
+   * Every date the document does not already carry (core properties
+   * `created`/`modified`, new comment dates) resolves to this value, and every
+   * generated id sequence (drawing/shape/SmartArt ids, font keys, altChunk
+   * part names) restarts deterministically, so two generations of the same
+   * input are byte-identical — same process or a fresh one.
+   *
+   * - `string | Date`: use this timestamp.
+   * - `undefined` (default): {@link DOCX_EPOCH} (`1980-01-01T00:00:00.000Z`).
+   * - `null`: omit generated dates entirely (source-carried dates still win).
+   *
+   * Dates/ids the source document already carries are preserved — this only
+   * replaces values the generator would otherwise take from the wall clock,
+   * `crypto.randomUUID()` or process-global counters.
+   */
+  date?: string | Date | null;
 }
 
 /**
@@ -2018,26 +2087,57 @@ function applyDocumentOptions(
 }
 
 /**
+ * Fill core-properties dates the compiled options do not carry with the
+ * generation clock. `undefined` means "the source carried no value" and gets
+ * the fixed date (or `null` to omit); an explicit source value — including
+ * `null`, office-open's "source had no date" — is preserved.
+ */
+function applyGenerationDate(
+  compiled: DocumentOptions,
+  date: string | Date | null | undefined,
+): DocumentOptions {
+  if (compiled.created !== undefined && compiled.modified !== undefined) return compiled;
+  const fallback = date === null ? null : toIsoDate(date ?? DOCX_EPOCH);
+  return {
+    ...compiled,
+    created: compiled.created !== undefined ? compiled.created : fallback,
+    modified: compiled.modified !== undefined ? compiled.modified : fallback,
+  };
+}
+
+/** The scope clock for a `date` option — `null` opens the scope date-less. */
+function scopeDate(date: string | Date | null | undefined): string | undefined {
+  return date === null ? undefined : toIsoDate(date ?? DOCX_EPOCH);
+}
+
+/**
  * Generate a DOCX file from Tiptap JSON (runtime model), asynchronously.
  *
- * Pipeline: `prepareDocument` (default: fetch http images, in place) →
- * `DocxManager.compile` → @office-open/docx's `generateDocument`. `packer.type`
- * controls the output format (default: `"nodebuffer"` → Buffer). Non-blocking
- * (fflate Web Workers). With the default `prepare`, the input `json` is mutated
- * in place (http image URLs become embedded data URLs).
+ * Pipeline: `prepareDocument` (default: local preparation on a copy; no
+ * network) → `DocxManager.compile` → @office-open/docx's `generateDocument`.
+ * `packer.type` controls the output format (default: `"nodebuffer"` → Buffer).
+ * Non-blocking (fflate Web Workers). The input `json` is never mutated; see
+ * `options.prepare` for fetching external images and `options.date` for the
+ * fixed reproducibility clock (default {@link DOCX_EPOCH}).
  */
 export async function generateDOCX<T extends OutputType = "nodebuffer">(
   json: JSONContent,
   options?: DocxGenerateOptions<T>,
 ): Promise<OutputByType[T]> {
-  const { prepare = true, packer, document, extensions, variant } = options ?? {};
-  if (prepare !== false) {
-    await prepareDocument(json, prepare === true ? undefined : prepare);
-  }
-  return generateDocument(
-    applyVariant(applyDocumentOptions(compileDocument(json, extensions), document), variant),
-    packer,
+  const { prepare = true, packer, document, extensions, variant, date, fields } = options ?? {};
+  const prepared =
+    prepare === false ? json : await prepareDocument(json, prepare === true ? undefined : prepare);
+  const compiled = applyGenerationDate(
+    applyVariant(
+      applyDocumentOptions(
+        compileDocument(fillGeneratedFields(prepared, fields), extensions),
+        document,
+      ),
+      variant,
+    ),
+    date,
   );
+  return withGenerationScope(scopeDate(date), () => generateDocument(compiled, packer));
 }
 
 /**
@@ -2045,38 +2145,53 @@ export async function generateDOCX<T extends OutputType = "nodebuffer">(
  *
  * Pipeline: `DocxManager.compile` → `generateDocumentSync`. Does **not** run
  * `prepareDocument` (it is async); call `await prepareDocument(json)` first
- * when http images need embedding. `options.document` is still applied.
+ * when images need embedding. `options.document` and `options.date` are
+ * applied; the input `json` is never mutated.
  */
 export function generateDOCXSync<T extends OutputType = "nodebuffer">(
   json: JSONContent,
   options?: DocxGenerateOptions<T>,
 ): OutputByType[T] {
-  const { packer, document, extensions, variant } = options ?? {};
-  return generateDocumentSync(
-    applyVariant(applyDocumentOptions(compileDocument(json, extensions), document), variant),
-    packer,
+  const { packer, document, extensions, variant, date, fields } = options ?? {};
+  const compiled = applyGenerationDate(
+    applyVariant(
+      applyDocumentOptions(
+        compileDocument(fillGeneratedFields(json, fields), extensions),
+        document,
+      ),
+      variant,
+    ),
+    date,
   );
+  return withGenerationScope(scopeDate(date), () => generateDocumentSync(compiled, packer));
 }
 
 /**
  * Generate a DOCX file as a `ReadableStream<Uint8Array>` — for large documents
  * or streaming HTTP responses.
  *
- * Pipeline: `prepareDocument` (default: fetch http images, in place) →
- * `DocxManager.compile` → `generateDocumentStream`. Async due to preparation.
+ * Pipeline: `prepareDocument` (default: local preparation on a copy; no
+ * network) → `DocxManager.compile` → `generateDocumentStream`. Async due to
+ * preparation; `options.date` controls the fixed reproducibility clock.
  */
 export async function generateDOCXStream(
   json: JSONContent,
   options?: DocxGenerateOptions,
 ): Promise<ReadableStream<Uint8Array>> {
-  const { prepare = true, packer, document, extensions, variant } = options ?? {};
-  if (prepare !== false) {
-    await prepareDocument(json, prepare === true ? undefined : prepare);
-  }
-  return generateDocumentStream(
-    applyVariant(applyDocumentOptions(compileDocument(json, extensions), document), variant),
-    packer,
+  const { prepare = true, packer, document, extensions, variant, date, fields } = options ?? {};
+  const prepared =
+    prepare === false ? json : await prepareDocument(json, prepare === true ? undefined : prepare);
+  const compiled = applyGenerationDate(
+    applyVariant(
+      applyDocumentOptions(
+        compileDocument(fillGeneratedFields(prepared, fields), extensions),
+        document,
+      ),
+      variant,
+    ),
+    date,
   );
+  return withGenerationScope(scopeDate(date), () => generateDocumentStream(compiled, packer));
 }
 
 /**

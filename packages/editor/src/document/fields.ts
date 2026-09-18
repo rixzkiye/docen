@@ -13,6 +13,16 @@
  * unresolved-field behavior (cached, else empty).
  */
 
+import {
+  CAPTION_SEPARATOR_CHARS,
+  fieldRef,
+  formatSeqNumber,
+  parseFieldInstruction,
+  seqChapterLevel,
+  SEQ_NUMBER_FORMATS,
+  type FieldRef,
+  type ParsedFieldInstruction,
+} from "@docen/docx";
 import { formatNumber } from "@docen/layout";
 
 import {
@@ -24,6 +34,21 @@ import {
 /** One insertable field: the OOXML name and its default instruction (what the
  *  dialog's field-code box prefills). Field names stay English — Word's field
  *  dialog shows the field codes verbatim in every UI language. */
+// The instruction parser, field-branch reader and SEQ formatting helpers live
+// in @docen/docx (converters/field-eval) so the generation-time cache pass and
+// the editor's update commands share one implementation. Re-exported here for
+// the editor modules that import them from ./fields.
+export {
+  CAPTION_SEPARATOR_CHARS,
+  fieldRef,
+  formatSeqNumber,
+  parseFieldInstruction,
+  seqChapterLevel,
+  SEQ_NUMBER_FORMATS,
+  type FieldRef,
+  type ParsedFieldInstruction,
+};
+
 export interface FieldDef {
   name: string;
   instruction: string;
@@ -87,48 +112,6 @@ export const FIELD_CATEGORIES: readonly FieldCategory[] = [
     fields: [plain("CITATION"), plain("BIBLIOGRAPHY")],
   },
 ];
-
-/** A field atom under the caret, resolved from its passthrough branch — the
- *  instruction, the cached result, and a checkbox's checked state. */
-export interface FieldRef {
-  kind: "simpleField" | "complexField" | "formField";
-  instruction?: string;
-  result?: string;
-  /** formField checkBox only. */
-  checked?: boolean;
-}
-
-/** The field a passthrough branch carries, or null (not a field). Both the
- *  flat shapes office-open parses (instruction/cachedValue, instruction/result)
- *  and the checkbox's `checked` flag are read. */
-export function fieldRef(branch: Record<string, unknown>): FieldRef | null {
-  const simple = branch.simpleField;
-  if (simple && typeof simple === "object") {
-    const s = simple as { instruction?: unknown; cachedValue?: unknown };
-    return {
-      kind: "simpleField",
-      instruction: typeof s.instruction === "string" ? s.instruction : undefined,
-      result: typeof s.cachedValue === "string" ? s.cachedValue : undefined,
-    };
-  }
-  const complex = branch.complexField;
-  if (complex && typeof complex === "object") {
-    const c = complex as { instruction?: unknown; result?: unknown };
-    return {
-      kind: "complexField",
-      instruction: typeof c.instruction === "string" ? c.instruction : undefined,
-      result: typeof c.result === "string" ? c.result : undefined,
-    };
-  }
-  const form = branch.formField;
-  if (form && typeof form === "object") {
-    const box = (form as { checkBox?: unknown }).checkBox;
-    const checked =
-      box && typeof box === "object" ? (box as { checked?: unknown }).checked : undefined;
-    return { kind: "formField", checked: checked === true };
-  }
-  return null;
-}
 
 /** What 更新域 needs to re-derive a value. Every part is optional so the same
  *  evaluator registry serves the edit-time update commands (document state
@@ -210,68 +193,6 @@ export interface FieldBookmark {
   /** The target's reading-order document position — the `\p` switch's
    *  above/below comparison. */
   pos?: number;
-}
-
-/** A parsed instruction: the field name plus its positional arguments and
- *  switches (`\* MERGEFORMAT`, `\@ "yyyy/M/d"`, `\h`). Quoted strings stay
- *  whole; a switch consumes the next token as its value. */
-export interface ParsedFieldInstruction {
-  /** The uppercase field name (first token). */
-  name: string;
-  /** The instruction verbatim, trimmed. */
-  raw: string;
-  /** Positional arguments after the name (`REF _Ref1`, `SEQ 图` → ["_Ref1"]),
-   *  switch tokens and their values excluded. */
-  args: string[];
-  /** Switch values keyed without the backslash: `*` → "MERGEFORMAT",
-   *  `@` → "yyyy/M/d", `#` → "0", `h` → "" (a flag switch). */
-  switches: Record<string, string>;
-}
-
-export function parseFieldInstruction(instruction: string): ParsedFieldInstruction {
-  const raw = instruction.trim();
-  const tokens: string[] = [];
-  let current = "";
-  let quoted = false;
-  for (const ch of raw) {
-    if (ch === '"') {
-      quoted = !quoted;
-      continue;
-    }
-    if (!quoted && (ch === " " || ch === "\t")) {
-      if (current) {
-        tokens.push(current);
-        current = "";
-      }
-      continue;
-    }
-    current += ch;
-  }
-  if (current) tokens.push(current);
-  let name = (tokens[0] ?? "").toUpperCase();
-  if (name.startsWith("=") && name.length > 1) {
-    const exprRest = tokens[0]!.slice(1);
-    tokens.splice(0, 1, "=", exprRest);
-    name = "=";
-  }
-  const args: string[] = [];
-  const switches: Record<string, string> = {};
-  for (let i = 1; i < tokens.length; i++) {
-    const token = tokens[i]!;
-    if (!token.startsWith("\\") || token.length < 2) {
-      args.push(token);
-      continue;
-    }
-    const key = token[1]!;
-    const next = tokens[i + 1];
-    if (next && !next.startsWith("\\")) {
-      switches[key] = next;
-      i += 1;
-    } else {
-      switches[key] = "";
-    }
-  }
-  return { name, raw, args, switches };
 }
 
 /** Formats `d` per a Word date picture (`\@ "yyyy年M月d日"`): the common
@@ -421,53 +342,6 @@ const INFO_ALIASES: Record<string, string> = {
  *  field has no value in this context" — the caller keeps the cached result
  *  (Word's unresolved-field behavior is the cached value, else empty). */
 export type FieldEvaluator = (field: ParsedFieldInstruction, ctx: FieldContext) => string | null;
-
-/** SEQ `\*` switch token → the number-format token {@link formatNumber}
- *  renders, keyed by the canonical tokens the Insert Caption dialog writes
- *  (the settings' w:numFmt values). Word's default (also the fallback for an
- *  unknown switch) is ARABIC. */
-export const SEQ_NUMBER_FORMATS: Readonly<Record<string, string>> = {
-  ARABIC: "decimal",
-  ROMAN: "upperRoman",
-  roman: "lowerRoman",
-  ALPHABETIC: "upperLetter",
-  alphabetic: "lowerLetter",
-};
-
-/** Render one sequence ordinal under its `\*` switch — the caption number
- *  (Word's Insert Caption format list). Word reads the switch word
- *  case-insensitively and its casing picks the output case: Roman/ROMAN → I,
- *  roman → i (ECMA's canonical uppercase is `Roman`); Alphabetic/ALPHABETIC →
- *  A, alphabetic → a; Arabic is case-free decimal. An unknown switch falls
- *  back to ARABIC. */
-export function formatSeqNumber(switchToken: string | undefined, ordinal: number): string {
-  const token = switchToken ?? "";
-  switch (token.toLowerCase()) {
-    case "roman":
-      return formatNumber(token === "roman" ? "lowerRoman" : "upperRoman", ordinal);
-    case "alphabetic":
-      return formatNumber(token === "alphabetic" ? "lowerLetter" : "upperLetter", ordinal);
-    default:
-      return formatNumber("decimal", ordinal);
-  }
-}
-
-/** The `\s` switch as a valid chapter level: an integer 1-9, or undefined —
- *  Word ignores any other switch value. */
-export function seqChapterLevel(switchValue: string | undefined): number | undefined {
-  const level = finiteNumber(switchValue);
-  return level != null && Number.isInteger(level) && level >= 1 && level <= 9 ? level : undefined;
-}
-
-/** w:caption@w:sep token → the character between a chapter number and a SEQ
- *  number (Word's "Use separator" list). */
-export const CAPTION_SEPARATOR_CHARS: Readonly<Record<string, string>> = {
-  hyphen: "-",
-  period: ".",
-  colon: ":",
-  emDash: "\u2014",
-  enDash: "\u2013",
-};
 
 /** The `\p` switch's above/below — "above" when the target bookmark sits
  *  before the field in reading order, "below" otherwise. Word restricts the

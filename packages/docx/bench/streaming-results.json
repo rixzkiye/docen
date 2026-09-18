@@ -1,0 +1,48 @@
+{
+  "recorded": "2026-09-18",
+  "machine": "Linux x86_64, Node v24.14.0",
+  "model": "N x 15 one-sentence paragraphs per page (LibreOffice-verified page counts)",
+  "runs": [
+    {
+      "pages": 100,
+      "pdfPagesVerified": 100,
+      "sync": { "elapsedMs": 153.7, "outputBytes": 14285, "rssDelta": 2490368, "peakRss": 2359296 },
+      "async": {
+        "elapsedMs": 318.2,
+        "outputBytes": 14285,
+        "rssDelta": 9216000,
+        "peakRss": 8896512
+      },
+      "stream": {
+        "elapsedMs": 95.0,
+        "outputBytes": 14285,
+        "rssDelta": 8777728,
+        "peakRss": 8777728
+      },
+      "streamMatchesSync": true
+    },
+    {
+      "pages": 300,
+      "pdfPagesVerified": 300,
+      "sync": {
+        "elapsedMs": 70.3,
+        "outputBytes": 24242,
+        "rssDelta": 10805248,
+        "peakRss": 10485760
+      },
+      "async": {
+        "elapsedMs": 180.1,
+        "outputBytes": 24242,
+        "rssDelta": 29597696,
+        "peakRss": 29466624
+      },
+      "stream": {
+        "elapsedMs": 218.3,
+        "outputBytes": 24242,
+        "rssDelta": 28647424,
+        "peakRss": 28647424
+      },
+      "streamMatchesSync": true
+    }
+  ]
+}

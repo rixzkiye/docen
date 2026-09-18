@@ -1,0 +1,6 @@
+{
+  "file": "docen_shaping.wasm",
+  "sha256": "2e251814d5d1ad4eab0a337c2639df221dae0d798a2ee5a1375c9a00a5ca7d9d",
+  "bytes": 1046761,
+  "toolchain": "rust-toolchain.toml"
+}

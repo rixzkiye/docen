@@ -26,6 +26,10 @@ export interface DrawingPicturesHostView {
     | undefined;
   /** Open the picture file picker (Insert → Picture). */
   pickImage(): void;
+  /** Open the Online Pictures address dialog (Insert → Pictures). */
+  openOnlinePictures(): void;
+  /** Open the custom Text Effects dialog, prefilled from the selection. */
+  openTextEffectsDialog(): void;
   /** Open the change-picture file picker (Picture Format → Adjust). */
   pickPicture(): void;
   /** Hand the keyboard back to the editing surface. */
@@ -63,6 +67,8 @@ export class DrawingPicturesHostCommands implements HostCommandDomain {
 
   readonly editor: readonly string[] = [
     "insert-picture",
+    "online-picture",
+    "text-effects",
     "change-picture",
     "reset-picture-size",
     "drawing-properties",
@@ -114,6 +120,22 @@ export class DrawingPicturesHostCommands implements HostCommandDomain {
     if (event === "insert-picture") {
       this.host.pickImage();
       return true;
+    }
+    // Online Pictures — the address dialog (Word's Insert Pictures window;
+    // no picture service here, so the dialog takes an image URL). The dialog
+    // commit arrives as `online-picture:ok` on the element.
+    if (event === "online-picture") {
+      this.host.openOnlinePictures();
+      return true;
+    }
+    // Text Effects → Options entries open the custom dialog; every preset
+    // value falls through to the wired `text-effects` Tiptap command.
+    if (event === "text-effects") {
+      if (value?.endsWith("options")) {
+        this.host.openTextEffectsDialog();
+        return true;
+      }
+      return false;
     }
     // Change Picture — a picker over the selected image; the picked source
     // replaces it at the same frame size (Picture Format > Adjust).

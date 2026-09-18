@@ -116,9 +116,15 @@ function applyBase(
 }
 
 /** Resolve each item's `text` i18n key to the active locale — the schema stores
- *  keys, the render pass is the single translate point (mirrors label). */
+ *  keys, the render pass is the single translate point (mirrors label).
+ *  Submenus recurse: nested `children`/`items` carry keys too. */
 const translateItems = (items: readonly RibbonMenuItem[], scope: Element): RibbonMenuItem[] =>
-  items.map((it) => ({ ...it, text: it.text ? t(it.text, scope) : it.text }));
+  items.map((it) => ({
+    ...it,
+    text: it.text ? t(it.text, scope) : it.text,
+    ...(it.children ? { children: translateItems(it.children, scope) } : {}),
+    ...(it.items ? { items: translateItems(it.items, scope) } : {}),
+  }));
 
 function buildControl(c: RibbonControl, scope: Element): HTMLElement {
   switch (c.type) {

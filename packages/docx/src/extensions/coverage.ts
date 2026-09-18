@@ -126,25 +126,45 @@ export const PARAGRAPH_CHILD_DISPOSITIONS = {
   rawXml: { passthrough: "inlinePassthrough atom" },
 } satisfies Record<ParagraphChildTag, Disposition>;
 
-/** RunOptions children shapes the resolve side drops (the children walk in
- *  resolveRun, converters/docx.ts). Not keyed by a union — an explicit
- *  decision list of the shapes with NO owning inline rule and no `break`:
- *  rule-owned children (tab, pageBreak, picture, …) are handled; a nested
- *  ParagraphChild member with no owning rule (e.g. {object}) drops there too
- *  but keeps its top-level disposition above — office-open parse emits those
- *  top-level, never nested. */
-export const RUN_CHILDREN_DROPPED: readonly { tag: string; reason: string }[] = [
-  { tag: "lastRenderedPageBreak", reason: "renderer pagination hint, not content" },
-  { tag: "separator", reason: "footnote/endnote separator run, not body content" },
-  { tag: "continuationSeparator", reason: "footnote/endnote separator run, not body content" },
-  { tag: "annotationRef", reason: "comment anchor marker, not body content" },
-  { tag: "footnoteRef", reason: "footnote anchor marker, not body content" },
-  { tag: "endnoteRef", reason: "endnote anchor marker, not body content" },
-  { tag: "pgNum", reason: "live field, value recomputed at view time" },
-  { tag: "dayShort", reason: "live date field, value recomputed at view time" },
-  { tag: "dayLong", reason: "live date field, value recomputed at view time" },
-  { tag: "monthShort", reason: "live date field, value recomputed at view time" },
-  { tag: "monthLong", reason: "live date field, value recomputed at view time" },
-  { tag: "yearShort", reason: "live date field, value recomputed at view time" },
-  { tag: "yearLong", reason: "live date field, value recomputed at view time" },
-];
+/** RunOptions children shapes the resolve side PRESERVES as the `runMarker`
+ *  atom (extensions/run-marker.ts). These are the empty `EG_RunInnerContent`
+ *  elements that carry document semantics but no text — field-result
+ *  placeholders, note/comment auto-marks, note separators, and Word's
+ *  pagination hint. office-open emits them as `{ tag: true }` run children and
+ *  its writer re-emits every one (EMPTY_RUN_ELEMENTS), so the atom round-trips
+ *  byte-faithfully; before the table they were dropped at resolve and the
+ *  OOXML element was lost on re-export. The `semantics` string is the tested
+ *  disposition — coverage.spec drives one fixture per tag through
+ *  resolve → compile and a real-XML generate → parse cycle. */
+export const PRESERVED_RUN_ELEMENTS = {
+  pgNum: {
+    element: "w:pgNum",
+    semantics: "field result placeholder for the current page number (PAGE field)",
+  },
+  dayShort: { element: "w:dayShort", semantics: "date field result: short day name" },
+  dayLong: { element: "w:dayLong", semantics: "date field result: long day name" },
+  monthShort: { element: "w:monthShort", semantics: "date field result: short month name" },
+  monthLong: { element: "w:monthLong", semantics: "date field result: long month name" },
+  yearShort: { element: "w:yearShort", semantics: "date field result: short year" },
+  yearLong: { element: "w:yearLong", semantics: "date field result: long year" },
+  annotationRef: { element: "w:annotationRef", semantics: "comment annotation auto-mark" },
+  footnoteRef: { element: "w:footnoteRef", semantics: "footnote auto-number mark" },
+  endnoteRef: { element: "w:endnoteRef", semantics: "endnote auto-number mark" },
+  separator: { element: "w:separator", semantics: "footnote/endnote separator rule" },
+  continuationSeparator: {
+    element: "w:continuationSeparator",
+    semantics: "footnote/endnote continuation separator rule",
+  },
+  lastRenderedPageBreak: {
+    element: "w:lastRenderedPageBreak",
+    semantics: "renderer pagination hint (Word recomputes, kept for byte fidelity)",
+  },
+} satisfies Record<string, { element: string; semantics: string }>;
+
+/** RunOptions children shapes still dropped: unknown object entries outside
+ *  {@link PRESERVED_RUN_ELEMENTS}. Empty by design — every known
+ *  EG_RunInnerContent empty element now has a preserve route, and non-empty
+ *  members are claimed by their own rules. Kept as the spec's negative probe
+ *  anchor (an unregistered tag must still drop — no silent passthrough into a
+ *  writer that cannot emit it). */
+export const RUN_CHILDREN_DROPPED: readonly { tag: string; reason: string }[] = [];

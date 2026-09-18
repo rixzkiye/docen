@@ -101,7 +101,11 @@ export interface PaintGlyphRunOptions {
   fill?: string;
   stroke?: string;
   strokeWidth?: number;
-  shadow?: { x: number; y: number; blur: number; color: string };
+  /** One shadow or an effect stack (shadow + bevel edges) — Leafer paints the
+   *  array in order, so a bevel's light and dark edges both render. */
+  shadow?:
+    | { x: number; y: number; blur?: number; color: string }
+    | { x: number; y: number; blur?: number; color: string }[];
   scaleX?: number;
   opacity?: number;
   outlineCache?: GlyphOutlineCache;

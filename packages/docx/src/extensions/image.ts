@@ -78,6 +78,11 @@ function decodedBytesOf(src: string): Uint8Array | undefined {
   }
 }
 
+/** Test-only window into the decoded-src FIFO (see converters/concurrency.spec). */
+export function decodedSrcCacheSize(): number {
+  return decodedBySrc.size;
+}
+
 /** src → the embedded media {type, bytes}: a registered blob: URL resolves
  *  through the media registry (the bytes never left); a data URL decodes
  *  through the shared src cache. Shared by renderDocx and the
