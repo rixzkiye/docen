@@ -491,7 +491,11 @@ export function downloadOleObject(bytes: Uint8Array, fileName: string): void {
   document.body.appendChild(a);
   a.click();
   setTimeout(() => {
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+    if (typeof document !== "undefined" && document.body && document.body.contains(a)) {
+      document.body.removeChild(a);
+    }
+    if (typeof URL !== "undefined" && typeof URL.revokeObjectURL === "function") {
+      URL.revokeObjectURL(url);
+    }
   }, 100);
 }

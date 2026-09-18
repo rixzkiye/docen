@@ -227,6 +227,9 @@ export const documentTemplate = html`
     <docen-task-pane slot="task-pane-end" position="end" part="thesaurus-pane" title="Thesaurus">
       <docen-thesaurus-pane></docen-thesaurus-pane>
     </docen-task-pane>
+    <docen-task-pane slot="task-pane-end" position="end" part="translate-pane" title="Translate">
+      <docen-translate-pane></docen-translate-pane>
+    </docen-task-pane>
     <docen-task-pane slot="task-pane-end" position="end" part="styles-pane" title="Styles">
       <docen-styles-pane></docen-styles-pane>
     </docen-task-pane>

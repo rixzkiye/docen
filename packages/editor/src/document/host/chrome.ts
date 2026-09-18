@@ -455,6 +455,7 @@ export class ChromeDomain {
       ["clipboard-pane", "pane.clipboard"],
       ["proofing-pane", "pane.proofing"],
       ["thesaurus-pane", "pane.thesaurus"],
+      ["translate-pane", "pane.translate"],
       ["styles-pane", "pane.styles"],
     ] as const) {
       root

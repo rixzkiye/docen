@@ -85,13 +85,13 @@ import {
   type StorySlot,
 } from "./canvas/edit-bridge";
 import { CanvasStage, type CanvasStageSection, type LaidFurnitureSection } from "./canvas/stage";
+import { documentStyles, documentTemplate } from "./chrome";
 // Side-effect: register the document-specific UI components moved out of the
 // shared ui/ barrel — <docen-format-pane> (properties fallback),
 // <docen-outline> (navigation Headings tab), <docen-styles-pane> (Styles).
 import "./components/format-pane";
 import "./components/outline";
 import "./components/styles-pane";
-import { documentStyles, documentTemplate } from "./chrome";
 import { ClipboardCommands } from "./commands/clipboard";
 import { CommentsCommands } from "./commands/comments";
 import { combineDocs, compareDocs } from "./commands/compare";
@@ -121,9 +121,9 @@ import { InsertDomain } from "./host/insert";
 import { IODomain } from "./host/io";
 import { RenderDomain } from "./host/render";
 import { StatusDomain } from "./host/status";
+import { pageInsets, StoriesDomain } from "./host/stories";
 // Side-effect import: registers the ribbon/header translation tables.
 import "./i18n";
-import { pageInsets, StoriesDomain } from "./host/stories";
 import { StylesDomain } from "./host/styles";
 import { mergeSectionProperties } from "./page-setup";
 import { compressPictureSrc, pickTransparentColor, type CropRect } from "./pixels";
@@ -155,6 +155,7 @@ import {
 } from "./settings";
 import { getSynonyms, spellSuggestions } from "./spelling";
 import { attachTemplate, type DotxTemplatePackage } from "./template-manager";
+import { translateText } from "./translation";
 
 /** Double-click window (ms) — the format painter's sticky toggle and the
  *  bare-click stroke deferral both track the system double-click time. */
@@ -226,6 +227,7 @@ export type TaskPaneId =
   | "clipboard"
   | "proofing"
   | "thesaurus"
+  | "translate"
   | "revisions"
   | "styles"
   | "reveal"
@@ -1714,6 +1716,23 @@ class DocenDocument extends AddinHost<Editor> {
           this.editor.commands.insertContent(event.detail);
         }
       }) as EventListener);
+    this.shadowRoot
+      ?.querySelector<HTMLElement>("docen-translate-pane")
+      ?.addEventListener("translate:insert", ((event: CustomEvent<string>) => {
+        if (event.detail && this.editor) {
+          this.editor.commands.insertContent(event.detail);
+        }
+      }) as EventListener);
+    this.shadowRoot
+      ?.querySelector<HTMLElement>("docen-translate-pane")
+      ?.addEventListener("translate:document", ((
+        event: CustomEvent<{ from?: string; to?: string }>,
+      ) => {
+        this.#translateDocument(event.detail?.from, event.detail?.to);
+      }) as EventListener);
+    this.addEventListener("docen:translate", ((event: CustomEvent<{ text?: string }>) => {
+      this.#openTranslate(event.detail?.text);
+    }) as EventListener);
 
     this.#stageHost = this.shadowRoot!.querySelector<HTMLElement>(".docen-canvas") ?? undefined;
     this.#stageHost?.addEventListener("wheel", this.#onWheel as EventListener, {
@@ -2447,6 +2466,7 @@ class DocenDocument extends AddinHost<Editor> {
     this.editor?.on("selectionUpdate", this.#comments.syncActiveCommentCard);
     this.editor?.on("selectionUpdate", this.#revisions.syncActiveRevision);
     this.editor?.on("selectionUpdate", this.#onSelectionUpdateForTabs);
+    this.editor?.on("selectionUpdate", this.#onSelectionUpdateForTranslate);
     document.addEventListener("fullscreenchange", this.#onFullscreenChange);
     this.addEventListener("keydown", this.#onZoomKey);
     this.dispatchEvent(new CustomEvent("docen:ready", { bubbles: true, composed: true }));
@@ -2961,6 +2981,8 @@ class DocenDocument extends AddinHost<Editor> {
     });
     this.editor?.off("transaction", this.#onTransaction);
     this.editor?.off("selectionUpdate", this.#comments.syncActiveCommentCard);
+    this.editor?.off("selectionUpdate", this.#onSelectionUpdateForTranslate);
+    this.removeEventListener("docen:translate", this.#onDocenTranslate as EventListener);
     document.removeEventListener("fullscreenchange", this.#onFullscreenChange);
     this.removeEventListener("keydown", this.#onZoomKey);
     this.shadowRoot
@@ -4452,6 +4474,7 @@ class DocenDocument extends AddinHost<Editor> {
           detail: { text: selected },
         }),
       );
+      this.#openTranslate(selected);
       return;
     }
     if (name === "theme" || name === "theme-color" || name === "theme-font") {
@@ -4749,6 +4772,79 @@ class DocenDocument extends AddinHost<Editor> {
       }
     }
   }
+
+  /** Open the Translate task pane with optional initial selection text. */
+  #openTranslate(text?: string): void {
+    const editor = this.#bridge?.activeEditor() ?? this.editor;
+    let target = text;
+    if (target === undefined && editor) {
+      const sel = editor.state.selection;
+      if (!sel.empty) {
+        target = editor.state.doc.textBetween(sel.from, sel.to, " ").trim();
+      }
+    }
+    this.#setTaskpane("translate", true);
+    const pane = this.shadowRoot?.querySelector("docen-translate-pane") as
+      | (HTMLElement & { setSelectionText: (t: string) => void })
+      | null;
+    if (pane && typeof pane.setSelectionText === "function" && target !== undefined) {
+      pane.setSelectionText(target);
+    }
+  }
+
+  /** Translates paragraph blocks in the document. */
+  #translateDocument(from = "auto", to = "id"): void {
+    const editor = this.#bridge?.activeEditor() ?? this.editor;
+    if (!editor) return;
+
+    const blocks: Array<{ from: number; to: number; text: string }> = [];
+    editor.state.doc.descendants((node, pos) => {
+      if (node.isTextblock && node.textContent.trim().length > 0) {
+        blocks.push({
+          from: pos + 1,
+          to: pos + node.nodeSize - 1,
+          text: node.textContent,
+        });
+        return false;
+      }
+      return true;
+    });
+
+    if (blocks.length === 0) return;
+
+    const tr = editor.state.tr;
+    for (let i = blocks.length - 1; i >= 0; i--) {
+      const b = blocks[i];
+      const translated = translateText(b.text, from, to);
+      tr.insertText(translated, b.from, b.to);
+    }
+    editor.view.dispatch(tr);
+
+    const pane = this.shadowRoot?.querySelector("docen-translate-pane") as
+      | (HTMLElement & { onDocumentTranslated: (count: number) => void })
+      | null;
+    pane?.onDocumentTranslated?.(blocks.length);
+  }
+
+  readonly #onSelectionUpdateForTranslate = (): void => {
+    if (this.#paneEl("translate")?.open && this.editor) {
+      const sel = this.editor.state.selection;
+      if (!sel.empty) {
+        const text = this.editor.state.doc.textBetween(sel.from, sel.to, " ").trim();
+        if (text) {
+          const pane = this.shadowRoot?.querySelector("docen-translate-pane") as
+            | (HTMLElement & { setSelectionText: (t: string) => void })
+            | null;
+          pane?.setSelectionText?.(text);
+        }
+      }
+    }
+  };
+
+  readonly #onDocenTranslate = (event: Event): void => {
+    const detail = (event as CustomEvent<{ text?: string }>).detail;
+    this.#openTranslate(detail?.text);
+  };
 
   #syncStatusLanguage(): void {
     this.#status.syncStatusLanguage();
@@ -5580,17 +5676,19 @@ class DocenDocument extends AddinHost<Editor> {
               ? "proofing-pane"
               : id === "thesaurus"
                 ? "thesaurus-pane"
-                : id === "revisions"
-                  ? "revisions-pane"
-                  : id === "styles"
-                    ? "styles-pane"
-                    : id === "reveal"
-                      ? "reveal-pane"
-                      : id === "restrict"
-                        ? "restrict-pane"
-                        : id === "a11y"
-                          ? "a11y-pane"
-                          : "props-pane";
+                : id === "translate"
+                  ? "translate-pane"
+                  : id === "revisions"
+                    ? "revisions-pane"
+                    : id === "styles"
+                      ? "styles-pane"
+                      : id === "reveal"
+                        ? "reveal-pane"
+                        : id === "restrict"
+                          ? "restrict-pane"
+                          : id === "a11y"
+                            ? "a11y-pane"
+                            : "props-pane";
     return this.shadowRoot?.querySelector(`docen-task-pane[part="${part}"]`) as
       | (HTMLElement & { open: boolean })
       | null;
