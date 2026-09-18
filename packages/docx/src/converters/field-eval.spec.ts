@@ -415,6 +415,71 @@ describe("TOC cached entries (item 13)", () => {
     expect(refCache(edited)).toBe("Beta");
   });
 
+  it("right-aligns the page number inside the docen default text column", () => {
+    // A4 minus the docen 1440-twip side margins. A hardcoded Word Letter
+    // default (9350) overruns this column: LibreOffice renders the leader but
+    // drops the page-number run (reproduced with a TOC inside a table cell).
+    const json = docOf([
+      para([text("One")], { heading: "Heading1" }),
+      {
+        type: "tocField",
+        attrs: { options: { headingStyleRange: "1-3" } },
+        content: [{ type: "paragraph" }],
+      },
+    ]);
+    const xml = documentXml(json, { fields: { tocPageOf: () => 1 } });
+    expect(xml).toContain('<w:tab w:val="right" w:pos="9026" w:leader="dot"/>');
+  });
+
+  it("derives the tab stop from the document's own section geometry", () => {
+    const json = docOf(
+      [
+        para([text("One")], { heading: "Heading1" }),
+        {
+          type: "tocField",
+          attrs: { options: { headingStyleRange: "1-3" } },
+          content: [{ type: "paragraph" }],
+        },
+      ],
+      {
+        sectionProperties: {
+          pageSize: { width: 12240, height: 15840 },
+          pageMargin: { left: 1800, right: 1800 },
+        },
+      },
+    );
+    const xml = documentXml(json, { fields: { tocPageOf: () => 1 } });
+    expect(xml).toContain('<w:tab w:val="right" w:pos="8640" w:leader="dot"/>');
+  });
+
+  it("uses the TOC's own section geometry across a section break", () => {
+    const json = docOf([
+      para([text("Section One")], { heading: "Heading1" }),
+      {
+        type: "tocField",
+        attrs: { options: { headingStyleRange: "1-3" } },
+        content: [{ type: "paragraph" }],
+      },
+      // Closes section one with its own 1800-twip side margins.
+      para([text("first section end")], {
+        sectionProperties: {
+          pageSize: { width: 11906, height: 16838 },
+          pageMargin: { left: 1800, right: 1800 },
+        },
+      }),
+      {
+        type: "tocField",
+        attrs: { options: { headingStyleRange: "1-3" } },
+        content: [{ type: "paragraph" }],
+      },
+    ]);
+    const xml = documentXml(json, { fields: { tocPageOf: () => 1 } });
+    // Section one's TOC: 11906 − 3600 = 8306; the final (defaults) TOC: 9026.
+    expect(xml).toContain('w:pos="8306"');
+    expect(xml).toContain('w:pos="9026"');
+    expect(xml).not.toContain('w:pos="9350"');
+  });
+
   it("leaves a document without any patchable field untouched (non-mutating)", () => {
     const plain = docOf([para([text("hello")])]);
     const snapshot = JSON.stringify(plain);

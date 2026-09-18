@@ -188,7 +188,11 @@ pass is non-mutating — the input JSON is untouched):
   collected heading/caption index) and a filled TOC carries the same cached
   numbers a reader shows without updating the field. The editor's save path
   derives them from the live canvas pagination; without the callback the
-  entries keep Word's empty page-number slot.
+  entries keep Word's empty page-number slot. Each entry's right-aligned page
+  number tab stops at its own section's text-column edge (page size minus
+  margins, per-section sectPr honored; the docen A4/1" defaults when the model
+  carries none), never at a fixed Word Letter-default position that overruns an
+  A4/1" column and makes LibreOffice drop the number.
 
 ```typescript
 // Page context for a headless save, e.g. after your own layout pass:
