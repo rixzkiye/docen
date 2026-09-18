@@ -1757,6 +1757,7 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
   const tableQuickInsertEl = document.createElement("div");
   tableQuickInsertEl.style.cssText =
     "position:absolute;display:none;z-index:38;cursor:pointer;width:16px;height:16px;border-radius:50%;" +
+    "pointer-events:auto;" +
     "background:#ffffff;border:1px solid #2b579a;box-shadow:0 1px 4px rgba(0,0,0,0.25);" +
     "align-items:center;justify-content:center;color:#2b579a;";
   tableQuickInsertEl.innerHTML =
