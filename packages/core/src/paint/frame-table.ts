@@ -1,6 +1,6 @@
 import {
+  createMeasurer,
   stackBlocks,
-  TextMeasurer,
   type LaidOutStackItem,
   type LayoutBlock,
   type LayoutBorderEdge,
@@ -56,7 +56,7 @@ export function paintFrameTable(
   const cols = t?.columnWidthsPx;
   const rows = t?.rows;
   if (!cols?.length || !rows?.length) return;
-  const measurer = new TextMeasurer(ctx.metrics);
+  const measurer = createMeasurer(ctx.metrics);
 
   // Column bands from the fixed widths.
   const colX = [0];

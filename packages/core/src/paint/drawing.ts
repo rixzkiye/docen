@@ -1,7 +1,7 @@
 import {
   anchorAxisPos,
+  createMeasurer,
   stackBlocks,
-  TextMeasurer,
   type LaidOutParagraph,
   type LayoutBlockContext,
   type LayoutDrawing,
@@ -386,7 +386,7 @@ export function paintMembers(
       // (a plain text box is white fill + an accent hairline, visible on a
       // white page).
       paintShapeBox(tree, { ...m, x: mx, y: my }, true);
-      const measurer = new TextMeasurer(ctx.metrics);
+      const measurer = createMeasurer(ctx.metrics);
       const left = m.insets?.left ?? 0;
       // Metafile runs carry nowrap: GDI draws the string as-is, so the width
       // re-fit must not re-break it into phantom lines. A vertical body

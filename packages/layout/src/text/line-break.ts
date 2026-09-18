@@ -187,6 +187,20 @@ const SQUEEZE_MAX = 0.04;
 const preparedCache = new Map<string, PreparedRichInline>();
 const PREPARED_CACHE_LIMIT = 4000;
 
+/** Stable per-measurer id for the prepared cache key: a canvas and a shaped
+ *  measurer (or two documents with different registered faces) must never
+ *  share a preparation. */
+const measurerIds = new WeakMap<TextMeasurer, number>();
+let nextMeasurerId = 1;
+function measurerIdOf(measurer: TextMeasurer): number {
+  let id = measurerIds.get(measurer);
+  if (id === undefined) {
+    id = nextMeasurerId++;
+    measurerIds.set(measurer, id);
+  }
+  return id;
+}
+
 /** The packer's whitespace mode: Word never collapses a space for display —
  *  every space keeps its advance inside the item text (one mark dot, one
  *  caret cell each), and the breaker keeps preserved spaces at line start
@@ -290,6 +304,9 @@ function groupOf(
       const scale = characterScaleOf(item.style);
       const kern = kerningActive(item.style);
       const baseSize = vertAlignedSizePx(item.style);
+      // Shaped measurers hand the breaker their own advances so wrap
+      // decisions see kern/liga widths; canvas keeps pretext's measurement.
+      const baseMeasure = measurer.segmentMeasurer(item.style);
       const { segments } = measurer.analyze(item.text, item.style);
       for (let sIdx = 0; sIdx < segments.length; sIdx++) {
         const seg = segments[sIdx]!;
@@ -301,11 +318,18 @@ function groupOf(
           const isBoundary =
             autoSpaceDE !== false && sIdx > 0 && segments[sIdx - 1]!.isCjk !== seg.isCjk;
           const extraWidth = isBoundary ? Math.round(sizePx * 0.25) : undefined;
+          // A smallCaps piece paints at a reduced size: scale the shaped
+          // advance by the same ratio (advances are linear in font size).
+          const measure =
+            baseMeasure && sizePx !== baseSize
+              ? (segment: string): number => baseMeasure(segment) * (sizePx / baseSize)
+              : baseMeasure;
           push(
             {
               text: piece.display,
               font: cssFontAtSize(item.style, familyOfSlot(item.style.family, seg.isCjk), sizePx),
               letterSpacing: item.style.letterSpacingPx,
+              ...(measure ? { measure } : {}),
               ...(extraWidth ? { extraWidth } : {}),
               ...(scale !== 1 ? { widthScale: scale } : {}),
               ...(kern ? { fontKerning: true } : {}),
@@ -327,13 +351,14 @@ function groupOf(
   const key = items
     .map(
       (it) =>
-        `${it.text}\x00${it.font}\x00${it.letterSpacing ?? ""}\x00${it.break ?? ""}\x00${it.extraWidth ?? ""}\x00${it.widthScale ?? ""}\x00${it.fontKerning ? "k" : ""}`,
+        `${it.text}\x00${it.font}\x00${it.letterSpacing ?? ""}\x00${it.break ?? ""}\x00${it.extraWidth ?? ""}\x00${it.widthScale ?? ""}\x00${it.fontKerning ? "k" : ""}\x00${it.measure ? "s" : "c"}`,
     )
     .join("\x01");
   // The mode rides outside the per-item key (single packer-wide constant
   // today) but is part of it so a future second mode cannot hit stale
-  // entries prepared under the other one.
-  const cacheKey = `${key}\x01${DOCEN_WHITE_SPACE}`;
+  // entries prepared under the other one. The measurer id keeps prepara-
+  // tions apart across measurer instances (shaped vs canvas, distinct fonts).
+  const cacheKey = `${key}\x01${DOCEN_WHITE_SPACE}\x01m${measurerIdOf(measurer)}`;
   let prepared = preparedCache.get(cacheKey);
   if (!prepared) {
     prepared = prepareRichInline(items, { whiteSpace: DOCEN_WHITE_SPACE });
@@ -919,6 +944,11 @@ export function packLines(inline: LayoutInline[], opts: PackLinesOptions): Packe
                     .naturalPx
                 : 0;
               const pieceSize = group.itemSizePx[frag.itemIndex] ?? vertAlignedSizePx(src.style);
+              const shapeStyle =
+                pieceSize === vertAlignedSizePx(src.style)
+                  ? src.style
+                  : { ...src.style, sizePx: pieceSize, verticalAlign: undefined };
+              const glyphRun = measurer.glyphRunOf(frag.text, shapeStyle);
               lineItems.push({
                 kind: "text",
                 inlineIndex,
@@ -932,6 +962,7 @@ export function packLines(inline: LayoutInline[], opts: PackLinesOptions): Packe
                 // offset space.
                 synthetic: src.synthetic,
                 ...(whole && src.ruby ? { ruby: src.ruby, rubyLiftPx } : {}),
+                ...(glyphRun ? { glyphRun } : {}),
               });
               // Hidden text the host does not display renders no ink and no
               // line-box metric — its atom only keeps the caret lattice

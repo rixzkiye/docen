@@ -64,6 +64,14 @@ export interface LayoutTextStyle {
   /** Kerning threshold in points (w:kern / 2): kerning applies when the run's
    *  font size is at least this — see kerningActive. Absent/0 = no kerning. */
   kernPt?: number;
+  /** Text direction: ltr, rtl, or auto (BiDi / script-dependent). */
+  direction?: "ltr" | "rtl" | "auto";
+  /** BCP 47 or OpenType language tag. */
+  language?: string;
+  /** ISO 15924 script tag (e.g. Latn, Arab, Hebr, Thai, Deva, Khmr, Hani). */
+  script?: string;
+  /** Vertical text flow (e.g. vertical CJK). */
+  vertical?: boolean;
   /** Character border (w:bdr) — a box around the run's glyphs. */
   border?: LayoutCharBorder;
   /** Emphasis mark (w:em): a small mark drawn above every glyph (dot / comma
@@ -81,6 +89,20 @@ export interface LayoutTextStyle {
   glow?: { radiusPx?: number; color?: string };
   /** Reflection effect (Word 2010+ / DrawingML). */
   reflection?: { blur?: number; distancePx?: number; opacity?: number };
+  /** OpenType ligatures setting (w:ligatures). */
+  ligatures?: "none" | "standard" | "contextual" | "historical" | "discretionary" | "all";
+  /** OpenType number form (w:numForm). */
+  numForm?: "default" | "lining" | "oldStyle";
+  /** OpenType number spacing (w:numSpacing). */
+  numSpacing?: "default" | "proportional" | "tabular";
+  /** OpenType stylistic set index (1-20, w:stylisticSet). */
+  stylisticSet?: number;
+  /** Explicit font feature settings tag -> value. */
+  fontFeatures?: readonly { tag: string; value?: number }[];
+  /** Explicit font variation settings tag -> value (for variable fonts). */
+  fontVariations?: readonly { tag: string; value: number }[];
+  /** Numeric font weight (100-900) for variable fonts. */
+  fontWeight?: number;
 }
 
 /** a:srcRect crop as fractions of the image edge (0-1, each side inward);

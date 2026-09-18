@@ -5,10 +5,12 @@ import * as os from "node:os";
 import * as path from "node:path";
 
 import type { FlowPage, LaidOutParagraph, LaidOutTable } from "@docen/layout";
+import { readCmap, subsetFontWithPlan } from "@docen/shaping/subsetter";
 import { describe, expect, it } from "vitest";
 
 import type { CanvasStageSection } from "./canvas/stage";
 import {
+  buildEmbeddedPdfFonts,
   encodeHexUtf16,
   escapePdfString,
   extractPdfPageLayers,
@@ -410,8 +412,166 @@ describe("pdftotext and pdfinfo integration verification", () => {
       expect(infoOut).toMatch(/Pages:\s+1/);
     } finally {
       if (fs.existsSync(tmpPdf)) {
-        fs.unlinkSync(tmpPdf);
+        if (fs.existsSync(tmpPdf)) {
+          fs.unlinkSync(tmpPdf);
+        }
       }
     }
+  });
+
+  it("embeds subset font stream and custom ToUnicode CMap when embeddedFonts option is provided", async () => {
+    const dummyFontData = new Uint8Array([0x00, 0x01, 0x00, 0x00, 0x00, 0x04]);
+    const toUnicodeMap = new Map<number, number>([
+      [1, 0x0041], // 'A'
+      [2, 0x0042], // 'B'
+    ]);
+    const shot: PdfPageShot = {
+      width: 800,
+      height: 600,
+      jpeg: DUMMY_JPEG,
+    };
+    const blob = await pagesToPdf([shot], {
+      embeddedFonts: [
+        {
+          fontName: "CustomSubsetFont",
+          fontData: dummyFontData,
+          toUnicodeMap,
+        },
+      ],
+    });
+    const text = await blob.text();
+    expect(text).toContain("/FontFile2");
+    expect(text).toContain("/FontName /CustomSubsetFont");
+    expect(text).toContain("/CMapName /Custom-ToUnicode def");
+    expect(text).toContain("<0001> <0041>");
+  });
+
+  it("embeds a real remapped subset with CIDToGIDMap; pdftotext extracts Latin/accents/CJK byte-exact", async () => {
+    const fontPath = path.resolve(
+      __dirname,
+      "../../../shaping/test/fixtures/fonts/OpenSans-Regular.ttf",
+    );
+    const fontBytes = fs.readFileSync(fontPath);
+    const cmap = readCmap(fontBytes);
+    const latin = "Café résumé — naïve façade 100%";
+    const cjk = "中文文档测试";
+
+    const usedGids = new Set<number>([0]);
+    const text = latin + cjk;
+    for (const ch of text) {
+      const gid = cmap.get(ch.codePointAt(0)!);
+      if (gid !== undefined) usedGids.add(gid);
+    }
+    const plan = subsetFontWithPlan(fontBytes, [...usedGids]);
+    const cidToGid = new Map<number, number>();
+    for (let i = 0; i < text.length; i++) {
+      const cu = text.charCodeAt(i);
+      const gid = cmap.get(cu);
+      const newGid = gid === undefined ? undefined : plan.glyphMap.get(gid);
+      if (newGid !== undefined) cidToGid.set(cu, newGid);
+    }
+
+    const textSpans: PdfTextSpan[] = [
+      {
+        text: latin,
+        x: 72,
+        y: 750,
+        width: 220,
+        height: 18,
+        fontSize: 16,
+        fontFamily: "Open Sans",
+      },
+      {
+        text: cjk,
+        x: 72,
+        y: 720,
+        width: 120,
+        height: 14,
+        fontSize: 12,
+        fontFamily: "Open Sans",
+      },
+    ];
+    const blob = await pagesToPdf([{ width: 816, height: 1056, jpeg: DUMMY_JPEG, textSpans }], {
+      metadata: { title: "Subset Gate" },
+      embeddedFonts: [
+        {
+          fontName: "OpenSans-Subset",
+          fontFamily: "Open Sans",
+          fontData: plan.data,
+          cidToGid,
+        },
+      ],
+    });
+
+    const tmpPdf = path.join(os.tmpdir(), `docen-subset-${Date.now()}.pdf`);
+    fs.writeFileSync(tmpPdf, Buffer.from(await blob.arrayBuffer()));
+    try {
+      const extracted = execFileSync("pdftotext", ["-enc", "UTF-8", tmpPdf, "-"], {
+        encoding: "utf-8",
+      });
+      expect(extracted).toContain(latin);
+      expect(extracted).toContain(cjk);
+
+      const fontsOut = execFileSync("pdffonts", [tmpPdf], { encoding: "utf-8" });
+      expect(fontsOut).toContain("OpenSans-Subset");
+      // Embedded (emb) and ToUnicode (uni) columns must both be yes.
+      expect(fontsOut).toMatch(
+        /OpenSans-Subset\s+CID TrueType\s+Identity-H\s+yes\s+(no|yes)\s+yes/,
+      );
+
+      // pdfinfo walks the xref: a corrupt table fails here.
+      const infoOut = execFileSync("pdfinfo", [tmpPdf], { encoding: "utf-8" });
+      expect(infoOut).toMatch(/Title:\s+Subset Gate/);
+    } finally {
+      fs.rmSync(tmpPdf, { force: true });
+    }
+  });
+});
+
+describe("buildEmbeddedPdfFonts", () => {
+  const fontPath = path.resolve(
+    __dirname,
+    "../../../shaping/test/fixtures/fonts/OpenSans-Regular.ttf",
+  );
+  const span = (text: string, fontFamily?: string): PdfTextSpan => ({
+    text,
+    x: 0,
+    y: 0,
+    width: 100,
+    height: 14,
+    fontSize: 12,
+    fontFamily,
+  });
+
+  it("subsets installed fonts and maps code units to remapped glyph ids", async () => {
+    const fontData = fs.readFileSync(fontPath);
+    const fonts = await buildEmbeddedPdfFonts(
+      [span("Café", "Open Sans")],
+      [{ family: "Open Sans", fontData }],
+    );
+    expect(fonts).toHaveLength(1);
+    const embedded = fonts[0]!;
+    expect(embedded.fontData.byteLength).toBeLessThan(fontData.byteLength);
+    expect(embedded.fontName).toBe("OpenSansSubset");
+    expect(embedded.fsType).toBe(0);
+    expect(embedded.cidToGid?.get("C".charCodeAt(0))).toBeGreaterThan(0);
+    expect(embedded.cidToGid?.get("é".charCodeAt(0))).toBeGreaterThan(0);
+  });
+
+  it("skips restricted fonts (fsType 0x0002) and embeds no-subsetting fonts whole", async () => {
+    const fontData = fs.readFileSync(fontPath);
+    const spans = [span("Restricted", "Locked Font")];
+    const restricted = await buildEmbeddedPdfFonts(spans, [
+      { family: "Locked Font", fontData, fsType: 0x0002 },
+    ]);
+    expect(restricted).toEqual([]);
+
+    const whole = await buildEmbeddedPdfFonts(
+      [span("Whole", "NoSubset Font")],
+      [{ family: "NoSubset Font", fontData, fsType: 0x0100 }],
+    );
+    expect(whole).toHaveLength(1);
+    expect(whole[0]!.fontData).toBe(fontData); // untouched full font
+    expect(whole[0]!.fontName).toBe("NoSubsetFont");
   });
 });

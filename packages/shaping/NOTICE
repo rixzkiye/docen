@@ -1,0 +1,20 @@
+@docen/shaping
+Copyright (c) 2026 Demo Macro
+
+This package bundles a WebAssembly artifact compiled from the following open-source projects:
+
+1. rustybuzz (https://github.com/RazrFalcon/rustybuzz)
+   License: MIT
+   Copyright (c) 2020 Yevhenii Reizner
+
+2. fontations: read-fonts, skrifa (https://github.com/googlefonts/fontations)
+   License: Apache 2.0 / MIT
+   Copyright (c) 2023 The Fontations Authors
+
+Development-only dependencies, not part of the distributed package or the
+bundled WebAssembly:
+
+3. harfbuzzjs (https://github.com/harfbuzz/harfbuzzjs)
+   License: MIT
+   Copyright (c) 2020 Ebrahim Byagowi
+   Used only as the differential/golden test oracle.

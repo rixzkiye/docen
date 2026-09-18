@@ -360,6 +360,7 @@ export function projectRuns(
       letterSpacingPx:
         own.characterSpacingTw != null ? twipToPx(own.characterSpacingTw) : defRun.letterSpacingPx,
       verticalAlign: own.verticalAlign ?? defRun.verticalAlign,
+      direction: own.rtl === true ? "rtl" : own.rtl === false ? "ltr" : defRun.direction,
       caps,
       ...(scalePct != null ? { scalePct } : {}),
       ...(baselineShiftPx != null ? { baselineShiftPx } : {}),
@@ -373,6 +374,25 @@ export function projectRuns(
       ...(imprint ? { imprint: true } : {}),
       ...(glow ? { glow } : {}),
       ...(reflection ? { reflection } : {}),
+      ...((own.ligatures ?? defRun.ligatures)
+        ? { ligatures: own.ligatures ?? defRun.ligatures }
+        : {}),
+      ...((own.numForm ?? defRun.numForm) ? { numForm: own.numForm ?? defRun.numForm } : {}),
+      ...((own.numSpacing ?? defRun.numSpacing)
+        ? { numSpacing: own.numSpacing ?? defRun.numSpacing }
+        : {}),
+      ...((own.stylisticSet ?? defRun.stylisticSet)
+        ? { stylisticSet: own.stylisticSet ?? defRun.stylisticSet }
+        : {}),
+      ...((own.fontFeatures ?? defRun.fontFeatures)
+        ? { fontFeatures: own.fontFeatures ?? defRun.fontFeatures }
+        : {}),
+      ...((own.fontVariations ?? defRun.fontVariations)
+        ? { fontVariations: own.fontVariations ?? defRun.fontVariations }
+        : {}),
+      ...((own.fontWeight ?? defRun.fontWeight)
+        ? { fontWeight: own.fontWeight ?? defRun.fontWeight }
+        : {}),
     };
   };
   const pushText = (text: string, rPr: Rec): void => {

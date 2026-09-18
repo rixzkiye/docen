@@ -79,4 +79,110 @@ describe("itemGlyphLayoutOf", () => {
     expect(stretched.endX).toBe(40);
     expect(stretched.xs.at(-1)).toBeLessThan(40);
   });
+
+  it("derives exact cluster positions for shaped OpenType glyph runs", () => {
+    const glyphRun = {
+      fontSizePx: 16,
+      glyphs: [
+        {
+          glyphId: 10,
+          cluster: 0,
+          xAdvance: 1000,
+          yAdvance: 0,
+          xOffset: 0,
+          yOffset: 0,
+          xPx: 0,
+          yPx: 0,
+        },
+        {
+          glyphId: 20,
+          cluster: 1,
+          xAdvance: 1200,
+          yAdvance: 0,
+          xOffset: 0,
+          yOffset: 0,
+          xPx: 10,
+          yPx: 0,
+        },
+      ],
+      totalAdvancePx: 22,
+    };
+
+    const layout = itemGlyphLayoutOf({ text: "AB", glyphRun }, latin);
+    expect(layout.xs).toEqual([0, 10]);
+    expect(layout.widths).toEqual([10, 12]);
+    expect(layout.endX).toBe(22);
+    expect(layout.lens).toEqual([1, 1]);
+  });
+
+  it("accurately splits ligature clusters for caret placement inside ligatures", () => {
+    // Ligature "fi": 1 glyph (gid 90) covering cluster 0 (length 2 chars)
+    const glyphRun = {
+      fontSizePx: 16,
+      glyphs: [
+        {
+          glyphId: 90,
+          cluster: 0,
+          xAdvance: 1200,
+          yAdvance: 0,
+          xOffset: 0,
+          yOffset: 0,
+          xPx: 0,
+          yPx: 0,
+        },
+      ],
+      totalAdvancePx: 12,
+    };
+
+    const layout = itemGlyphLayoutOf({ text: "fi", glyphRun }, latin);
+    // 2 graphemes: 'f' and 'i'
+    expect(layout.xs.length).toBe(2);
+    expect(layout.widths.length).toBe(2);
+    expect(layout.xs[0]).toBe(0);
+    expect(layout.xs[1]).toBe(6);
+    expect(layout.widths[0]).toBe(6);
+    expect(layout.widths[1]).toBe(6);
+    expect(layout.endX).toBe(12);
+  });
+
+  it("accurately maps RTL clusters where visual positions proceed right-to-left", () => {
+    // 2-letter RTL word "של": 'ש' (bytes 0..1) visually on the right, 'ל' (bytes 2..3) on the left
+    const glyphRun = {
+      fontSizePx: 16,
+      direction: "rtl" as const,
+      glyphs: [
+        {
+          glyphId: 45, // 'ל'
+          cluster: 2, // UTF-8 byte offset 2
+          xAdvance: 500,
+          yAdvance: 0,
+          xOffset: 0,
+          yOffset: 0,
+          xPx: 0,
+          yPx: 0,
+        },
+        {
+          glyphId: 78, // 'ש'
+          cluster: 0, // UTF-8 byte offset 0
+          xAdvance: 700,
+          yAdvance: 0,
+          xOffset: 0,
+          yOffset: 0,
+          xPx: 5,
+          yPx: 0,
+        },
+      ],
+      totalAdvancePx: 12,
+    };
+
+    const layout = itemGlyphLayoutOf({ text: "של", glyphRun }, latin);
+    expect(layout.xs.length).toBe(2);
+    // 'ש' (index 0) is on the right: x = 5, width = 7
+    expect(layout.xs[0]).toBe(5);
+    expect(layout.widths[0]).toBe(7);
+    // 'ל' (index 1) is on the left: x = 0, width = 5
+    expect(layout.xs[1]).toBe(0);
+    expect(layout.widths[1]).toBe(5);
+    expect(layout.endX).toBe(12);
+  });
 });

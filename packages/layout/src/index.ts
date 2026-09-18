@@ -1,6 +1,7 @@
 export * from "./units";
 export * from "./numbering-format";
 export * from "./font";
+export * from "./font-metrics-data";
 export * from "./layout-doc";
 export * from "./layout-result";
 export * from "./text/measure";
@@ -14,3 +15,4 @@ export * from "./block/table";
 export * from "./block/block";
 export * from "./flow/flow";
 export * from "./math/math-layout";
+export * from "./text/shaped-measurer";

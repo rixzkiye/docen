@@ -35,10 +35,12 @@ import {
 } from "@docen/docx/layout";
 import {
   browserFontMetrics,
-  TextMeasurer,
+  createMeasurer,
+  registerShapingFont,
   type FlowPage,
   type FlowPageInsets,
 } from "@docen/layout";
+import { initShapingWasm } from "@docen/shaping";
 import { attr, customElement } from "@microsoft/fast-element";
 import type { Mark, Node as PMNode } from "@tiptap/pm/model";
 import { EditorState, NodeSelection, TextSelection, type Transaction } from "@tiptap/pm/state";
@@ -484,6 +486,7 @@ class DocenDocument extends AddinHost<Editor> {
     sectionOfPage: () => this.#sectionOfPage,
     flow: () => this.#flow,
     lastRun: () => this.#lastRun,
+    fonts: () => this.#fonts,
     viewMode: () => this.#viewMode(),
     lang: () => this.lang,
     docxVariant: () => this.#docxVariant,
@@ -657,7 +660,11 @@ class DocenDocument extends AddinHost<Editor> {
     doc: JSONContent;
   }> = [];
   #currentLandmarkIdx = 0;
-  #measurer = new TextMeasurer(browserFontMetrics);
+  #measurer = createMeasurer(browserFontMetrics);
+  /** Host-registered font bytes by lowercased family — used for shaping
+   *  (when opted in) and for PDF/DOCX font embedding. The original family
+   *  spelling rides along for font-name output. */
+  readonly #fonts = new Map<string, { family: string; fontData: Uint8Array }>();
   #pages: readonly FlowPage[] = [];
   /** Page index → section index (the caret's section and per-page geometry
    *  read through it). */
@@ -5736,6 +5743,26 @@ class DocenDocument extends AddinHost<Editor> {
     return this.#io.saveDOCX(variant);
   }
 
+  /**
+   * Register font bytes for deterministic shaping and export embedding.
+   * Pass the family name the document styles reference (e.g. "Calibri") and,
+   * for a `.ttc`/`.otc` collection (Noto Sans CJK, msyh.ttc), the face
+   * `fontIndex`. Shaping is on by default — a registered family shapes under
+   * the engine and feeds the line breaker; families without a registered face
+   * keep the canvas fallback (`setShapingEnabled(false)` /
+   * `DOCEN_SHAPING_DISABLED=1` rolls back). PDF/DOCX export embeds the font
+   * whenever its `fsType` allows; collection faces cannot be subset by the
+   * embedded-font writer yet — register an extracted face for export
+   * embedding.
+   */
+  async registerFont(family: string, fontData: Uint8Array, fontIndex = 0): Promise<void> {
+    this.#fonts.set(family.toLowerCase(), { family, fontData });
+    await initShapingWasm();
+    registerShapingFont(family, fontData, fontIndex);
+    this.#measurer.clearCache();
+  }
+
+  /** Serialize the current document to a Markdown string. */
   saveMarkdown(): string {
     return this.#io.saveMarkdown();
   }

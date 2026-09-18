@@ -18,6 +18,7 @@ import {
   parseMarkdown,
   parsePlainText,
   parseRTF,
+  prepareEmbeddedFonts,
   type DocxVariant,
   type HtmlGenerateOptions,
   type JSONContent,
@@ -30,7 +31,7 @@ import { EditorState } from "@tiptap/pm/state";
 import { t } from "../../ui";
 import type { EditBridge } from "../canvas/edit-bridge";
 import type { CanvasStage, CanvasStageSection } from "../canvas/stage";
-import { extractPdfPageLayers, pagesToPdf } from "../export-pdf";
+import { buildEmbeddedPdfFonts, extractPdfPageLayers, pagesToPdf } from "../export-pdf";
 import { collectRevisions } from "../extensions/track-changes";
 import {
   OpenFormatError,
@@ -52,6 +53,9 @@ export interface IOHostView {
   sectionOfPage(): readonly number[];
   flow(): ProjectedFlowBox | undefined;
   lastRun(): { sections: (ProjectedSection & CanvasStageSection)[] } | undefined;
+  /** Host-registered font bytes by lowercased family — used by PDF/DOCX
+   *  export embedding (registration lives on the element's `registerFont`). */
+  fonts(): ReadonlyMap<string, { family: string; fontData: Uint8Array }>;
   viewMode(): "print" | "web" | "draft" | "read" | "outline";
   lang(): string;
   docxVariant(): DocxVariant;
@@ -218,10 +222,22 @@ export class IODomain {
       textSpans: pageLayers[i]?.textSpans,
       links: pageLayers[i]?.links,
     }));
+    const fonts = this.host.fonts();
+    const embeddedFonts =
+      fonts.size > 0
+        ? await buildEmbeddedPdfFonts(
+            pageLayers.flatMap((layer) => layer.textSpans),
+            [...fonts.values()].map((entry) => ({
+              family: entry.family,
+              fontData: entry.fontData,
+            })),
+          )
+        : [];
     const title = this.host.getAttribute("filename") ?? t("header.doc-name", this.host.element());
     const blob = await pagesToPdf(shotsWithLayers, {
       metadata: { title, author: "Docen" },
       tagged: true,
+      ...(embeddedFonts.length > 0 ? { embeddedFonts } : {}),
     });
     await this.saveBlob(blob, SAVE_FORMATS.pdf, false);
   }
@@ -518,9 +534,26 @@ export class IODomain {
   /** Serialize the current document to a DOCX buffer. `variant` selects the
    *  package kind (default: the open document's own — a .docm saves as a .docm,
    *  a .dotx as a .dotx) and stamps the main-part content type; macro parts
-   *  carried from the source stay in the package. */
+   *  carried from the source stay in the package.
+   *
+   *  Host-registered fonts are embedded (word/fontTable.xml + obfuscated
+   *  word/fonts/fontN.odttf parts) when their OS/2 fsType permits it — the
+   *  engine writes the parts/relationships. */
   async saveDOCX(variant: DocxVariant = this.host.docxVariant()): Promise<Uint8Array> {
-    const buffer = await generateDOCX(this.getJSON(), { variant });
+    const fonts = this.host.fonts();
+    const embedded =
+      fonts.size > 0
+        ? prepareEmbeddedFonts(
+            [...fonts.values()].map((entry) => ({
+              family: entry.family,
+              fontData: entry.fontData,
+            })),
+          )
+        : [];
+    const buffer = await generateDOCX(this.getJSON(), {
+      variant,
+      ...(embedded.length > 0 ? { document: { fonts: embedded } } : {}),
+    });
     return buffer as unknown as Uint8Array;
   }
 

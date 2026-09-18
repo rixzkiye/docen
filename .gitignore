@@ -135,3 +135,7 @@ packages/docx/tests/docx
 
 # Playwright MCP snapshots (tool artifacts, regenerable)
 .playwright-mcp/
+
+# Rust build artifacts
+target/
+**/target/

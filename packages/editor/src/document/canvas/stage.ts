@@ -45,7 +45,7 @@ import {
  * after the editing milestones (M-R2+) land.
  */
 import type { FlowPage, FontMetrics, LaidOutParagraph, LaidOutStackItem } from "@docen/layout";
-import { stackBlocks, TextMeasurer } from "@docen/layout";
+import { createMeasurer, stackBlocks } from "@docen/layout";
 import { App, Debug, Group, Line, Rect, Text, type IGroup } from "leafer-ui";
 
 import { getArtBorderSvgDataUri } from "./art-borders";
@@ -214,7 +214,7 @@ export function layFurnitureSections(
   sections: readonly CanvasStageSection[],
   metrics: FontMetrics,
 ): (LaidFurnitureSection | undefined)[] {
-  const measurer = new TextMeasurer(metrics);
+  const measurer = createMeasurer(metrics);
   return sections.map((section) => {
     const f = section.furniture;
     if (!f) return undefined;

@@ -14,6 +14,9 @@ const styles = css`
   :host {
     display: contents;
   }
+  :host(:not([open])) {
+    display: none !important;
+  }
   fluent-dialog-body {
     width: 100%;
   }
@@ -81,7 +84,9 @@ const template = html<DocenDialog>`
         </svg>
       </fluent-button>
       <slot></slot>
+      <slot name="body"></slot>
       <slot name="action" slot="action"></slot>
+      <slot name="footer" slot="action"></slot>
     </fluent-dialog-body>
   </fluent-dialog>
 `;

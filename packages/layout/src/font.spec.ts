@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vitest";
 
 import { browserFontMetrics, clearFontMetricCache } from "./font";
-import { WORD_FONT_METRICS, wordLineRatio } from "./font-metrics-data";
+import {
+  WORD_FONT_METRICS,
+  getWordFontMetric,
+  wordBaselineShare,
+  wordLineRatio,
+} from "./font-metrics-data";
 
 describe("word font metrics table", () => {
   it("computes Word's formula ratio from the OS/2 tables", () => {
@@ -19,7 +24,15 @@ describe("word font metrics table", () => {
 
   it("resolves localized family aliases to the same face", () => {
     expect(WORD_FONT_METRICS["宋体"]).toBe(WORD_FONT_METRICS.simsun);
-    expect(WORD_FONT_METRICS["微软雅黑"]).toEqual(WORD_FONT_METRICS["microsoft yahei"]);
+    expect(WORD_FONT_METRICS["微软雅黑"]).toBe(WORD_FONT_METRICS["microsoft yahei"]);
+    expect(getWordFontMetric("  MICROSOFT YAHEI  ")).toBe(WORD_FONT_METRICS["microsoft yahei"]);
+    expect(getWordFontMetric("等线")).toBe(WORD_FONT_METRICS.dengxian);
+  });
+
+  it("computes baseline share from winAscent over upem", () => {
+    const calibri = getWordFontMetric("Calibri");
+    expect(calibri).toBeDefined();
+    expect(wordBaselineShare(calibri!)).toBeCloseTo(1950 / 2048, 5);
   });
 
   it("serves tabulated faces Word's ratio without probing", () => {
