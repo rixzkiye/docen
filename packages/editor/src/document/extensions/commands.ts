@@ -40,6 +40,7 @@ import {
   getQuickTableBuildingBlocks,
   getQuickTableJson,
 } from "../quick-tables";
+import { applyEffectsPatch, applyPreset } from "../text-effects";
 
 /**
  * Document editor commands (Office.js-style "add-in commands") as native
@@ -125,6 +126,8 @@ declare module "@tiptap/core" {
       "underline-words": () => ReturnType;
       "underline-double": () => ReturnType;
       "small-caps": () => ReturnType;
+      "text-effects": (value?: string) => ReturnType;
+      "text-effects-apply": (value?: string) => ReturnType;
       "font-name": (font?: string) => ReturnType;
       "font-size": (size?: string) => ReturnType;
       "grow-font": () => ReturnType;
@@ -336,6 +339,8 @@ export const WIRED_DISPATCH: ReadonlySet<string> = new Set([
   "underline-words",
   "underline-double",
   "small-caps",
+  "text-effects",
+  "text-effects-apply",
   "font-name",
   "font-size",
   "grow-font",
@@ -2576,10 +2581,71 @@ function blockSliceOf(schema: Schema, block: BuildingBlock): Slice | null {
   }
 }
 
+/** Stamp run-property patches onto the styles model: "document" targets the
+ *  docDefaults run, any other key resolves to the paragraph style whose id is
+ *  the capitalized key (heading1 → Heading1), patching the explicit definition
+ *  when present and the built-in default slot otherwise (an explicit
+ *  definition wins — the built-in slot never reaches styles.xml). A null
+ *  patch value clears the property. Shared by the style-set gallery and the
+ *  Design tab's Text Effects themes. */
+export function stampStyleRunPatches(
+  styles: Record<string, unknown>,
+  patches: Readonly<Record<string, unknown>>,
+): Record<string, unknown> {
+  const next = { ...styles };
+  const defaults = { ...((next.default ?? {}) as Record<string, unknown>) };
+  const list = [...((next.paragraphStyles ?? []) as Record<string, unknown>[])];
+  const merge = (
+    run: Record<string, unknown>,
+    patch: Readonly<Record<string, unknown>>,
+  ): Record<string, unknown> => {
+    const merged = { ...run };
+    for (const [key, value] of Object.entries(patch)) {
+      if (value == null) delete merged[key];
+      else merged[key] = value;
+    }
+    return merged;
+  };
+  for (const [key, rawPatch] of Object.entries(patches)) {
+    if (rawPatch == null || typeof rawPatch !== "object") continue;
+    const runPatch = rawPatch as Readonly<Record<string, unknown>>;
+    // "document" is the docDefaults run itself — write it there.
+    if (key === "document") {
+      const doc = { ...((defaults.document ?? {}) as Record<string, unknown>) };
+      doc.run = merge((doc.run ?? {}) as Record<string, unknown>, runPatch);
+      defaults.document = doc;
+      continue;
+    }
+    const id = key.charAt(0).toUpperCase() + key.slice(1);
+    const at = list.findIndex((ps) => ps.id === id);
+    if (at >= 0) {
+      const entry = { ...list[at] };
+      entry.run = merge((entry.run ?? {}) as Record<string, unknown>, runPatch);
+      list[at] = entry;
+      next.paragraphStyles = list;
+      delete defaults[key];
+    } else {
+      const entry = { ...((defaults[key] ?? {}) as Record<string, unknown>) };
+      entry.run = merge((entry.run ?? {}) as Record<string, unknown>, runPatch);
+      defaults[key] = entry;
+    }
+  }
+  next.default = defaults;
+  return next;
+}
+
 let copiedFormatting: {
   marks: readonly Mark[];
   paraAttrs?: Record<string, unknown>;
 } | null = null;
+
+/** The TextStyle mark's w14RawXml at the selection — the Text Effects
+ *  gallery's current-value read (null when the run carries none). */
+function currentW14RawXml(state: EditorState): string | null {
+  const mark = state.selection.$from.marks().find((m) => m.type.name === "textStyle");
+  const raw = mark?.attrs.w14RawXml;
+  return typeof raw === "string" && raw ? raw : null;
+}
 
 export const DocumentCommands = Extension.create({
   name: "documentCommands",
@@ -2647,6 +2713,35 @@ export const DocumentCommands = Extension.create({
           });
           const next = !current;
           return commands.setMark("textStyle", { smallCaps: next ? true : null });
+        },
+      // Home → Font → Text Effects and Typography. The gallery's `kind:token`
+      // value applies (or clears at `:0`) one w14 effect family on the
+      // selection's TextStyle carrier; the existing raw XML is preserved for
+      // every family the value does not name.
+      "text-effects":
+        (value) =>
+        ({ state, commands }) => {
+          if (typeof value !== "string" || !value || value.endsWith(":options")) return false;
+          const current = currentW14RawXml(state);
+          const next = applyPreset(current, value);
+          if (next === undefined) return false;
+          return commands.setMark("textStyle", { w14RawXml: next });
+        },
+      // The custom Text Effects dialog commits all sections at once (JSON
+      // `{ outline?: …, shadow?: null, … }`); null clears that family.
+      "text-effects-apply":
+        (value) =>
+        ({ state, commands }) => {
+          if (typeof value !== "string" || !value) return false;
+          let patch: Record<string, Record<string, unknown> | null>;
+          try {
+            patch = JSON.parse(value) as Record<string, Record<string, unknown> | null>;
+          } catch {
+            return false;
+          }
+          if (!patch || typeof patch !== "object") return false;
+          const next = applyEffectsPatch(currentW14RawXml(state), patch);
+          return commands.setMark("textStyle", { w14RawXml: next });
         },
       "copy-format":
         () =>
@@ -4866,47 +4961,8 @@ export const DocumentCommands = Extension.create({
         ({ tr }) => {
           const preset = STYLE_SET_PRESETS[value ?? ""];
           if (!preset) return false;
-          const styles = { ...((tr.doc.attrs.styles ?? {}) as Record<string, unknown>) };
-          const defaults = { ...((styles.default ?? {}) as Record<string, unknown>) };
-          const list = [...((styles.paragraphStyles ?? []) as Record<string, unknown>[])];
-          for (const [key, runPatch] of Object.entries(preset)) {
-            // "document" is the docDefaults run itself — write it there.
-            if (key === "document") {
-              const doc = { ...((defaults.document ?? {}) as Record<string, unknown>) };
-              doc.run = {
-                ...((doc.run ?? {}) as Record<string, unknown>),
-                ...(runPatch as Record<string, unknown>),
-              };
-              defaults.document = doc;
-              continue;
-            }
-            const id = key.charAt(0).toUpperCase() + key.slice(1);
-            const at = list.findIndex((ps) => ps.id === id);
-            if (at >= 0) {
-              // Same rule as modify-style: an explicit definition wins — patch
-              // it and drop the built-in slot. The built-in slot never reaches
-              // styles.xml on export (the roundTripped path emits
-              // paragraphStyles verbatim), so parking the patch there diverges
-              // Word from the rendered page.
-              const entry = { ...list[at] };
-              entry.run = {
-                ...((entry.run ?? {}) as Record<string, unknown>),
-                ...(runPatch as Record<string, unknown>),
-              };
-              list[at] = entry;
-              styles.paragraphStyles = list;
-              delete defaults[key];
-            } else {
-              const entry = { ...((defaults[key] ?? {}) as Record<string, unknown>) };
-              entry.run = {
-                ...((entry.run ?? {}) as Record<string, unknown>),
-                ...(runPatch as Record<string, unknown>),
-              };
-              defaults[key] = entry;
-            }
-          }
-          styles.default = defaults;
-          tr.step(new DocAttrStep("styles", styles));
+          const styles = (tr.doc.attrs.styles ?? {}) as Record<string, unknown>;
+          tr.step(new DocAttrStep("styles", stampStyleRunPatches(styles, preset)));
           return true;
         },
       // Word's References > Add Text: mark every selected paragraph as a TOC

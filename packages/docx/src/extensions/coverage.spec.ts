@@ -7,6 +7,7 @@ import { compileDocument, docxExtensions, resolveDocument } from "../index";
 import {
   PARAGRAPH_CHILD_DISPOSITIONS,
   PRESERVE_ONLY_ELEMENTS,
+  PRESERVED_RUN_ELEMENTS,
   RUN_CHILDREN_DROPPED,
   SECTION_CHILD_DISPOSITIONS,
   type Disposition,
@@ -555,19 +556,53 @@ describe("ParagraphChild dispositions", () => {
   }
 });
 
-// ── Run children drops ──
+// ── Run children: preserved elements + remaining drops ──
 
-describe("run children drops", () => {
+/** Resolve → compile a run carrying `{ tag: true }` after some text. */
+function runChildRoundTrip(tag: string) {
+  const run: ParagraphChild = {
+    text: "x",
+    children: [{ [tag]: true } as NonNullable<RunOptions["children"]>[number]],
+  };
+  return roundTrip([{ paragraph: { children: [run] } }]);
+}
+
+describe("run children preservation", () => {
+  for (const [tag, entry] of Object.entries(PRESERVED_RUN_ELEMENTS)) {
+    it(`keeps {${tag}} nested in a run as a runMarker (${entry.element})`, () => {
+      const { json, compiled } = runChildRoundTrip(tag);
+      // The resolve leg claims the element with the dedicated atom.
+      const markers: { element?: string }[] = [];
+      const collect = (node: JSONContent): void => {
+        if (node.type === "runMarker") markers.push(node.attrs ?? {});
+        for (const child of node.content ?? []) collect(child);
+      };
+      collect(json);
+      expect(markers.map((m) => m.element)).toContain(tag);
+      // The compile leg emits the element back into the run children.
+      expect(JSON.stringify(compiled)).toContain(`"${tag}"`);
+    });
+  }
+
   for (const { tag, reason } of RUN_CHILDREN_DROPPED) {
     it(`drops {${tag}} nested in a run (${reason})`, () => {
-      const run: ParagraphChild = {
-        text: "x",
-        children: [{ [tag]: true } as NonNullable<RunOptions["children"]>[number]],
-      };
-      const { compiled } = roundTrip([{ paragraph: { children: [run] } }]);
+      const { compiled } = runChildRoundTrip(tag);
       expect(JSON.stringify(compiled)).not.toContain(`"${tag}"`);
     });
   }
+
+  it("still drops an unregistered run child (no writer support)", () => {
+    // A shape outside EG_RunInnerContent's empty set has no office-open
+    // writer; the walk must drop it rather than pass it into the writer.
+    const run: ParagraphChild = {
+      text: "x",
+      children: [
+        { unknownRunChild: true } as unknown as NonNullable<RunOptions["children"]>[number],
+      ],
+    };
+    const { compiled } = roundTrip([{ paragraph: { children: [run] } }]);
+    expect(JSON.stringify(compiled)).not.toContain("unknownRunChild");
+  });
 
   it("keeps rule-owned children nested in a run (pageBreak inside children)", () => {
     const run: ParagraphChild = {

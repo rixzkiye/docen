@@ -14,6 +14,8 @@ export interface MailMergeHostView {
   firstRecord(): void;
   lastRecord(): void;
   setMergeType(type: MergeType): void;
+  /** Mailings → Highlight Merge Fields: flip the view-only field tint. */
+  toggleHighlightMergeFields(): void;
   /** Finish & Merge — assemble the output document. */
   finishMerge(mode: "edit" | "print" | "email"): void;
 }
@@ -38,6 +40,7 @@ export class MailMergeHostCommands implements HostCommandDomain {
     "last-record",
     "start-merge",
     "finish-merge",
+    "highlight-merge",
   ];
 
   run(event: string, value?: string): boolean {
@@ -78,6 +81,12 @@ export class MailMergeHostCommands implements HostCommandDomain {
     }
     if (event === "preview-results") {
       this.host.togglePreview();
+      return true;
+    }
+    // Highlight Merge Fields — Word's view-only yellow tint over every
+    // MERGEFIELD (the document content never changes).
+    if (event === "highlight-merge") {
+      this.host.toggleHighlightMergeFields();
       return true;
     }
     if (event === "first-record") {

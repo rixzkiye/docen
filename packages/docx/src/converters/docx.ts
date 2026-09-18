@@ -31,6 +31,7 @@ import { flattenExtensions, getExtensionField, getSchema } from "@tiptap/core";
 
 import type { Extensions, JSONContent } from "../core";
 import { docxExtensions } from "../core";
+import { PRESERVED_RUN_ELEMENTS } from "../extensions/coverage";
 import {
   type DrawingShapeLayout,
   stringifyVmlShapeLayout,
@@ -52,6 +53,7 @@ import {
 } from "./archive-guard";
 import { DOCX_EPOCH, toIsoDate, withGenerationScope } from "./determinism";
 import { EncryptedDocumentError, assertNotEncryptedContainer } from "./encrypted";
+import { fillGeneratedFields, type FieldCacheOptions } from "./field-eval";
 import { prepareDocument, type PrepareStep } from "./prepare";
 import { docenDefaultSectionProperties } from "./section-defaults";
 import { buildTextBlock } from "./styles";
@@ -1156,6 +1158,17 @@ export class DocxManager {
         case "columnBreak":
           children.push({ columnBreak: true });
           break;
+        case "runMarker": {
+          // Reverse of RunMarker's parseDocxInline rule: the preserved empty
+          // run element re-emits as the run's only child (office-open's
+          // EMPTY_RUN_ELEMENTS writer). Tags outside the preserve table are
+          // dropped — the writer has no XML for them.
+          const element = node.attrs?.element as string | undefined;
+          if (element && element in PRESERVED_RUN_ELEMENTS) {
+            children.push({ children: [{ [element]: true }] } as unknown as ParagraphChild);
+          }
+          break;
+        }
         case "tab":
           // office-open emits <w:tab/> from a top-level tab:true run, but its
           // ParagraphChild union doesn't list the top-level shape — double
@@ -1177,10 +1190,19 @@ export class DocxManager {
         }
         case "mathInline": {
           // Reverse of MathInline's parseDocxInline rule: the MathInput rides
-          // the `math` attr verbatim.
+          // the `math` attr verbatim. A bare single-construct struct (the
+          // convertLinearToOMML shape) is wrapped into the paragraph shape
+          // office-open's m:oMath writer reads — otherwise the formula
+          // silently serializes empty.
           const math = node.attrs?.math;
           if (math && typeof math === "object") {
-            children.push({ math } as Record<string, unknown> as ParagraphChild);
+            // The office-open paragraph shape carries children/display/
+            // justification; anything else is a bare single construct (the
+            // convertLinearToOMML shape) and gets wrapped so the m:oMath
+            // writer sees its child — otherwise the formula serializes empty.
+            const isParagraph = "children" in math || "display" in math || "justification" in math;
+            const paragraph = isParagraph ? math : { children: [math as Record<string, unknown>] };
+            children.push({ math: paragraph } as Record<string, unknown> as ParagraphChild);
           }
           break;
         }
@@ -1738,9 +1760,11 @@ export class DocxManager {
             flushText();
             nodes.push({ type: "hardBreak" });
           }
-          // {lastRenderedPageBreak} is a Word render hint — drop (office-open
-          // does not emit it on output). date fields/separator/pgNum
-          // are unsupported inline elements, dropped for now.
+          // {lastRenderedPageBreak}, the date-field placeholders
+          // (dayShort/monthLong/…), pgNum, the note auto-marks and
+          // separators are claimed by the RunMarker inline rule above and
+          // preserved as atoms; only unregistered run children still drop
+          // here (office-open has no writer for them).
         }
       }
       flushText();
@@ -2014,6 +2038,14 @@ export interface DocxGenerateOptions<T extends OutputType = "nodebuffer"> {
    */
   extensions?: Extensions;
   /**
+   * Generated-field cache context (SEQ/REF/TOC are always re-derived; the
+   * page-dependent fields need this). `pageOf` returns the 1-based displayed
+   * page for the field atom at the given document-order index — the editor
+   * passes its canvas pagination, standalone callers a known page map. Omit
+   * it and page fields keep their model cache (never a guessed number).
+   */
+  fields?: FieldCacheOptions;
+  /**
    * Fixed clock for this generation — the reproducibility switch.
    *
    * Every date the document does not already carry (core properties
@@ -2088,11 +2120,17 @@ export async function generateDOCX<T extends OutputType = "nodebuffer">(
   json: JSONContent,
   options?: DocxGenerateOptions<T>,
 ): Promise<OutputByType[T]> {
-  const { prepare = true, packer, document, extensions, variant, date } = options ?? {};
+  const { prepare = true, packer, document, extensions, variant, date, fields } = options ?? {};
   const prepared =
     prepare === false ? json : await prepareDocument(json, prepare === true ? undefined : prepare);
   const compiled = applyGenerationDate(
-    applyVariant(applyDocumentOptions(compileDocument(prepared, extensions), document), variant),
+    applyVariant(
+      applyDocumentOptions(
+        compileDocument(fillGeneratedFields(prepared, fields), extensions),
+        document,
+      ),
+      variant,
+    ),
     date,
   );
   return withGenerationScope(scopeDate(date), () => generateDocument(compiled, packer));
@@ -2110,9 +2148,15 @@ export function generateDOCXSync<T extends OutputType = "nodebuffer">(
   json: JSONContent,
   options?: DocxGenerateOptions<T>,
 ): OutputByType[T] {
-  const { packer, document, extensions, variant, date } = options ?? {};
+  const { packer, document, extensions, variant, date, fields } = options ?? {};
   const compiled = applyGenerationDate(
-    applyVariant(applyDocumentOptions(compileDocument(json, extensions), document), variant),
+    applyVariant(
+      applyDocumentOptions(
+        compileDocument(fillGeneratedFields(json, fields), extensions),
+        document,
+      ),
+      variant,
+    ),
     date,
   );
   return withGenerationScope(scopeDate(date), () => generateDocumentSync(compiled, packer));
@@ -2130,11 +2174,17 @@ export async function generateDOCXStream(
   json: JSONContent,
   options?: DocxGenerateOptions,
 ): Promise<ReadableStream<Uint8Array>> {
-  const { prepare = true, packer, document, extensions, variant, date } = options ?? {};
+  const { prepare = true, packer, document, extensions, variant, date, fields } = options ?? {};
   const prepared =
     prepare === false ? json : await prepareDocument(json, prepare === true ? undefined : prepare);
   const compiled = applyGenerationDate(
-    applyVariant(applyDocumentOptions(compileDocument(prepared, extensions), document), variant),
+    applyVariant(
+      applyDocumentOptions(
+        compileDocument(fillGeneratedFields(prepared, fields), extensions),
+        document,
+      ),
+      variant,
+    ),
     date,
   );
   return withGenerationScope(scopeDate(date), () => generateDocumentStream(compiled, packer));

@@ -4,7 +4,7 @@ import type { AddressInfo } from "node:net";
 import type { JSONContent } from "@tiptap/core";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import { prepareDocument, prepareImageSizes, prepareImages } from "../index";
+import { fetchImageHandler, prepareDocument, prepareImageSizes, prepareImages } from "../index";
 
 const PNG_BASE64 =
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
@@ -186,5 +186,33 @@ describe("prepareDocument safety contract", () => {
     ]);
     expect(json).toEqual(snapshot);
     expect(prepared.content?.[0]?.content?.[0]?.attrs?.alt).toBe("touched");
+  });
+});
+
+describe("fetchImageHandler (explicit UI fetch)", () => {
+  it("decodes a data:image URL locally under the byte cap", async () => {
+    const bytes = await fetchImageHandler(PNG_DATA_URL);
+    expect(Buffer.from(bytes).toString("base64")).toBe(PNG_BASE64);
+    await expect(fetchImageHandler(PNG_DATA_URL, { maxBytes: 4 })).rejects.toThrow(/cap/);
+  });
+
+  it("rejects non-http(s) schemes and credentialed URLs", async () => {
+    await expect(fetchImageHandler("file:///etc/passwd")).rejects.toThrow(/scheme/);
+    await expect(fetchImageHandler("https://user:pass@example.com/a.png")).rejects.toThrow(
+      /credentials/,
+    );
+  });
+
+  it("applies the size cap to a custom transport and enforces an optional allowlist", async () => {
+    const transport = async (): Promise<Uint8Array> => new Uint8Array(4096);
+    await expect(
+      fetchImageHandler("https://cdn.example.com/big.png", { maxBytes: 1024, fetch: transport }),
+    ).rejects.toThrow(/cap/);
+    await expect(
+      fetchImageHandler("https://other.example.com/a.png", {
+        allow: ["cdn.example.com"],
+        fetch: transport,
+      }),
+    ).rejects.toThrow(/allowlisted/);
   });
 });

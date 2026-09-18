@@ -74,6 +74,21 @@ export {
   type RunPropMark,
 } from "./converters/docx";
 export { decodePassthroughData, encodePassthroughData } from "./extensions/passthrough";
+// Generated-field cache pipeline (SEQ/REF/page/TOC caches at generation time)
+// plus the pure instruction/format helpers the editor's update commands share.
+export {
+  fillGeneratedFields,
+  parseFieldInstruction,
+  fieldRef,
+  parseCustomStyles,
+  formatSeqNumber,
+  seqChapterLevel,
+  SEQ_NUMBER_FORMATS,
+  CAPTION_SEPARATOR_CHARS,
+  type ParsedFieldInstruction,
+  type FieldRef,
+  type FieldCacheOptions,
+} from "./converters/field-eval";
 export { DOCX_EPOCH } from "./converters/determinism";
 export {
   ENCRYPTED_DOCUMENT_CODE,
@@ -102,10 +117,12 @@ export {
   prepareDocument,
   prepareImages,
   prepareImageSizes,
+  fetchImageHandler,
   DEFAULT_IMAGE_MAX_BYTES,
   DEFAULT_IMAGE_MAX_REDIRECTS,
   DEFAULT_IMAGE_TIMEOUT_MS,
   type PrepareImagesPolicy,
+  type FetchImageOptions,
   type PrepareStep,
   type ImageFetchHandler,
 } from "./converters/prepare";

@@ -37,7 +37,7 @@ export const mailingsTab = (): RibbonTab =>
       btn("document-print", "address-block", { size: "large" }),
       btn("comment-add", "greeting-line", { size: "large" }),
       btn("link", "merge-field", { size: "large" }),
-      btn("highlight", "highlight-merge", { size: "large" }),
+      btn("highlight", "highlight-merge", { size: "large", toggle: true }),
     ]),
     group("preview", [
       btn("search", "preview-results", { size: "large" }),
