@@ -31,6 +31,7 @@ import { flattenExtensions, getExtensionField, getSchema } from "@tiptap/core";
 
 import type { Extensions, JSONContent } from "../core";
 import { docxExtensions } from "../core";
+import { PRESERVED_RUN_ELEMENTS } from "../extensions/coverage";
 import {
   type DrawingShapeLayout,
   stringifyVmlShapeLayout,
@@ -1144,6 +1145,17 @@ export class DocxManager {
         case "columnBreak":
           children.push({ columnBreak: true });
           break;
+        case "runMarker": {
+          // Reverse of RunMarker's parseDocxInline rule: the preserved empty
+          // run element re-emits as the run's only child (office-open's
+          // EMPTY_RUN_ELEMENTS writer). Tags outside the preserve table are
+          // dropped — the writer has no XML for them.
+          const element = node.attrs?.element as string | undefined;
+          if (element && element in PRESERVED_RUN_ELEMENTS) {
+            children.push({ children: [{ [element]: true }] } as unknown as ParagraphChild);
+          }
+          break;
+        }
         case "tab":
           // office-open emits <w:tab/> from a top-level tab:true run, but its
           // ParagraphChild union doesn't list the top-level shape — double
@@ -1165,10 +1177,19 @@ export class DocxManager {
         }
         case "mathInline": {
           // Reverse of MathInline's parseDocxInline rule: the MathInput rides
-          // the `math` attr verbatim.
+          // the `math` attr verbatim. A bare single-construct struct (the
+          // convertLinearToOMML shape) is wrapped into the paragraph shape
+          // office-open's m:oMath writer reads — otherwise the formula
+          // silently serializes empty.
           const math = node.attrs?.math;
           if (math && typeof math === "object") {
-            children.push({ math } as Record<string, unknown> as ParagraphChild);
+            // The office-open paragraph shape carries children/display/
+            // justification; anything else is a bare single construct (the
+            // convertLinearToOMML shape) and gets wrapped so the m:oMath
+            // writer sees its child — otherwise the formula serializes empty.
+            const isParagraph = "children" in math || "display" in math || "justification" in math;
+            const paragraph = isParagraph ? math : { children: [math as Record<string, unknown>] };
+            children.push({ math: paragraph } as Record<string, unknown> as ParagraphChild);
           }
           break;
         }
@@ -1726,9 +1747,11 @@ export class DocxManager {
             flushText();
             nodes.push({ type: "hardBreak" });
           }
-          // {lastRenderedPageBreak} is a Word render hint — drop (office-open
-          // does not emit it on output). date fields/separator/pgNum
-          // are unsupported inline elements, dropped for now.
+          // {lastRenderedPageBreak}, the date-field placeholders
+          // (dayShort/monthLong/…), pgNum, the note auto-marks and
+          // separators are claimed by the RunMarker inline rule above and
+          // preserved as atoms; only unregistered run children still drop
+          // here (office-open has no writer for them).
         }
       }
       flushText();

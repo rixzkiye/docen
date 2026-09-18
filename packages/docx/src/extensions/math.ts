@@ -1,6 +1,7 @@
 import type { ParagraphChild } from "@office-open/docx";
 
 import { Node } from "../core";
+import { convertLinearToOMML as convertLinear, mathInputToLatex } from "./math-tex";
 import type { ParseInlineRule } from "./types";
 import { attrNative } from "./utils";
 
@@ -11,7 +12,9 @@ import { attrNative } from "./utils";
  * projection), compile emits the MathInput back into the office-open model,
  * and the Insert → Equation path seeds the same node. `convertLinearToOMML` /
  * `convertOMMLToLinear` back the linear ↔ structured conversion (HTML
- * clipboard spans and authoring labels).
+ * clipboard spans and authoring labels); the parser/serializer pair lives in
+ * math-tex.ts and covers fractions, roots, scripts, Greek, operators, n-ary
+ * limits, functions, delimiters, matrices and aligned environments.
  */
 
 /** DOCX `{ math: MathInput }` run branch → the mathInline atom. The run-level
@@ -34,114 +37,24 @@ export const parseDocxInline: ParseInlineRule<MathDocxBranch> = {
 };
 
 /**
- * Convert simple linear math text (e.g. `\frac{a}{b}`, `\sqrt{x}`, `x^2`, `x_i`)
- * into structured OMML MathInput for @office-open/docx.
+ * Convert linear math text (`\frac{a}{b}`, `\sqrt[3]{x}`, `x^2`, `x_i`,
+ * `\sum_{i=1}^{n}`, `\alpha`, `\begin{pmatrix}…\end{pmatrix}`, …) into
+ * structured OMML MathInput. The parser covers the LaTeX subset listed in
+ * math-tex.ts; unknown commands degrade to their literal text, never to an
+ * empty structure.
  */
 export function convertLinearToOMML(linear: string): Record<string, unknown> {
-  const trimmed = linear.trim();
-  // Fraction: \frac{num}{den}
-  const fracMatch = /^\\frac\{([^}]+)\}\{([^}]+)\}$/.exec(trimmed);
-  if (fracMatch) {
-    return {
-      fraction: {
-        numerator: [fracMatch[1]],
-        denominator: [fracMatch[2]],
-      },
-    };
-  }
-
-  // Radical: \sqrt{rad} or \sqrt[deg]{rad}
-  const radMatch = /^\\sqrt(?:\[([^\]]+)\])?\{([^}]+)\}$/.exec(trimmed);
-  if (radMatch) {
-    return {
-      radical: {
-        children: [radMatch[2]],
-        ...(radMatch[1] ? { degree: [radMatch[1]] } : {}),
-      },
-    };
-  }
-
-  // Superscript: base^exp
-  const supMatch = /^([^^]+)\^\{?([^}]+)\}?$/.exec(trimmed);
-  if (supMatch) {
-    return {
-      superScript: {
-        children: [supMatch[1]],
-        superScript: [supMatch[2]],
-      },
-    };
-  }
-
-  // Subscript: base_sub
-  const subMatch = /^([^_]+)_\{?([^}]+)\}?$/.exec(trimmed);
-  if (subMatch) {
-    return {
-      subScript: {
-        children: [subMatch[1]],
-        subScript: [subMatch[2]],
-      },
-    };
-  }
-
-  // Fallback to plain run
-  return {
-    run: {
-      text: trimmed,
-    },
-  };
+  return convertLinear(linear);
 }
 
 /**
- * Convert structured OMML MathInput back to linear representation.
+ * Convert structured OMML MathInput back to linear representation — the
+ * inverse of {@link convertLinearToOMML} for every structure it emits, plus
+ * the office-open shapes a parsed DOCX carries (box/phant/borderBox, `{text,
+ * properties}` runs, pre/sub/superscripts).
  */
 export function convertOMMLToLinear(math: unknown): string {
-  if (typeof math === "string") return math;
-  if (!math || typeof math !== "object") return "";
-
-  const rec = math as Record<string, unknown>;
-  // A math run operand: either a bare `{ text }` or office-open's structured
-  // `{ text, properties }` (the m:rPr style a parsed formula carries). Both
-  // linearize to their text — the properties stay on the verbatim `math` attr
-  // that compile re-emits, so dropping them here loses nothing.
-  if (typeof rec.text === "string") return rec.text;
-  if (rec.fraction && typeof rec.fraction === "object") {
-    const f = rec.fraction as Record<string, unknown>;
-    const num = Array.isArray(f.numerator) ? f.numerator.map(convertOMMLToLinear).join("") : "";
-    const den = Array.isArray(f.denominator) ? f.denominator.map(convertOMMLToLinear).join("") : "";
-    return `\\frac{${num}}{${den}}`;
-  }
-
-  if (rec.radical && typeof rec.radical === "object") {
-    const r = rec.radical as Record<string, unknown>;
-    const base = Array.isArray(r.children) ? r.children.map(convertOMMLToLinear).join("") : "";
-    const deg = Array.isArray(r.degree) ? r.degree.map(convertOMMLToLinear).join("") : "";
-    return deg ? `\\sqrt[${deg}]{${base}}` : `\\sqrt{${base}}`;
-  }
-
-  if (rec.superScript && typeof rec.superScript === "object") {
-    const s = rec.superScript as Record<string, unknown>;
-    const base = Array.isArray(s.children) ? s.children.map(convertOMMLToLinear).join("") : "";
-    const sup = Array.isArray(s.superScript) ? s.superScript.map(convertOMMLToLinear).join("") : "";
-    return `${base}^{${sup}}`;
-  }
-
-  if (rec.subScript && typeof rec.subScript === "object") {
-    const s = rec.subScript as Record<string, unknown>;
-    const base = Array.isArray(s.children) ? s.children.map(convertOMMLToLinear).join("") : "";
-    const sub = Array.isArray(s.subScript) ? s.subScript.map(convertOMMLToLinear).join("") : "";
-    return `${base}_{${sub}}`;
-  }
-
-  if (rec.run && typeof rec.run === "object") {
-    const r = rec.run as Record<string, unknown>;
-    return typeof r.text === "string" ? r.text : "";
-  }
-
-  if (Array.isArray(rec.children)) {
-    return rec.children.map(convertOMMLToLinear).join("");
-  }
-
-  return "";
+  return mathInputToLatex(math);
 }
 
 export const MathInline = Node.create({
@@ -166,9 +79,13 @@ export const MathInline = Node.create({
         getAttrs: (element) => {
           const el = element as HTMLElement;
           const linear = el.getAttribute("data-linear") ?? el.textContent ?? "";
+          const converted = convertLinearToOMML(linear);
+          // The math attr is the office-open paragraph shape
+          // ({ children }); a single-construct result is wrapped so paste
+          // never produces an empty oMath.
           return {
             linear,
-            math: convertLinearToOMML(linear),
+            math: Array.isArray(converted.children) ? converted : { children: [converted] },
           };
         },
       },

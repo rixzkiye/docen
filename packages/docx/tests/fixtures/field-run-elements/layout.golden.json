@@ -1,0 +1,193 @@
+{
+  "sections": [
+    {
+      "blocks": [
+        {
+          "defaultTextStyle": {
+            "family": {},
+            "sizePx": 16
+          },
+          "indent": {},
+          "inline": [
+            {
+              "kind": "text",
+              "style": {
+                "family": {},
+                "sizePx": 16
+              },
+              "text": "page: "
+            }
+          ],
+          "keepLines": false,
+          "keepNext": false,
+          "kind": "paragraph",
+          "pageBreakBefore": false,
+          "snapToGrid": null,
+          "spacing": {
+            "afterPx": 0,
+            "beforePx": 0
+          },
+          "suppressLineNumbers": false,
+          "widowControl": true
+        },
+        {
+          "defaultTextStyle": {
+            "family": {},
+            "sizePx": 16
+          },
+          "indent": {},
+          "inline": [
+            {
+              "kind": "text",
+              "style": {
+                "family": {},
+                "sizePx": 16
+              },
+              "text": "date: "
+            },
+            {
+              "kind": "text",
+              "style": {
+                "family": {},
+                "sizePx": 16
+              },
+              "text": ", "
+            },
+            {
+              "kind": "text",
+              "style": {
+                "family": {},
+                "sizePx": 16
+              },
+              "text": " "
+            },
+            {
+              "kind": "text",
+              "style": {
+                "family": {},
+                "sizePx": 16
+              },
+              "text": " "
+            },
+            {
+              "kind": "text",
+              "style": {
+                "family": {},
+                "sizePx": 16
+              },
+              "text": " "
+            },
+            {
+              "kind": "text",
+              "style": {
+                "family": {},
+                "sizePx": 16
+              },
+              "text": " "
+            }
+          ],
+          "keepLines": false,
+          "keepNext": false,
+          "kind": "paragraph",
+          "pageBreakBefore": false,
+          "snapToGrid": null,
+          "spacing": {
+            "afterPx": 0,
+            "beforePx": 0
+          },
+          "suppressLineNumbers": false,
+          "widowControl": true
+        },
+        {
+          "defaultTextStyle": {
+            "family": {},
+            "sizePx": 16
+          },
+          "indent": {},
+          "inline": [
+            {
+              "kind": "text",
+              "style": {
+                "family": {},
+                "sizePx": 16
+              },
+              "text": "marks: "
+            },
+            {
+              "kind": "text",
+              "style": {
+                "family": {},
+                "sizePx": 16,
+                "verticalAlign": "superscript"
+              },
+              "text": "1"
+            },
+            {
+              "kind": "text",
+              "style": {
+                "family": {},
+                "sizePx": 16,
+                "verticalAlign": "superscript"
+              },
+              "text": "i"
+            }
+          ],
+          "keepLines": false,
+          "keepNext": false,
+          "kind": "paragraph",
+          "pageBreakBefore": false,
+          "snapToGrid": null,
+          "spacing": {
+            "afterPx": 0,
+            "beforePx": 0
+          },
+          "suppressLineNumbers": false,
+          "widowControl": true
+        },
+        {
+          "defaultTextStyle": {
+            "family": {},
+            "sizePx": 16
+          },
+          "indent": {},
+          "inline": [
+            {
+              "kind": "text",
+              "style": {
+                "family": {},
+                "sizePx": 16
+              },
+              "text": "separators: "
+            }
+          ],
+          "keepLines": false,
+          "keepNext": false,
+          "kind": "paragraph",
+          "pageBreakBefore": false,
+          "snapToGrid": null,
+          "spacing": {
+            "afterPx": 0,
+            "beforePx": 0
+          },
+          "suppressLineNumbers": false,
+          "widowControl": true
+        }
+      ],
+      "flow": {
+        "adjustLinesInTable": false,
+        "contentHeightPx": 930.5333333333333,
+        "contentLeftPx": 120,
+        "contentTopPx": 96,
+        "contentWidthPx": 553.7333333333333,
+        "pageHeightPx": 1122.5333333333333,
+        "pageWidthPx": 793.7333333333333
+      },
+      "furniture": {
+        "evenAndOddHeaders": false,
+        "footerDistancePx": 48,
+        "headerDistancePx": 48,
+        "titlePage": false
+      }
+    }
+  ]
+}
