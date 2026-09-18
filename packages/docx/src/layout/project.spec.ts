@@ -614,6 +614,66 @@ describe("projectDocumentOptions blocks", () => {
     });
   });
 
+  it("projects diagonal cell borders (tl2br and tr2bl)", () => {
+    const { blocks } = oneSection({
+      styles,
+      sections: [
+        {
+          children: [
+            {
+              table: {
+                rows: [
+                  {
+                    cells: [
+                      {
+                        borders: {
+                          tl2br: { style: "single", color: "FF0000", size: 8 },
+                          tr2bl: { style: "dashed", color: "0000FF", size: 4 },
+                        },
+                        children: [{ paragraph: { children: ["diagonal"] } }],
+                      },
+                      {
+                        borders: {
+                          topLeftToBottomRight: { style: "single", color: "00FF00", size: 8 },
+                          topRightToBottomLeft: { style: "dotted", color: "FFFF00", size: 4 },
+                        } as any,
+                        children: [{ paragraph: { children: ["diagonal-native"] } }],
+                      },
+                    ],
+                  },
+                ],
+              },
+            },
+          ],
+        },
+      ],
+    });
+    const table = blocks[0];
+    if (table?.kind !== "table") throw new Error("expected table");
+    const cell1 = table.rows[0].cells[0];
+    expect(cell1.borders?.tl2br).toEqual({
+      style: "single",
+      px: (8 / 8) * (4 / 3),
+      color: "FF0000",
+    });
+    expect(cell1.borders?.tr2bl).toEqual({
+      style: "dashed",
+      px: (4 / 8) * (4 / 3),
+      color: "0000FF",
+    });
+    const cell2 = table.rows[0].cells[1];
+    expect(cell2.borders?.tl2br).toEqual({
+      style: "single",
+      px: (8 / 8) * (4 / 3),
+      color: "00FF00",
+    });
+    expect(cell2.borders?.tr2bl).toEqual({
+      style: "dotted",
+      px: (4 / 8) * (4 / 3),
+      color: "FFFF00",
+    });
+  });
+
   it("projects table alignment from direct attributes and table styles", () => {
     const { blocks } = oneSection({
       styles: {
@@ -820,6 +880,27 @@ describe("projectDocumentOptions fields and furniture", () => {
     // A nil side paints nothing and stays absent.
     expect(pageBorders?.bottom).toBeUndefined();
     expect(pageBorders?.left).toBeUndefined();
+  });
+
+  it("projects page borders with art presets", () => {
+    const { pageBorders } = oneSection({
+      styles,
+      sections: [
+        {
+          children: [],
+          properties: {
+            pageBorders: {
+              top: { art: "apples", size: 24 } as any,
+              bottom: { style: "stars" as any, size: 16, color: "FF0000" },
+            },
+          },
+        },
+      ],
+    });
+    expect(pageBorders).toMatchObject({
+      top: { art: "apples", style: "art", widthPx: (24 / 8) * (96 / 72) },
+      bottom: { art: "stars", style: "stars", widthPx: (16 / 8) * (96 / 72), color: "FF0000" },
+    });
   });
 
   it("omits pageBorders when the section carries none or only nil sides", () => {

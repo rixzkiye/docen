@@ -26,7 +26,9 @@ export interface LayoutTableCell {
   /** Per-spanned-column widths in px (w:tcW resolved); absent → grid share. */
   widthPx?: number;
   insets?: LayoutCellInsets;
-  borders?: Partial<Record<"top" | "right" | "bottom" | "left", LayoutBorderEdge>>;
+  borders?: Partial<
+    Record<"top" | "right" | "bottom" | "left" | "tl2br" | "tr2bl", LayoutBorderEdge>
+  >;
   /** Cell shading (w:shd @w:fill), hex RRGGBB. */
   fill?: string;
   /** w:vAlign — the content's placement when the row is taller than it. */

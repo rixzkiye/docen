@@ -63,6 +63,8 @@ export interface ProjectedPageBorder {
   color?: string;
   /** Distance from the offset reference to this border, in pt. */
   spacePt?: number;
+  /** Art border token (w:art) or decorative preset name. */
+  art?: string;
 }
 
 /** Page borders projected for painting (w:pgBorders): which pages of the

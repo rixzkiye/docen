@@ -48,6 +48,7 @@ import type { FlowPage, FontMetrics, LaidOutParagraph, LaidOutStackItem } from "
 import { stackBlocks, TextMeasurer } from "@docen/layout";
 import { App, Debug, Group, Line, Rect, Text, type IGroup } from "leafer-ui";
 
+import { getArtBorderSvgDataUri } from "./art-borders";
 import { collectPageParas } from "./caret-map";
 import { diffFlowItems } from "./item-diff";
 import { computeLineNumbers } from "./line-numbers";
@@ -771,6 +772,16 @@ export class CanvasStage {
           `${CanvasStage.BORDER_STYLE[side.style] ?? "solid"} ` +
           `#${side.color && side.color !== "auto" ? side.color : "000000"}`
         : "none";
+    const artSide = b.top?.art
+      ? b.top
+      : b.right?.art
+        ? b.right
+        : b.bottom?.art
+          ? b.bottom
+          : b.left?.art
+            ? b.left
+            : undefined;
+
     const div = document.createElement("div");
     div.className = "page-borders";
     Object.assign(div.style, {
@@ -781,10 +792,32 @@ export class CanvasStage {
       // back is negative (still above the frame's own background fill).
       zIndex: b.behind ? "-1" : "2",
     } satisfies Partial<CSSStyleDeclaration>);
-    div.style.borderTop = cssSide(b.top);
-    div.style.borderRight = cssSide(b.right);
-    div.style.borderBottom = cssSide(b.bottom);
-    div.style.borderLeft = cssSide(b.left);
+
+    if (artSide?.art) {
+      const dataUri = getArtBorderSvgDataUri(artSide.art, artSide.color);
+      const artW = (side: ProjectedPageBorder | undefined): number =>
+        side
+          ? Math.max(
+              16,
+              Math.round((side.widthPx > 8 ? side.widthPx : side.widthPx * 6) * this.factor),
+            )
+          : 0;
+      const tW = artW(b.top);
+      const rW = artW(b.right);
+      const bW = artW(b.bottom);
+      const lW = artW(b.left);
+      div.style.borderStyle = "solid";
+      div.style.borderWidth = `${tW}px ${rW}px ${bW}px ${lW}px`;
+      div.style.borderImageSource = `url("${dataUri}")`;
+      div.style.borderImageSlice = "20";
+      div.style.borderImageRepeat = "repeat";
+      div.style.borderImageWidth = `${tW}px ${rW}px ${bW}px ${lW}px`;
+    } else {
+      div.style.borderTop = cssSide(b.top);
+      div.style.borderRight = cssSide(b.right);
+      div.style.borderBottom = cssSide(b.bottom);
+      div.style.borderLeft = cssSide(b.left);
+    }
     div.style.top = `${insetPt(b.top, margin.top)}px`;
     div.style.right = `${insetPt(b.right, margin.right)}px`;
     div.style.bottom = `${insetPt(b.bottom, margin.bottom)}px`;

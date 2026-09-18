@@ -87,23 +87,30 @@ function toBorders(b: unknown): CellBorders | undefined {
     right: toBorderEdge(b.right),
     bottom: toBorderEdge(b.bottom),
     left: toBorderEdge(b.left),
+    tl2br: toBorderEdge(b.tl2br ?? b.topLeftToBottomRight),
+    tr2bl: toBorderEdge(b.tr2bl ?? b.topRightToBottomLeft),
   };
-  return out.top || out.right || out.bottom || out.left ? out : undefined;
+  return out.top || out.right || out.bottom || out.left || out.tl2br || out.tr2bl ? out : undefined;
 }
 
 function toCellBorders(direct: unknown, styleBorders: unknown): CellBorders | undefined {
   const d = isRecord(direct) ? direct : undefined;
   const s = isRecord(styleBorders) ? styleBorders : undefined;
   if (!d && !s) return undefined;
-  const edge = (side: string): LayoutBorderEdge | undefined =>
-    toBorderEdge(d?.[side]) ?? toBorderEdge(s?.[side]);
+  const edge = (side: string, alt?: string): LayoutBorderEdge | undefined =>
+    toBorderEdge(d?.[side]) ??
+    (alt ? toBorderEdge(d?.[alt]) : undefined) ??
+    toBorderEdge(s?.[side]) ??
+    (alt ? toBorderEdge(s?.[alt]) : undefined);
   const out = {
     top: edge("top"),
     right: edge("right"),
     bottom: edge("bottom"),
     left: edge("left"),
+    tl2br: edge("tl2br", "topLeftToBottomRight"),
+    tr2bl: edge("tr2bl", "topRightToBottomLeft"),
   };
-  return out.top || out.right || out.bottom || out.left ? out : undefined;
+  return out.top || out.right || out.bottom || out.left || out.tl2br || out.tr2bl ? out : undefined;
 }
 
 /** w:tblBorders → the engine's table-level defaults, merging the direct

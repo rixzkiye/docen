@@ -634,9 +634,15 @@ export interface BorderSideState {
  *  or the paragraph fill (shading tab, null clears). */
 export interface BordersDialogPatch {
   tab: "border" | "page" | "shading";
-  sides?: Partial<Record<"top" | "bottom" | "left" | "right", BorderSideState | null>>;
+  sides?: Partial<
+    Record<"top" | "bottom" | "left" | "right" | "tl2br" | "tr2bl", BorderSideState | null>
+  >;
   /** Hex RRGGBB paragraph fill; null clears the shading. */
   fill?: string | null;
+  /** Art border token (stars, hearts, apples, etc.) for page borders. */
+  art?: string | null;
+  /** Target scope: paragraph vs cell vs table. */
+  applyTo?: "paragraph" | "cell" | "table";
 }
 
 // ── Pure helpers (take EditorState, return data; never touch the chain) ──
@@ -2174,8 +2180,14 @@ function tableBordersStamp(
     borders.left = GRID_BORDER;
     borders.right = GRID_BORDER;
   }
-  if (value === "all") {
+  if (value === "all" || value === "inside") {
     borders.insideHorizontal = GRID_BORDER;
+    borders.insideVertical = GRID_BORDER;
+  }
+  if (value === "insideHorizontal" || value === "inside-horizontal") {
+    borders.insideHorizontal = GRID_BORDER;
+  }
+  if (value === "insideVertical" || value === "inside-vertical") {
     borders.insideVertical = GRID_BORDER;
   }
   if (value === "bottom" || value === "top" || value === "left" || value === "right") {
@@ -2190,7 +2202,10 @@ type BorderPen = { style: string; size: number; color: string };
 /** A crossed table edge from the canvas edge hit test — the cell position
  *  plus which of its sides the sweep touched (interior lines arrive twice,
  *  once per collapse half). */
-type BorderSweepSide = { pos: number; side: "top" | "bottom" | "left" | "right" };
+type BorderSweepSide = {
+  pos: number;
+  side: "top" | "bottom" | "left" | "right" | "tl2br" | "tr2bl";
+};
 
 type BorderSweep = { sides: BorderSweepSide[]; pen: BorderPen | undefined };
 
@@ -2211,7 +2226,9 @@ function parseBorderSweep(value: unknown, eraser: boolean): BorderSweep | undefi
       (side.side !== "top" &&
         side.side !== "bottom" &&
         side.side !== "left" &&
-        side.side !== "right")
+        side.side !== "right" &&
+        side.side !== "tl2br" &&
+        side.side !== "tr2bl")
     ) {
       return undefined;
     }
@@ -2730,12 +2747,43 @@ export const DocumentCommands = Extension.create({
           return true;
         },
       // The Borders and Shading dialog's OK (border tab) — replaces each
-      // selected paragraph's w:pBdr wholesale with the staged sides (a null
-      // edge clears that side; every edge null drops the border).
+      // selected paragraph's w:pBdr or table cell's w:tcBorders with the staged sides
+      // (a null edge clears that side; every edge null drops the border).
       "borders-apply":
         (patch) =>
         ({ state, tr }) => {
           if (!patch?.sides) return false;
+          const targets = tableTargets(state);
+          if (
+            targets?.cells.length &&
+            (patch.applyTo === "cell" ||
+              patch.sides.tl2br !== undefined ||
+              patch.sides.tr2bl !== undefined)
+          ) {
+            const allSides = ["top", "bottom", "left", "right", "tl2br", "tr2bl"] as const;
+            for (const { pos, node } of targets.cells) {
+              const attrs = node.attrs as Record<string, unknown>;
+              const current = { ...((attrs.borders ?? {}) as Record<string, unknown>) };
+              for (const side of allSides) {
+                if (patch.sides[side] === undefined) continue;
+                const edge = patch.sides[side];
+                if (!edge) {
+                  delete current[side];
+                  if (side === "tl2br") delete current.topLeftToBottomRight;
+                  if (side === "tr2bl") delete current.topRightToBottomLeft;
+                } else {
+                  current[side] = {
+                    style: edge.style,
+                    size: Math.max(2, Math.round(edge.size)),
+                    color: edge.color ?? "auto",
+                  };
+                }
+              }
+              const borders = Object.keys(current).length ? current : null;
+              tr.setNodeMarkup(pos, undefined, { ...attrs, borders });
+            }
+            return true;
+          }
           const blocks = selectedParagraphs(state);
           if (!blocks.length) return false;
           for (const { pos, node } of blocks) {
@@ -3692,6 +3740,60 @@ export const DocumentCommands = Extension.create({
           if (typeof value !== "string") return false;
           const anchor = tableAncestry(state);
           if (!anchor) return false;
+          if (value === "diagonalDown" || value === "diagonal-down" || value === "tl2br") {
+            const targets = tableTargets(state);
+            if (!targets?.cells.length) return false;
+            if (dispatch) {
+              const tr = state.tr;
+              for (const { pos, node: cell } of targets.cells) {
+                const cur = { ...((cell.attrs.borders ?? {}) as Record<string, unknown>) };
+                const existing = cur.tl2br ?? cur.topLeftToBottomRight;
+                const on =
+                  existing &&
+                  (existing as { style?: string }).style !== "none" &&
+                  (existing as { style?: string }).style !== "nil";
+                if (on) {
+                  delete cur.tl2br;
+                  delete cur.topLeftToBottomRight;
+                } else {
+                  cur.tl2br = { ...GRID_BORDER };
+                }
+                tr.setNodeMarkup(pos, undefined, {
+                  ...cell.attrs,
+                  borders: Object.keys(cur).length ? cur : null,
+                });
+              }
+              dispatch(tr.scrollIntoView());
+            }
+            return true;
+          }
+          if (value === "diagonalUp" || value === "diagonal-up" || value === "tr2bl") {
+            const targets = tableTargets(state);
+            if (!targets?.cells.length) return false;
+            if (dispatch) {
+              const tr = state.tr;
+              for (const { pos, node: cell } of targets.cells) {
+                const cur = { ...((cell.attrs.borders ?? {}) as Record<string, unknown>) };
+                const existing = cur.tr2bl ?? cur.topRightToBottomLeft;
+                const on =
+                  existing &&
+                  (existing as { style?: string }).style !== "none" &&
+                  (existing as { style?: string }).style !== "nil";
+                if (on) {
+                  delete cur.tr2bl;
+                  delete cur.topRightToBottomLeft;
+                } else {
+                  cur.tr2bl = { ...GRID_BORDER };
+                }
+                tr.setNodeMarkup(pos, undefined, {
+                  ...cell.attrs,
+                  borders: Object.keys(cur).length ? cur : null,
+                });
+              }
+              dispatch(tr.scrollIntoView());
+            }
+            return true;
+          }
           const current = (state.selection.$from.node(anchor.tableAt).attrs.borders ??
             null) as TableBordersLike | null;
           return stampTableBorders(state, dispatch, tableBordersStamp(value, current));
