@@ -28,6 +28,9 @@ export interface RibbonMenuItem {
   checked?: boolean;
   /** Non-clickable group heading (Quick Parts gallery groups). */
   header?: boolean;
+  /** Submenu items (Word context menu and ribbon dropdown submenus). */
+  children?: RibbonMenuItem[];
+  items?: RibbonMenuItem[];
 }
 
 // Per-instance CSS anchor name so each menu's popover aligns to its own

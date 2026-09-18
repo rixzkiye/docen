@@ -3365,21 +3365,91 @@ class DocenDocument extends AddinHost<Editor> {
     items.push({ text: t("context.select-all", this), event: "select" });
     if (inTable) {
       items.push({ text: "-" });
-      items.push({ text: t("ribbon.cmd.insert-row-above", this), event: "insert-row-above" });
-      items.push({ text: t("ribbon.cmd.insert-row-below", this), event: "insert-row-below" });
-      items.push({ text: t("ribbon.cmd.insert-column-left", this), event: "insert-column-left" });
-      items.push({ text: t("ribbon.cmd.insert-column-right", this), event: "insert-column-right" });
-      items.push({ text: "-" });
-      items.push({ text: t("ribbon.cmd.delete-row", this), event: "delete-row" });
-      items.push({ text: t("ribbon.cmd.delete-column", this), event: "delete-column" });
-      items.push({ text: t("context.delete-table", this), event: "delete-table" });
-      // Word's merge/split + AutoFit + the Properties entry close the table
-      // menu (commands shared with the Table Layout tab).
+      items.push({
+        text: t("context.insert", this),
+        items: [
+          { text: t("ribbon.cmd.insert-column-left", this), event: "insert-column-left" },
+          { text: t("ribbon.cmd.insert-column-right", this), event: "insert-column-right" },
+          { text: "-" },
+          { text: t("ribbon.cmd.insert-row-above", this), event: "insert-row-above" },
+          { text: t("ribbon.cmd.insert-row-below", this), event: "insert-row-below" },
+          { text: "-" },
+          { text: t("context.insert-cells", this), event: "insert-cells" },
+        ],
+      });
+      items.push({
+        text: t("context.delete", this),
+        items: [
+          { text: t("context.delete-cells", this), event: "delete-cells" },
+          { text: t("ribbon.cmd.delete-column", this), event: "delete-column" },
+          { text: t("ribbon.cmd.delete-row", this), event: "delete-row" },
+          { text: "-" },
+          { text: t("context.delete-table", this), event: "delete-table" },
+        ],
+      });
+      items.push({
+        text: t("context.select", this),
+        items: [
+          { text: t("ribbon.cmd.select-table-cell", this), event: "select-table-cell" },
+          { text: t("ribbon.cmd.select-table-column", this), event: "select-table-column" },
+          { text: t("ribbon.cmd.select-table-row", this), event: "select-table-row" },
+          { text: t("ribbon.cmd.select-table", this), event: "select-table" },
+        ],
+      });
       items.push({ text: "-" });
       items.push({ text: t("ribbon.cmd.merge-cells", this), event: "merge-cells" });
       items.push({ text: t("ribbon.cmd.split-cell", this), event: "split-cell" });
-      items.push({ text: t("ribbon.opt.autofit-contents", this), event: "autofit-contents" });
-      items.push({ text: t("ribbon.opt.autofit-window", this), event: "autofit-window" });
+      items.push({ text: t("ribbon.cmd.split-table", this), event: "split-table" });
+      items.push({ text: "-" });
+      items.push({
+        text: t("ribbon.cmd.autofit", this),
+        items: [
+          { text: t("ribbon.opt.autofit-contents", this), event: "autofit-contents" },
+          { text: t("ribbon.opt.autofit-window", this), event: "autofit-window" },
+          { text: t("ribbon.opt.fixed-column-width", this), event: "fixed-column-width" },
+        ],
+      });
+      items.push({
+        text: t("ribbon.cmd.align-cell", this),
+        items: [
+          { text: t("ribbon.opt.cell-align-tl", this), event: "align-cell", value: "tl" },
+          { text: t("ribbon.opt.cell-align-tc", this), event: "align-cell", value: "tc" },
+          { text: t("ribbon.opt.cell-align-tr", this), event: "align-cell", value: "tr" },
+          { text: t("ribbon.opt.cell-align-ml", this), event: "align-cell", value: "ml" },
+          { text: t("ribbon.opt.cell-align-mc", this), event: "align-cell", value: "mc" },
+          { text: t("ribbon.opt.cell-align-mr", this), event: "align-cell", value: "mr" },
+          { text: t("ribbon.opt.cell-align-bl", this), event: "align-cell", value: "bl" },
+          { text: t("ribbon.opt.cell-align-bc", this), event: "align-cell", value: "bc" },
+          { text: t("ribbon.opt.cell-align-br", this), event: "align-cell", value: "br" },
+        ],
+      });
+      items.push({
+        text: t("context.distribute", this),
+        items: [
+          { text: t("ribbon.cmd.distribute-rows", this), event: "distribute-rows" },
+          { text: t("ribbon.cmd.distribute-columns", this), event: "distribute-columns" },
+        ],
+      });
+      items.push({ text: t("ribbon.cmd.text-direction", this), event: "text-direction" });
+      items.push({
+        text: t("ribbon.cmd.cell-margins", this),
+        items: [
+          {
+            text: t("ribbon.opt.cell-margin-normal", this),
+            event: "cell-margins",
+            value: "normal",
+          },
+          { text: t("ribbon.opt.cell-margin-none", this), event: "cell-margins", value: "none" },
+        ],
+      });
+      items.push({
+        text: t("ribbon.opt.borders-shading", this),
+        event: "border",
+        value: "borders-shading",
+      });
+      items.push({ text: t("ribbon.cmd.repeat-header-rows", this), event: "repeat-header-rows" });
+      items.push({ text: t("ribbon.group.sort", this) || "Sort...", event: "sort" });
+      items.push({ text: t("context.formula", this), event: "table-formula" });
       items.push({ text: "-" });
       items.push({ text: t("context.table-properties", this), event: "table-properties" });
     }

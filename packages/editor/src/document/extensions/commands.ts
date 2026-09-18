@@ -115,6 +115,12 @@ declare module "@tiptap/core" {
       "insert-column-right": () => ReturnType;
       "delete-row": () => ReturnType;
       "delete-column": () => ReturnType;
+      "delete-cell": () => ReturnType;
+      "delete-cells": () => ReturnType;
+      "insert-cell": () => ReturnType;
+      "insert-cells": () => ReturnType;
+      "table-formula": () => ReturnType;
+      formula: () => ReturnType;
       "select-table": () => ReturnType;
       "select-table-row": () => ReturnType;
       "select-table-cell": () => ReturnType;
@@ -266,6 +272,12 @@ export const WIRED_DISPATCH: ReadonlySet<string> = new Set([
   "insert-column-right",
   "delete-row",
   "delete-column",
+  "delete-cell",
+  "delete-cells",
+  "insert-cell",
+  "insert-cells",
+  "table-formula",
+  "formula",
   "select-table",
   "select-table-row",
   "select-table-cell",
@@ -2950,6 +2962,111 @@ export const DocumentCommands = Extension.create({
           }
           return true;
         },
+      "delete-cell":
+        () =>
+        ({ state, dispatch }) => {
+          const anchor = tableAncestry(state);
+          if (!anchor || anchor.cellAt < 0) return false;
+          const { $from } = state.selection;
+          const rowNode = $from.node(anchor.rowAt);
+          if (rowNode.childCount === 1) {
+            const tableNode = $from.node(anchor.tableAt);
+            if (tableNode.childCount === 1) {
+              return deleteTableAt(
+                state,
+                dispatch,
+                $from.before(anchor.tableAt),
+                tableNode.nodeSize,
+              );
+            }
+            if (dispatch) {
+              const rowPos = $from.before(anchor.rowAt);
+              dispatch(state.tr.delete(rowPos, rowPos + rowNode.nodeSize).scrollIntoView());
+            }
+            return true;
+          }
+          if (dispatch) {
+            const cellPos = $from.before(anchor.cellAt);
+            const cell = $from.node(anchor.cellAt);
+            dispatch(state.tr.delete(cellPos, cellPos + cell.nodeSize).scrollIntoView());
+          }
+          return true;
+        },
+      "delete-cells":
+        () =>
+        ({ commands }) =>
+          commands["delete-cell"](),
+      "insert-cell":
+        () =>
+        ({ state, dispatch }) => {
+          const anchor = tableAncestry(state);
+          if (!anchor || anchor.cellAt < 0) return false;
+          if (dispatch) {
+            const { $from } = state.selection;
+            const cellPos = $from.after(anchor.cellAt);
+            const emptyCell = state.schema.nodes.tableCell?.create(
+              null,
+              state.schema.nodes.paragraph ? state.schema.nodes.paragraph.create() : undefined,
+            );
+            if (emptyCell) {
+              dispatch(state.tr.insert(cellPos, emptyCell).scrollIntoView());
+            }
+          }
+          return true;
+        },
+      "insert-cells":
+        () =>
+        ({ commands }) =>
+          commands["insert-cell"](),
+      "table-formula":
+        () =>
+        ({ state, dispatch }) => {
+          const anchor = tableAncestry(state);
+          if (!anchor || anchor.cellAt < 0) return false;
+          const { $from } = state.selection;
+          const tableNode = $from.node(anchor.tableAt);
+          const currentRow = $from.index(anchor.tableAt);
+          const currentCol = $from.index(anchor.rowAt);
+          let sum = 0;
+          let count = 0;
+          for (let r = 0; r < currentRow; r += 1) {
+            const row = tableNode.child(r);
+            if (currentCol < row.childCount) {
+              const cellText = row.child(currentCol).textContent.trim();
+              const num = Number.parseFloat(cellText.replace(/[^0-9.-]+/g, ""));
+              if (!Number.isNaN(num)) {
+                sum += num;
+                count += 1;
+              }
+            }
+          }
+          if (count === 0) {
+            const row = tableNode.child(currentRow);
+            for (let c = 0; c < currentCol; c += 1) {
+              const cellText = row.child(c).textContent.trim();
+              const num = Number.parseFloat(cellText.replace(/[^0-9.-]+/g, ""));
+              if (!Number.isNaN(num)) {
+                sum += num;
+                count += 1;
+              }
+            }
+          }
+          const resultStr = count > 0 ? String(sum) : "=SUM(ABOVE)";
+          if (dispatch) {
+            const cellPos = $from.before(anchor.cellAt);
+            const cell = $from.node(anchor.cellAt);
+            const p = state.schema.nodes.paragraph.create(null, state.schema.text(resultStr));
+            const newCell = state.schema.nodes.tableCell.create(cell.attrs, p);
+            dispatch(
+              state.tr.replaceWith(cellPos, cellPos + cell.nodeSize, newCell).scrollIntoView(),
+            );
+          }
+          return true;
+        },
+      formula:
+        () =>
+        ({ commands }) =>
+          commands["table-formula"](),
       "select-table":
         () =>
         ({ state, dispatch }) => {

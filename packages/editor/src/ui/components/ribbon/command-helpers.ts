@@ -102,6 +102,8 @@ interface MenuItemLike {
   /** A non-clickable group heading — the Quick Parts gallery groups (Word's
    *  "Explore Quick Parts" lists AutoText / Cover Pages / … as headings). */
   header?: boolean;
+  children?: readonly MenuItemLike[];
+  items?: readonly MenuItemLike[];
 }
 
 /** A menu list wired by `appendMenuItems` (the wiring is idempotent across
@@ -143,7 +145,8 @@ export function wireMenuKeyboardFocusRing(list: HTMLElement): void {
  *  slot and keeps Fluent's own indent (icon-then-text columns). In a pick list
  *  (any `checked` member) the plain members indent past the checkmark track
  *  too — Word's Editing/Viewing drop-down aligns both labels on one edge
- *  (`data-indent="1"`). */
+ *  (`data-indent="1"`). Submenus in `children` / `items` nest as slotted
+ *  `<fluent-menu-list slot="submenu">` components. */
 export function appendMenuItems<T extends MenuItemLike>(
   list: HTMLElement,
   items: readonly T[],
@@ -175,11 +178,16 @@ export function appendMenuItems<T extends MenuItemLike>(
       continue;
     }
     const menuItem = document.createElement("fluent-menu-item");
+    const subItems = (item.children ?? item.items) as readonly T[] | undefined;
+    const hasSubmenu = Boolean(subItems && subItems.length > 0);
     if (item.checked) {
       menuItem.setAttribute("role", options?.multiple ? "menuitemcheckbox" : "menuitemradio");
       menuItem.setAttribute("checked", "");
     } else {
       menuItem.setAttribute("role", "menuitem");
+    }
+    if (hasSubmenu) {
+      menuItem.setAttribute("data-has-submenu", "");
     }
     if (item.icon) {
       const start = document.createElement("span");
@@ -199,7 +207,19 @@ export function appendMenuItems<T extends MenuItemLike>(
       menuItem.textContent = item.text;
     }
     if (item.disabled) menuItem.setAttribute("disabled", "");
-    menuItem.addEventListener("change", () => onSelect(item));
+    if (hasSubmenu && subItems) {
+      const subList = document.createElement("fluent-menu-list");
+      subList.setAttribute("slot", "submenu");
+      appendMenuItems(subList, subItems, onSelect, options);
+      menuItem.append(subList);
+    }
+    if (!hasSubmenu) {
+      menuItem.addEventListener("change", (e) => {
+        if (e.target === menuItem) {
+          onSelect(item);
+        }
+      });
+    }
     list.append(menuItem);
   }
 }
