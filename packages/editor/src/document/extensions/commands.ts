@@ -171,6 +171,7 @@ declare module "@tiptap/core" {
       "horizontal-rule": () => ReturnType;
       "page-break": () => ReturnType;
       "column-break": () => ReturnType;
+      "text-wrapping": () => ReturnType;
       "section-break": () => ReturnType;
       "section-break-next": () => ReturnType;
       "section-break-continuous": () => ReturnType;
@@ -370,6 +371,7 @@ export const WIRED_DISPATCH: ReadonlySet<string> = new Set([
   "horizontal-rule",
   "page-break",
   "column-break",
+  "text-wrapping",
   "section-break",
   "section-break-next",
   "section-break-continuous",
@@ -3273,6 +3275,22 @@ export const DocumentCommands = Extension.create({
             );
           }
           return commands.setColumnBreak();
+        },
+      // Word's Insert → Breaks → Text Wrapping: the soft line break (w:br
+      // type="textWrapping", the hardBreak node's default variant) that ends
+      // text wrapping around a floating object.
+      "text-wrapping":
+        () =>
+        ({ state, dispatch }: { state: EditorState; dispatch?: (tr: Transaction) => void }) => {
+          const br = state.schema.nodes.hardBreak?.create();
+          if (!br) return false;
+          if (dispatch) {
+            const tr = state.tr;
+            if (!state.selection.empty) tr.deleteSelection();
+            tr.insert(state.selection.from, br);
+            dispatch(tr.scrollIntoView());
+          }
+          return true;
         },
       "section-break":
         () =>

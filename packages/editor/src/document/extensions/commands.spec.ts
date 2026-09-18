@@ -2698,3 +2698,53 @@ describe("shape-custom-geometry-apply", () => {
     editor.destroy();
   });
 });
+
+describe("text-wrapping break (Insert → Breaks)", () => {
+  // The engine's hardBreak node (name + inline shape); the docx package keeps
+  // it internal, so the spec mirrors the schema slot the command reads.
+  const HardBreak = TextNode.create({
+    name: "hardBreak",
+    inline: true,
+    group: "inline",
+    selectable: false,
+    addAttributes() {
+      return { variant: { default: "textWrapping" } };
+    },
+  });
+
+  const buildWith = (text: string): EditorType =>
+    new Editor({
+      element: null,
+      extensions: [...EXTENSIONS, HardBreak],
+      content: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text }] }] },
+    });
+
+  it("inserts a hardBreak at the caret", () => {
+    const editor = buildWith("before after");
+    editor.commands.setTextSelection(7);
+    expect(editor.commands["text-wrapping"]()).toBe(true);
+    const para = editor.state.doc.child(0);
+    const breaks: string[] = [];
+    para.descendants((node) => {
+      if (node.type.name === "hardBreak") breaks.push(node.attrs.variant as string);
+    });
+    expect(breaks).toEqual(["textWrapping"]);
+    // The text after the caret moved behind the break.
+    expect(para.textContent).toBe("before after");
+    expect(editor.state.selection.from).toBe(8);
+    editor.destroy();
+  });
+
+  it("replaces a non-empty selection with the break", () => {
+    const editor = buildWith("hello world");
+    editor.commands.setTextSelection({ from: 1, to: 6 });
+    expect(editor.commands["text-wrapping"]()).toBe(true);
+    expect(editor.state.doc.child(0).textContent).toBe(" world");
+    editor.destroy();
+  });
+
+  it("declares the command in the wired dispatch set", async () => {
+    const { WIRED_DISPATCH } = await import("./commands");
+    expect(WIRED_DISPATCH.has("text-wrapping")).toBe(true);
+  });
+});
