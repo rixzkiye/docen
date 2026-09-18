@@ -1127,6 +1127,12 @@ export class CanvasStage {
         if (!this.#pageItemsUnchanged(slot, index)) this.#relinkHitParas(slot.app, index);
       }
     }
+    if (this.#showRuler) {
+      for (const [index, slot] of this.slots.entries()) {
+        const frame = slot.el.parentElement;
+        if (frame) this.applyRulers(frame, index);
+      }
+    }
   }
 
   /** Whether the page's painted item list is the previous generation's own
