@@ -52,8 +52,10 @@ import {
   normalizeArchiveInputSync,
 } from "./archive-guard";
 import { DOCX_EPOCH, toIsoDate, withGenerationScope } from "./determinism";
+import { EncryptedDocumentError, assertNotEncryptedContainer } from "./encrypted";
 import { fillGeneratedFields, type FieldCacheOptions } from "./field-eval";
 import { prepareDocument, type PrepareStep } from "./prepare";
+import { docenDefaultSectionProperties } from "./section-defaults";
 import { buildTextBlock } from "./styles";
 
 export type { DocumentOptions };
@@ -535,7 +537,11 @@ export class DocxManager {
     };
   }
 
-  /** Assemble a SectionOptions from compiled children + optional layout/headers/footers. */
+  /** Assemble a SectionOptions from compiled children + optional layout/headers/footers.
+   *  A section the model gives no properties is stamped with the docen
+   *  defaults — every generated document carries its own explicit page
+   *  geometry instead of inheriting office-open's zh-CN
+   *  `sectionMarginDefaults` at stringify time. */
   private buildSection(
     children: SectionChild[],
     properties: SectionPropertiesOptions | null,
@@ -544,7 +550,7 @@ export class DocxManager {
   ): DocumentOptions["sections"][number] {
     return {
       children,
-      ...(properties ? { properties } : {}),
+      properties: properties ?? docenDefaultSectionProperties(),
       ...(headers ? { headers } : {}),
       ...(footers ? { footers } : {}),
     };
@@ -651,7 +657,11 @@ export class DocxManager {
       const sectionContent = this.resolveSectionChildren(section.children ?? []);
       if (i < lastIndex) {
         const sectAttrs: Record<string, unknown> = {
-          sectionProperties: section.properties ?? null,
+          // A propertyless non-final section still IS a section break (an
+          // empty sectPr inherits the defaults); compile closes the section
+          // only for a non-null marker, so stamp `{}` rather than null or the
+          // break — and the whole section — silently merges into the next.
+          sectionProperties: section.properties ?? {},
           sectionHeaders: this.resolveHeaderFooter(section.headers),
           sectionFooters: this.resolveHeaderFooter(section.footers),
         };
@@ -730,7 +740,16 @@ export class DocxManager {
           if (!compiled) continue;
           pushAll(entries, compiled);
         }
-        return { toc: { ...options, entries } };
+        // The block+ schema's placeholder paragraph is not a rendered entry.
+        // Hand office-open the no-entries shape instead: it emits the dirty
+        // field head/end pair (which Word/LibreOffice update on open), while an
+        // empty paragraph stringifies as a self-closing <w:p/> that
+        // injectFieldHead cannot carry the field runs into — dropping the
+        // field instruction entirely.
+        const hasRenderedEntry = (node.content ?? []).some(
+          (child) => child.type !== "paragraph" || (child.content?.length ?? 0) > 0,
+        );
+        return { toc: hasRenderedEntry ? { ...options, entries } : { ...options } };
       }
       case "sdtBlock": {
         // Content-control container (reverse of the sdt block rule): children
@@ -1899,8 +1918,13 @@ export async function parseDOCX(
   extensions?: Extensions,
 ): Promise<JSONContent> {
   const bytes = await normalizeArchiveInput(data);
+  assertNotEncryptedContainer(bytes);
   assertArchiveWithinLimits(bytes);
-  return getDocxManager(extensions).resolve(await parseDocument(bytes));
+  const parsed = await parseDocument(bytes);
+  // Belt-and-braces: a container office-open recognized as encrypted without
+  // the CFB signature (or a future input path we do not read bytes for).
+  if (parsed.encrypted) throw new EncryptedDocumentError();
+  return getDocxManager(extensions).resolve(parsed);
 }
 
 /**
@@ -1913,8 +1937,11 @@ export function parseDOCXSync(
   extensions?: Extensions,
 ): JSONContent {
   const bytes = normalizeArchiveInputSync(data);
+  assertNotEncryptedContainer(bytes);
   assertArchiveWithinLimits(bytes);
-  return getDocxManager(extensions).resolve(parseDocumentSync(bytes));
+  const parsed = parseDocumentSync(bytes);
+  if (parsed.encrypted) throw new EncryptedDocumentError();
+  return getDocxManager(extensions).resolve(parsed);
 }
 
 /**
@@ -2213,7 +2240,7 @@ export function compileDocument(
 }
 
 /**
- * Fill in office-open's ECMA-376 schema defaults that a hand-built JSON lacks.
+ * Fill in the document-level defaults that a hand-built JSON lacks.
  *
  * A document constructed by hand (not via {@link parseDOCX}) carries no
  * `doc.attrs.styles` (docDefaults: body font/size/spacing + the built-in style
@@ -2223,12 +2250,13 @@ export function compileDocument(
  * page geometry, and no document grid for snapToGrid to pitch against, and
  * rendering/pagination drift.
  *
- * Harvests the defaults by round-tripping an EMPTY document through office-open
- * (`generateDOCXSync` → `parseDOCX`) and taking exactly those two attrs — the
- * empty doc's remaining attrs (documentExtras with passthrough binaries,
- * settings, contentTypes) are round-trip artifacts a hand-built doc must not
- * inherit: rawParts carries Uint8Array bytes that break JSON serialization of
- * the attrs (a host embedding `JSON.stringify(normalizeDocument(...))` then
+ * Harvests the style table by round-tripping an EMPTY document through
+ * office-open (`generateDOCXSync` → `parseDOCX`) and takes that attr plus
+ * docen's own {@link docenDefaultSectionProperties} — the empty doc's
+ * remaining attrs (documentExtras with passthrough binaries, settings,
+ * contentTypes) are round-trip artifacts a hand-built doc must not inherit:
+ * rawParts carries Uint8Array bytes that break JSON serialization of the
+ * attrs (a host embedding `JSON.stringify(normalizeDocument(...))` then
  * crashes the next save-as in office-open's media reader). Content nodes
  * (paragraphs/runs/marks) pass through verbatim, avoiding the mark pollution a
  * full-content round-trip would cause (a paragraph's default run props leak
@@ -2251,7 +2279,10 @@ export function normalizeDocument(json: JSONContent, extensions?: Extensions): J
   );
   const harvested = {
     styles: baseAttrs.styles,
-    sectionProperties: baseAttrs.sectionProperties,
+    // Our own explicit geometry — never the empty round-trip's (absent)
+    // sectionProperties, which made a hand-built doc depend on office-open's
+    // implicit zh-CN `sectionMarginDefaults` for its page box.
+    sectionProperties: docenDefaultSectionProperties(),
   };
   return { ...json, attrs: { ...harvested, ...userAttrs } };
 }

@@ -1,0 +1,27 @@
+{
+  "description": "REF backward/forward, NOTEREF, and the \\p/\\n keep-cache switches",
+  "python": {
+    "simple": [
+      ["REF _Ref1 \\h", "Alpha"],
+      ["REF _Ref2 \\h", "Omega"],
+      ["NOTEREF _Ref3 \\h", "3"],
+      ["REF _Ref1 \\p", "cached-position"],
+      ["REF _Ref1 \\n", "cached-number"]
+    ],
+    "instrTexts": [],
+    "tocEntries": []
+  },
+  "xmlPresent": ["REF _Ref1", "REF _Ref2", "NOTEREF _Ref3"],
+  "pdf": {
+    "contains": ["Alpha", "Omega", "above"]
+  },
+  "update": {
+    "contains": ["Alpha", "Omega"]
+  },
+  "loLimitations": [
+    "LibreOffice recomputes \\p as above/below (the builder keeps the model cache) and renders \\n empty without paragraph numbering; its resave duplicates the \\p/\\n switches (\\p \\h)."
+  ],
+  "resavePython": {
+    "instrTexts": ["REF _Ref1", "REF _Ref2", "NOTEREF _Ref3"]
+  }
+}

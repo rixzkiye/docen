@@ -52,6 +52,15 @@ const documentXml = (json: JSONContent, options?: Parameters<typeof generateDOCX
     ],
   );
 
+/** The TOC sdt slice of `document.xml` — entry assertions must not match the
+ *  body headings the entries quote. */
+const tocXml = (json: JSONContent, options?: Parameters<typeof generateDOCXSync>[1]): string => {
+  const xml = documentXml(json, options);
+  const start = xml.indexOf("<w:sdt>");
+  const end = xml.indexOf("</w:sdt>");
+  return start >= 0 && end > start ? xml.slice(start, end + 8) : "";
+};
+
 describe("SEQ generation-time numbering", () => {
   it("numbers per label, restarts at the `\\s` heading level, formats `\\*`", () => {
     const json = docOf([
@@ -238,6 +247,237 @@ describe("TOC cached entries (item 13)", () => {
     const parsed = parseDOCXSync(generateDOCXSync(figure, { prepare: false }) as Uint8Array);
     const toc = parsed.content?.find((n) => n.type === "tocField");
     expect(toc?.content?.length).toBe(2);
+  });
+
+  it("honors a parsed DOCX `\\t` stylesWithLevels switch", () => {
+    const json = docOf([
+      para([text("Heading One")], { heading: "Heading1" }),
+      para([text("Custom Style Heading")], { style: "MyHeading" }),
+      {
+        type: "tocField",
+        attrs: {
+          options: {
+            headingStyleRange: "1-3",
+            stylesWithLevels: [{ styleName: "MyHeading", level: 2 }],
+          },
+        },
+        content: [{ type: "paragraph" }],
+      },
+    ]);
+    const toc = tocXml(json);
+    expect(toc).toContain(">Custom Style Heading<");
+    expect(toc).toContain('\\t "MyHeading,2"');
+  });
+
+  it("matches `\\t` styles by their resolved style name, not just the id", () => {
+    const json = docOf(
+      [
+        para([text("Named Heading")], { style: "MyStyle" }),
+        {
+          type: "tocField",
+          attrs: {
+            options: {
+              headingStyleRange: "1-3",
+              stylesWithLevels: [{ styleName: "My Heading", level: 2 }],
+            },
+          },
+          content: [{ type: "paragraph" }],
+        },
+      ],
+      { styles: { paragraphStyles: [{ id: "MyStyle", name: "My Heading", basedOn: "Normal" }] } },
+    );
+    const toc = tocXml(json);
+    expect(toc).toContain(">Named Heading<");
+    expect(toc).toContain("TOC2");
+  });
+
+  it("scopes entries to a `\\b` entriesFromBookmark", () => {
+    const json = docOf([
+      para([text("Outside Before")], { heading: "Heading1" }),
+      para([bookmarkStart(1, "Scope"), text("Inside One")], { heading: "Heading1" }),
+      para([field({ bookmarkEnd: { id: 1 } })]),
+      para([text("Outside After")], { heading: "Heading1" }),
+      {
+        type: "tocField",
+        attrs: { options: { headingStyleRange: "1-3", entriesFromBookmark: "Scope" } },
+        content: [{ type: "paragraph" }],
+      },
+    ]);
+    const toc = tocXml(json);
+    expect(toc).toContain("Inside One");
+    expect(toc).not.toContain("Outside Before");
+    expect(toc).not.toContain("Outside After");
+  });
+
+  it("leaves the scope empty (placeholder field) for an unknown bookmark", () => {
+    const json = docOf([
+      para([text("One")], { heading: "Heading1" }),
+      {
+        type: "tocField",
+        attrs: { options: { headingStyleRange: "1-3", entriesFromBookmark: "Missing" } },
+        content: [{ type: "paragraph" }],
+      },
+    ]);
+    const xml = documentXml(json);
+    expect(xml).toContain("TOC");
+    expect(xml).toContain('w:dirty="1"');
+    expect(tocXml(json)).not.toContain(">One<");
+  });
+
+  it("fills a `\\c` table of figures from the parsed captionLabelIncludingNumbers", () => {
+    const json = docOf([
+      para([text("Figure "), simple(" SEQ Figure \\* ARABIC ", "1"), text(": One")], {
+        style: "Caption",
+      }),
+      {
+        type: "tocField",
+        attrs: { options: { captionLabelIncludingNumbers: "Figure" } },
+        content: [{ type: "paragraph" }],
+      },
+    ]);
+    const toc = tocXml(json);
+    expect(toc).toContain("Figure 1: One");
+    expect(toc).toContain('\\c "Figure"');
+  });
+
+  it("does not include outline-only paragraphs when `\\u` is off", () => {
+    const json = docOf([
+      para([text("Styled Heading")], { heading: "Heading1" }),
+      para([text("Outline Only")], { outlineLevel: 0 }),
+      {
+        type: "tocField",
+        attrs: { options: { headingStyleRange: "1-3", useAppliedParagraphOutlineLevel: false } },
+        content: [{ type: "paragraph" }],
+      },
+    ]);
+    const toc = tocXml(json);
+    expect(toc).toContain("Styled Heading");
+    expect(toc).not.toContain(">Outline Only<");
+  });
+
+  it("keeps an unfillable TOC's field instruction (dirty placeholder)", () => {
+    const json = docOf([
+      para([text("body only")]),
+      {
+        type: "tocField",
+        attrs: { options: { headingStyleRange: "1-3" } },
+        content: [{ type: "paragraph" }],
+      },
+    ]);
+    const bytes = generateDOCXSync(json, { prepare: false }) as Uint8Array;
+    const xml = new TextDecoder().decode(unzipSync(bytes)["word/document.xml"]);
+    expect(xml).toContain("w:fldChar");
+    expect(xml).toContain('w:dirty="1"');
+    expect(xml).toContain("TOC");
+    // Round-trip: the placeholder field parses back as a tocField.
+    const parsed = parseDOCXSync(bytes);
+    expect(parsed.content?.some((n) => n.type === "tocField")).toBe(true);
+  });
+
+  it("fills the generated entries' page numbers from tocPageOf", () => {
+    const json = docOf([
+      para([text("One")], { heading: "Heading1" }),
+      para([text("Two")], { heading: "Heading2" }),
+      {
+        type: "tocField",
+        attrs: { options: { headingStyleRange: "1-3" } },
+        content: [{ type: "paragraph" }],
+      },
+    ]);
+    const toc = tocXml(json, {
+      fields: { tocPageOf: ({ index }) => [3, 5][index] },
+    });
+    expect(toc).toContain(">One<");
+    expect(toc).toContain(">3<");
+    expect(toc).toContain(">Two<");
+    expect(toc).toContain(">5<");
+  });
+
+  it("re-resolves REF caches after the referenced text is edited", () => {
+    const refCache = (json: JSONContent): string => {
+      const match = /<w:fldSimple[^>]*w:instr="[^"]*REF[^"]*"[^>]*>(.*?)<\/w:fldSimple>/.exec(
+        documentXml(json),
+      );
+      return [...match![1]!.matchAll(/<w:t[^>]*>([^<]*)<\/w:t>/g)]
+        .map((entry) => entry[1]!)
+        .join("");
+    };
+    const before = docOf([
+      para([bookmarkStart(1, "_Ref1"), text("Alpha"), bookmarkEnd(1)]),
+      para([simple(" REF _Ref1 \\h ", "")]),
+    ]);
+    expect(refCache(before)).toBe("Alpha");
+    // Edit the referenced text, then regenerate: the stale cache follows.
+    const edited = docOf([
+      para([bookmarkStart(1, "_Ref1"), text("Beta"), bookmarkEnd(1)]),
+      para([simple(" REF _Ref1 \\h ", "Alpha")]),
+    ]);
+    expect(refCache(edited)).toBe("Beta");
+  });
+
+  it("right-aligns the page number inside the docen default text column", () => {
+    // A4 minus the docen 1440-twip side margins. A hardcoded Word Letter
+    // default (9350) overruns this column: LibreOffice renders the leader but
+    // drops the page-number run (reproduced with a TOC inside a table cell).
+    const json = docOf([
+      para([text("One")], { heading: "Heading1" }),
+      {
+        type: "tocField",
+        attrs: { options: { headingStyleRange: "1-3" } },
+        content: [{ type: "paragraph" }],
+      },
+    ]);
+    const xml = documentXml(json, { fields: { tocPageOf: () => 1 } });
+    expect(xml).toContain('<w:tab w:val="right" w:pos="9026" w:leader="dot"/>');
+  });
+
+  it("derives the tab stop from the document's own section geometry", () => {
+    const json = docOf(
+      [
+        para([text("One")], { heading: "Heading1" }),
+        {
+          type: "tocField",
+          attrs: { options: { headingStyleRange: "1-3" } },
+          content: [{ type: "paragraph" }],
+        },
+      ],
+      {
+        sectionProperties: {
+          pageSize: { width: 12240, height: 15840 },
+          pageMargin: { left: 1800, right: 1800 },
+        },
+      },
+    );
+    const xml = documentXml(json, { fields: { tocPageOf: () => 1 } });
+    expect(xml).toContain('<w:tab w:val="right" w:pos="8640" w:leader="dot"/>');
+  });
+
+  it("uses the TOC's own section geometry across a section break", () => {
+    const json = docOf([
+      para([text("Section One")], { heading: "Heading1" }),
+      {
+        type: "tocField",
+        attrs: { options: { headingStyleRange: "1-3" } },
+        content: [{ type: "paragraph" }],
+      },
+      // Closes section one with its own 1800-twip side margins.
+      para([text("first section end")], {
+        sectionProperties: {
+          pageSize: { width: 11906, height: 16838 },
+          pageMargin: { left: 1800, right: 1800 },
+        },
+      }),
+      {
+        type: "tocField",
+        attrs: { options: { headingStyleRange: "1-3" } },
+        content: [{ type: "paragraph" }],
+      },
+    ]);
+    const xml = documentXml(json, { fields: { tocPageOf: () => 1 } });
+    // Section one's TOC: 11906 − 3600 = 8306; the final (defaults) TOC: 9026.
+    expect(xml).toContain('w:pos="8306"');
+    expect(xml).toContain('w:pos="9026"');
+    expect(xml).not.toContain('w:pos="9350"');
   });
 
   it("leaves a document without any patchable field untouched (non-mutating)", () => {

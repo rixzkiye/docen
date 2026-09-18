@@ -1,0 +1,80 @@
+{
+  "sections": [
+    {
+      "headers": {
+        "default": [
+          {
+            "paragraph": {
+              "children": [
+                "PAGE ",
+                {
+                  "simpleField": {
+                    "instruction": " PAGE ",
+                    "cachedValue": "99"
+                  }
+                },
+                " / ",
+                {
+                  "complexField": {
+                    "instruction": " NUMPAGES ",
+                    "result": "99"
+                  }
+                },
+                " | SEC ",
+                {
+                  "simpleField": {
+                    "instruction": " SECTION ",
+                    "cachedValue": "1"
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "footers": {
+        "default": [
+          {
+            "paragraph": {
+              "children": [
+                "ref ",
+                {
+                  "simpleField": {
+                    "instruction": " PAGEREF _Ref1 \\h ",
+                    "cachedValue": "99"
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "children": [
+        {
+          "paragraph": {
+            "heading": "Heading1",
+            "children": ["One"]
+          }
+        },
+        {
+          "paragraph": {
+            "children": [
+              {
+                "bookmarkStart": {
+                  "id": 1,
+                  "name": "_Ref1"
+                }
+              },
+              "target",
+              {
+                "bookmarkEnd": {
+                  "id": 1
+                }
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

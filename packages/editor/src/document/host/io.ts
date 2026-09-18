@@ -7,6 +7,7 @@
  */
 
 import {
+  EncryptedDocumentError,
   generateDOCX,
   generateHTML,
   generateMarkdown,
@@ -42,7 +43,7 @@ import {
   type SaveFormat,
 } from "../file-formats";
 import { findTemplate, templateLocale } from "../templates";
-import { collectBookmarkPages, collectFieldPages } from "./field-pages";
+import { collectBookmarkPages, collectFieldPages, collectTocTargetPages } from "./field-pages";
 
 /** The file-I/O domain's view of the host — only what its bodies touch. */
 export interface IOHostView {
@@ -102,6 +103,9 @@ export class IODomain {
    *  through the editor i18n table (en/zh), anything else surfaces its own
    *  message. */
   openRefusalMessage(err: unknown): string {
+    if (err instanceof EncryptedDocumentError) {
+      return t("open.encrypted", this.host.element());
+    }
     if (err instanceof OpenFormatError) {
       if (err.code === "flat-opc") return t("open.flat-opc-unsupported", this.host.element());
       return t("open.unsupported", this.host.element()).replace("{name}", err.file ?? "(unknown)");
@@ -580,6 +584,7 @@ export class IODomain {
     };
     const fieldPages = collectFieldPages(editor.state.doc, view);
     const bookmarkPages = collectBookmarkPages(editor.state.doc, view);
+    const tocPages = collectTocTargetPages(editor.state.doc, view);
     return {
       // PAGEREF resolves against the bookmark's page; everything else against
       // the field's own.
@@ -590,6 +595,16 @@ export class IODomain {
           }
         : {}),
       pageCount: pages.length,
+      // A saved TOC whose cached entries were missing gets real page numbers
+      // from the live canvas pagination instead of Word's empty slots.
+      ...(tocPages.headingPages.size > 0 || tocPages.captionPages.size > 0
+        ? {
+            tocPageOf: ({ index, kind }: { index: number; kind: "heading" | "caption" }) =>
+              kind === "heading"
+                ? tocPages.headingPages.get(index)
+                : tocPages.captionPages.get(index),
+          }
+        : {}),
     };
   }
 

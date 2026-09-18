@@ -1,3 +1,5 @@
+import { crc32 } from "node:zlib";
+
 import { zipSync } from "fflate";
 import { describe, expect, it } from "vitest";
 
@@ -16,6 +18,112 @@ function zip(files: Record<string, Uint8Array | string | number>): Uint8Array {
   const data: Record<string, Uint8Array> = {};
   for (const [name, value] of Object.entries(files)) data[name] = bytes(value);
   return zipSync(data, { level: 6 });
+}
+
+/**
+ * A minimal stored-entry ZIP whose single entry streams through a data
+ * descriptor (general-purpose bit 3): local header CRC/sizes zeroed, the true
+ * values after the payload, no ZIP64. Mirrors what LibreOffice's DOCX export
+ * produces (`_rels/.rels`, `word/document.xml`, … all carry bit 3).
+ */
+function zipWithDataDescriptor(name: string, content: Uint8Array): Uint8Array {
+  const nameBytes = encoder.encode(name);
+  const checksum = crc32(content) >>> 0;
+  const local = new Uint8Array(30 + nameBytes.length);
+  const lv = new DataView(local.buffer);
+  lv.setUint32(0, 0x04034b50, true);
+  lv.setUint16(4, 20, true); // version needed
+  lv.setUint16(6, 0x08, true); // flags: data descriptor
+  lv.setUint16(8, 0, true); // stored
+  lv.setUint32(14, 0, true); // CRC deferred
+  lv.setUint32(18, 0, true); // compressed size deferred
+  lv.setUint32(22, 0, true); // uncompressed size deferred
+  lv.setUint16(26, nameBytes.length, true);
+  local.set(nameBytes, 30);
+  const descriptor = new Uint8Array(16);
+  const dv = new DataView(descriptor.buffer);
+  dv.setUint32(0, 0x08074b50, true);
+  dv.setUint32(4, checksum, true);
+  dv.setUint32(8, content.length, true);
+  dv.setUint32(12, content.length, true);
+  const central = new Uint8Array(46 + nameBytes.length);
+  const cv = new DataView(central.buffer);
+  cv.setUint32(0, 0x02014b50, true);
+  cv.setUint16(4, 20, true); // version made by
+  cv.setUint16(6, 20, true); // version needed
+  cv.setUint16(8, 0x08, true); // flags
+  cv.setUint16(10, 0, true); // stored
+  cv.setUint32(16, checksum, true);
+  cv.setUint32(20, content.length, true);
+  cv.setUint32(24, content.length, true);
+  cv.setUint16(28, nameBytes.length, true);
+  cv.setUint32(42, 0, true); // local header offset
+  central.set(nameBytes, 46);
+  const eocd = new Uint8Array(22);
+  const ev = new DataView(eocd.buffer);
+  ev.setUint32(0, 0x06054b50, true);
+  ev.setUint16(8, 1, true); // entries on disk
+  ev.setUint16(10, 1, true); // entries total
+  ev.setUint32(12, central.length, true);
+  ev.setUint32(16, local.length + content.length + descriptor.length, true);
+  const archive = new Uint8Array(
+    local.length + content.length + descriptor.length + central.length + 22,
+  );
+  let cursor = 0;
+  for (const part of [local, content, descriptor, central, eocd]) {
+    archive.set(part, cursor);
+    cursor += part.length;
+  }
+  return archive;
+}
+
+/**
+ * Convert the archive's last local entry to a streaming (data-descriptor)
+ * write: zero its local CRC/sizes, set bit 3 in both headers and insert a
+ * signed descriptor after the payload, shifting the central directory and
+ * EOCD offset. Only the last entry is converted so the earlier local-header
+ * offsets recorded in the central directory stay valid — this rewrites a real
+ * multi-part engine package (`validDocx`) into the LibreOffice write shape.
+ */
+function withDataDescriptor(input: Uint8Array): Uint8Array {
+  const ordered = entriesOf(input).sort((a, b) => a.localOffset - b.localOffset);
+  const entry = ordered[ordered.length - 1];
+  if (!entry) throw new Error("archive has no entries");
+  const view = new DataView(input.buffer, input.byteOffset, input.byteLength);
+  const nameLength = view.getUint16(entry.localOffset + 26, true);
+  const extraLength = view.getUint16(entry.localOffset + 28, true);
+  const dataEnd = entry.localOffset + 30 + nameLength + extraLength + entry.compressed;
+  const descriptor = new Uint8Array(16);
+  const dview = new DataView(descriptor.buffer);
+  dview.setUint32(0, 0x08074b50, true);
+  dview.setUint32(4, entry.crc, true);
+  dview.setUint32(8, entry.compressed, true);
+  dview.setUint32(12, entry.uncompressed, true);
+
+  const out = new Uint8Array(input.length + descriptor.length);
+  out.set(input.subarray(0, dataEnd), 0);
+  out.set(descriptor, dataEnd);
+  out.set(input.subarray(dataEnd), dataEnd + descriptor.length);
+  const outView = new DataView(out.buffer);
+  outView.setUint16(
+    entry.localOffset + 6,
+    view.getUint16(entry.localOffset + 6, true) | 0x08,
+    true,
+  );
+  outView.setUint32(entry.localOffset + 14, 0, true);
+  outView.setUint32(entry.localOffset + 18, 0, true);
+  outView.setUint32(entry.localOffset + 22, 0, true);
+  outView.setUint16(
+    entry.centralOffset + descriptor.length + 8,
+    view.getUint16(entry.centralOffset + 8, true) | 0x08,
+    true,
+  );
+  let oldEocd = input.length - 22;
+  while (oldEocd >= 0 && view.getUint32(oldEocd, true) !== 0x06054b50) oldEocd -= 1;
+  let eocd = out.length - 22;
+  while (eocd >= 0 && outView.getUint32(eocd, true) !== 0x06054b50) eocd -= 1;
+  outView.setUint32(eocd + 16, view.getUint32(oldEocd + 16, true) + descriptor.length, true);
+  return out;
 }
 
 interface EntryHeader {
@@ -106,54 +214,6 @@ function expectRejection(run: () => void, code: string): void {
   throw new Error(`expected rejection ${code}`);
 }
 
-/**
- * Convert the archive's last local entry to a streaming (data-descriptor)
- * write: zero its local CRC/sizes, set bit 3 in both headers and insert a
- * signed descriptor after the payload, shifting the central directory and
- * EOCD offset. Only the last entry is converted so the earlier local-header
- * offsets recorded in the central directory stay valid.
- */
-function withDataDescriptor(input: Uint8Array): Uint8Array {
-  const ordered = entriesOf(input).sort((a, b) => a.localOffset - b.localOffset);
-  const entry = ordered[ordered.length - 1];
-  if (!entry) throw new Error("archive has no entries");
-  const view = new DataView(input.buffer, input.byteOffset, input.byteLength);
-  const nameLength = view.getUint16(entry.localOffset + 26, true);
-  const extraLength = view.getUint16(entry.localOffset + 28, true);
-  const dataEnd = entry.localOffset + 30 + nameLength + extraLength + entry.compressed;
-  const descriptor = new Uint8Array(16);
-  const dview = new DataView(descriptor.buffer);
-  dview.setUint32(0, 0x08074b50, true);
-  dview.setUint32(4, entry.crc, true);
-  dview.setUint32(8, entry.compressed, true);
-  dview.setUint32(12, entry.uncompressed, true);
-
-  const out = new Uint8Array(input.length + descriptor.length);
-  out.set(input.subarray(0, dataEnd), 0);
-  out.set(descriptor, dataEnd);
-  out.set(input.subarray(dataEnd), dataEnd + descriptor.length);
-  const outView = new DataView(out.buffer);
-  outView.setUint16(
-    entry.localOffset + 6,
-    view.getUint16(entry.localOffset + 6, true) | 0x08,
-    true,
-  );
-  outView.setUint32(entry.localOffset + 14, 0, true);
-  outView.setUint32(entry.localOffset + 18, 0, true);
-  outView.setUint32(entry.localOffset + 22, 0, true);
-  outView.setUint16(
-    entry.centralOffset + descriptor.length + 8,
-    view.getUint16(entry.centralOffset + 8, true) | 0x08,
-    true,
-  );
-  let oldEocd = input.length - 22;
-  while (oldEocd >= 0 && view.getUint32(oldEocd, true) !== 0x06054b50) oldEocd -= 1;
-  let eocd = out.length - 22;
-  while (eocd >= 0 && outView.getUint32(eocd, true) !== 0x06054b50) eocd -= 1;
-  outView.setUint32(eocd + 16, view.getUint32(oldEocd + 16, true) + descriptor.length, true);
-  return out;
-}
-
 /** A valid DOCX generated by the engine (guard must accept it). */
 function validDocx(): Uint8Array {
   return generateDOCXSync({
@@ -227,17 +287,19 @@ describe("archive admission limits", () => {
     );
   });
 
-  it("accepts streaming data-descriptor entries (LibreOffice resaves) but rejects a lying descriptor", () => {
-    // Word-processing tools stream packages: local CRC/sizes stay zero and the
-    // real values sit in a data descriptor after the payload. office-open
-    // itself reads those; the admission guard must validate them through the
-    // central directory + descriptor instead of rejecting the whole document
-    // (LibreOffice's own DOCX resave of every R8 fixture is such an archive).
+  it("accepts streamed data-descriptor entries (the LibreOffice export shape)", () => {
+    // LibreOffice writes every part with general-purpose bit 3: local CRC and
+    // sizes are zeroed and a data descriptor follows the payload.
+    const archive = zipWithDataDescriptor("word/document.xml", bytes("<a/>"));
+    expect(() => assertArchiveWithinLimits(archive)).not.toThrow();
+
+    // The same shape on a real multi-part engine package opens end to end.
     const streamed = withDataDescriptor(validDocx());
     expect(() => assertArchiveWithinLimits(streamed)).not.toThrow();
     expect(parseDOCXSync(streamed)).toBeDefined();
 
-    // A descriptor that disagrees with the central directory is still rejected.
+    // A descriptor whose sizes disagree with the central directory is rejected
+    // even though the payload itself is untouched.
     const view = new DataView(streamed.buffer, streamed.byteOffset, streamed.byteLength);
     const entries = entriesOf(streamed);
     const target = entries[entries.length - 1]!;
@@ -246,6 +308,15 @@ describe("archive admission limits", () => {
     const descriptor = target.localOffset + 30 + nameLength + extraLength + target.compressed + 4;
     view.setUint32(descriptor + 8, 123_456, true);
     expectRejection(() => assertArchiveWithinLimits(streamed), "ZIP_LOCAL_HEADER_INVALID");
+  });
+
+  it("rejects a data descriptor that disagrees with the central directory", () => {
+    const archive = zipWithDataDescriptor("word/document.xml", bytes("<a/>"));
+    // Byte 4 of the descriptor is the CRC-32 — flip it.
+    const descriptorCrc = 30 + "word/document.xml".length + "<a/>".length + 4;
+    const corrupted = archive.slice();
+    corrupted[descriptorCrc] = (corrupted[descriptorCrc]! ^ 0xff) & 0xff;
+    expectRejection(() => assertArchiveWithinLimits(corrupted), "ZIP_LOCAL_HEADER_INVALID");
   });
 
   it("rejects unsupported compression methods", () => {

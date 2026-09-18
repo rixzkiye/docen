@@ -20,11 +20,10 @@ export const PAPER_SIZES: Readonly<Record<string, readonly [number, number]>> = 
   b5: [182, 257],
 };
 
-/** MS Office margin presets (mm). `normal` matches the engine default
- *  (@office-open/docx sectionMarginDefaults: top/bottom 25.4mm, left/right
- *  31.75mm = MS Office zh-CN "Normal"). */
+/** MS Office margin presets (mm). `normal` is Word's international Normal —
+ *  1" (25.4mm) on every side; never the zh-CN 25.4/31.75 preset. */
 export const MARGINS: Readonly<Record<string, string>> = {
-  normal: "25.4mm 31.75mm",
+  normal: "25.4mm",
   narrow: "12.7mm",
   moderate: "25.4mm 19.05mm",
   wide: "25.4mm 50.8mm",

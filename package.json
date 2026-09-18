@@ -44,6 +44,7 @@
     "build": "pnpm --filter \"./packages/**\" -r build",
     "check": "vp check --fix",
     "test": "vp test run",
+    "test:pack": "node scripts/pack-smoke.mjs",
     "editability": "vp test run packages/docx/tests/oracle/fixtures.spec.ts packages/docx/tests/fuzz/fuzz.spec.ts && node packages/docx/tests/oracle/run.mjs",
     "bench": "vp test bench",
     "version": "pnpm --filter \"./packages/**\" -r exec basis version",

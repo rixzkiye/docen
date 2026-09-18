@@ -1,0 +1,117 @@
+{
+  "type": "doc",
+  "content": [
+    {
+      "type": "paragraph",
+      "attrs": {
+        "heading": "Heading1"
+      },
+      "content": [
+        {
+          "type": "text",
+          "text": "Chapter One"
+        }
+      ]
+    },
+    {
+      "type": "paragraph",
+      "content": [
+        {
+          "type": "text",
+          "text": "Body one"
+        }
+      ]
+    },
+    {
+      "type": "paragraph",
+      "content": [
+        {
+          "type": "pageBreak"
+        }
+      ]
+    },
+    {
+      "type": "paragraph",
+      "attrs": {
+        "heading": "Heading2"
+      },
+      "content": [
+        {
+          "type": "text",
+          "text": "Section One"
+        }
+      ]
+    },
+    {
+      "type": "paragraph",
+      "attrs": {
+        "heading": "Heading3"
+      },
+      "content": [
+        {
+          "type": "text",
+          "text": "Subsection"
+        }
+      ]
+    },
+    {
+      "type": "paragraph",
+      "content": [
+        {
+          "type": "pageBreak"
+        }
+      ]
+    },
+    {
+      "type": "paragraph",
+      "attrs": {
+        "heading": "Heading2"
+      },
+      "content": [
+        {
+          "type": "text",
+          "text": "Section Two"
+        }
+      ]
+    },
+    {
+      "type": "paragraph",
+      "content": [
+        {
+          "type": "text",
+          "text": "Page "
+        },
+        {
+          "type": "inlinePassthrough",
+          "attrs": {
+            "data": "{\"simpleField\":{\"instruction\":\" PAGE \",\"cachedValue\":\"99\"}}"
+          }
+        },
+        {
+          "type": "text",
+          "text": " / "
+        },
+        {
+          "type": "inlinePassthrough",
+          "attrs": {
+            "data": "{\"simpleField\":{\"instruction\":\" NUMPAGES \",\"cachedValue\":\"99\"}}"
+          }
+        }
+      ]
+    },
+    {
+      "type": "tocField",
+      "attrs": {
+        "options": {
+          "headingStyleRange": "1-3",
+          "hyperlink": true
+        }
+      },
+      "content": [
+        {
+          "type": "paragraph"
+        }
+      ]
+    }
+  ]
+}

@@ -16,3 +16,4 @@ export * from "./block/block";
 export * from "./flow/flow";
 export * from "./math/math-layout";
 export * from "./text/shaped-measurer";
+export * from "./text/default-fonts";

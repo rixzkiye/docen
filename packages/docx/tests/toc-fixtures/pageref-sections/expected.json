@@ -1,0 +1,31 @@
+{
+  "description": "PAGEREF across a page-number restart + PAGE caches",
+  "fields": {
+    "pageOf": {
+      "0": 1,
+      "2": 5
+    },
+    "bookmarkPages": {
+      "_Ref2": 5
+    }
+  },
+  "python": {
+    "simple": [
+      ["PAGE", "1"],
+      ["PAGEREF _Ref2 \\h", "5"],
+      ["PAGE", "5"]
+    ],
+    "instrTexts": [],
+    "tocEntries": []
+  },
+  "xmlPresent": ["w:pgNumType w:start=\"5\""],
+  "pdf": {
+    "patterns": ["page\\s+1\\s*->\\s*5", "target\\s+5"]
+  },
+  "update": {
+    "patterns": ["page\\s+1\\s*->\\s*5", "target\\s+5"]
+  },
+  "resavePython": {
+    "instrTexts": ["PAGE", "PAGEREF _Ref2"]
+  }
+}

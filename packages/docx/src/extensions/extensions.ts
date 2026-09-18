@@ -161,7 +161,7 @@ export {
 } from "./marks";
 export { Document, createDocument } from "./document";
 export { Paragraph } from "./paragraph";
-export { detectHeadingLevel, HEADING_COMPILE_MAP } from "./paragraph";
+export { detectHeadingLevel, HEADING_COMPILE_MAP, paragraphStyleNames } from "./paragraph";
 // Flat list model: generated numbering references + level builders shared by
 // compile (definition registration) and the editor list commands.
 export {
@@ -208,7 +208,12 @@ export { Passthrough, InlinePassthrough } from "./passthrough";
 export { TocField } from "./toc-field";
 export { SdtBlock, SdtInline } from "./sdt";
 export { RunMarker, runElementTagOf, type RunElementTag } from "./run-marker";
-export { PRESERVED_RUN_ELEMENTS, RUN_CHILDREN_DROPPED } from "./coverage";
+export {
+  PRESERVE_ONLY_ELEMENTS,
+  PRESERVED_RUN_ELEMENTS,
+  RUN_CHILDREN_DROPPED,
+  type PreserveOnlyElement,
+} from "./coverage";
 export { MathInline, convertLinearToOMML, convertOMMLToLinear } from "./math";
 export { Textbox } from "./textbox";
 export {

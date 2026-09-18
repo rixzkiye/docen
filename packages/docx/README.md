@@ -26,6 +26,11 @@ $ pnpm add @docen/docx
 $ npm install @docen/docx
 ```
 
+### Runtime dependencies
+
+- `@docen/markdown` (the Markdown IR layer behind `parseMarkdown`/`generateMarkdown`) is **bundled into `dist`**: the published package is self-contained and never resolves a separate markdown package at install time.
+- `linkedom` is a real **runtime dependency** — `parseHTML` lazily imports it on the server, where no native DOM exists. Browser bundles take the native `DOMParser` path and never load it.
+
 ## Quick Start
 
 ```typescript
@@ -164,15 +169,30 @@ pass is non-mutating — the input JSON is untouched):
   and paragraph numbering the builder does not own).
 - **TOC** — a `tocField` whose cached entries are missing (the from-scratch
   placeholder) gets real entry paragraphs built from the document's headings
-  (`\o`/`\t`/`\u` switches honored) or, for a `\c` field, from the matching
-  captions. The field instruction stays intact, so Word/LibreOffice/the
-  editor's Update Table still refresh it; a TOC that already carries entries
-  is never recomputed.
+  (`\o` window, `\t` custom styles, `\u` outline semantics, `\b` bookmark
+  scope) or, for a `\c` field, from the matching captions. The parsed DOCX
+  option names are honored (`stylesWithLevels`, `entriesFromBookmark`,
+  `captionLabelIncludingNumbers`), as are the editor dialog's older
+  `styles`/`customStyles`/`bookmark`/`captionLabel` keys. The field
+  instruction stays intact, so Word/LibreOffice/the editor's Update Table still
+  refresh it; a TOC that already carries entries is never recomputed. A TOC
+  that cannot be filled keeps its field: the package carries the dirty
+  placeholder field (`w:fldChar` + `w:dirty="1"`) Word updates on open instead
+  of silently dropping the instruction.
 - **PAGE / NUMPAGES / PAGEREF / SECTION / SECTIONPAGES** — resolved through
   the optional `fields` option: pass `pageOf` (and `pageCount`) from your
   pagination. The editor's save path feeds its live canvas pages; without a
   context these fields keep the model's cache rather than inventing a number:
   Word updates them on open from its own pagination.
+- **TOC entry page numbers** — pass `tocPageOf` (1-based displayed page per
+  collected heading/caption index) and a filled TOC carries the same cached
+  numbers a reader shows without updating the field. The editor's save path
+  derives them from the live canvas pagination; without the callback the
+  entries keep Word's empty page-number slot. Each entry's right-aligned page
+  number tab stops at its own section's text-column edge (page size minus
+  margins, per-section sectPr honored; the docen A4/1" defaults when the model
+  carries none), never at a fixed Word Letter-default position that overruns an
+  A4/1" column and makes LibreOffice drop the number.
 
 ```typescript
 // Page context for a headless save, e.g. after your own layout pass:
@@ -180,9 +200,38 @@ await generateDOCX(json, {
   fields: {
     pageCount: 12,
     pageOf: ({ index, bookmark }) => pageByFieldIndex.get(index), // 1-based
+    tocPageOf: ({ index, kind }) =>
+      kind === "heading" ? headingPage.get(index) : captionPage.get(index),
   },
 });
 ```
+
+### Field-update behavior (LibreOffice-verified subset)
+
+The fixture matrix in [`tests/toc-fixtures/`](./tests/toc-fixtures/) drives
+every generated document through LibreOffice headless (plain PDF, resave,
+explicit "update all fields/indexes" over UNO) with python-docx/lxml as the
+structural oracle (`tests/toc-oracles*.spec.ts`, `tests/toc-oracle.py`).
+Verified behavior:
+
+- **No drift** — a `\o`/`\t` heading TOC and a `\c` caption table keep their
+  entries and page numbers; REF/NOTEREF text, PAGE/NUMPAGES/PAGEREF values and
+  plain (no `\s`) SEQ ordinals stay stable. SEQ `\*` Roman/Alphabetic formats
+  are stable; LibreOffice renders the cached TOC entries and page numbers
+  without any field update.
+- **LibreOffice limitations** (not docen defects): an explicit update ignores
+  `\b` bookmark scopes and the `\o`/`\u` filters (rebuilding 1-3 plus outline
+  paragraphs), drops `\s` chapter restarts/prefixes, recomputes `\p`/`\n`, and
+  merges multiple TOC fields into one content index on resave; a TOC inside a
+  table cell fails its UNO load (the same file converts to PDF). Header/footer
+  story field caches are preserved (not re-derived) at generation;
+  LibreOffice computes PAGE/NUMPAGES/PAGEREF live but never SECTION, so an
+  author-supplied SECTION cache is what readers show.
+- **Word interop deviation** — Word writes a chapter-numbered caption as a
+  separate `STYLEREF` field plus `SEQ`; docen caches the chapter prefix inside
+  the SEQ result, so a Word field update drops the prefix until the caption is
+  re-inserted. The cached value itself is correct and shown by Word/LO until
+  an explicit update.
 
 ### Determinism
 
@@ -210,7 +259,26 @@ nodes, 200k attributes, 8 MiB attribute/text budgets, 1024 relationships)
 plus owned-media caps (8 MiB/image, 32 MiB total, 256 entries). Every DEFLATE
 payload is streamed through a capped inflater, so a size-lying zip bomb is
 stopped at its declared cap instead of being materialized; violations throw an
-`ArchiveRejection` (`error.code` names the failed rule).
+`ArchiveRejection` (`error.code` names the failed rule). Streamed entries that
+park their CRC/sizes in a data descriptor (general-purpose bit 3 — what
+LibreOffice's DOCX export writes) are admitted after the descriptor is
+validated against the central directory, so LibreOffice-saved files re-import.
+
+### Generation defaults (page geometry & styles)
+
+Generation never lets the engine's MS Office **zh-CN** defaults leak. Every
+compiled section carries explicit `sectionProperties` from docen's own
+constants — A4, 1" (1440-twip) margins on all sides, 0.5" header/footer
+distance (`DOCEN_DEFAULT_PAGE_SIZE`, `DOCEN_DEFAULT_PAGE_MARGIN`,
+`docenDefaultSectionProperties()`), instead of office-open's
+`sectionMarginDefaults` (1.25" side margins, 851/992 header/footer). A
+model-supplied sectPr is preserved verbatim; only a section without one gets
+the defaults. The document style table keeps office-open's locale-neutral
+ECMA-376 defaults (theme font refs — Calibri/Calibri Light — and `en-US`
+language), and theme-only East Asian font tokens resolve with the
+caller-supplied document language (`DOCEN_DEFAULT_EAST_ASIA_LANGUAGE` is
+`en-US`; pass `"zh-CN"` explicitly for a zh-CN document) — never an implicit
+zh-CN face (`等线`/DengXian).
 
 ### Streaming benchmark
 
@@ -218,6 +286,16 @@ stopped at its declared cap instead of being materialized; violations throw an
 [`bench/streaming-bench.mjs`](./bench/streaming-bench.mjs) (time + peak RSS,
 sync/async/stream); recorded numbers and thresholds live in
 [`bench/README.md`](./bench/README.md).
+
+### Preserve-only content
+
+Elements the Tiptap model deliberately carries without authoring — SmartArt,
+OLE objects, symbol runs, comment range markers, customXml, subDoc, proofErr,
+rawXml, altChunk — plus the complex-structure matrix (altChunk/subDoc/glossary/
+encrypted containers) are documented in
+[`docs/passthrough.md`](./docs/passthrough.md). Round-trip is byte-faithful;
+the editor warns when a loaded document contains uneditable container content
+instead of silently dropping it.
 
 ## Architecture
 

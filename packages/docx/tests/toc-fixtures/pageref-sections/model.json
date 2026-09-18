@@ -1,0 +1,61 @@
+{
+  "sections": [
+    {
+      "children": [
+        {
+          "paragraph": {
+            "children": [
+              "page ",
+              {
+                "simpleField": {
+                  "instruction": " PAGE ",
+                  "cachedValue": "99"
+                }
+              },
+              " -> ",
+              {
+                "simpleField": {
+                  "instruction": " PAGEREF _Ref2 \\h ",
+                  "cachedValue": "99"
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "properties": {
+        "pageNumberType": {
+          "start": 5
+        }
+      },
+      "children": [
+        {
+          "paragraph": {
+            "children": [
+              {
+                "bookmarkStart": {
+                  "id": 2,
+                  "name": "_Ref2"
+                }
+              },
+              "target ",
+              {
+                "simpleField": {
+                  "instruction": " PAGE ",
+                  "cachedValue": "99"
+                }
+              },
+              {
+                "bookmarkEnd": {
+                  "id": 2
+                }
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

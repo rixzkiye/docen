@@ -16,8 +16,13 @@ A future `@docen/pptx` / `@docen/xlsx` would follow the same pattern: implement 
 
 ## Installation
 
+Consumed through [`@docen/docx`](https://www.npmjs.com/package/@docen/docx),
+which bundles this layer into its published `dist` — installing `@docen/docx`
+is all a consumer needs; a separate `@docen/markdown` install is not required.
+Inside this monorepo the package builds and tests standalone.
+
 ```bash
-$ pnpm add @docen/markdown
+$ pnpm add @docen/docx
 ```
 
 ## Usage
