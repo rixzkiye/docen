@@ -291,6 +291,8 @@ export const LOCAL_HANDLED: ReadonlySet<string> = new Set([
   // Picture Format context tab's Accessibility group / Size split.
   "drawing-properties",
   "drawing-crop",
+  "edit-shape",
+  "shape-edit-points",
   // Footnote prompts for the note text, references the caret and appends the
   // note body to documentExtras.footnotes. Equation drops a placeholder
   // math template (the gallery's fraction/script/radical/sum/integral) at
@@ -310,6 +312,7 @@ export const LOCAL_HANDLED: ReadonlySet<string> = new Set([
   // Chart Design's Edit Data opens the data-grid dialog (the commit arrives
   // via chart:ok → the chart-data-apply command).
   "chart-edit-data",
+  "chart-change-type",
   "equation",
   // Page Color writes the doc-level w:background (doc.attrs.background) from
   // the color-picker's palette value. Page Borders stamps a w:pgBorders

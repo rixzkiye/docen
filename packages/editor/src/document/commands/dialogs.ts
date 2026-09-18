@@ -268,6 +268,32 @@ export class DialogCommands {
       | undefined;
   }
 
+  /** Chart Design tab → Change Chart Type — open the type dialog. */
+  chartTypeAtSelection(): void {
+    const target = this.#target();
+    const sel = target?.state.selection;
+    if (!sel || !(sel instanceof NodeSelection) || sel.node.type.name !== "chart") return;
+    const chart = sel.node.attrs.chart as ChartOptions | null | undefined;
+    const currentType = (chart?.type as string) ?? "column";
+    this.#chartTypeDialog()?.show(currentType);
+  }
+
+  /** Change Chart Type dialog 确定 — update the selected chart's type. */
+  readonly onChartTypeOk = (event: Event): void => {
+    const { type } = (event as CustomEvent<{ type?: string }>).detail ?? {};
+    if (!type) return;
+    const target = this.#target();
+    target?.commands["chart-type"]?.(type);
+    this.host.bridge()?.focus();
+  };
+
+  #chartTypeDialog(): { show(type?: string): void } | null | undefined {
+    return this.host.element().shadowRoot?.querySelector("docen-chart-type-dialog") as
+      | { show(type?: string): void }
+      | null
+      | undefined;
+  }
+
   /** Language dialog 确定 — commit the selection's proofing language
    *  (w:lang). With a bare caret the setting rides the run the caret sits in
    *  (extended over the adjacent text sharing its marks) — the viewless input

@@ -277,10 +277,12 @@ declare module "@tiptap/core" {
       "shape-outline": (value?: string) => ReturnType;
       "shape-effects": (value?: string) => ReturnType;
       "shape-text-direction": (value?: string) => ReturnType;
+      "shape-custom-geometry-apply": (value?: string | Record<string, unknown>) => ReturnType;
       // Chart Design tab — the type token (column/bar/line/area/pie/doughnut/
       // scatter), the legend placement ("none" or a LegendPosition), and the
       // Edit Data dialog's commit (JSON {title?, categories?, series?}).
       "chart-type": (value?: string) => ReturnType;
+      "chart-style": (value?: string) => ReturnType;
       "chart-legend": (value?: string) => ReturnType;
       "chart-data-apply": (value?: string) => ReturnType;
       // value is the series index to remove (the plot's sub-selected series).
@@ -296,7 +298,8 @@ declare module "@tiptap/core" {
       wrap: (value?: string) => ReturnType;
       rotate: (value?: string) => ReturnType;
       position: (value?: string) => ReturnType;
-      "align-objects": (value?: string) => ReturnType;
+      "align-objects": (value?: string, payload?: string) => ReturnType;
+      "drawing-position-mode": (mode?: string) => ReturnType;
       // Group/Ungroup/Distribute — the Arrange group's multi-selection
       // actions. payload is JSON {members: [{pos, box}]} with the member page
       // boxes in px (the multi-selection overlay's hit boxes); distribute's
@@ -455,7 +458,9 @@ export const WIRED_DISPATCH: ReadonlySet<string> = new Set([
   "shape-outline",
   "shape-effects",
   "shape-text-direction",
+  "shape-custom-geometry-apply",
   "chart-type",
+  "chart-style",
   "chart-legend",
   "chart-data-apply",
   "chart-series-delete",
@@ -468,6 +473,7 @@ export const WIRED_DISPATCH: ReadonlySet<string> = new Set([
   "rotate",
   "position",
   "align-objects",
+  "drawing-position-mode",
   "drawing-group",
   "drawing-ungroup",
   "drawing-distribute",
@@ -1343,6 +1349,16 @@ export function wrapMenuValueOf(state: EditorState): string | null {
   return f.behindDocument === true ? "behind" : "front";
 }
 
+/** The Position Mode for a selected floating drawing: "moveWithText" or "fixPosition". */
+export function drawingPositionModeOf(state: EditorState): "moveWithText" | "fixPosition" {
+  const floating = floatingDrawingAt(state);
+  if (!floating) return "moveWithText";
+  const f = floatingOf(floating);
+  const v = f.verticalPosition as Record<string, unknown> | undefined;
+  if (v?.relative === "page" || f.lockAnchor === true) return "fixPosition";
+  return "moveWithText";
+}
+
 /** The Position gallery's current cell (tl…br) — the margin-relative align
  *  pair both axes stamp together. Null for an inline drawing, offset anchors
  *  (a dragged float, Word's "custom position"), or no selection — no cell
@@ -1486,7 +1502,15 @@ function shapeAt(
 
 /** The chart types whose series carry a grouping (w:bar/line/area families +
  *  stock's OHLC lanes) — the rest have none to hand down. */
-const GROUPING_CHART_TYPES: readonly ChartType[] = ["column", "bar", "line", "area", "stock"];
+const GROUPING_CHART_TYPES: readonly ChartType[] = [
+  "column",
+  "bar",
+  "line",
+  "area",
+  "stock",
+  "surface",
+  "combo",
+];
 
 /** The selected chart node — inline or floating alike: the type/legend/data
  *  edits write the chart payload wherever the chart sits. attrs.chart is a
@@ -5495,6 +5519,27 @@ export const DocumentCommands = Extension.create({
           else shape.bodyProperties = body;
           return stampAttrs(tr, target, { ...target.attrs, wpsShape: shape });
         },
+      "shape-custom-geometry-apply":
+        (value) =>
+        ({ state, tr }) => {
+          const target = shapeAt(state);
+          if (!target || !value) return false;
+          let parsed: Record<string, unknown>;
+          try {
+            parsed =
+              typeof value === "string" ? JSON.parse(value) : (value as Record<string, unknown>);
+          } catch {
+            return false;
+          }
+          if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return false;
+          const shape: Record<string, unknown> = {
+            ...(target.attrs.wpsShape as Record<string, unknown>),
+          };
+          shape.customGeometry = parsed;
+          delete shape.presetGeometry;
+          delete shape.geometry;
+          return stampAttrs(tr, target, { ...target.attrs, wpsShape: shape });
+        },
       // ── Chart Design — type / legend / data (the contextual tab) ────────
       // Chart Type: value is the ChartType token the renderer draws (the
       // unmodeled types grey out at the menu). Pie/doughnut/scatter/bubble/
@@ -5508,6 +5553,16 @@ export const DocumentCommands = Extension.create({
           const type = value as ChartType;
           const chart = { ...target.chart, type };
           if (!GROUPING_CHART_TYPES.includes(chart.type)) delete chart.grouping;
+          return stampChart(tr, target, chart as ChartOptions);
+        },
+      // Chart Style gallery commit: value is the style index integer.
+      "chart-style":
+        (value) =>
+        ({ state, tr }) => {
+          const target = chartAt(state);
+          if (!target || !value) return false;
+          const style = parseInt(value, 10) || 1;
+          const chart = { ...target.chart, style };
           return stampChart(tr, target, chart);
         },
       // Legend: "none" hides it (showLegend false — the painter's presence
@@ -5740,7 +5795,7 @@ export const DocumentCommands = Extension.create({
               // Word's Square conversion distances: 0.125" left/right, none
               // above/below (Top-and-Bottom carries no side distances).
               floating.margins = { left: 114300, right: 114300 };
-            } else if (value === "top-bottom") {
+            } else if (value === "top-bottom" || value === "topBottom") {
               floating.wrap = { type: "topAndBottom" };
             } else {
               return false;
@@ -5764,7 +5819,7 @@ export const DocumentCommands = Extension.create({
           } else if (value === "square" || value === "tight" || value === "through") {
             floating.wrap = { type: value };
             floating.behindDocument = false;
-          } else if (value === "top-bottom") {
+          } else if (value === "top-bottom" || value === "topBottom") {
             floating.wrap = { type: "topAndBottom" };
             floating.behindDocument = false;
           } else {
@@ -5839,8 +5894,53 @@ export const DocumentCommands = Extension.create({
       // stamping its own axis and leaving the other untouched. The two
       // distributes need multi-selection and stay greyed at the menu layer.
       "align-objects":
-        (value) =>
-        ({ state, tr }) => {
+        (value?: string, payload?: string) =>
+        ({ state, tr }: { state: EditorState; tr: Transaction }) => {
+          const members = multiMembersOf(state, payload);
+          if (members && members.length >= 2) {
+            let changed = false;
+            let targetX: ((b: Box) => number) | null = null;
+            let targetY: ((b: Box) => number) | null = null;
+            if (value === "left") {
+              const minX = Math.min(...members.map((m) => m.box.x));
+              targetX = () => minX;
+            } else if (value === "right") {
+              const maxX = Math.max(...members.map((m) => m.box.x + m.box.width));
+              targetX = (b) => maxX - b.width;
+            } else if (value === "center") {
+              const minX = Math.min(...members.map((m) => m.box.x));
+              const maxX = Math.max(...members.map((m) => m.box.x + m.box.width));
+              const midX = (minX + maxX) / 2;
+              targetX = (b) => midX - b.width / 2;
+            } else if (value === "top") {
+              const minY = Math.min(...members.map((m) => m.box.y));
+              targetY = () => minY;
+            } else if (value === "bottom") {
+              const maxY = Math.max(...members.map((m) => m.box.y + m.box.height));
+              targetY = (b) => maxY - b.height;
+            } else if (value === "middle") {
+              const minY = Math.min(...members.map((m) => m.box.y));
+              const maxY = Math.max(...members.map((m) => m.box.y + m.box.height));
+              const midY = (minY + maxY) / 2;
+              targetY = (b) => midY - b.height / 2;
+            } else {
+              return false;
+            }
+            for (const { target, box } of members) {
+              const deltaX = targetX ? Math.round((targetX(box) - box.x) * EMU_PER_PX) : 0;
+              const deltaY = targetY ? Math.round((targetY(box) - box.y) * EMU_PER_PX) : 0;
+              if (deltaX !== 0 || deltaY !== 0) {
+                const floating = floatingOf(target);
+                const h = floating.horizontalPosition as Record<string, unknown> | undefined;
+                const v = floating.verticalPosition as Record<string, unknown> | undefined;
+                if (typeof h?.offset !== "number" || typeof v?.offset !== "number") return false;
+                stampFloating(tr, target, offsetFloating(floating, deltaX, deltaY));
+                changed = true;
+              }
+            }
+            tr.setSelection(NodeSelection.create(tr.doc, members[0]!.target.pos));
+            return changed;
+          }
           const h =
             value === "center" || value === "right"
               ? value
@@ -5863,6 +5963,28 @@ export const DocumentCommands = Extension.create({
             ...(h != null ? { horizontalPosition: { relative: "margin", align: h } } : {}),
             ...(v != null ? { verticalPosition: { relative: "margin", align: v } } : {}),
           });
+        },
+      // Move with text vs Fix position on page
+      "drawing-position-mode":
+        (mode?: string) =>
+        ({ state, tr }: { state: EditorState; tr: Transaction }) => {
+          const target = floatingDrawingAt(state);
+          if (!target) return false;
+          const floating = { ...floatingOf(target) };
+          const hPos = { ...(floating.horizontalPosition as Record<string, unknown> | undefined) };
+          const vPos = { ...(floating.verticalPosition as Record<string, unknown> | undefined) };
+          if (mode === "fixPosition") {
+            hPos.relative = "page";
+            vPos.relative = "page";
+            floating.lockAnchor = true;
+          } else {
+            hPos.relative = "column";
+            vPos.relative = "paragraph";
+            floating.lockAnchor = false;
+          }
+          floating.horizontalPosition = hPos;
+          floating.verticalPosition = vPos;
+          return stampFloating(tr, target, floating);
         },
       // Word's Group on a multi-selection: one wpgGroup node replaces the
       // members (at the document-first member's position — the anchor that

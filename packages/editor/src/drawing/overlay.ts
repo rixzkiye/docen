@@ -1,4 +1,5 @@
 import { HANDLES, resizeBox, rotateDelta, type Box, type HandleId } from "./geometry";
+import { computeSmartGuides, SmartGuidesOverlay, type PageMargins } from "./smart-guides";
 
 /**
  * The drawing selection frame — Word's picture selection: a border plus eight
@@ -23,6 +24,14 @@ export interface DrawingOverlayCallbacks {
   applyBox(box: Box): void;
   applyOffset?(dx: number, dy: number, clientX?: number, clientY?: number): void;
   applyRotation?(delta: number): void;
+  snapContext?(): {
+    margins: PageMargins;
+    siblings: Box[];
+    pageHost: HTMLElement | null;
+  } | null;
+  onSelectWrap?(wrap: string): void;
+  onSelectPositionMode?(mode: "moveWithText" | "fixPosition"): void;
+  onOpenPropertiesDialog?(): void;
 }
 
 export class DrawingOverlay {
@@ -33,6 +42,11 @@ export class DrawingOverlay {
   #drag: { handle: HandleId; startX: number; startY: number; origin: Box } | null = null;
   #escCancel?: (e: KeyboardEvent) => void;
   #handles = new Map<HandleId, HTMLDivElement>();
+  #flyout?: HTMLElement & {
+    wrapMode: string;
+    positionMode: "moveWithText" | "fixPosition";
+    isFloating: boolean;
+  };
 
   constructor(callbacks: DrawingOverlayCallbacks) {
     this.#callbacks = callbacks;
@@ -96,6 +110,46 @@ export class DrawingOverlay {
     this.el.addEventListener("pointermove", (e) => this.#onPointerMove(e));
     for (const kind of ["pointerup", "pointercancel"] as const)
       this.el.addEventListener(kind, () => this.#onDragEnd());
+
+    const flyout = document.createElement(
+      "docen-layout-options-flyout",
+    ) as unknown as HTMLElement & {
+      wrapMode: string;
+      positionMode: "moveWithText" | "fixPosition";
+      isFloating: boolean;
+    };
+    Object.assign(flyout.style, {
+      position: "absolute",
+      right: "-28px",
+      top: "0px",
+      zIndex: "10",
+      pointerEvents: "auto",
+    } satisfies Partial<CSSStyleDeclaration>);
+    flyout.addEventListener("select-wrap", (e: Event) => {
+      const wrap = (e as CustomEvent<{ wrap: string }>).detail?.wrap;
+      if (wrap) this.#callbacks.onSelectWrap?.(wrap);
+    });
+    flyout.addEventListener("select-position", (e: Event) => {
+      const mode = (e as CustomEvent<{ mode: "moveWithText" | "fixPosition" }>).detail?.mode;
+      if (mode) this.#callbacks.onSelectPositionMode?.(mode);
+    });
+    flyout.addEventListener("open-dialog", () => {
+      this.#callbacks.onOpenPropertiesDialog?.();
+    });
+    this.#flyout = flyout;
+    this.el.append(flyout);
+  }
+
+  updateLayoutOptions(
+    wrapMode: string,
+    positionMode: "moveWithText" | "fixPosition",
+    isFloating: boolean,
+  ): void {
+    if (this.#flyout) {
+      this.#flyout.wrapMode = wrapMode;
+      this.#flyout.positionMode = positionMode;
+      this.#flyout.isFloating = isFloating;
+    }
   }
 
   /** Show the frame over `box` (page-local px at scale 1), tilted by
@@ -244,16 +298,48 @@ export class DrawingOverlay {
     let dx = 0;
     let dy = 0;
     const scale = (): number => this.#callbacks.scale() || 1;
+    const snapCtx = this.#callbacks.snapContext?.();
+    const guidesOverlay = snapCtx?.pageHost ? new SmartGuidesOverlay() : null;
+    if (guidesOverlay && snapCtx?.pageHost) {
+      snapCtx.pageHost.append(guidesOverlay.el);
+    }
+    const cleanUpGuides = (): void => {
+      if (guidesOverlay) {
+        guidesOverlay.clear();
+        guidesOverlay.el.remove();
+      }
+    };
     const onMove = (event: PointerEvent): void => {
       if (!moved && Math.hypot(event.clientX - startX, event.clientY - startY) < MOVE_THRESHOLD)
         return;
       moved = true;
-      dx = (event.clientX - startX) / scale();
-      dy = (event.clientY - startY) / scale();
+      const rawDx = (event.clientX - startX) / scale();
+      const rawDy = (event.clientY - startY) / scale();
+      if (snapCtx) {
+        const candidateBox = {
+          x: origin.x + rawDx,
+          y: origin.y + rawDy,
+          width: origin.width,
+          height: origin.height,
+        };
+        const { snappedBox, guides } = computeSmartGuides(
+          candidateBox,
+          snapCtx.margins,
+          snapCtx.siblings,
+          { shiftKey: event.shiftKey, threshold: 5 },
+        );
+        dx = snappedBox.x - origin.x;
+        dy = snappedBox.y - origin.y;
+        guidesOverlay?.render(guides, scale());
+      } else {
+        dx = rawDx;
+        dy = rawDy;
+      }
       this.#box = { ...origin, x: origin.x + dx, y: origin.y + dy };
       this.#place();
     };
     const onUp = (event: PointerEvent): void => {
+      cleanUpGuides();
       document.removeEventListener("pointermove", onMove);
       document.removeEventListener("pointerup", onUp);
       document.removeEventListener("pointercancel", onUp);

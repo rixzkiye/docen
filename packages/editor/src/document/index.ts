@@ -1821,6 +1821,14 @@ class DocenDocument extends AddinHost<Editor> {
       onBalloonHover: (hit) => this.#stage?.hoverBalloon(hit),
       drawingSelection: (hit, enter) =>
         this.#drawingNodePos(hit.para, hit.index, hit.kind, hit.childPath, enter),
+      pageFlow: (page) => this.#stage?.flowOf(page) ?? null,
+      siblingBoxes: (page, hit) =>
+        this.#stage?.pageDrawingBoxes(
+          page,
+          hit
+            ? ({ para: hit.para, index: hit.index, childPath: hit.childPath } as never)
+            : undefined,
+        ) ?? [],
       chartPartBoxes: (para, index, kind) => this.#stage?.chartPartBoxesOf(para, index, kind) ?? [],
       shapeTextStacks: () => this.#stage?.allShapeTextStacks() ?? [],
       shapeResolve: (host) => {
@@ -2204,6 +2212,11 @@ class DocenDocument extends AddinHost<Editor> {
     this.shadowRoot!.querySelector("docen-chart-data-dialog")?.addEventListener(
       "chart:ok",
       this.#dialogs.onChartOk as EventListener,
+    );
+    // Chart type dialog — the Change Chart Type picker commit (Chart Design tab).
+    this.shadowRoot!.querySelector("docen-chart-type-dialog")?.addEventListener(
+      "chart-type:ok",
+      this.#dialogs.onChartTypeOk as EventListener,
     );
     // Compress Pictures — the OK path re-encodes the selected picture's
     // pixels (the picture-pixels command swaps the source in).
@@ -2862,6 +2875,9 @@ class DocenDocument extends AddinHost<Editor> {
     this.shadowRoot
       ?.querySelector("docen-chart-data-dialog")
       ?.removeEventListener("chart:ok", this.#dialogs.onChartOk as EventListener);
+    this.shadowRoot
+      ?.querySelector("docen-chart-type-dialog")
+      ?.removeEventListener("chart-type:ok", this.#dialogs.onChartTypeOk as EventListener);
     this.shadowRoot
       ?.querySelector("docen-cross-reference-dialog")
       ?.removeEventListener("cross-ref:ok", this.#dialogs.onCrossRefOk as EventListener);
@@ -4054,6 +4070,9 @@ class DocenDocument extends AddinHost<Editor> {
           enterCropMode: () => {
             this.#bridge?.enterCropMode();
           },
+          enterEditPointsMode: () => {
+            this.#bridge?.enterEditPointsMode();
+          },
           insertShapeAt: (preset) => this.#insertShapeAt(preset),
           armShapeDrawer: (preset) => this.#armShapeDrawer(preset),
           insertWordArt: () => this.#insertWordArt(),
@@ -4093,6 +4112,7 @@ class DocenDocument extends AddinHost<Editor> {
           docStyles: (editor) => this.#docStyles(editor),
           runState: (state) => this.#runStateOf(state),
           chartEditAtSelection: () => this.#dialogs.chartEditAtSelection(),
+          chartTypeAtSelection: () => this.#dialogs.chartTypeAtSelection(),
           phoneticOpen: () => this.#dialogs.phoneticOpen(),
           twoInOneOpen: () => this.#dialogs.twoInOneOpen(),
           defineListOpen: () => this.#dialogs.defineListOpen(),
