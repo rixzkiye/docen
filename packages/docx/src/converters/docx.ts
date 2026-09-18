@@ -46,6 +46,7 @@ import {
   revertWpsShapeToVmlPict,
 } from "../extensions/vml-promotion";
 import { foldWpsShapeName } from "../extensions/wps-shape";
+import { fillGeneratedFields, type FieldCacheOptions } from "./field-eval";
 import { prepareDocument, type PrepareStep } from "./prepare";
 import { buildTextBlock } from "./styles";
 
@@ -2003,6 +2004,14 @@ export interface DocxGenerateOptions<T extends OutputType = "nodebuffer"> {
    * mark/node into compile/resolve via its renderDocx/parseDocx hooks.
    */
   extensions?: Extensions;
+  /**
+   * Generated-field cache context (SEQ/REF/TOC are always re-derived; the
+   * page-dependent fields need this). `pageOf` returns the 1-based displayed
+   * page for the field atom at the given document-order index — the editor
+   * passes its canvas pagination, standalone callers a known page map. Omit
+   * it and page fields keep their model cache (never a guessed number).
+   */
+  fields?: FieldCacheOptions;
 }
 
 /**
@@ -2035,12 +2044,18 @@ export async function generateDOCX<T extends OutputType = "nodebuffer">(
   json: JSONContent,
   options?: DocxGenerateOptions<T>,
 ): Promise<OutputByType[T]> {
-  const { prepare = true, packer, document, extensions, variant } = options ?? {};
+  const { prepare = true, packer, document, extensions, variant, fields } = options ?? {};
   if (prepare !== false) {
     await prepareDocument(json, prepare === true ? undefined : prepare);
   }
   return generateDocument(
-    applyVariant(applyDocumentOptions(compileDocument(json, extensions), document), variant),
+    applyVariant(
+      applyDocumentOptions(
+        compileDocument(fillGeneratedFields(json, fields), extensions),
+        document,
+      ),
+      variant,
+    ),
     packer,
   );
 }
@@ -2056,9 +2071,15 @@ export function generateDOCXSync<T extends OutputType = "nodebuffer">(
   json: JSONContent,
   options?: DocxGenerateOptions<T>,
 ): OutputByType[T] {
-  const { packer, document, extensions, variant } = options ?? {};
+  const { packer, document, extensions, variant, fields } = options ?? {};
   return generateDocumentSync(
-    applyVariant(applyDocumentOptions(compileDocument(json, extensions), document), variant),
+    applyVariant(
+      applyDocumentOptions(
+        compileDocument(fillGeneratedFields(json, fields), extensions),
+        document,
+      ),
+      variant,
+    ),
     packer,
   );
 }
@@ -2074,12 +2095,18 @@ export async function generateDOCXStream(
   json: JSONContent,
   options?: DocxGenerateOptions,
 ): Promise<ReadableStream<Uint8Array>> {
-  const { prepare = true, packer, document, extensions, variant } = options ?? {};
+  const { prepare = true, packer, document, extensions, variant, fields } = options ?? {};
   if (prepare !== false) {
     await prepareDocument(json, prepare === true ? undefined : prepare);
   }
   return generateDocumentStream(
-    applyVariant(applyDocumentOptions(compileDocument(json, extensions), document), variant),
+    applyVariant(
+      applyDocumentOptions(
+        compileDocument(fillGeneratedFields(json, fields), extensions),
+        document,
+      ),
+      variant,
+    ),
     packer,
   );
 }
