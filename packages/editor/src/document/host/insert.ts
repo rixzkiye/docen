@@ -233,6 +233,8 @@ export class InsertDomain {
     leader: string;
     showPageNumbers: boolean;
     alignPageNumbers: boolean;
+    hyperlink?: boolean;
+    styles?: string;
   }): void {
     const editor = this.host.bridge()?.activeEditor() ?? this.host.editor();
     if (!editor) return;

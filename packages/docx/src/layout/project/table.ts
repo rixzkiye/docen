@@ -21,8 +21,9 @@ import {
   type TableCellPosition,
 } from "../../style-cascade";
 import type { ProjectContext } from "./context";
-import { eighthPtToPx, isRecord, measureTwip, num, type LayoutCell, type Rec } from "./guards";
+import { eighthPtToPx, isRecord, measureTwip, num, str, type LayoutCell, type Rec } from "./guards";
 import { projectChild } from "./page";
+import { formatIndicatorOf, balloonKinds } from "./runs";
 
 // ── table projection ──
 
@@ -182,6 +183,32 @@ function projectCell(
         ? style?.cell?.verticalAlign
         : undefined;
 
+  const blocks = c.children
+    .map((child) => projectChild(child, cellCtx))
+    .filter((b): b is LayoutBlock => b !== null);
+
+  const tcRev = isRecord((c as any).tcPrChange)
+    ? (c as any).tcPrChange
+    : isRecord(c.revision)
+      ? c.revision
+      : undefined;
+  if (tcRev && balloonKinds(ctx).revisions) {
+    const indicator = formatIndicatorOf(ctx, tcRev);
+    const change = (indicator as { formatChange?: { color: string } }).formatChange;
+    if (change) {
+      const anchor = {
+        id: num(tcRev.id) ?? 0,
+        kind: "revision" as const,
+        color: change.color,
+        label: str(tcRev.author) ?? "",
+        inlineIndex: -1,
+      };
+      if (blocks.length > 0 && blocks[0].kind === "paragraph") {
+        blocks[0].balloons = [...(blocks[0].balloons ?? []), anchor];
+      }
+    }
+  }
+
   return {
     colspan: c.columnSpan,
     rowspan: rowspan ?? 1,
@@ -193,9 +220,7 @@ function projectCell(
       c.textDirection === "tbRl" || c.textDirection === "btLr" || c.textDirection === "lrTb"
         ? c.textDirection
         : undefined,
-    blocks: c.children
-      .map((child) => projectChild(child, cellCtx))
-      .filter((b): b is LayoutBlock => b !== null),
+    blocks,
   };
 }
 
@@ -305,6 +330,29 @@ export function projectTable(t: TableOptions, ctx: ProjectContext): LayoutTable 
       col += span;
     }
 
+    const trRev = isRecord((row as any).trPrChange)
+      ? (row as any).trPrChange
+      : isRecord((row as any).revision)
+        ? (row as any).revision
+        : undefined;
+    if (trRev && balloonKinds(ctx).revisions) {
+      const indicator = formatIndicatorOf(ctx, trRev);
+      const change = (indicator as { formatChange?: { color: string } }).formatChange;
+      if (change && projectedCells.length > 0) {
+        const anchor = {
+          id: num(trRev.id) ?? 0,
+          kind: "revision" as const,
+          color: change.color,
+          label: str(trRev.author) ?? "",
+          inlineIndex: -1,
+        };
+        const firstBlock = projectedCells[0]?.blocks[0];
+        if (firstBlock && firstBlock.kind === "paragraph") {
+          firstBlock.balloons = [...(firstBlock.balloons ?? []), anchor];
+        }
+      }
+    }
+
     rows.push({
       cells: projectedCells,
       height,
@@ -318,6 +366,30 @@ export function projectTable(t: TableOptions, ctx: ProjectContext): LayoutTable 
     resolvedStyle?.table ??
     (t.style ? indexTableStyles(ctx.styles).get(t.style)?.table : undefined);
   const alignment = t.alignment ?? styleTable?.alignment;
+
+  const tblRev = isRecord((t as any).tblPrChange)
+    ? (t as any).tblPrChange
+    : isRecord((t as any).revision)
+      ? (t as any).revision
+      : undefined;
+  if (tblRev && balloonKinds(ctx).revisions) {
+    const indicator = formatIndicatorOf(ctx, tblRev);
+    const change = (indicator as { formatChange?: { color: string } }).formatChange;
+    if (change && rows.length > 0) {
+      const anchor = {
+        id: num(tblRev.id) ?? 0,
+        kind: "revision" as const,
+        color: change.color,
+        label: str(tblRev.author) ?? "",
+        inlineIndex: -1,
+      };
+      const firstBlock = rows[0]?.cells[0]?.blocks[0];
+      if (firstBlock && firstBlock.kind === "paragraph") {
+        firstBlock.balloons = [...(firstBlock.balloons ?? []), anchor];
+      }
+    }
+  }
+
   return {
     kind: "table",
     width: toTableWidth(t.width) ?? toTableWidth(styleTable?.width),

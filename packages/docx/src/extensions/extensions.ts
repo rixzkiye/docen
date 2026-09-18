@@ -21,6 +21,12 @@ import {
   Bdo,
 } from "./marks";
 import { MathInline } from "./math";
+import {
+  MoveFromRangeStart,
+  MoveFromRangeEnd,
+  MoveToRangeStart,
+  MoveToRangeEnd,
+} from "./move-range";
 import { PageBreak } from "./page-break";
 import { Paragraph } from "./paragraph";
 import { Passthrough, InlinePassthrough } from "./passthrough";
@@ -35,7 +41,7 @@ import { TableRow } from "./table-row";
 import { TextStyle } from "./text-style";
 import { Textbox } from "./textbox";
 import { TocField } from "./toc-field";
-import { FormatChange, Insertion, Deletion } from "./track-change";
+import { FormatChange, Insertion, Deletion, MoveFrom, MoveTo } from "./track-change";
 import { WpgGroup } from "./wpg-group";
 import { WpsShape } from "./wps-shape";
 
@@ -95,6 +101,10 @@ export const tiptapNodeExtensions: AnyExtension[] = [
   FormField,
   PermStart,
   PermEnd,
+  MoveFromRangeStart,
+  MoveFromRangeEnd,
+  MoveToRangeStart,
+  MoveToRangeEnd,
 ];
 
 // Marks
@@ -107,6 +117,8 @@ export const tiptapMarkExtensions: AnyExtension[] = [
   Insertion,
   Italic,
   Link,
+  MoveFrom,
+  MoveTo,
   Ruby,
   Strike,
   Subscript,
@@ -172,10 +184,18 @@ export {
   FormatChange,
   Insertion,
   Deletion,
+  MoveFrom,
+  MoveTo,
   parseFormatRecords,
   parseRunMarks,
 } from "./track-change";
 export type { RunFormatEdit, RunFormatRecord } from "./track-change";
+export {
+  MoveFromRangeStart,
+  MoveFromRangeEnd,
+  MoveToRangeStart,
+  MoveToRangeEnd,
+} from "./move-range";
 export { PageBreak } from "./page-break";
 export { WpgGroup } from "./wpg-group";
 export { WpsShape } from "./wps-shape";
@@ -184,6 +204,20 @@ export { TocField } from "./toc-field";
 export { SdtBlock, SdtInline } from "./sdt";
 export { MathInline, convertLinearToOMML, convertOMMLToLinear } from "./math";
 export { Textbox } from "./textbox";
+export {
+  type DrawingShapeLayout,
+  type ShapeWrapping,
+  ptToTwip,
+  twipToPt,
+  emuToTwip,
+  twipToEmu,
+  ptToEmu,
+  emuToPt,
+  parseLengthToTwips,
+  normalizeVmlShapeStyle,
+  parseVmlShapeLayout,
+  stringifyVmlShapeLayout,
+} from "./drawing-shape-layout";
 export { Tab } from "./tab";
 export { FormField, extractFormFieldText } from "./form-field";
 export { PermStart, PermEnd } from "./perm-range";

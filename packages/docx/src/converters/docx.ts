@@ -31,6 +31,10 @@ import { flattenExtensions, getExtensionField, getSchema } from "@tiptap/core";
 
 import type { Extensions, JSONContent } from "../core";
 import { docxExtensions } from "../core";
+import {
+  type DrawingShapeLayout,
+  stringifyVmlShapeLayout,
+} from "../extensions/drawing-shape-layout";
 import { memberNodeToGroupChild } from "../extensions/group-members";
 import { buildListLevels, isGeneratedListReference } from "../extensions/list-numbering";
 import { decodePassthroughData, encodePassthroughData } from "../extensions/passthrough";
@@ -727,7 +731,13 @@ export class DocxManager {
         // attrs verbatim; children walk the shared SectionChild dispatch. The
         // branch type is an inline intersection in SectionChild — extract it.
         type TextboxBranch = Extract<SectionChild, { textbox: unknown }>;
-        const box = (node.attrs?.textbox ?? {}) as Omit<TextboxBranch["textbox"], "children">;
+        const box = {
+          ...((node.attrs?.textbox ?? {}) as Omit<TextboxBranch["textbox"], "children">),
+        };
+        const layout = node.attrs?.layout as DrawingShapeLayout | undefined;
+        if (layout && !box.style) {
+          (box as any).style = stringifyVmlShapeLayout(layout);
+        }
         const boxChildren: SectionChild[] = [];
         for (const child of node.content ?? []) {
           const compiled = this.compileSectionChild(child);
@@ -1012,6 +1022,80 @@ export class DocxManager {
           } as unknown as ParagraphChild);
           break;
         }
+        case "moveFromRangeStart": {
+          const m = (node.attrs ?? {}) as {
+            id?: number | string;
+            name?: string;
+            author?: string;
+            date?: string;
+            displacedByCustomXml?: unknown;
+            colFirst?: number | string;
+            colLast?: number | string;
+          };
+          children.push({
+            moveFromRangeStart: {
+              id: m.id != null ? Number(m.id) : 0,
+              ...(m.name != null ? { name: String(m.name) } : {}),
+              ...(m.author != null ? { author: String(m.author) } : {}),
+              ...(m.date != null ? { date: String(m.date) } : {}),
+              ...(m.displacedByCustomXml != null
+                ? { displacedByCustomXml: m.displacedByCustomXml as any }
+                : {}),
+              ...(m.colFirst != null ? { colFirst: Number(m.colFirst) } : {}),
+              ...(m.colLast != null ? { colLast: Number(m.colLast) } : {}),
+            },
+          } as unknown as ParagraphChild);
+          break;
+        }
+        case "moveFromRangeEnd": {
+          const m = (node.attrs ?? {}) as { id?: number | string; displacedByCustomXml?: unknown };
+          children.push({
+            moveFromRangeEnd: {
+              id: m.id != null ? Number(m.id) : 0,
+              ...(m.displacedByCustomXml != null
+                ? { displacedByCustomXml: m.displacedByCustomXml as any }
+                : {}),
+            },
+          } as unknown as ParagraphChild);
+          break;
+        }
+        case "moveToRangeStart": {
+          const m = (node.attrs ?? {}) as {
+            id?: number | string;
+            name?: string;
+            author?: string;
+            date?: string;
+            displacedByCustomXml?: unknown;
+            colFirst?: number | string;
+            colLast?: number | string;
+          };
+          children.push({
+            moveToRangeStart: {
+              id: m.id != null ? Number(m.id) : 0,
+              ...(m.name != null ? { name: String(m.name) } : {}),
+              ...(m.author != null ? { author: String(m.author) } : {}),
+              ...(m.date != null ? { date: String(m.date) } : {}),
+              ...(m.displacedByCustomXml != null
+                ? { displacedByCustomXml: m.displacedByCustomXml as any }
+                : {}),
+              ...(m.colFirst != null ? { colFirst: Number(m.colFirst) } : {}),
+              ...(m.colLast != null ? { colLast: Number(m.colLast) } : {}),
+            },
+          } as unknown as ParagraphChild);
+          break;
+        }
+        case "moveToRangeEnd": {
+          const m = (node.attrs ?? {}) as Record<string, unknown>;
+          children.push({
+            moveToRangeEnd: {
+              id: m.id != null ? Number(m.id) : 0,
+              ...(m.displacedByCustomXml != null
+                ? { displacedByCustomXml: m.displacedByCustomXml as any }
+                : {}),
+            },
+          } as unknown as ParagraphChild);
+          break;
+        }
         case "formField": {
           const ff = (node.attrs?.formField ?? {}) as Record<string, unknown>;
           let text = "";
@@ -1205,7 +1289,12 @@ export class DocxManager {
         if (mark.attrs?.href) linkMark = mark;
         continue;
       }
-      if (mark.type === "insertion" || mark.type === "deletion") {
+      if (
+        mark.type === "insertion" ||
+        mark.type === "deletion" ||
+        mark.type === "moveFrom" ||
+        mark.type === "moveTo"
+      ) {
         trackMark = mark;
         continue;
       }
@@ -1264,12 +1353,12 @@ export class DocxManager {
       return;
     }
     if (trackMark) {
-      // Wrap the run back into a w:ins/w:del container — the reverse of
+      // Wrap the run back into a w:ins/w:del/w:moveFrom/w:moveTo container — the reverse of
       // resolveTrackedChange. compileTrackedChangeRun returns the typed
       // ParagraphChild branch, so no cast is needed here. office-open's
       // stringifyDeletedRun emits <w:delText> for deletion children.
-      const kind = trackMark.type;
-      if (kind === "insertion" || kind === "deletion") {
+      const kind = trackMark.type as "insertion" | "deletion" | "moveFrom" | "moveTo";
+      if (kind === "insertion" || kind === "deletion" || kind === "moveFrom" || kind === "moveTo") {
         let finalTrack = this.compileTrackedChangeRun(kind, trackMark.attrs, text, runOpts);
         if (dirMark) {
           const val = (dirMark.attrs?.val === "rtl" ? "rtl" : "ltr") as "ltr" | "rtl";
@@ -1297,14 +1386,14 @@ export class DocxManager {
   }
 
   /**
-   * Wrap a run back into a w:ins/w:del container — the reverse of
+   * Wrap a run back into a w:ins/w:del/w:moveFrom/w:moveTo container — the reverse of
    * resolveTrackedChange. A literal-key ternary (`{insertion: body}` /
    * `{deletion: body}`) lets TS narrow to the ParagraphChild branch without a
    * cast, and `typeof` guards read `attrs` type-safely (no `as number/string`).
    * stringifyDeletedRun emits `<w:delText>` automatically for deletion children.
    */
   private compileTrackedChangeRun(
-    type: "insertion" | "deletion",
+    type: "insertion" | "deletion" | "moveFrom" | "moveTo",
     attrs: Record<string, unknown> | undefined,
     text: string,
     runOpts: Record<string, unknown>,
@@ -1320,7 +1409,10 @@ export class DocxManager {
     const author = typeof attrs?.author === "string" ? attrs.author : "";
     const date = typeof attrs?.date === "string" ? attrs.date : "";
     const body = { id, author, date, children: trackChildren };
-    return type === "insertion" ? { insertion: body } : { deletion: body };
+    if (type === "insertion") return { insertion: body };
+    if (type === "deletion") return { deletion: body };
+    if (type === "moveFrom") return { movedFrom: body } as unknown as ParagraphChild;
+    return { movedTo: body } as unknown as ParagraphChild;
   }
 
   /** Wrap a run back into a w:ruby container — the reverse of resolveRuby.

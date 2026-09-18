@@ -2030,6 +2030,8 @@ class DocenDocument extends AddinHost<Editor> {
         leader: string;
         showPageNumbers: boolean;
         alignPageNumbers: boolean;
+        hyperlink?: boolean;
+        styles?: string;
       }>,
     ) => this.#insertCustomToc(event.detail)) as EventListener);
     // Phonetic guide dialog — split the selection into per-character ruby
@@ -3660,6 +3662,8 @@ class DocenDocument extends AddinHost<Editor> {
     leader: string;
     showPageNumbers: boolean;
     alignPageNumbers: boolean;
+    hyperlink?: boolean;
+    styles?: string;
   }): void {
     this.#insert.insertCustomToc(detail);
   }

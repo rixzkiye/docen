@@ -82,13 +82,15 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 
 const str = (value: unknown): string => (typeof value === "string" ? value : "");
 
-/** A node's w:pPrChange record (paragraph `revision` attr), or undefined. */
+/** A node's revision record (paragraph w:pPrChange, table w:tblPrChange, row w:trPrChange, cell w:tcPrChange), or undefined. */
 function revisionAttrOf(node: PMNode): Record<string, unknown> | undefined {
-  const rev = (node.attrs as Record<string, unknown>).revision;
+  const attrs = node.attrs as Record<string, unknown>;
+  const rev = attrs.revision ?? attrs.tblPrChange ?? attrs.trPrChange ?? attrs.tcPrChange;
   return isRecord(rev) ? rev : undefined;
 }
 
-const isTrackChangeMark = (name: string): boolean => name === "insertion" || name === "deletion";
+const isTrackChangeMark = (name: string): boolean =>
+  name === "insertion" || name === "deletion" || name === "moveFrom" || name === "moveTo";
 
 /** Highest existing revision id + 1 — w:id is a document-unique integer across
  *  text revisions (w:ins/w:del), run format records (w:rPrChange), and
@@ -558,20 +560,23 @@ const trackChangesPlugin = new Plugin<boolean>({
 /** One revision as the reviewing pane lists it: the range plus the record's
  *  author/date and the tracked text (the pane shows what was typed or what
  *  Word would remove; a paragraph format change shows its prop diff). */
-export type RevisionType = "insertion" | "deletion" | "format";
+export type RevisionType = "insertion" | "deletion" | "format" | "moveFrom" | "moveTo";
 
 /** Contiguous revision runs of one record, merged for accept/reject picking. */
 interface RevisionRange {
   from: number;
   to: number;
   type: RevisionType;
-  id: unknown;
+  id?: number | string | null;
   /** The record's author (w:ins/@w:author) — the display filter's key. */
   author: string;
   date?: string;
   /** Paragraph format change (w:pPrChange): the paragraph node position —
    *  accept/reject rewrites its attrs in place. */
   paraPos?: number;
+  /** Target node pos for block-level revisions (paragraphs, tables, rows, cells). */
+  nodePos?: number;
+  nodeType?: string;
   /** Run format change (w:rPrChange): the record itself — reject replays the
    *  mark's base + surviving records' edits (order-independent, mark-exact on
    *  the editor path). */
@@ -587,14 +592,61 @@ export interface RevisionInfo extends RevisionRange {
  *  first, then their inline runs, then text revisions), with each record's
  *  metadata read off the first node carrying it. */
 export function collectRevisions(doc: PMNode): RevisionInfo[] {
-  return revisionRanges(doc).map((range) => ({
-    ...range,
-    date: range.date ?? "",
-    text:
-      range.paraPos != null
-        ? paragraphChangeSummary(doc, range.paraPos)
-        : doc.textBetween(range.from, range.to, "\n"),
-  }));
+  const ranges = revisionRanges(doc);
+  return ranges.map((range) => {
+    let text = "";
+    if (range.nodePos != null || range.paraPos != null) {
+      text = nodeChangeSummary(doc, range.nodePos ?? range.paraPos!);
+    } else if (range.type === "moveFrom" || range.type === "moveTo") {
+      const selfText = doc.textBetween(range.from, range.to, "\n");
+      const partner = ranges.find(
+        (r) =>
+          (r.type === "moveFrom" || r.type === "moveTo") &&
+          r.type !== range.type &&
+          String(r.id) === String(range.id),
+      );
+      if (partner) {
+        const partnerText = doc.textBetween(partner.from, partner.to, "\n");
+        text =
+          range.type === "moveFrom"
+            ? `Moved from "${selfText}" to "${partnerText}"`
+            : `Moved to "${selfText}" from "${partnerText}"`;
+      } else {
+        text = selfText;
+      }
+    } else {
+      text = doc.textBetween(range.from, range.to, "\n");
+    }
+    return {
+      ...range,
+      date: range.date ?? "",
+      text,
+    };
+  });
+}
+
+/** Summarize changes on a block-level node (paragraph, table, row, cell). */
+function nodeChangeSummary(doc: PMNode, pos: number): string {
+  const node = doc.nodeAt(pos);
+  const revision = node ? revisionAttrOf(node) : undefined;
+  if (!node || !revision) return "";
+  if (node.type.name === "paragraph") return paragraphChangeSummary(doc, pos);
+  const before = { ...revision };
+  delete before.id;
+  delete before.author;
+  delete before.date;
+  const after = { ...(node.attrs as Record<string, unknown>) };
+  delete after.revision;
+  delete after.tblPrChange;
+  delete after.trPrChange;
+  delete after.tcPrChange;
+  const keys = new Set([...Object.keys(before), ...Object.keys(after)]);
+  const parts: string[] = [];
+  for (const key of keys) {
+    if (JSON.stringify(before[key]) === JSON.stringify(after[key])) continue;
+    parts.push(`${key}: ${propLabel(before[key])} → ${propLabel(after[key])}`);
+  }
+  return parts.length > 0 ? parts.join(", ") : `${node.type.name} properties modified`;
 }
 
 /** "alignment: center → left, bold: on → off" — a compact picture of what a
@@ -631,17 +683,19 @@ function revisionRanges(doc: PMNode): RevisionRange[] {
   // records would otherwise interleave with the next node's).
   const formatRanges = new Map<number, RevisionRange>();
   doc.descendants((node, pos) => {
-    // Paragraph-level w:pPrChange lives on the node, not on a mark.
+    // Block-level format change lives on the node, not on a mark.
     const revision = node.isText ? undefined : revisionAttrOf(node);
     if (revision) {
       out.push({
         from: pos + 1,
         to: pos + node.nodeSize - 1,
         type: "format",
-        id: revision.id ?? null,
+        id: revision.id != null ? (revision.id as number | string) : null,
         author: str(revision.author),
         date: str(revision.date),
-        paraPos: pos,
+        paraPos: node.type.name === "paragraph" ? pos : undefined,
+        nodePos: pos,
+        nodeType: node.type.name,
       });
     }
     if (!node.isText) return true;
@@ -649,7 +703,7 @@ function revisionRanges(doc: PMNode): RevisionRange[] {
     const to = pos + node.nodeSize;
     const track = node.marks.find((mark) => isTrackChangeMark(mark.type.name));
     if (track) {
-      const id = (track.attrs as { id?: unknown }).id;
+      const id = (track.attrs as { id?: number | string | null }).id ?? null;
       const author = str((track.attrs as { author?: unknown }).author);
       const last = out[out.length - 1];
       if (last && last.type === track.type.name && last.id === id && last.to === from) {
@@ -658,7 +712,7 @@ function revisionRanges(doc: PMNode): RevisionRange[] {
         out.push({
           from,
           to,
-          type: track.type.name as "insertion" | "deletion",
+          type: track.type.name as RevisionType,
           id,
           author,
         });
@@ -812,6 +866,46 @@ function applyParagraphFormatChange(
   tr.setNodeMarkup(paraPos, undefined, next);
 }
 
+/** Accept or reject a block-level (paragraph, table, row, cell) property change. */
+function applyBlockPropertyChange(
+  tr: Transaction,
+  state: EditorState,
+  range: RevisionRange,
+  accept: boolean,
+): void {
+  const pos = range.nodePos ?? range.paraPos;
+  if (pos == null) return;
+  const node = tr.doc.nodeAt(pos);
+  if (!node) return;
+  if (node.type.name === "paragraph") {
+    applyParagraphFormatChange(tr, state, range, accept);
+    return;
+  }
+  const attrs = node.attrs as Record<string, unknown>;
+  if (accept) {
+    tr.setNodeMarkup(pos, undefined, {
+      ...attrs,
+      revision: null,
+      tblPrChange: null,
+      trPrChange: null,
+      tcPrChange: null,
+    });
+    return;
+  }
+  const rev = attrs.revision ?? attrs.tblPrChange ?? attrs.trPrChange ?? attrs.tcPrChange;
+  if (isRecord(rev)) {
+    const { id: _, author: __, date: ___, ...oldProps } = rev;
+    tr.setNodeMarkup(pos, undefined, {
+      ...attrs,
+      ...oldProps,
+      revision: null,
+      tblPrChange: null,
+      trPrChange: null,
+      tcPrChange: null,
+    });
+  }
+}
+
 /** Apply one revision range in either direction — the shared body of the
  *  single-item commands and the four "…All Changes" sweeps. */
 function applyRange(
@@ -821,15 +915,27 @@ function applyRange(
   accept: boolean,
 ): void {
   if (range.type === "format") {
-    if (range.paraPos != null) applyParagraphFormatChange(tr, state, range, accept);
-    else applyRunFormatRecord(tr, state, range, accept);
+    if (range.nodePos != null || range.paraPos != null) {
+      applyBlockPropertyChange(tr, state, range, accept);
+    } else {
+      applyRunFormatRecord(tr, state, range, accept);
+    }
   } else if (range.type === "insertion") {
     if (accept) tr.removeMark(range.from, range.to, state.schema.marks.insertion!);
     else tr.delete(range.from, range.to);
-  } else if (accept) {
-    tr.delete(range.from, range.to);
-  } else {
-    tr.removeMark(range.from, range.to, state.schema.marks.deletion!);
+  } else if (range.type === "deletion") {
+    if (accept) tr.delete(range.from, range.to);
+    else tr.removeMark(range.from, range.to, state.schema.marks.deletion!);
+  } else if (range.type === "moveFrom") {
+    if (accept) tr.delete(range.from, range.to);
+    else if (state.schema.marks.moveFrom)
+      tr.removeMark(range.from, range.to, state.schema.marks.moveFrom);
+  } else if (range.type === "moveTo") {
+    if (accept) {
+      if (state.schema.marks.moveTo) tr.removeMark(range.from, range.to, state.schema.marks.moveTo);
+    } else {
+      tr.delete(range.from, range.to);
+    }
   }
 }
 
@@ -965,9 +1071,85 @@ export const TrackChanges = Extension.create({
           dispatch(tr.scrollIntoView());
           return true;
         },
+      "accept-move":
+        (id?: string | number) =>
+        ({ state, tr, dispatch }) => {
+          const ranges = revisionRanges(state.doc);
+          let targetId = id != null ? String(id) : undefined;
+          if (targetId == null) {
+            const hit = ranges.find(
+              (r) =>
+                (r.type === "moveFrom" || r.type === "moveTo") &&
+                r.from <= state.selection.to &&
+                r.to >= state.selection.from,
+            );
+            if (hit && hit.id != null) targetId = String(hit.id);
+          }
+          if (targetId == null) return false;
+          const moves = ranges.filter(
+            (r) => (r.type === "moveFrom" || r.type === "moveTo") && String(r.id) === targetId,
+          );
+          if (moves.length === 0) return false;
+          if (!dispatch) return true;
+          for (const m of [...moves].sort((a, b) => b.from - a.from)) {
+            applyRange(tr, state, m, true);
+          }
+          removeMoveRangeNodes(tr, targetId);
+          tr.setMeta(skipTrackingKey, true);
+          dispatch(tr);
+          return true;
+        },
+      "reject-move":
+        (id?: string | number) =>
+        ({ state, tr, dispatch }) => {
+          const ranges = revisionRanges(state.doc);
+          let targetId = id != null ? String(id) : undefined;
+          if (targetId == null) {
+            const hit = ranges.find(
+              (r) =>
+                (r.type === "moveFrom" || r.type === "moveTo") &&
+                r.from <= state.selection.to &&
+                r.to >= state.selection.from,
+            );
+            if (hit && hit.id != null) targetId = String(hit.id);
+          }
+          if (targetId == null) return false;
+          const moves = ranges.filter(
+            (r) => (r.type === "moveFrom" || r.type === "moveTo") && String(r.id) === targetId,
+          );
+          if (moves.length === 0) return false;
+          if (!dispatch) return true;
+          for (const m of [...moves].sort((a, b) => b.from - a.from)) {
+            applyRange(tr, state, m, false);
+          }
+          removeMoveRangeNodes(tr, targetId);
+          tr.setMeta(skipTrackingKey, true);
+          dispatch(tr);
+          return true;
+        },
     };
   },
 });
+
+function removeMoveRangeNodes(tr: Transaction, moveId: string): void {
+  const toDelete: { from: number; to: number }[] = [];
+  tr.doc.descendants((node, pos) => {
+    if (
+      node.type.name === "moveFromRangeStart" ||
+      node.type.name === "moveFromRangeEnd" ||
+      node.type.name === "moveToRangeStart" ||
+      node.type.name === "moveToRangeEnd"
+    ) {
+      if (String(node.attrs.id) === moveId) {
+        toDelete.push({ from: pos, to: pos + node.nodeSize });
+      }
+    }
+    return true;
+  });
+  for (const d of toDelete.reverse()) {
+    tr.delete(d.from, d.to);
+  }
+}
 
 declare module "@tiptap/core" {
   interface Commands<ReturnType> {
@@ -981,6 +1163,8 @@ declare module "@tiptap/core" {
       "reject-all-changes-shown": (authors?: string[]) => ReturnType;
       "previous-change": () => ReturnType;
       "next-change": () => ReturnType;
+      "accept-move": (id?: string | number) => ReturnType;
+      "reject-move": (id?: string | number) => ReturnType;
     };
   }
 }

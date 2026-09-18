@@ -68,6 +68,12 @@ export {
   type RunPropMark,
 } from "./converters/docx";
 export { decodePassthroughData, encodePassthroughData } from "./extensions/passthrough";
+export {
+  type TocSwitches,
+  tokenizeTocInstruction,
+  parseTocSwitches,
+  generateTocInstruction,
+} from "./converters/toc-switches";
 
 // Converters: DOCX template patching (placeholder replacement via office-open patchDocument)
 export { patchDOCX, type DocxPatchOptions, type DocxPatchContent } from "./converters/patch";
