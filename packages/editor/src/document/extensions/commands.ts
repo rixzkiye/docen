@@ -4444,26 +4444,49 @@ export const DocumentCommands = Extension.create({
           if (!anchor) return false;
           const { $from } = state.selection;
           const tableNode = $from.node(anchor.tableAt);
-          const widths = tableNode.attrs.columnWidths as number[] | null;
-          if (!widths || widths.length === 0) return false;
-          const cols = widths.length;
+          const declared =
+            (tableNode.attrs.columnWidths as number[] | null)?.filter((w) => w > 0) ?? [];
+          // The grid can be wider than columnWidths (a hand-built merged
+          // table) — walk the rows' spans for the real column count.
+          let gridCols = declared.length;
           for (let r = 0; r < tableNode.childCount; r += 1) {
-            const row = tableNode.child(r);
-            if (row.childCount !== cols) return false;
-            for (let c = 0; c < cols; c += 1) {
-              const cell = row.child(c);
-              if (cell.attrs.columnSpan || cell.attrs.verticalMerge) return false;
-            }
+            let span = 0;
+            tableNode.child(r).forEach((cell) => {
+              span += Math.max(1, (cell.attrs.columnSpan as number) || 1);
+            });
+            gridCols = Math.max(gridCols, span);
           }
+          if (gridCols === 0) return false;
           if (dispatch) {
             const onlyCol = targetCol != null && targetCol !== "" ? Number(targetCol) : null;
-            const next = widths.map((w, c) => {
+            // Per grid column, the widest content. A spanning cell's width is
+            // split evenly across the columns it covers — Word's fit pass
+            // still shrinks every grid column under a merge.
+            const measured = new Array<number>(gridCols).fill(0);
+            for (let r = 0; r < tableNode.childCount; r += 1) {
+              let col = 0;
+              tableNode.child(r).forEach((cell) => {
+                const span = Math.max(1, (cell.attrs.columnSpan as number) || 1);
+                const need = measureTextTwip(cell.textContent);
+                if (span === 1) {
+                  measured[col] = Math.max(measured[col]!, need);
+                } else {
+                  const per = Math.ceil(need / span);
+                  for (let i = 0; i < span && col + i < gridCols; i += 1) {
+                    measured[col + i] = Math.max(measured[col + i]!, per);
+                  }
+                }
+                col += span;
+              });
+            }
+            const fallback =
+              declared.length > 0
+                ? Math.round(declared.reduce((a, b) => a + b, 0) / declared.length)
+                : MIN_COL_TWIP;
+            const next = Array.from({ length: gridCols }, (_, c) => {
+              const w = declared[c] ?? Math.max(MIN_COL_TWIP, fallback);
               if (onlyCol != null && !Number.isNaN(onlyCol) && onlyCol !== c) return w;
-              let widest = 0;
-              for (let r = 0; r < tableNode.childCount; r += 1) {
-                widest = Math.max(widest, measureTextTwip(tableNode.child(r).child(c).textContent));
-              }
-              return Math.max(MIN_COL_TWIP, Math.min(w, widest));
+              return Math.max(MIN_COL_TWIP, Math.min(w, measured[c]!));
             });
             const tr = state.tr.setNodeMarkup($from.before(anchor.tableAt), undefined, {
               ...tableNode.attrs,
@@ -4474,14 +4497,20 @@ export const DocumentCommands = Extension.create({
             for (let r = 0; r < tableNode.childCount; r += 1) {
               const row = tableNode.child(r);
               let curCellPos = curRowPos + 1;
-              for (let c = 0; c < row.childCount; c += 1) {
-                const cell = row.child(c);
+              let col = 0;
+              row.forEach((cell) => {
+                const span = Math.max(1, (cell.attrs.columnSpan as number) || 1);
+                let widthTw = 0;
+                for (let i = 0; i < span && col + i < gridCols; i += 1) {
+                  widthTw += next[col + i]!;
+                }
                 tr.setNodeMarkup(curCellPos, undefined, {
                   ...cell.attrs,
-                  width: { value: next[c], type: "dxa" },
+                  width: { value: widthTw, type: "dxa" },
                 });
                 curCellPos += cell.nodeSize;
-              }
+                col += span;
+              });
               curRowPos += row.nodeSize;
             }
             dispatch(tr.scrollIntoView());

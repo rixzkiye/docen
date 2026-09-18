@@ -370,6 +370,11 @@ class LiveChromiumSession implements CdpSession {
       "--disable-gpu",
       "--no-sandbox",
       "--disable-dev-shm-usage",
+      // Headless overlay scrollbars fade in on mousedown and shift the
+      // centered page column by half their width mid-interaction, which makes
+      // pointer scenarios (border drags) hit stale coordinates. Hide them.
+      "--hide-scrollbars",
+      "--disable-features=OverlayScrollbar,OverlayScrollbars",
       `--window-size=${width},${height}`,
       "about:blank",
     ]);
@@ -447,11 +452,25 @@ class LiveChromiumSession implements CdpSession {
     type: "mouseMoved" | "mousePressed" | "mouseReleased",
     opts: MouseEventOptions,
   ): Promise<void> {
+    const button = opts.button ?? (type === "mouseMoved" ? "none" : "left");
+    // CDP drag recognition: a pressed left button must set the buttons bitmask
+    // (1 = left) on the move events too, else the page sees a hover-only move.
+    const buttons =
+      type === "mousePressed"
+        ? button === "left"
+          ? 1
+          : button === "right"
+            ? 2
+            : 4
+        : type === "mouseMoved" && button === "left"
+          ? 1
+          : 0;
     await this.call("Input.dispatchMouseEvent", {
       type,
       x: opts.x,
       y: opts.y,
-      button: opts.button ?? (type === "mouseMoved" ? "none" : "left"),
+      button,
+      buttons,
       clickCount: opts.clickCount ?? (type === "mouseMoved" ? 0 : 1),
       modifiers: opts.modifiers ?? 0,
     });
