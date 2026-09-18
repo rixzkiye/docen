@@ -33,7 +33,9 @@ function check(name, fn) {
     results.push({ name, ok: true });
   } catch (err) {
     results.push({ name, ok: false, error: err instanceof Error ? err.message : String(err) });
-    console.error(`FAIL ${name}: ${err instanceof Error ? err.stack : err}`);
+    console.error(
+      `FAIL ${name}: ${err instanceof Error ? (err.stack ?? err.message) : String(err)}`,
+    );
   }
 }
 

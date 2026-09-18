@@ -37,9 +37,11 @@ import {
 import {
   browserFontMetrics,
   createMeasurer,
+  loadDefaultFonts,
   registerShapingFont,
   type FlowPage,
   type FlowPageInsets,
+  type RegisterDefaultFontsOptions,
 } from "@docen/layout";
 import { initShapingWasm } from "@docen/shaping";
 import { attr, customElement } from "@microsoft/fast-element";
@@ -1871,6 +1873,20 @@ class DocenDocument extends AddinHost<Editor> {
     // Fonts must be loaded before the pipeline measures, else the layout
     // drifts from the browser's actual font metrics.
     await document.fonts?.ready;
+    // The production shaping set: register the bundled metric-compatible
+    // faces before the first layout so the default Word families shape
+    // deterministically instead of silently falling back to canvas. A failure
+    // (e.g. a bundler that did not emit the package's asset URLs) is loud but
+    // non-fatal — the canvas measurer keeps working.
+    try {
+      await this.registerDefaultFonts();
+    } catch (err) {
+      console.warn(
+        "[docen-document] bundled shaping fonts unavailable — using canvas metrics. " +
+          "Call registerDefaultFonts({ baseUrl }) with the emitted assets/fonts directory to opt in.",
+        err,
+      );
+    }
 
     const contentAttr = this.getAttribute("content");
     // Declarative section-properties / styles (JSON) seed doc-level attrs so a
@@ -5903,6 +5919,38 @@ class DocenDocument extends AddinHost<Editor> {
     await initShapingWasm();
     registerShapingFont(family, fontData, fontIndex);
     this.#measurer.clearCache();
+  }
+
+  /**
+   * Register docen's bundled production faces for the Word default families
+   * (Calibri/Calibri Light → Carlito, Cambria → Caladea, Arial → Liberation
+   * Sans, Times New Roman → Liberation Serif; all four weight/slant slots).
+   * The element calls this automatically on connect, so shaping never silently
+   * falls back to canvas for the default families; call it yourself (with
+   * `baseUrl` when your bundler does not emit the package's asset URLs, or
+   * after overriding the bundled files) to control it. Registered regular
+   * faces additionally join the export-embedding set.
+   *
+   * Failures are non-fatal: the editor warns and keeps the canvas fallback.
+   */
+  async registerDefaultFonts(options?: RegisterDefaultFontsOptions): Promise<string[]> {
+    const faces = await loadDefaultFonts(options);
+    await initShapingWasm();
+    const labels: string[] = [];
+    for (const face of faces) {
+      registerShapingFont(face.family, face.bytes, 0, {
+        bold: face.bold,
+        italic: face.italic,
+      });
+      // One face per family feeds the export-embedding map (its regular face,
+      // matching registerFont's family-keyed contract).
+      if (!face.bold && !face.italic) {
+        this.#fonts.set(face.family.toLowerCase(), { family: face.family, fontData: face.bytes });
+      }
+      labels.push(`${face.family}${face.bold ? " bold" : ""}${face.italic ? " italic" : ""}`);
+    }
+    this.#measurer.clearCache();
+    return labels;
   }
 
   /** Serialize the current document to a Markdown string. */

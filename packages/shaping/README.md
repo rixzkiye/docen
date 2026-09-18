@@ -12,7 +12,7 @@ Consumed by [`@docen/layout`](../layout/README.md)'s `ShapedMeasurer` for bit-ex
 
 ## Features
 
-- **Cross-Platform Determinism:** Replaces browser-divergent `CanvasRenderingContext2D.measureText` with OpenType shaping. The shaped measurer is the default for registered fonts (`setShapingEnabled(false)` in `@docen/layout` or `DOCEN_SHAPING_DISABLED=1` rolls back to the canvas measurer); families without a registered face keep the canvas fallback.
+- **Cross-Platform Determinism:** Replaces browser-divergent `CanvasRenderingContext2D.measureText` with OpenType shaping. The shaped measurer is the default for registered fonts; `@docen/layout` bundles metric-compatible production faces (Carlito/Caladea/Liberation) and registers them through `registerDefaultFonts()`, so the Word default families never silently fall back to canvas — an unregistered family logs a one-time warning. `setShapingEnabled(false)` or `DOCEN_SHAPING_DISABLED=1` rolls back to the canvas measurer.
 - **Complex Scripts & Direction:**
   - Multi-direction: LTR, RTL, TTB (vertical CJK with `vhea` / OpenType synthesis), BTT, and automatic Unicode script detection.
   - Full GSUB/GPOS shaping for Arabic cursive joining & mark positioning, Hebrew RTL Niqqud, Thai vowel reordering & mark stacking, Devanagari conjuncts & matras, Khmer coeng subscripts, and Latin ligature substitution (`fi`, `fl`, `ffi`, `ffl`).
@@ -243,9 +243,10 @@ concurrently.
 | **PDF text extraction**        | 100% (Latin + accents + CJK)   | `pdftotext` byte-exact on subset-embedded PDF                       | PASSED                   |
 
 Known gaps, tracked for R6.T2: the pretext line breaker still measures through
-canvas (`prepareRichInline`), so shaped advances only drive atom probes today;
-cross-browser LayoutDoc hashing and bundled production fonts are not yet in
-place.
+canvas (`prepareRichInline`), so shaped advances only drive atom probes today.
+The production font set is bundled by `@docen/layout` (`registerDefaultFonts()`)
+with its metrics pinned in the cross-environment golden
+(`packages/layout/test/font-metrics-golden.json`).
 
 ---
 
