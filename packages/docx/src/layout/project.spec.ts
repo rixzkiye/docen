@@ -2383,3 +2383,74 @@ describe("projectDocumentOptions theme fonts", () => {
     );
   });
 });
+
+describe("projectDocumentOptions embedded OLE object", () => {
+  it("projects embedded Excel object into inline picture with vector preview", () => {
+    const res = projectDocumentOptions({
+      sections: [
+        {
+          children: [
+            {
+              paragraph: {
+                children: [
+                  {
+                    object: {
+                      width: 400,
+                      height: 200,
+                      embed: { progId: "Excel.Sheet.12", fileName: "Worksheet.xlsx" },
+                    },
+                  } as any,
+                ],
+              },
+            },
+          ],
+        },
+      ],
+    });
+    const block = res.sections[0]!.blocks[0];
+    expect(block.kind).toBe("paragraph");
+    if (block.kind !== "paragraph") return;
+    const inline = block.inline[0];
+    expect(inline?.kind).toBe("picture");
+    if (inline?.kind !== "picture") return;
+    expect(inline.widthPx).toBe(400);
+    expect(inline.heightPx).toBe(200);
+    expect(inline.src).toContain("data:image/svg+xml");
+    expect(inline.src).toContain("Sheet1");
+    expect(inline.line?.color).toBe("107C41");
+  });
+
+  it("projects generic OLE object with fallback preview", () => {
+    const res = projectDocumentOptions({
+      sections: [
+        {
+          children: [
+            {
+              paragraph: {
+                children: [
+                  {
+                    object: {
+                      width: 300,
+                      height: 150,
+                      embed: { progId: "Acrobat.Document.DC" },
+                    },
+                  } as any,
+                ],
+              },
+            },
+          ],
+        },
+      ],
+    });
+    const block = res.sections[0]!.blocks[0];
+    expect(block.kind).toBe("paragraph");
+    if (block.kind !== "paragraph") return;
+    const inline = block.inline[0];
+    expect(inline?.kind).toBe("picture");
+    if (inline?.kind !== "picture") return;
+    expect(inline.widthPx).toBe(300);
+    expect(inline.heightPx).toBe(150);
+    expect(inline.src).toContain("data:image/svg+xml");
+    expect(inline.line?.color).toBe("808080");
+  });
+});

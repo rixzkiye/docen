@@ -23,6 +23,7 @@ import {
   nextOrderedReference,
   presetShapePaths,
   type JSONContent,
+  decodePassthroughData,
 } from "@docen/docx";
 import { Editor } from "@docen/docx/core";
 import { EMU_PER_PX, type FlowPage } from "@docen/layout";
@@ -44,6 +45,7 @@ import { DrawingGestures, type DrawingHit } from "../../drawing";
 import { t } from "../../ui/i18n/localize";
 import { collectListReferences, listLevelStepPatch } from "../extensions/commands";
 import { KEYBOARD_SHORTCUTS } from "../extensions/keymap";
+import { downloadOleObject } from "../quick-tables";
 import {
   applyAutocorrect,
   autocorrectOf,
@@ -2919,6 +2921,34 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
         ta.focus();
         ta.value = "";
         return;
+      }
+      if (clicks === 2) {
+        const { doc, selection } = active().editor.state;
+        const $pos = doc.resolve(pos);
+        const target =
+          (selection instanceof NodeSelection && selection.node.type.name === "inlinePassthrough"
+            ? selection.node
+            : null) ??
+          ($pos.nodeAfter?.type.name === "inlinePassthrough" ? $pos.nodeAfter : null) ??
+          ($pos.nodeBefore?.type.name === "inlinePassthrough" ? $pos.nodeBefore : null);
+        if (target?.attrs?.data) {
+          try {
+            const parsed = decodePassthroughData<{
+              object?: { embed?: { data?: Uint8Array; fileName?: string } };
+            }>(target.attrs.data);
+            if (parsed?.object?.embed?.data) {
+              const bytes =
+                parsed.object.embed.data instanceof Uint8Array
+                  ? parsed.object.embed.data
+                  : new Uint8Array((parsed.object.embed.data as any) ?? []);
+              const fileName = parsed.object.embed.fileName ?? "Microsoft_Excel_Worksheet.xlsx";
+              downloadOleObject(bytes, fileName);
+              ta.focus();
+              ta.value = "";
+              return;
+            }
+          } catch {}
+        }
       }
       clickSelection(pos, event, clicks);
     }

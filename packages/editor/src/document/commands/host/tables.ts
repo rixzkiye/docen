@@ -48,7 +48,7 @@ export class TablesHostCommands implements HostCommandDomain {
     "table-eraser",
   ];
 
-  readonly editor: readonly string[] = ["table-properties"];
+  readonly editor: readonly string[] = ["table-properties", "insert-quick-table", "insert-excel"];
 
   run(event: string, value?: string): boolean {
     if (event === "draw-table") {

@@ -67,6 +67,7 @@ export {
   type DocxVariant,
   type RunPropMark,
 } from "./converters/docx";
+export { decodePassthroughData, encodePassthroughData } from "./extensions/passthrough";
 
 // Converters: DOCX template patching (placeholder replacement via office-open patchDocument)
 export { patchDOCX, type DocxPatchOptions, type DocxPatchContent } from "./converters/patch";

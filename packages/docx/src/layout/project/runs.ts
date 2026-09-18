@@ -20,7 +20,12 @@ import type { MarkupDisplay, ProjectContext } from "./context";
 import { markStateful } from "./context";
 import { cropOf, outlineOf, pictureAdjustOf } from "./drawing";
 import { isRecord, measureEmu, num, str, unescapeXml, type Rec } from "./guards";
-import { metafileMembers, pictureSrc } from "./media";
+import {
+  excelPreviewSvgDataUri,
+  metafileMembers,
+  objectPreviewSvgDataUri,
+  pictureSrc,
+} from "./media";
 import { formatNumber } from "./numbering";
 import { fontAttr, normalizeScalePct, toFamily, runStyleOf } from "./styles";
 
@@ -670,6 +675,40 @@ export function projectRuns(
               : {}),
           });
         }
+      }
+      if (isRecord(child.object)) {
+        // An embedded OLE object (w:object, e.g. Excel spreadsheet) paints
+        // as an inline framed picture with its vector preview.
+        const obj = child.object as Rec;
+        const parseDimPx = (val: unknown, fallback: number): number => {
+          if (typeof val === "number") {
+            return val > 20000 ? emuToPx(val) : val;
+          }
+          if (typeof val === "string") {
+            const emu = measureEmu(val);
+            if (emu != null) return emuToPx(emu);
+          }
+          return fallback;
+        };
+        const widthPx = parseDimPx(obj.width, 360);
+        const heightPx = parseDimPx(obj.height, 180);
+        const embed = isRecord(obj.embed) ? (obj.embed as Rec) : undefined;
+        const progId = str(embed?.progId) ?? str(obj.progId) ?? "";
+        const fileName = str(embed?.fileName) ?? "";
+        const isExcel =
+          progId.toLowerCase().includes("excel") ||
+          fileName.toLowerCase().endsWith(".xlsx") ||
+          fileName.toLowerCase().endsWith(".xls");
+        const src = isExcel
+          ? excelPreviewSvgDataUri(widthPx, heightPx)
+          : objectPreviewSvgDataUri(widthPx, heightPx, progId || undefined);
+        out.push({
+          kind: "picture",
+          widthPx,
+          heightPx,
+          src,
+          line: { color: isExcel ? "107C41" : "808080", px: 1 },
+        });
       }
       if (isRecord(child.complexField)) pushField(child.complexField, rPr);
       if (isRecord(child.simpleField)) pushField(child.simpleField, rPr);

@@ -1,6 +1,7 @@
 import type { ChartOptions, ChartType, ImageAttrs, LegendPosition } from "@docen/docx";
 import {
   BULLET_GLYPHS,
+  encodePassthroughData,
   HIGHLIGHT_PALETTE_RGB,
   nextMultilevelReference,
   nextOrderedReference,
@@ -24,6 +25,11 @@ import { DocAttrStep } from "@tiptap/pm/transform";
 import { freshChildEmu, memberEmuOf, unionBox, type Box } from "../../drawing";
 import { autotextMatch, blocksOfDocAttrs, type BuildingBlock } from "../building-blocks";
 import { CellSelection, cellsInRect } from "../canvas/cell-selection";
+import {
+  createBlankExcelWorkbookBytes,
+  getQuickTableBuildingBlocks,
+  getQuickTableJson,
+} from "../quick-tables";
 
 /**
  * Document editor commands (Office.js-style "add-in commands") as native
@@ -142,6 +148,8 @@ declare module "@tiptap/core" {
       "section-break-next": () => ReturnType;
       "section-break-continuous": () => ReturnType;
       "insert-table": (options?: InsertTableOptions) => ReturnType;
+      "insert-quick-table": (presetId?: string) => ReturnType;
+      "insert-excel": () => ReturnType;
       chart: () => ReturnType;
       "delete-table": () => ReturnType;
       // Quick Parts (D2): insert a saved building block / the F3 AutoText
@@ -314,6 +322,8 @@ export const WIRED_DISPATCH: ReadonlySet<string> = new Set([
   "section-break-next",
   "section-break-continuous",
   "insert-table",
+  "insert-quick-table",
+  "insert-excel",
   "chart",
   "delete-table",
   "insert-row-above",
@@ -2913,6 +2923,54 @@ export const DocumentCommands = Extension.create({
             // Caret lands in the first cell, ready to type (Word behavior).
             tr.setSelection(TextSelection.near(tr.doc.resolve(pos + 2)));
             dispatch(tr.scrollIntoView());
+          }
+          return true;
+        },
+      // Quick Tables gallery — insert a built-in pre-structured table
+      // (calendar, matrix, tabular list, double table, subheadings) as one
+      // transaction at the caret.
+      "insert-quick-table":
+        (presetId?: string) =>
+        ({ state, dispatch }: { state: EditorState; dispatch?: (tr: Transaction) => void }) => {
+          const json = getQuickTableJson(presetId ?? "calendar1");
+          if (!json) return false;
+          let node: PMNode;
+          try {
+            node = state.schema.nodeFromJSON(json);
+          } catch {
+            return false;
+          }
+          if (dispatch) {
+            const pos = state.selection.from;
+            const tr = state.tr.replaceSelectionWith(node);
+            tr.setSelection(TextSelection.near(tr.doc.resolve(pos + 2)));
+            dispatch(tr.scrollIntoView());
+          }
+          return true;
+        },
+      // Insert Excel spreadsheet — embeds a minimal valid OOXML .xlsx workbook
+      // as an inline OLE object (w:object), rendered as a frame with preview.
+      "insert-excel":
+        () =>
+        ({ state, dispatch }: { state: EditorState; dispatch?: (tr: Transaction) => void }) => {
+          const bytes = createBlankExcelWorkbookBytes();
+          const node = state.schema.nodes.inlinePassthrough?.create({
+            data: encodePassthroughData({
+              object: {
+                width: "360px",
+                height: "180px",
+                embed: {
+                  data: bytes,
+                  progId: "Excel.Sheet.12",
+                  fileName: "Microsoft_Excel_Worksheet1.xlsx",
+                  relationshipType: "oleObject",
+                },
+              },
+            }),
+          });
+          if (!node) return false;
+          if (dispatch) {
+            dispatch(state.tr.replaceSelectionWith(node).scrollIntoView());
           }
           return true;
         },
@@ -5641,7 +5699,9 @@ export const DocumentCommands = Extension.create({
         (id) =>
         ({ state, dispatch }) => {
           if (typeof id !== "string" || id === "") return false;
-          const block = blocksOfDocAttrs(state.doc.attrs).find((b) => b.id === id);
+          const block =
+            blocksOfDocAttrs(state.doc.attrs).find((b) => b.id === id) ??
+            getQuickTableBuildingBlocks().find((b) => b.id === id);
           const slice = block ? blockSliceOf(state.schema, block) : null;
           if (!slice) return false;
           let tr: Transaction;

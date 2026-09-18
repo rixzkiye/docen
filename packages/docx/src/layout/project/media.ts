@@ -226,3 +226,74 @@ function base64ToBytes(b64: string): Uint8Array | undefined {
     return undefined;
   }
 }
+
+/** Render a crisp vector SVG preview data URI for an embedded Excel spreadsheet. */
+export function excelPreviewSvgDataUri(widthPx: number, heightPx: number): string {
+  const w = Math.max(Math.round(widthPx), 120);
+  const h = Math.max(Math.round(heightPx), 60);
+  const colW = 60;
+  const rowH = 20;
+  const headerH = 26;
+  const footerH = 22;
+
+  const numCols = Math.min(Math.floor((w - 30) / colW), 10);
+  const numRows = Math.min(Math.floor((h - headerH - footerH) / rowH), 15);
+
+  let colXml = "";
+  for (let c = 0; c < numCols; c++) {
+    const letter = String.fromCharCode(65 + c);
+    const x = 30 + c * colW;
+    colXml +=
+      `<rect x="${x}" y="${headerH}" width="${colW}" height="${rowH}" fill="#F3F2F1" stroke="#D2D0CE"/>` +
+      `<text x="${x + colW / 2}" y="${headerH + 14}" font-family="Segoe UI, sans-serif" font-size="11" fill="#323130" text-anchor="middle">${letter}</text>`;
+  }
+
+  let rowXml = "";
+  for (let r = 0; r < numRows; r++) {
+    const y = headerH + rowH + r * rowH;
+    rowXml +=
+      `<rect x="0" y="${y}" width="30" height="${rowH}" fill="#F3F2F1" stroke="#D2D0CE"/>` +
+      `<text x="15" y="${y + 14}" font-family="Segoe UI, sans-serif" font-size="10" fill="#605E5C" text-anchor="middle">${r + 1}</text>`;
+    for (let c = 0; c < numCols; c++) {
+      const x = 30 + c * colW;
+      rowXml += `<rect x="${x}" y="${y}" width="${colW}" height="${rowH}" fill="#FFFFFF" stroke="#E1DFDD"/>`;
+    }
+  }
+
+  const svg =
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">` +
+    `<rect width="${w}" height="${h}" fill="#FFFFFF" stroke="#107C41" stroke-width="1.5"/>` +
+    `<rect x="0" y="0" width="${w}" height="${headerH}" fill="#107C41"/>` +
+    `<rect x="6" y="5" width="16" height="16" rx="2" fill="#FFFFFF"/>` +
+    `<text x="14" y="17" font-family="Segoe UI, sans-serif" font-weight="bold" font-size="12" fill="#107C41" text-anchor="middle">X</text>` +
+    `<text x="28" y="17" font-family="Segoe UI, sans-serif" font-size="11" font-weight="600" fill="#FFFFFF">Sheet1 - Microsoft Excel Worksheet</text>` +
+    `<rect x="0" y="${headerH}" width="30" height="${rowH}" fill="#E1DFDD" stroke="#D2D0CE"/>` +
+    colXml +
+    rowXml +
+    `<rect x="0" y="${h - footerH}" width="${w}" height="${footerH}" fill="#F3F2F1" stroke="#D2D0CE"/>` +
+    `<rect x="8" y="${h - footerH + 2}" width="64" height="${footerH - 2}" fill="#FFFFFF" stroke="#D2D0CE"/>` +
+    `<rect x="8" y="${h - 2}" width="64" height="2" fill="#107C41"/>` +
+    `<text x="40" y="${h - 8}" font-family="Segoe UI, sans-serif" font-size="10" font-weight="600" fill="#107C41" text-anchor="middle">Sheet1</text>` +
+    `</svg>`;
+
+  return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
+}
+
+/** Render a generic OLE embedded object frame preview. */
+export function objectPreviewSvgDataUri(
+  widthPx: number,
+  heightPx: number,
+  progId = "Embedded Object",
+): string {
+  const w = Math.max(Math.round(widthPx), 120);
+  const h = Math.max(Math.round(heightPx), 60);
+  const svg =
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">` +
+    `<rect width="${w}" height="${h}" fill="#FAFAFA" stroke="#808080" stroke-width="1.5" stroke-dasharray="4 2"/>` +
+    `<rect x="10" y="10" width="24" height="24" rx="3" fill="#0078D4"/>` +
+    `<text x="22" y="27" font-family="Segoe UI, sans-serif" font-weight="bold" font-size="14" fill="#FFFFFF" text-anchor="middle">O</text>` +
+    `<text x="42" y="26" font-family="Segoe UI, sans-serif" font-size="12" font-weight="600" fill="#323130">${progId}</text>` +
+    `<text x="14" y="${h - 12}" font-family="Segoe UI, sans-serif" font-size="10" fill="#605E5C">Double-click or right-click to open/download</text>` +
+    `</svg>`;
+  return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
+}

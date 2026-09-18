@@ -12,6 +12,7 @@
 
 import {
   convertMillimetersToTwip,
+  decodePassthroughData,
   docxExtensions,
   effectiveRunProps,
   generateDOCX,
@@ -82,13 +83,13 @@ import {
   type StoryKind,
   type StorySlot,
 } from "./canvas/edit-bridge";
+import { CanvasStage, type CanvasStageSection, type LaidFurnitureSection } from "./canvas/stage";
 // Side-effect: register the document-specific UI components moved out of the
 // shared ui/ barrel — <docen-format-pane> (properties fallback),
 // <docen-outline> (navigation Headings tab), <docen-styles-pane> (Styles).
 import "./components/format-pane";
 import "./components/outline";
 import "./components/styles-pane";
-import { CanvasStage, type CanvasStageSection, type LaidFurnitureSection } from "./canvas/stage";
 import { documentStyles, documentTemplate } from "./chrome";
 import { ClipboardCommands } from "./commands/clipboard";
 import { CommentsCommands } from "./commands/comments";
@@ -117,9 +118,9 @@ import { READONLY_LIVE, type SaveFormat } from "./file-formats";
 import { ChromeDomain } from "./host/chrome";
 import { InsertDomain } from "./host/insert";
 import { IODomain } from "./host/io";
+import { RenderDomain } from "./host/render";
 // Side-effect import: registers the ribbon/header translation tables.
 import "./i18n";
-import { RenderDomain } from "./host/render";
 import { StatusDomain } from "./host/status";
 import { pageInsets, StoriesDomain } from "./host/stories";
 import { StylesDomain } from "./host/styles";
@@ -134,6 +135,7 @@ import {
   type ProtectionHostView,
   type ProtectionPane,
 } from "./protection";
+import { downloadOleObject } from "./quick-tables";
 import { formattingInfoOf } from "./reveal-formatting";
 import { useCmUnits } from "./ribbon";
 import {
@@ -2416,6 +2418,50 @@ class DocenDocument extends AddinHost<Editor> {
     return sel.node.attrs.crop != null;
   }
 
+  /** The selected or caret-adjacent OLE embedded object, if any. */
+  #selectedOleObject(): { data: Uint8Array; fileName: string; progId: string } | null {
+    const editor = this.#bridge?.activeEditor() ?? this.editor;
+    if (!editor) return null;
+    const { state } = editor;
+    const { selection } = state;
+    let found: { data: Uint8Array; fileName: string; progId: string } | null = null;
+    const checkNode = (node: PMNode): void => {
+      if (node.type.name === "inlinePassthrough" && node.attrs?.data) {
+        try {
+          const parsed = decodePassthroughData<{
+            object?: { embed?: { data?: Uint8Array; fileName?: string; progId?: string } };
+          }>(node.attrs.data);
+          if (parsed?.object?.embed) {
+            const embed = parsed.object.embed;
+            found = {
+              data:
+                embed.data instanceof Uint8Array
+                  ? embed.data
+                  : new Uint8Array((embed.data as any) ?? []),
+              fileName: embed.fileName ?? "Microsoft_Excel_Worksheet.xlsx",
+              progId: embed.progId ?? "Excel.Sheet.12",
+            };
+          }
+        } catch {
+          // ignore malformed data
+        }
+      }
+    };
+
+    if (selection instanceof NodeSelection) {
+      checkNode(selection.node);
+    } else if (selection.empty) {
+      const $pos = selection.$from;
+      if ($pos.nodeBefore) checkNode($pos.nodeBefore);
+      if (!found && $pos.nodeAfter) checkNode($pos.nodeAfter);
+    } else {
+      state.doc.nodesBetween(selection.from, selection.to, (node) => {
+        if (!found) checkNode(node);
+      });
+    }
+    return found;
+  }
+
   /** The active view, normalized (an unknown attr value reads as print). */
   #viewMode(): "print" | "web" | "draft" | "read" {
     return this.view === "web" || this.view === "draft" || this.view === "read"
@@ -3434,6 +3480,22 @@ class DocenDocument extends AddinHost<Editor> {
       }
       items.push({ text: "-" });
     }
+    const ole = this.#selectedOleObject();
+    if (ole) {
+      const isExcel =
+        ole.fileName.endsWith(".xlsx") ||
+        ole.fileName.endsWith(".xls") ||
+        ole.progId.toLowerCase().includes("excel");
+      items.push({
+        text: isExcel ? t("context.open-worksheet", this) : t("context.open-object", this),
+        event: "open-embedded-object",
+      });
+      items.push({
+        text: isExcel ? t("context.download-worksheet", this) : t("context.download-object", this),
+        event: "download-embedded-object",
+      });
+      items.push({ text: "-" });
+    }
     items.push({ text: t("context.select-all", this), event: "select" });
     if (inTable) {
       items.push({ text: "-" });
@@ -4018,6 +4080,16 @@ class DocenDocument extends AddinHost<Editor> {
     }
     if (name === "toggle-checkbox") {
       this.#sdtCommand().toggleCheckboxAtCaret();
+      return;
+    }
+    if (name === "open-embedded-object" || name === "download-embedded-object") {
+      const ole = this.#selectedOleObject();
+      if (ole) {
+        downloadOleObject(ole.data, ole.fileName);
+        this.dispatchEvent(
+          new CustomEvent("ole:open", { bubbles: true, composed: true, detail: ole }),
+        );
+      }
       return;
     }
     // Read-only documents (Viewing mode) reject document-changing commands —

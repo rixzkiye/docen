@@ -330,6 +330,8 @@ export const LOCAL_HANDLED: ReadonlySet<string> = new Set([
   "unset-link",
   "open-link",
   "copy-link",
+  "open-embedded-object",
+  "download-embedded-object",
   // New Comment anchors the selection with a Word comment (range markers +
   // a documentExtras.comments entry) — composed in the comments pane, not a
   // prompt; Edit opens the pane (cards edit inline), Delete removes the

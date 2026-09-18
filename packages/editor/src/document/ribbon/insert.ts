@@ -26,8 +26,22 @@ export const tableItems = (): string =>
     // Draw Table tool enables freehand grid creation & cell splitting.
     { text: opt("draw-table"), event: "draw-table" },
     { text: opt("convert-text"), value: "convert", disabled: true },
-    { text: opt("excel"), value: "excel", disabled: true },
-    { text: opt("quick-tables"), value: "quick", disabled: true },
+    { text: opt("excel"), value: "excel", event: "insert-excel" },
+    {
+      text: opt("quick-tables"),
+      children: [
+        { text: opt("quick-table-calendar1"), value: "calendar1", event: "insert-quick-table" },
+        { text: opt("quick-table-calendar2"), value: "calendar2", event: "insert-quick-table" },
+        { text: opt("quick-table-matrix"), value: "matrix", event: "insert-quick-table" },
+        {
+          text: opt("quick-table-tabular-list"),
+          value: "tabular-list",
+          event: "insert-quick-table",
+        },
+        { text: opt("quick-table-double"), value: "double-table", event: "insert-quick-table" },
+        { text: opt("quick-table-subheadings"), value: "subheadings", event: "insert-quick-table" },
+      ],
+    },
   ]);
 
 /** The Header/Footer split's drop-down: edit (the split's main action),
