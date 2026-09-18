@@ -267,15 +267,29 @@ const INLINE_FIXTURES: Record<keyof typeof PARAGRAPH_CHILD_DISPOSITIONS, () => P
   moveToRangeStart: () => ({ moveToRangeStart: { id: 1, name: "mv" } }),
   moveToRangeEnd: () => ({ moveToRangeEnd: { id: 1 } }),
   movedFrom: () => ({
-    movedFrom: { id: 1, author: "a", date: "2024-01-01T00:00:00Z", children: [] },
+    movedFrom: { id: 1, author: "a", date: "2024-01-01T00:00:00Z", children: [{ text: "mf" }] },
   }),
   movedTo: () => ({
-    movedTo: { id: 1, author: "a", date: "2024-01-01T00:00:00Z", children: [] },
+    movedTo: { id: 1, author: "a", date: "2024-01-01T00:00:00Z", children: [{ text: "mt" }] },
   }),
   moveFrom: () => ({
-    moveFrom: { author: "a", date: "2024-01-01T00:00:00Z", name: "mv" },
+    moveFrom: {
+      id: 1,
+      author: "a",
+      date: "2024-01-01T00:00:00Z",
+      name: "mv",
+      children: [{ text: "mf" }],
+    },
   }),
-  moveTo: () => ({ moveTo: { author: "a", date: "2024-01-01T00:00:00Z", name: "mv" } }),
+  moveTo: () => ({
+    moveTo: {
+      id: 1,
+      author: "a",
+      date: "2024-01-01T00:00:00Z",
+      name: "mv",
+      children: [{ text: "mt" }],
+    },
+  }),
   customXmlInsRangeStart: () => ({ customXmlInsRangeStart: { id: 1 } }),
   customXmlInsRangeEnd: () => ({ customXmlInsRangeEnd: 1 }),
   customXmlDelRangeStart: () => ({ customXmlDelRangeStart: { id: 1 } }),
@@ -455,6 +469,64 @@ const INLINE_EDITABLE: InlineEditable = {
     probe: (out) => {
       const bdo = (out as { bdo: { val?: string; children?: unknown[] } }).bdo;
       expect(bdo.val).toBe("rtl");
+    },
+  },
+  moveFromRangeStart: {
+    marker: "moveFromRangeStart",
+    probe: (out) => {
+      const m = (out as { moveFromRangeStart: { id: number } }).moveFromRangeStart;
+      expect(m.id).toBe(1);
+    },
+  },
+  moveFromRangeEnd: {
+    marker: "moveFromRangeEnd",
+    probe: (out) => {
+      const m = (out as { moveFromRangeEnd: { id: number } }).moveFromRangeEnd;
+      expect(m.id).toBe(1);
+    },
+  },
+  moveToRangeStart: {
+    marker: "moveToRangeStart",
+    probe: (out) => {
+      const m = (out as { moveToRangeStart: { id: number } }).moveToRangeStart;
+      expect(m.id).toBe(1);
+    },
+  },
+  moveToRangeEnd: {
+    marker: "moveToRangeEnd",
+    probe: (out) => {
+      const m = (out as { moveToRangeEnd: { id: number } }).moveToRangeEnd;
+      expect(m.id).toBe(1);
+    },
+  },
+  movedFrom: {
+    marker: "moveFrom",
+    probe: (out) => {
+      const m = (out as { movedFrom: { id?: number; author?: string } }).movedFrom;
+      expect(m.id).toBe(1);
+      expect(m.author).toBe("a");
+    },
+  },
+  movedTo: {
+    marker: "moveTo",
+    probe: (out) => {
+      const m = (out as { movedTo: { id?: number; author?: string } }).movedTo;
+      expect(m.id).toBe(1);
+      expect(m.author).toBe("a");
+    },
+  },
+  moveFrom: {
+    marker: "moveFrom",
+    probe: (out) => {
+      const m = out as { movedFrom?: { id?: number }; moveFrom?: { id?: number } };
+      expect((m.movedFrom ?? m.moveFrom)?.id).toBe(1);
+    },
+  },
+  moveTo: {
+    marker: "moveTo",
+    probe: (out) => {
+      const m = out as { movedTo?: { id?: number }; moveTo?: { id?: number } };
+      expect((m.movedTo ?? m.moveTo)?.id).toBe(1);
     },
   },
 };

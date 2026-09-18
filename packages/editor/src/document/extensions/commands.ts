@@ -475,6 +475,8 @@ export const WIRED_DISPATCH: ReadonlySet<string> = new Set([
   "track-changes",
   "accept-change",
   "reject-change",
+  "accept-move",
+  "reject-move",
   "previous-change",
   "next-change",
   "toggle-ribbon-minimized",

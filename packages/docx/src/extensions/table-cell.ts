@@ -23,8 +23,11 @@ export function renderDocx(node: JSONContent): Record<string, unknown> {
   const attrs = (node.attrs ?? {}) as Record<string, unknown>;
   const opts: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(attrs)) {
-    if (SKIP_KEYS.has(key)) continue;
+    if (SKIP_KEYS.has(key) || key === "tcPrChange") continue;
     if (value !== null && value !== undefined) opts[key] = value;
+  }
+  if (attrs.tcPrChange != null && opts.revision == null) {
+    opts.revision = attrs.tcPrChange;
   }
   return opts;
 }
@@ -35,6 +38,9 @@ export function parseDocx(opts: TableCellOptions): Record<string, unknown> {
     if (key === "rowSpan" || key === "children" || key === "text" || key === "cellProperties")
       continue;
     attrs[key] = value ?? null;
+  }
+  if (opts.revision != null) {
+    attrs.tcPrChange = opts.revision;
   }
   return attrs;
 }

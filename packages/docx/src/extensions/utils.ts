@@ -177,7 +177,7 @@ export function docxParagraphAttrs() {
 type CellKeyElsewhere = "rowSpan" | "children" | "text" | "cellProperties";
 
 /** The full attr key set the tableCell node declares. */
-type TableCellAttrKey = Exclude<keyof TableCellOptions, CellKeyElsewhere>;
+type TableCellAttrKey = Exclude<keyof TableCellOptions, CellKeyElsewhere> | "tcPrChange";
 
 /** Shared office-open table-cell attrs — TableCellPropertiesOptions mirror.
  *  The satisfies guard pins the key set to TableCellAttrKey — same mirror
@@ -222,6 +222,7 @@ export function docxTableCellAttrs() {
     deletion: attrNative(),
     cellMerge: attrNative(),
     revision: attrNative(),
+    tcPrChange: attrNative(),
     // Mirror contract: every office-open cell property declared, nothing else.
   } satisfies Record<TableCellAttrKey, DocxAttrSpec>;
 }

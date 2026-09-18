@@ -50,27 +50,42 @@ const trackChangeAttrs = () => ({
   id: { default: null, rendered: false },
   author: { default: null, rendered: false },
   date: { default: null, rendered: false },
+  name: { default: null, rendered: false },
+  moveId: { default: null, rendered: false },
 });
 
 /** office-open's w:ins / w:del ParagraphChild branches, derived from the union
  *  (ChangedProperties & { children: TrackChangeChild[] } is not exported). */
 type InsertionBranch = Extract<ParagraphChild, { insertion: unknown }>;
 type DeletionBranch = Extract<ParagraphChild, { deletion: unknown }>;
+type MovedFromBranch = Extract<ParagraphChild, { movedFrom: unknown }>;
+type MoveFromBranch = Extract<ParagraphChild, { moveFrom: unknown }>;
+type MovedToBranch = Extract<ParagraphChild, { movedTo: unknown }>;
+type MoveToBranch = Extract<ParagraphChild, { moveTo: unknown }>;
 
-/** ParagraphChild `{ insertion|deletion: {...} }` → text[] carrying the mark.
+/** ParagraphChild `{ insertion|deletion|movedFrom|movedTo: {...} }` → text[] carrying the mark.
  *  Mirrors the old DocxManager.resolveTrackedChange: recurse the container's
  *  runs via ctx, merge adjacent text, then stamp every text node with the
  *  revision mark alongside any existing rPr marks. Returns null for an empty
  *  container. */
 function resolveTrackedChange(
-  opts: InsertionBranch["insertion"] | DeletionBranch["deletion"],
-  type: "insertion" | "deletion",
+  opts: Record<string, unknown> & {
+    id?: unknown;
+    author?: unknown;
+    date?: unknown;
+    name?: unknown;
+    moveId?: unknown;
+    children?: unknown[];
+    wrap?: unknown[];
+  },
+  type: "insertion" | "deletion" | "moveFrom" | "moveTo",
   ctx: ResolveContext,
 ): JSONContent[] | null {
   // Track-change children (runs, strings, comment markers) are all valid
   // inline input — the ParagraphChild union admits every TrackChangeChild
   // shape as itself or its fallback member.
-  const content = ctx.resolveInlineChildren(opts.children ?? []);
+  const rawChildren = (opts.children ?? opts.wrap ?? []) as ParagraphChild[];
+  const content = ctx.resolveInlineChildren(rawChildren);
   if (content.length === 0) return null;
   const merged = mergeTextNodes(content);
   const mark = {
@@ -79,6 +94,8 @@ function resolveTrackedChange(
       id: opts.id ?? null,
       author: opts.author ?? null,
       date: opts.date ?? null,
+      name: opts.name ?? null,
+      moveId: opts.moveId ?? opts.id ?? null,
     },
   };
   for (const node of merged) {
@@ -92,7 +109,7 @@ function resolveTrackedChange(
 // DOCX `<w:ins>` run → office-open ParagraphChild `{ insertion: {...} }`.
 const insertionRule: ParseInlineRule<InsertionBranch> = {
   match: (child): child is InsertionBranch => "insertion" in child,
-  convert: (child, ctx) => resolveTrackedChange(child.insertion, "insertion", ctx),
+  convert: (child, ctx) => resolveTrackedChange(child.insertion as any, "insertion", ctx),
 };
 
 export const Insertion = Mark.create({
@@ -116,7 +133,7 @@ export const Insertion = Mark.create({
 // DOCX `<w:del>` run → office-open ParagraphChild `{ deletion: {...} }`.
 const deletionRule: ParseInlineRule<DeletionBranch> = {
   match: (child): child is DeletionBranch => "deletion" in child,
-  convert: (child, ctx) => resolveTrackedChange(child.deletion, "deletion", ctx),
+  convert: (child, ctx) => resolveTrackedChange(child.deletion as any, "deletion", ctx),
 };
 
 export const Deletion = Mark.create({
@@ -133,6 +150,53 @@ export const Deletion = Mark.create({
   },
 
   parseDocxInline: deletionRule,
+});
+
+// DOCX `<w:moveFrom>` run → office-open ParagraphChild `{ movedFrom|moveFrom: {...} }`.
+const moveFromRule: ParseInlineRule<MovedFromBranch | MoveFromBranch> = {
+  match: (child): child is MovedFromBranch | MoveFromBranch =>
+    "movedFrom" in child || "moveFrom" in child,
+  convert: (child, ctx) =>
+    resolveTrackedChange(
+      ("movedFrom" in child ? child.movedFrom : (child as any).moveFrom) as any,
+      "moveFrom",
+      ctx,
+    ),
+};
+
+export const MoveFrom = Mark.create({
+  name: "moveFrom",
+  inclusive: false,
+  addAttributes() {
+    return trackChangeAttrs();
+  },
+  parseHTML() {
+    return [{ tag: "del.docen-move-from" }, { tag: "span.docen-move-from" }];
+  },
+  parseDocxInline: moveFromRule,
+});
+
+// DOCX `<w:moveTo>` run → office-open ParagraphChild `{ movedTo|moveTo: {...} }`.
+const moveToRule: ParseInlineRule<MovedToBranch | MoveToBranch> = {
+  match: (child): child is MovedToBranch | MoveToBranch => "movedTo" in child || "moveTo" in child,
+  convert: (child, ctx) =>
+    resolveTrackedChange(
+      ("movedTo" in child ? child.movedTo : (child as any).moveTo) as any,
+      "moveTo",
+      ctx,
+    ),
+};
+
+export const MoveTo = Mark.create({
+  name: "moveTo",
+  inclusive: false,
+  addAttributes() {
+    return trackChangeAttrs();
+  },
+  parseHTML() {
+    return [{ tag: "ins.docen-move-to" }, { tag: "span.docen-move-to" }];
+  },
+  parseDocxInline: moveToRule,
 });
 
 /** One edit in a record's own-edit log — an exact mark-level delta. */

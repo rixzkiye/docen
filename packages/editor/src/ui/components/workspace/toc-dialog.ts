@@ -71,6 +71,10 @@ const template = html<DocenTocDialog>`
         ></fluent-checkbox>
         <label slot="label">${(x) => t("tocDialog.alignPageNumbers", x)}</label>
       </fluent-field>
+      <fluent-field label-position="after">
+        <fluent-checkbox slot="input" ${ref("hyperlinksBox")}></fluent-checkbox>
+        <label slot="label">${(x) => t("tocDialog.useHyperlinks", x)}</label>
+      </fluent-field>
       <div class="field">
         <label>${(x) => t("tocDialog.tabLeader", x)}</label>
         <fluent-dropdown type="combobox" appearance="outline" ${ref("leaderDropdown")}>
@@ -91,6 +95,13 @@ const template = html<DocenTocDialog>`
         <label>${(x) => t("tocDialog.levels", x)}</label>
         <fluent-text-input ${ref("levelsInput")}></fluent-text-input>
       </div>
+      <div class="field">
+        <label>${(x) => t("tocDialog.customStyles", x)}</label>
+        <fluent-text-input
+          ${ref("stylesInput")}
+          placeholder="Title,1,Subtitle,2"
+        ></fluent-text-input>
+      </div>
     </div>
     <div slot="action">
       <fluent-button ${ref("cancelBtn")} @click="${(x) => x.hide()}"></fluent-button>
@@ -108,15 +119,17 @@ const template = html<DocenTocDialog>`
  * of Contents → Custom Table of Contents): page numbers on/off, their right
  * alignment (driving the leader tab), the tab leader glyph, and the heading
  * level window. Commits via `toc:ok` `{ headingRange, leader, showPageNumbers,
- * alignPageNumbers }`.
+ * alignPageNumbers, hyperlink, styles }`.
  */
 @customElement({ name: "docen-toc-dialog", template, styles })
 class DocenTocDialog extends FASTElement {
   @observable dialogEl?: HTMLElement & { heading?: string; show(): void; hide(): void };
   @observable pageNumbersBox?: HTMLElement & { checked: boolean };
   @observable alignBox?: HTMLElement & { checked: boolean };
+  @observable hyperlinksBox?: HTMLElement & { checked: boolean };
   @observable leaderDropdown?: HTMLElement & { value: string | null };
   @observable levelsInput?: HTMLElement & { value: string };
+  @observable stylesInput?: HTMLElement & { value: string };
   @observable okBtn?: HTMLElement;
   @observable cancelBtn?: HTMLElement;
 
@@ -137,8 +150,10 @@ class DocenTocDialog extends FASTElement {
   show(): void {
     if (this.pageNumbersBox) this.pageNumbersBox.checked = true;
     if (this.alignBox) this.alignBox.checked = true;
+    if (this.hyperlinksBox) this.hyperlinksBox.checked = true;
     if (this.leaderDropdown) this.leaderDropdown.value = "dot";
     if (this.levelsInput) this.levelsInput.value = "3";
+    if (this.stylesInput) this.stylesInput.value = "";
     this.syncGates();
     this.dialogEl?.show();
   }
@@ -156,6 +171,8 @@ class DocenTocDialog extends FASTElement {
       leader: this.leaderDropdown?.value ?? "dot",
       showPageNumbers: this.pageNumbersBox?.checked ?? true,
       alignPageNumbers: this.alignBox?.checked ?? true,
+      hyperlink: this.hyperlinksBox?.checked ?? true,
+      styles: this.stylesInput?.value?.trim() || undefined,
     });
     this.hide();
   }

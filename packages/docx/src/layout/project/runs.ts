@@ -589,6 +589,37 @@ export function projectRuns(
         openComments.delete(num(child.commentRangeEnd.id)!);
       }
       const rPr: Rec = { ...preset, ...child };
+      if (child.movedFrom || child.moveFrom) {
+        const moveFrom = (child.movedFrom ?? child.moveFrom) as Rec;
+        if (isRecord(moveFrom) && !Array.isArray(moveFrom.children)) {
+          const eff = effectiveView(ctx.markup, moveFrom);
+          if (eff === "none") continue;
+          if (eff === "all") {
+            rPr.strike = true;
+            rPr.color = "008000";
+            if (wantsDeletions) {
+              const color = revisionColor(ctx, moveFrom);
+              revisionBalloon(
+                moveFrom,
+                out.length,
+                color,
+                typeof child.text === "string" ? child.text : undefined,
+              );
+            }
+          }
+        }
+      }
+      if (child.movedTo || child.moveTo) {
+        const moveTo = (child.movedTo ?? child.moveTo) as Rec;
+        if (isRecord(moveTo) && !Array.isArray(moveTo.children)) {
+          const eff = effectiveView(ctx.markup, moveTo);
+          if (eff === "original") continue;
+          if (eff === "all") {
+            rPr.underline = { type: "double", color: "008000" };
+            rPr.color = "008000";
+          }
+        }
+      }
       // A footnote/endnote reference is a superscript ordinal (Word's
       // FootnoteReference/EndnoteReference style look) — numbered by
       // first-reference order, the same id twice showing the same number;
@@ -779,6 +810,46 @@ export function projectRuns(
           }
           pushRuns(child.deletion.children, { ...preset, strike: true, color });
         } else if (eff === "original") pushRuns(child.deletion.children, preset);
+      }
+      const rawMoveFrom =
+        (isRecord(child.movedFrom) && Array.isArray(child.movedFrom.children)
+          ? child.movedFrom
+          : null) ??
+        (isRecord(child.moveFrom) && Array.isArray(child.moveFrom.children)
+          ? child.moveFrom
+          : null);
+      const moveFrom = rawMoveFrom as (Rec & { children: readonly unknown[] }) | null;
+      if (moveFrom) {
+        const color = revisionColor(ctx, moveFrom);
+        const eff = effectiveView(ctx.markup, moveFrom);
+        if (eff === "all") {
+          if (wantsDeletions) {
+            revisionBalloon(
+              moveFrom,
+              out.length,
+              color,
+              containerText(moveFrom.children) || undefined,
+            );
+          }
+          pushRuns(moveFrom.children, { ...preset, strike: true, color: "008000" });
+        } else if (eff === "original") {
+          pushRuns(moveFrom.children, preset);
+        }
+      }
+      const rawMoveTo =
+        (isRecord(child.movedTo) && Array.isArray(child.movedTo.children) ? child.movedTo : null) ??
+        (isRecord(child.moveTo) && Array.isArray(child.moveTo.children) ? child.moveTo : null);
+      const moveTo = rawMoveTo as (Rec & { children: readonly unknown[] }) | null;
+      if (moveTo) {
+        const eff = effectiveView(ctx.markup, moveTo);
+        if (eff !== "original") {
+          pushRuns(
+            moveTo.children,
+            eff === "all"
+              ? { ...preset, underline: { type: "double", color: "008000" }, color: "008000" }
+              : preset,
+          );
+        }
       }
       if (Array.isArray(child.children)) pushRuns(child.children, preset);
     }
