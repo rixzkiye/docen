@@ -242,3 +242,65 @@ describe("forms enforcement through the edit bridge", () => {
     expect(editor.state.doc.textContent).toContain("X");
   });
 });
+
+describe("table cell protection in forms mode", () => {
+  const tableContent = {
+    type: "doc",
+    content: [
+      {
+        type: "table",
+        content: [
+          {
+            type: "tableRow",
+            content: [
+              {
+                type: "tableCell",
+                content: [{ type: "paragraph", content: [{ type: "text", text: "Prompt Label" }] }],
+              },
+              {
+                type: "tableCell",
+                content: [
+                  {
+                    type: "sdtBlock",
+                    attrs: { properties: { title: "User Input" } },
+                    content: [
+                      { type: "paragraph", content: [{ type: "text", text: "Editable Cell" }] },
+                    ],
+                  },
+                ],
+              },
+              {
+                type: "tableCell",
+                content: [
+                  {
+                    type: "sdtBlock",
+                    attrs: { properties: { title: "Locked Field", cannotEdit: true } },
+                    content: [
+                      { type: "paragraph", content: [{ type: "text", text: "Locked Cell" }] },
+                    ],
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+    ],
+  };
+
+  it("enforces cell-level write protection in Word forms mode", () => {
+    const editor = makeEditor(tableContent);
+
+    // Static label cell without SDT: write-protected in forms mode
+    editor.commands.setTextSelection(posIn(editor, "Prompt Label"));
+    expect(isInsideEditableSdt(editor)).toBe(false);
+
+    // Input cell containing unlocked SDT: editable in forms mode
+    editor.commands.setTextSelection(posIn(editor, "Editable Cell"));
+    expect(isInsideEditableSdt(editor)).toBe(true);
+
+    // Cell containing locked SDT: write-protected in forms mode
+    editor.commands.setTextSelection(posIn(editor, "Locked Cell"));
+    expect(isInsideEditableSdt(editor)).toBe(false);
+  });
+});
