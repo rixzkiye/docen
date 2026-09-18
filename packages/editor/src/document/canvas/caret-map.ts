@@ -1093,6 +1093,24 @@ export class CaretMap {
     return null;
   }
 
+  /** The cell at a page-local point, if one covers it. */
+  cellAtPoint(page: number, x: number, y: number): { pos: number; rect: SelectionRect } | null {
+    for (const [pos, rects] of this.cellBoxes) {
+      for (const r of rects) {
+        if (
+          r.page === page &&
+          x >= r.xPx &&
+          x <= r.xPx + r.widthPx &&
+          y >= r.yPx &&
+          y <= r.yPx + r.heightPx
+        ) {
+          return { pos, rect: r };
+        }
+      }
+    }
+    return null;
+  }
+
   /** The table edge nearest a page-local point, if one sits within `tol` px —
    *  the border painter's hit test. Returns every cell side the boundary is
    *  SHARED with (a cell box edge equals the neighbor's opposite edge), so one

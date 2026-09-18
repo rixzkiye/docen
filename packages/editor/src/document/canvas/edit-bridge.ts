@@ -50,7 +50,7 @@ import {
   hyperlinkFix,
   type AutocorrectConfig,
 } from "./autocorrect";
-import { CaretMap, type TableZone } from "./caret-map";
+import { CaretMap, type SelectionRect, type TableZone } from "./caret-map";
 import { CellSelection, cellAt, inSameTable, spanOf } from "./cell-selection";
 import { installChartHover, type ChartTip } from "./chart-hover";
 import { createDocJsonCache, pmNodeToJSON, type DocJsonCache } from "./doc-json";
@@ -279,6 +279,25 @@ export interface EditBridgeOptions {
    *  collapse halves of an interior line included) for the host to commit as
    *  one paint/erase command. */
   applyBorderPaint?: (sides: { pos: number; side: "top" | "bottom" | "left" | "right" }[]) => void;
+  /** Armed state for Draw Table tool. */
+  tableDraw?: () => boolean;
+  /** Armed state for Table Eraser tool. */
+  tableEraser?: () => boolean;
+  /** Commit a drawn table stroke / rect. */
+  applyTableDraw?: (rect: {
+    page: number;
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+    stroke: { x1: number; y1: number; x2: number; y2: number };
+  }) => void;
+  /** Commit table eraser click on a border. */
+  applyTableEraser?: (sides: { pos: number; side: "top" | "bottom" | "left" | "right" }[]) => void;
+  /** Disarm Draw Table tool. */
+  stopTableDraw?: () => void;
+  /** Disarm Table Eraser tool. */
+  stopTableEraser?: () => void;
   /** Whether direct editing (typing, backspace, paste, cut) is permitted at the current selection. */
   canEdit?: (editor: Editor) => boolean;
 }
@@ -385,6 +404,8 @@ export interface EditBridge {
   /** Move keyboard focus to the bridge's input surface (the editing focus —
    *  there is no DOM editor to focus). */
   focus(): void;
+  /** Lookup cell at page coordinates. */
+  cellAtPoint(page: number, x: number, y: number): { pos: number; rect: SelectionRect } | null;
   /** Re-place the caret/selection/search overlays against the current
    *  geometry — needed when the zoom rescales the frames without a
    *  selection transaction. */
@@ -1535,6 +1556,16 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
     line: boolean;
   } | null = null;
 
+  let tableDrawGhost: {
+    page: number;
+    scale: number;
+    sx: number;
+    sy: number;
+    ax: number;
+    ay: number;
+    moved: boolean;
+  } | null = null;
+
   // Table column/row drag resize guide line & measurement badge
   const tableResizeLineEl = document.createElement("div");
   tableResizeLineEl.style.cssText =
@@ -1733,6 +1764,14 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
       opts.host.style.cursor = "crosshair";
       return;
     }
+    if (!story && opts.tableDraw?.()) {
+      opts.host.style.cursor = "crosshair";
+      return;
+    }
+    if (!story && opts.tableEraser?.()) {
+      opts.host.style.cursor = "cell";
+      return;
+    }
     // The armed painter owns the cursor: crosshair for the pen, the dense
     // cell cross for the eraser (Word's pencil/eraser, CSS-native), the
     // brush I-beam for the format painter.
@@ -1801,6 +1840,20 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
   };
 
   const onMouseMove = (event: MouseEvent): void => {
+    if (tableDrawGhost) {
+      const g = tableDrawGhost;
+      if (!g.moved && Math.hypot(event.clientX - g.sx, event.clientY - g.sy) < 3) return;
+      g.moved = true;
+      const px = g.ax + (event.clientX - g.sx) / g.scale;
+      const py = g.ay + (event.clientY - g.sy) / g.scale;
+      showShapeGhost(
+        Math.min(g.ax, px),
+        Math.min(g.ay, py),
+        Math.abs(px - g.ax),
+        Math.abs(py - g.ay),
+      );
+      return;
+    }
     if (shapeGhost) {
       const g = shapeGhost;
       if (!g.moved && Math.hypot(event.clientX - g.sx, event.clientY - g.sy) < 3) return;
@@ -1999,6 +2052,24 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
       } else {
         setSel(trState.tablePos + 1);
       }
+      return;
+    }
+    if (tableDrawGhost) {
+      const g = tableDrawGhost;
+      tableDrawGhost = null;
+      hideShapeGhost();
+      const px = g.ax + (event.clientX - g.sx) / g.scale;
+      const py = g.ay + (event.clientY - g.sy) / g.scale;
+      const width = Math.abs(px - g.ax);
+      const height = Math.abs(py - g.ay);
+      opts.applyTableDraw?.({
+        page: g.page,
+        x: Math.min(g.ax, px),
+        y: Math.min(g.ay, py),
+        width,
+        height,
+        stroke: { x1: g.ax, y1: g.ay, x2: px, y2: py },
+      });
       return;
     }
     if (shapeGhost) {
@@ -2291,6 +2362,30 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
       const nx = Math.min(Math.max((px - drawHit.x) / drawHit.width, 0), 1);
       const ny = Math.min(Math.max((py - drawHit.y) / drawHit.height, 0), 1);
       onPick(drawHit, nx, ny);
+      ta.focus();
+      ta.value = "";
+      return;
+    }
+    if (event.button === 0 && !story && opts.tableEraser?.() && hit && main.map) {
+      const edge = main.map.tableEdgeAt(hit.page, hit.lx, hit.ly, 5);
+      if (edge && edge.sides.length > 0) {
+        opts.applyTableEraser?.(edge.sides);
+        ta.focus();
+        ta.value = "";
+        return;
+      }
+    }
+    if (event.button === 0 && !story && opts.tableDraw?.() && hit) {
+      const scale = opts.scale?.() ?? 1;
+      tableDrawGhost = {
+        page: hit.page,
+        scale,
+        sx: event.clientX,
+        sy: event.clientY,
+        ax: hit.lx,
+        ay: hit.ly,
+        moved: false,
+      };
       ta.focus();
       ta.value = "";
       return;
@@ -3377,6 +3472,12 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
         break;
       // Leaving a furniture story (Word: Esc = Close Header and Footer).
       case "Escape":
+        if (opts.tableDraw?.() || opts.tableEraser?.()) {
+          opts.stopTableDraw?.();
+          opts.stopTableEraser?.();
+          event.preventDefault();
+          return;
+        }
         // The armed Set Transparent Color pick is the shallowest mode — Esc
         // disarms it before any other Escape meaning (Word).
         if (transparentPick) {
@@ -3938,6 +4039,7 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
       draw.replaceOverlays();
       placeCaret();
     },
+    cellAtPoint: (page, x, y) => main.map?.cellAtPoint(page, x, y) ?? null,
     /** Hand the host's fresh spell-check results to the overlay (the check
      *  itself runs in the host, debounced per transaction). Placement is
      *  coalesced onto the overlay rAF: a transaction both remaps the issue

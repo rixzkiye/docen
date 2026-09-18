@@ -23,8 +23,8 @@ export const tableItems = (): string =>
   JSON.stringify([
     // Insert Table opens the classic dialog shape of the table grid entry.
     { text: opt("insert-table"), value: "insert", event: "table-dialog" },
-    // Draw Table / Convert Text / Excel / Quick Tables are not built yet.
-    { text: opt("draw-table"), value: "draw", disabled: true },
+    // Draw Table tool enables freehand grid creation & cell splitting.
+    { text: opt("draw-table"), event: "draw-table" },
     { text: opt("convert-text"), value: "convert", disabled: true },
     { text: opt("excel"), value: "excel", disabled: true },
     { text: opt("quick-tables"), value: "quick", disabled: true },

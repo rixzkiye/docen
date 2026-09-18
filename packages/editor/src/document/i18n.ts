@@ -116,6 +116,7 @@ export const ribbonEn: AdditionalLanguage = {
     "ribbon.group.rows-columns": "Rows & Columns",
     "ribbon.group.alignment": "Alignment",
     "ribbon.group.data": "Data",
+    "ribbon.group.draw": "Draw",
     // --- Groups: Header & Footer context tab ---
     "ribbon.group.navigation": "Navigation",
     "ribbon.group.options": "Options",
@@ -209,6 +210,8 @@ export const ribbonEn: AdditionalLanguage = {
     "ribbon.cmd.pen-size": "Pen Size",
     "ribbon.cmd.pen-color": "Pen Color",
     "ribbon.cmd.border-painter": "Border Painter",
+    "ribbon.cmd.draw-table": "Draw Table",
+    "ribbon.cmd.table-eraser": "Eraser",
     "ribbon.opt.border-eraser": "Eraser",
     "ribbon.opt.pen-quarter-point": "¼ pt",
     "ribbon.opt.pen-half-point": "½ pt",
@@ -1790,6 +1793,7 @@ export const ribbonZhCN: AdditionalLanguage = {
     "ribbon.group.rows-columns": "行和列",
     "ribbon.group.alignment": "对齐",
     "ribbon.group.data": "数据",
+    "ribbon.group.draw": "绘制",
     // --- Groups: Header & Footer context tab ---
     "ribbon.group.navigation": "导航",
     "ribbon.group.options": "选项",
@@ -1883,6 +1887,8 @@ export const ribbonZhCN: AdditionalLanguage = {
     "ribbon.cmd.pen-size": "笔笔画粗细",
     "ribbon.cmd.pen-color": "笔颜色",
     "ribbon.cmd.border-painter": "边框刷",
+    "ribbon.cmd.draw-table": "绘制表格",
+    "ribbon.cmd.table-eraser": "橡皮擦",
     "ribbon.opt.border-eraser": "橡皮擦",
     "ribbon.opt.pen-quarter-point": "¼ 磅",
     "ribbon.opt.pen-half-point": "½ 磅",

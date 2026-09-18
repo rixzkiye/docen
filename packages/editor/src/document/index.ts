@@ -657,6 +657,11 @@ class DocenDocument extends AddinHost<Editor> {
   #borderErase = false;
   #borderPaintKeyOff?: () => void;
 
+  #tableDrawing = false;
+  #tableEraser = false;
+  #tableDrawKeyOff?: () => void;
+  #tableEraserKeyOff?: () => void;
+
   /** Insert → Shapes: the armed preset token (null = disarmed). While armed
    *  the canvas presses drag a ghost rectangle and insert the preset at it
    *  (Word's drag-to-draw); Esc disarms, draws keep it armed. */
@@ -1303,6 +1308,50 @@ class DocenDocument extends AddinHost<Editor> {
     this.#borderPaintKeyOff = undefined;
   }
 
+  #armTableDrawer(): void {
+    this.#stopBorderPainting();
+    this.#stopFormatPainter();
+    this.#stopShapeDrawing();
+    this.#stopTableEraser();
+    this.#tableDrawing = true;
+    const onKey = (event: Event): void => {
+      if ((event as KeyboardEvent).key === "Escape") {
+        event.stopPropagation();
+        this.#stopTableDrawing();
+      }
+    };
+    this.addEventListener("keydown", onKey, true);
+    this.#tableDrawKeyOff = () => this.removeEventListener("keydown", onKey, true);
+  }
+
+  #stopTableDrawing(): void {
+    this.#tableDrawing = false;
+    this.#tableDrawKeyOff?.();
+    this.#tableDrawKeyOff = undefined;
+  }
+
+  #armTableEraser(): void {
+    this.#stopBorderPainting();
+    this.#stopFormatPainter();
+    this.#stopShapeDrawing();
+    this.#stopTableDrawing();
+    this.#tableEraser = true;
+    const onKey = (event: Event): void => {
+      if ((event as KeyboardEvent).key === "Escape") {
+        event.stopPropagation();
+        this.#stopTableEraser();
+      }
+    };
+    this.addEventListener("keydown", onKey, true);
+    this.#tableEraserKeyOff = () => this.removeEventListener("keydown", onKey, true);
+  }
+
+  #stopTableEraser(): void {
+    this.#tableEraser = false;
+    this.#tableEraserKeyOff?.();
+    this.#tableEraserKeyOff = undefined;
+  }
+
   /** Arm the Shapes drawer (Insert → Shapes pick): the next canvas press
    *  draws and disarms. The keydown captures — before a draw an Escape only
    *  means "put the pencil down", not the bridge's selection Escapes
@@ -1714,6 +1763,29 @@ class DocenDocument extends AddinHost<Editor> {
         } else {
           editor.commands["paint-cell-border"](JSON.stringify({ sides, pen: this.#pen }));
         }
+      },
+      tableDraw: () => this.#tableDrawing,
+      tableEraser: () => this.#tableEraser,
+      stopTableDraw: () => this.#stopTableDrawing(),
+      stopTableEraser: () => this.#stopTableEraser(),
+      applyTableDraw: (rect) => {
+        const editor = this.#bridge?.activeEditor() ?? this.editor;
+        if (!editor || !this.#tableDrawing) return;
+        const inTable =
+          this.#bridge?.cellAtPoint(rect.page, rect.stroke.x1, rect.stroke.y1) != null;
+        (editor.commands as any)["draw-table-stroke"]?.({
+          page: rect.page,
+          widthPx: rect.width,
+          heightPx: rect.height,
+          dx: rect.stroke.x2 - rect.stroke.x1,
+          dy: rect.stroke.y2 - rect.stroke.y1,
+          inTable,
+        });
+      },
+      applyTableEraser: (sides) => {
+        const editor = this.#bridge?.activeEditor() ?? this.editor;
+        if (!editor || !this.#tableEraser || !sides.length) return;
+        (editor.commands as any)["table-eraser-click"]?.({ sides });
       },
     });
     if (this.getAttribute("editable") === "false") this.#bridge.editor.setEditable(false);
@@ -3710,6 +3782,16 @@ class DocenDocument extends AddinHost<Editor> {
           borderErase: () => this.#borderErase,
           stopBorderPainting: () => this.#stopBorderPainting(),
           armBorderPainter: (erase) => this.#armBorderPainter(erase),
+          tableDrawing: () => this.#tableDrawing,
+          tableEraser: () => this.#tableEraser,
+          toggleDrawTable: () => {
+            if (this.#tableDrawing) this.#stopTableDrawing();
+            else this.#armTableDrawer();
+          },
+          toggleTableEraser: () => {
+            if (this.#tableEraser) this.#stopTableEraser();
+            else this.#armTableEraser();
+          },
         },
         dialogs: {
           element: () => this as HTMLElement,

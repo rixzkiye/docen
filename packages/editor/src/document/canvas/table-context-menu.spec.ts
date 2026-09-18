@@ -2,11 +2,11 @@
 import { Document, Paragraph, Table, TableCell, TableRow } from "@docen/docx";
 import { Editor, Node as TextNode, type Editor as EditorType } from "@docen/docx/core";
 import { UndoRedo } from "@tiptap/extensions";
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 
-import { DocumentCommands, WIRED_DISPATCH } from "../extensions/commands";
-import { appendMenuItems } from "../../ui/components/ribbon/command-helpers";
 import type { RibbonMenuItem } from "../../ui/addin/types";
+import { appendMenuItems } from "../../ui/components/ribbon/command-helpers";
+import { DocumentCommands, WIRED_DISPATCH } from "../extensions/commands";
 
 const Text = TextNode.create({ name: "text", group: "inline" });
 
@@ -21,7 +21,13 @@ const EXTENSIONS = [
   UndoRedo,
 ];
 
-function makeTableJSON(columnWidths: number[], cells: string[][] = [["10", "20"], ["30", ""]]): any {
+function makeTableJSON(
+  columnWidths: number[],
+  cells: string[][] = [
+    ["10", "20"],
+    ["30", ""],
+  ],
+): any {
   return {
     type: "table",
     attrs: { columnWidths },
@@ -171,7 +177,15 @@ describe("W1.3 table context menu & submenus", () => {
 
     it("calculates table formula sum from above cells", () => {
       // 2x2 table: Row 0 has "10", "20"; Row 1 has cell 0: "30", cell 1: ""
-      const editor = build(makeTableJSON([1000, 1000], [["10", "20"], ["30", ""]]));
+      const editor = build(
+        makeTableJSON(
+          [1000, 1000],
+          [
+            ["10", "20"],
+            ["30", ""],
+          ],
+        ),
+      );
       // Find position of the empty cell (row 1, col 1)
       let targetPos = -1;
       editor.state.doc.descendants((node, pos) => {

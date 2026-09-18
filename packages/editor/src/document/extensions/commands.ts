@@ -47,6 +47,28 @@ import { CellSelection, cellsInRect } from "../canvas/cell-selection";
  * their own engines and do not reuse it.
  */
 
+export interface InsertTableOptions {
+  /** Row count (1-50, default 3 — the first row is the header row). */
+  rows?: number;
+  /** Column count (1-10, default 3). */
+  cols?: number;
+  /** Column widths in dxa twips. */
+  columnWidths?: number[];
+}
+
+export interface DrawTableStrokeOptions {
+  page?: number;
+  widthPx?: number;
+  heightPx?: number;
+  dx?: number;
+  dy?: number;
+  inTable?: boolean;
+}
+
+export interface TableEraserClickOptions {
+  sides?: { pos: number; side: "top" | "bottom" | "left" | "right" }[];
+}
+
 // Type augmentation: register every command on `editor.commands` so callers
 // get autocomplete + `editor.can()` works. Each name is also the ribbon
 // `event` attribute, so #onCommand does editor.chain().focus()[event](value).
@@ -141,6 +163,10 @@ declare module "@tiptap/core" {
       "autofit-contents": (value?: string | number) => ReturnType;
       "autofit-window": (value?: string) => ReturnType;
       "fixed-column-width": () => ReturnType;
+      "draw-table": () => ReturnType;
+      "table-eraser": () => ReturnType;
+      "draw-table-stroke": (options?: DrawTableStrokeOptions) => ReturnType;
+      "table-eraser-click": (options: TableEraserClickOptions) => ReturnType;
       "distribute-columns": () => ReturnType;
       "distribute-rows": () => ReturnType;
       "cell-margins": (value?: string) => ReturnType;
@@ -296,6 +322,10 @@ export const WIRED_DISPATCH: ReadonlySet<string> = new Set([
   "autofit-contents",
   "autofit-window",
   "fixed-column-width",
+  "draw-table",
+  "table-eraser",
+  "draw-table-stroke",
+  "table-eraser-click",
   "distribute-columns",
   "distribute-rows",
   "cell-margins",
@@ -370,14 +400,6 @@ export const WIRED_DISPATCH: ReadonlySet<string> = new Set([
  * tokens. Stamped onto every selected paragraph by
  * {@link documentCommands.paragraph-dialog-apply}.
  */
-/** Options for the insert-table command (all fields fall back to Word's
- *  3×3 default preset; rows/cols are clamped to the schema-safe range). */
-export interface InsertTableOptions {
-  /** Row count (1-50, default 3 — the first row is the header row). */
-  rows?: number;
-  /** Column count (1-10, default 3). */
-  cols?: number;
-}
 
 /**
  * What the Modify Style dialog commits on OK — the style's chain pointers
@@ -2209,6 +2231,52 @@ function applyBorderSweep(
   return true;
 }
 
+export function mergeCellsBetween(
+  state: EditorState,
+  dispatch: ((tr: Transaction) => void) | undefined,
+  $from: ResolvedPos,
+  $to: ResolvedPos,
+): boolean {
+  const fromA = ancestryAt($from);
+  const toA = ancestryAt($to);
+  if (!fromA || !toA || fromA.rowAt < 0 || toA.rowAt < 0) return false;
+  if ($from.before(fromA.tableAt) !== $to.before(toA.tableAt)) return false;
+  const tableNode = $from.node(fromA.tableAt);
+  const grid = (tableNode.attrs.columnWidths as number[] | null)?.length ?? 0;
+  const c1 = Math.min($from.index(fromA.rowAt), $to.index(toA.rowAt));
+  const c2 = Math.max($from.index(fromA.rowAt), $to.index(toA.rowAt));
+  const rowFrom = Math.min($from.index(fromA.tableAt), $to.index(toA.tableAt));
+  const rowTo = Math.max($from.index(fromA.tableAt), $to.index(toA.tableAt));
+  if (rowFrom === rowTo && c1 === c2) return false;
+  if (dispatch) {
+    const tablePos = $from.before(fromA.tableAt);
+    const tr = state.tr;
+    for (let r = rowTo; r >= rowFrom; r -= 1) {
+      const rowNode = tableNode.child(r);
+      if (grid > 0 && rowNode.childCount !== grid) continue;
+      let rowPos = tablePos + 1;
+      for (let i = 0; i < r; i += 1) rowPos += tableNode.child(i).nodeSize;
+      const last = Math.min(c2, rowNode.childCount - 1);
+      if (c1 > last) continue;
+      let basePos = rowPos + 1;
+      for (let c = 0; c < c1; c += 1) basePos += rowNode.child(c).nodeSize;
+      const base = rowNode.child(c1);
+      tr.setNodeMarkup(basePos, undefined, {
+        ...base.attrs,
+        columnSpan: last > c1 ? last - c1 + 1 : null,
+        verticalMerge: r > rowFrom ? "continue" : base.attrs.verticalMerge,
+      });
+      for (let c = last; c > c1; c -= 1) {
+        let cellPos = rowPos + 1;
+        for (let cc = 0; cc < c; cc += 1) cellPos += rowNode.child(cc).nodeSize;
+        tr.delete(cellPos, cellPos + rowNode.child(c).nodeSize);
+      }
+    }
+    dispatch(tr.scrollIntoView());
+  }
+  return true;
+}
+
 /** Delete the table at `pos` (size `size`) and park the caret where it stood
  *  — shared by delete-table and the collapse cases of delete-row/-column. */
 function deleteTableAt(
@@ -2734,8 +2802,8 @@ export const DocumentCommands = Extension.create({
       // of a point, 4 = 0.5pt) — so the table is visible without a TableGrid
       // style in the document's styles.xml.
       "insert-table":
-        (options) =>
-        ({ state, dispatch }) => {
+        (options?: InsertTableOptions) =>
+        ({ state, dispatch }: { state: EditorState; dispatch?: (tr: Transaction) => void }) => {
           const rows = Math.max(1, Math.min(50, Math.trunc(options?.rows ?? 3)));
           const cols = Math.max(1, Math.min(10, Math.trunc(options?.cols ?? 3)));
           const { table, tableRow, tableCell, paragraph } = state.schema.nodes;
@@ -2748,6 +2816,7 @@ export const DocumentCommands = Extension.create({
           const dataRow = tableRow.createAndFill(null, Array(cols).fill(cell))!;
           const node = table.createAndFill(
             {
+              columnWidths: options?.columnWidths,
               borders: {
                 top: GRID_BORDER,
                 bottom: GRID_BORDER,
@@ -2757,7 +2826,7 @@ export const DocumentCommands = Extension.create({
                 insideVertical: GRID_BORDER,
               },
             },
-            [headerRow, ...Array(rows - 1).fill(dataRow)],
+            rows === 1 ? [dataRow] : [headerRow, ...Array(rows - 1).fill(dataRow)],
           );
           if (!node) return false;
           if (dispatch) {
@@ -3402,12 +3471,7 @@ export const DocumentCommands = Extension.create({
           }
           return true;
         },
-      // Word's Merge Cells over the selection's bounding rectangle. Each
-      // spanned row folds its cells into one: the row's first cell takes
-      // columnSpan = width, rows below the first take verticalMerge
-      // "continue" (their content stays put — the layout folds continue
-      // cells into the restart cell, so nothing is lost). Grid math is
-      // cellIndex-approximate, so a span-mismatched row is left untouched.
+      // Word's Merge Cells over the selection's bounding rectangle.
       "merge-cells":
         () =>
         ({ state, dispatch }) => {
@@ -3420,49 +3484,45 @@ export const DocumentCommands = Extension.create({
             $from = $a.pos <= $h.pos ? $a : $h;
             $to = $a.pos <= $h.pos ? $h : $a;
           }
-          const fromA = ancestryAt($from);
-          const toA = ancestryAt($to);
-          if (!fromA || !toA || fromA.rowAt < 0 || toA.rowAt < 0) return false;
-          if ($from.before(fromA.tableAt) !== $to.before(toA.tableAt)) return false;
-          const tableNode = $from.node(fromA.tableAt);
-          const grid = (tableNode.attrs.columnWidths as number[] | null)?.length ?? 0;
-          const c1 = Math.min($from.index(fromA.rowAt), $to.index(toA.rowAt));
-          const c2 = Math.max($from.index(fromA.rowAt), $to.index(toA.rowAt));
-          const rowFrom = Math.min($from.index(fromA.tableAt), $to.index(toA.tableAt));
-          const rowTo = Math.max($from.index(fromA.tableAt), $to.index(toA.tableAt));
-          if (rowFrom === rowTo && c1 === c2) return false;
-          if (dispatch) {
-            const tablePos = $from.before(fromA.tableAt);
-            // Row indices into the table's children — the ancestry depths are
-            // not indexes (a depth-2 rowAt would address the last row).
-            const tr = state.tr;
-            for (let r = rowTo; r >= rowFrom; r -= 1) {
-              const rowNode = tableNode.child(r);
-              // Bottom-up keeps positions valid as earlier deletions shift
-              // later ones; a row that doesn't match the grid exactly (a
-              // previously merged one) is skipped rather than corrupted.
-              if (grid > 0 && rowNode.childCount !== grid) continue;
-              let rowPos = tablePos + 1;
-              for (let i = 0; i < r; i += 1) rowPos += tableNode.child(i).nodeSize;
-              const last = Math.min(c2, rowNode.childCount - 1);
-              if (c1 > last) continue;
-              let basePos = rowPos + 1;
-              for (let c = 0; c < c1; c += 1) basePos += rowNode.child(c).nodeSize;
-              const base = rowNode.child(c1);
-              tr.setNodeMarkup(basePos, undefined, {
-                ...base.attrs,
-                columnSpan: last > c1 ? last - c1 + 1 : null,
-                verticalMerge: r > rowFrom ? "continue" : base.attrs.verticalMerge,
-              });
-              for (let c = last; c > c1; c -= 1) {
-                let cellPos = rowPos + 1;
-                for (let cc = 0; cc < c; cc += 1) cellPos += rowNode.child(cc).nodeSize;
-                tr.delete(cellPos, cellPos + rowNode.child(c).nodeSize);
-              }
+          return mergeCellsBetween(state, dispatch, $from, $to);
+        },
+      "draw-table": () => () => true,
+      "table-eraser": () => () => true,
+      "draw-table-stroke":
+        (options?: DrawTableStrokeOptions) =>
+        ({ state, commands }: { state: EditorState; commands: any }) => {
+          const inTable = options?.inTable ?? tableAncestry(state) != null;
+          if (inTable) {
+            const dx = Math.abs(options?.dx ?? 0);
+            const dy = Math.abs(options?.dy ?? 0);
+            if (dx > 2 * dy && dx > 15) {
+              return commands["insert-row-below"]();
             }
-            dispatch(tr.scrollIntoView());
+            return commands["insert-column-right"]();
           }
-          return true;
+          const w = options?.widthPx ?? 180;
+          const h = options?.heightPx ?? 80;
+          const cols = Math.max(1, Math.min(10, Math.floor(w / 120)));
+          const rows = Math.max(1, Math.min(20, Math.floor(h / 60)));
+          const widthTwip = Math.max(1440, Math.round(w * 15));
+          const colWidth = Math.round(widthTwip / cols);
+          const columnWidths = Array(cols).fill(colWidth);
+          return commands["insert-table"]({ rows, cols, columnWidths });
+        },
+      "table-eraser-click":
+        (options: TableEraserClickOptions) =>
+        ({ state, dispatch }: { state: EditorState; dispatch?: (tr: Transaction) => void }) => {
+          const { sides } = options;
+          if (!sides || sides.length === 0) return false;
+          if (sides.length >= 2) {
+            const posA = Math.min(sides[0]!.pos, sides[1]!.pos);
+            const posB = Math.max(sides[0]!.pos, sides[1]!.pos);
+            const $from = state.doc.resolve(posA + 2);
+            const $to = state.doc.resolve(posB + 2);
+            return mergeCellsBetween(state, dispatch, $from, $to);
+          }
+          const { pos, side } = sides[0]!;
+          return applyBorderSweep(state, dispatch, [{ pos, side }], undefined);
         },
       // Word's Split Cells without the dialog: a merged cell (columnSpan or
       // verticalMerge) returns to its own single grid cell, empty twins
