@@ -55,6 +55,8 @@ export interface CdpSession {
   pressShortcut(combo: string): Promise<void>;
   captureScreenshot(): Promise<Uint8Array>;
   evaluate<T = unknown>(expression: string): Promise<T>;
+  /** Await a page-side promise before returning (async scenario setups). */
+  evaluateAsync<T = unknown>(expression: string): Promise<T>;
   getComputedCursor(selector: string): Promise<string>;
   close(): Promise<void>;
 }
@@ -109,38 +111,70 @@ export function parseShortcut(combo: string): {
     }
   }
 
+  // A bare modifier ("Alt") is a key press of that modifier itself, with no
+  // modifier bit set — CDP rejects a keydown with an empty `key`.
+  if (rawKey === "") {
+    if (modifiers === CDP_MODIFIERS.ALT) {
+      return { key: "Alt", code: "AltLeft", modifiers: 0, keyCode: 18 };
+    }
+    if (modifiers === CDP_MODIFIERS.CTRL) {
+      return { key: "Control", code: "ControlLeft", modifiers: 0, keyCode: 17 };
+    }
+    if (modifiers === CDP_MODIFIERS.SHIFT) {
+      return { key: "Shift", code: "ShiftLeft", modifiers: 0, keyCode: 16 };
+    }
+    if (modifiers === CDP_MODIFIERS.META) {
+      return { key: "Meta", code: "MetaLeft", modifiers: 0, keyCode: 91 };
+    }
+  }
+
   let key = rawKey.toUpperCase();
   let code = `Key${key}`;
   let keyCode = key.charCodeAt(0);
 
-  if (rawKey === "up" || rawKey === "arrowup") {
-    key = "ArrowUp";
-    code = "ArrowUp";
-    keyCode = 38;
-  } else if (rawKey === "down" || rawKey === "arrowdown") {
-    key = "ArrowDown";
-    code = "ArrowDown";
-    keyCode = 40;
-  } else if (rawKey === "left" || rawKey === "arrowleft") {
-    key = "ArrowLeft";
-    code = "ArrowLeft";
-    keyCode = 37;
-  } else if (rawKey === "right" || rawKey === "arrowright") {
-    key = "ArrowRight";
-    code = "ArrowRight";
-    keyCode = 39;
-  } else if (rawKey === "enter") {
-    key = "Enter";
-    code = "Enter";
-    keyCode = 13;
-  } else if (rawKey === "escape" || rawKey === "esc") {
-    key = "Escape";
-    code = "Escape";
-    keyCode = 27;
-  } else if (rawKey === "space") {
-    key = " ";
-    code = "Space";
-    keyCode = 32;
+  const named: Record<string, { key: string; code: string; keyCode: number }> = {
+    up: { key: "ArrowUp", code: "ArrowUp", keyCode: 38 },
+    arrowup: { key: "ArrowUp", code: "ArrowUp", keyCode: 38 },
+    down: { key: "ArrowDown", code: "ArrowDown", keyCode: 40 },
+    arrowdown: { key: "ArrowDown", code: "ArrowDown", keyCode: 40 },
+    left: { key: "ArrowLeft", code: "ArrowLeft", keyCode: 37 },
+    arrowleft: { key: "ArrowLeft", code: "ArrowLeft", keyCode: 37 },
+    right: { key: "ArrowRight", code: "ArrowRight", keyCode: 39 },
+    arrowright: { key: "ArrowRight", code: "ArrowRight", keyCode: 39 },
+    enter: { key: "Enter", code: "Enter", keyCode: 13 },
+    escape: { key: "Escape", code: "Escape", keyCode: 27 },
+    esc: { key: "Escape", code: "Escape", keyCode: 27 },
+    space: { key: " ", code: "Space", keyCode: 32 },
+    tab: { key: "Tab", code: "Tab", keyCode: 9 },
+    home: { key: "Home", code: "Home", keyCode: 36 },
+    end: { key: "End", code: "End", keyCode: 35 },
+    pageup: { key: "PageUp", code: "PageUp", keyCode: 33 },
+    pagedown: { key: "PageDown", code: "PageDown", keyCode: 34 },
+    delete: { key: "Delete", code: "Delete", keyCode: 46 },
+    del: { key: "Delete", code: "Delete", keyCode: 46 },
+    backspace: { key: "Backspace", code: "Backspace", keyCode: 8 },
+    insert: { key: "Insert", code: "Insert", keyCode: 45 },
+    alt: { key: "Alt", code: "AltLeft", keyCode: 18 },
+    shift: { key: "Shift", code: "ShiftLeft", keyCode: 16 },
+    control: { key: "Control", code: "ControlLeft", keyCode: 17 },
+  };
+  const fn = rawKey.match(/^f(\d{1,2})$/);
+  if (named[rawKey]) {
+    ({ key, code, keyCode } = named[rawKey]);
+  } else if (fn) {
+    const n = Number(fn[1]);
+    key = `F${n}`;
+    code = `F${n}`;
+    keyCode = 111 + n;
+  } else if (/^\d$/.test(rawKey)) {
+    key = rawKey;
+    code = `Digit${rawKey}`;
+    keyCode = rawKey.charCodeAt(0);
+  } else if (rawKey.length === 1 && !/[a-z]/i.test(rawKey)) {
+    // Punctuation/symbol keys keep their character as-is (e.g. "-", "=").
+    key = rawKey;
+    code = `Key${rawKey.toUpperCase()}`;
+    keyCode = rawKey.charCodeAt(0);
   }
 
   return { key, code, modifiers, keyCode };
@@ -278,6 +312,10 @@ class EmulatedCdpSession implements CdpSession {
     return true as unknown as T;
   }
 
+  async evaluateAsync<T = unknown>(expression: string): Promise<T> {
+    return this.evaluate<T>(expression);
+  }
+
   async getComputedCursor(_selector: string): Promise<string> {
     return this.#simulatedCursor;
   }
@@ -358,6 +396,11 @@ class LiveChromiumSession implements CdpSession {
       "--disable-gpu",
       "--no-sandbox",
       "--disable-dev-shm-usage",
+      // Headless overlay scrollbars fade in on mousedown and shift the
+      // centered page column by half their width mid-interaction, which makes
+      // pointer scenarios (border drags) hit stale coordinates. Hide them.
+      "--hide-scrollbars",
+      "--disable-features=OverlayScrollbar,OverlayScrollbars",
       `--window-size=${width},${height}`,
       "about:blank",
     ]);
@@ -435,11 +478,25 @@ class LiveChromiumSession implements CdpSession {
     type: "mouseMoved" | "mousePressed" | "mouseReleased",
     opts: MouseEventOptions,
   ): Promise<void> {
+    const button = opts.button ?? (type === "mouseMoved" ? "none" : "left");
+    // CDP drag recognition: a pressed left button must set the buttons bitmask
+    // (1 = left) on the move events too, else the page sees a hover-only move.
+    const buttons =
+      type === "mousePressed"
+        ? button === "left"
+          ? 1
+          : button === "right"
+            ? 2
+            : 4
+        : type === "mouseMoved" && button === "left"
+          ? 1
+          : 0;
     await this.call("Input.dispatchMouseEvent", {
       type,
       x: opts.x,
       y: opts.y,
-      button: opts.button ?? (type === "mouseMoved" ? "none" : "left"),
+      button,
+      buttons,
       clickCount: opts.clickCount ?? (type === "mouseMoved" ? 0 : 1),
       modifiers: opts.modifiers ?? 0,
     });
@@ -510,6 +567,15 @@ class LiveChromiumSession implements CdpSession {
   async evaluate<T = unknown>(expression: string): Promise<T> {
     const res = await this.call("Runtime.evaluate", {
       expression,
+      returnByValue: true,
+    });
+    return res.result?.value as T;
+  }
+
+  async evaluateAsync<T = unknown>(expression: string): Promise<T> {
+    const res = await this.call("Runtime.evaluate", {
+      expression,
+      awaitPromise: true,
       returnByValue: true,
     });
     return res.result?.value as T;

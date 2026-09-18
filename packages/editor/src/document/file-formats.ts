@@ -156,6 +156,11 @@ export const LOCAL_HANDLED: ReadonlySet<string> = new Set([
   "toggle-navigation",
   "search",
   "replace",
+  // Design → Document Formatting galleries — the host's #onItemSelect applies
+  // the theme variables and persists the document setting.
+  "theme",
+  "theme-color",
+  "theme-font",
   "page-size",
   "orientation",
   "margins",

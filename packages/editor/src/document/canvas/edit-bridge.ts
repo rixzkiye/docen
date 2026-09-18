@@ -1757,6 +1757,7 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
   const tableQuickInsertEl = document.createElement("div");
   tableQuickInsertEl.style.cssText =
     "position:absolute;display:none;z-index:38;cursor:pointer;width:16px;height:16px;border-radius:50%;" +
+    "pointer-events:auto;" +
     "background:#ffffff;border:1px solid #2b579a;box-shadow:0 1px 4px rgba(0,0,0,0.25);" +
     "align-items:center;justify-content:center;color:#2b579a;";
   tableQuickInsertEl.innerHTML =
@@ -4200,7 +4201,7 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
               const prev = TextSelection.near(active().editor.state.doc.resolve(beforePos - 1), -1);
               target = prev.$from.start();
             } else {
-              target = 0;
+              target = TextSelection.near(active().editor.state.doc.resolve(0), 1).from;
             }
           }
           apply(target, extend);
@@ -4235,7 +4236,10 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
         if (event.altKey && cellAt(active().editor.state.selection.$from)) {
           target = firstCellInRowPos(active().editor.state) ?? 0;
         } else if (event.ctrlKey || event.metaKey) {
-          target = 0;
+          // Word's Ctrl+Home: the body's first caret position — the first
+          // valid text position, not the doc boundary (PM position 0 sits
+          // before the first block and cannot hold a text caret).
+          target = TextSelection.near(active().editor.state.doc.resolve(0), 1).from;
         } else {
           target = edgeTarget(active().editor.state, head(), false);
         }

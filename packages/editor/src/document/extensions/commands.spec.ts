@@ -2698,3 +2698,110 @@ describe("shape-custom-geometry-apply", () => {
     editor.destroy();
   });
 });
+
+describe("text-wrapping break (Insert → Breaks)", () => {
+  // The engine's hardBreak node (name + inline shape); the docx package keeps
+  // it internal, so the spec mirrors the schema slot the command reads.
+  const HardBreak = TextNode.create({
+    name: "hardBreak",
+    inline: true,
+    group: "inline",
+    selectable: false,
+    addAttributes() {
+      return { variant: { default: "textWrapping" } };
+    },
+  });
+
+  const buildWith = (text: string): EditorType =>
+    new Editor({
+      element: null,
+      extensions: [...EXTENSIONS, HardBreak],
+      content: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text }] }] },
+    });
+
+  it("inserts a hardBreak at the caret", () => {
+    const editor = buildWith("before after");
+    editor.commands.setTextSelection(7);
+    expect(editor.commands["text-wrapping"]()).toBe(true);
+    const para = editor.state.doc.child(0);
+    const breaks: string[] = [];
+    para.descendants((node) => {
+      if (node.type.name === "hardBreak") breaks.push(node.attrs.variant as string);
+    });
+    expect(breaks).toEqual(["textWrapping"]);
+    // The text after the caret moved behind the break.
+    expect(para.textContent).toBe("before after");
+    expect(editor.state.selection.from).toBe(8);
+    editor.destroy();
+  });
+
+  it("replaces a non-empty selection with the break", () => {
+    const editor = buildWith("hello world");
+    editor.commands.setTextSelection({ from: 1, to: 6 });
+    expect(editor.commands["text-wrapping"]()).toBe(true);
+    expect(editor.state.doc.child(0).textContent).toBe(" world");
+    editor.destroy();
+  });
+
+  it("declares the command in the wired dispatch set", async () => {
+    const { WIRED_DISPATCH } = await import("./commands");
+    expect(WIRED_DISPATCH.has("text-wrapping")).toBe(true);
+  });
+});
+
+describe("host-owned command dispatch (Font dialog, Show ¶, Comment, Footnote)", () => {
+  /** A stand-in docen-document: records events on the shadow root (where the
+   *  host listens) and on the light element (where the old code fired). */
+  const fakeHost = () => {
+    const shadowEvents: Event[] = [];
+    const lightEvents: Event[] = [];
+    const shadowRoot = {
+      dispatchEvent: (event: Event) => {
+        shadowEvents.push(event);
+        return true;
+      },
+    };
+    const host = {
+      shadowRoot,
+      dispatchEvent: (event: Event) => {
+        lightEvents.push(event);
+        return true;
+      },
+    };
+    return { host, shadowEvents, lightEvents };
+  };
+
+  it.each([
+    ["show-marks", undefined],
+    ["font-dialog", undefined],
+    ["new-comment", undefined],
+    ["insert-footnote", "endnote"],
+  ])("routes %s to the shadow root the host listens on", (event, value) => {
+    const editor = build();
+    const { host, shadowEvents, lightEvents } = fakeHost();
+    (editor.options as { element?: unknown }).element = {
+      closest: (sel: string) => (sel === "docen-document" ? host : null),
+    };
+    const ok = (editor.commands as unknown as Record<string, (arg?: string) => boolean>)[event](
+      value,
+    );
+    expect(ok).toBe(true);
+    expect(shadowEvents).toHaveLength(1);
+    expect(lightEvents).toHaveLength(0);
+    const detail = (shadowEvents[0] as CustomEvent).detail as { event: string; value?: string };
+    expect(detail.event).toBe(event);
+    expect(detail.value).toBe(value);
+    editor.destroy();
+  });
+
+  it("falls back to the light host when it has no shadow root", () => {
+    const editor = build();
+    const lightEvents: Event[] = [];
+    (editor.options as { element?: unknown }).element = {
+      closest: () => ({ dispatchEvent: (e: Event) => (lightEvents.push(e), true) }),
+    };
+    expect(editor.commands["show-marks"]()).toBe(true);
+    expect(lightEvents).toHaveLength(1);
+    editor.destroy();
+  });
+});

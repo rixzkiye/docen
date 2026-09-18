@@ -246,6 +246,22 @@ export type TaskPaneId =
  */
 export type VisibilityMode = "taskpane" | "hidden";
 
+/** The interactive horizontal ruler element (View → Ruler): the
+ *  `<docen-ruler>` component surface the host drives. */
+interface InteractiveRulerElement extends HTMLElement {
+  bindEditor(editor: Editor): void;
+  setParagraphAttrs(
+    indent?: { left?: number; right?: number; firstLine?: number; hanging?: number },
+    tabStops?: Array<{ position: number; type: string }>,
+    geometry?: {
+      pageWidthPx?: number;
+      marginLeftPx?: number;
+      marginRightPx?: number;
+      scale?: number;
+    },
+  ): void;
+}
+
 @customElement({ name: "docen-document", template: documentTemplate, styles: documentStyles })
 class DocenDocument extends AddinHost<Editor> {
   // ── Reactive attributes (@attr) — no `reflect` (attribute → property stays
@@ -435,14 +451,16 @@ class DocenDocument extends AddinHost<Editor> {
     updateReveal: () => this.#updateRevealFormatting(),
     updateAltText: () => this.#syncAltTextPane(),
     setView: (view) => this.setAttribute("view", view),
-    emitZoom: (zoom) =>
+    emitZoom: (zoom) => {
       this.dispatchEvent(
         new CustomEvent("docen:zoom-change", {
           bubbles: true,
           composed: true,
           detail: { zoom },
         }),
-      ),
+      );
+      this.#syncRuler();
+    },
   });
   /** Ribbon/title-bar chrome (QAT, auto-save, header/panes, menu syncs), split
    *  out of this class — see host/chrome.ts. */
@@ -472,6 +490,10 @@ class DocenDocument extends AddinHost<Editor> {
     getTaskpaneState: (id) => this.getTaskpaneState(id),
     setTaskpane: (id, open) => this.#setTaskpane(id, open),
     updateStatus: () => this.#updateStatus(),
+    hostCommandEvents: () => {
+      const registry = this.#hostCommandRegistry();
+      return new Set<string>([...registry.chrome.keys(), ...registry.editor.keys()]);
+    },
     dispatch: (event) => this.dispatchEvent(event),
   });
   /** File I/O (open/save/print/close/templates), split out of this class —
@@ -541,7 +563,6 @@ class DocenDocument extends AddinHost<Editor> {
     root: () => this.shadowRoot,
     editor: () => this.editor,
     bridge: () => this.#bridge,
-    stage: () => this.#stage,
     flow: () => this.#flow,
     pages: () => this.#pages,
     hyphenation: () => this.#hyphenation,
@@ -609,6 +630,10 @@ class DocenDocument extends AddinHost<Editor> {
     flow: () => this.#flow,
     setFlow: (flow) => {
       this.#flow = flow;
+      // The flow box is the ruler's geometry source — sync as soon as it lands
+      // (the first render is incremental, so renderDoc's own call may run
+      // before the first slice has laid out).
+      this.#syncRuler();
     },
     lastRun: () => this.#lastRun,
     setLastRun: (run) => {
@@ -623,7 +648,6 @@ class DocenDocument extends AddinHost<Editor> {
     pageInsets: (flow, furniture, laid) => this.#pageInsets(flow, furniture, laid),
     updateStatus: () => this.#updateStatus(),
     syncStatusLanguage: () => this.#syncStatusLanguage(),
-    syncActiveTabStops: () => this.#syncActiveTabStops(),
     setProgress: (label) => this.#setProgress(label),
     viewMode: () => this.#viewMode(),
   });
@@ -650,6 +674,11 @@ class DocenDocument extends AddinHost<Editor> {
     isPageField: (child) => DocenDocument.isPageField(child),
   });
   #stageHost?: HTMLElement;
+  /** The interactive horizontal ruler (View → Ruler). Mounted above the
+   *  pages; the vertical strip stays on the stage. */
+  #ruler?: InteractiveRulerElement;
+  #rulerGeometry = "";
+  #rulerEditor?: Editor;
   readonly #a11yMirror = new A11yMirror();
   #a11yTimer?: number;
   #versionSnapshots: Array<{
@@ -1812,6 +1841,7 @@ class DocenDocument extends AddinHost<Editor> {
     }) as EventListener);
 
     this.#stageHost = this.shadowRoot!.querySelector<HTMLElement>(".docen-canvas") ?? undefined;
+    this.#mountRuler();
     this.#stageHost?.addEventListener("wheel", this.#onWheel as EventListener, {
       capture: true,
       passive: false,
@@ -2567,7 +2597,6 @@ class DocenDocument extends AddinHost<Editor> {
     // card whose range the caret sits in).
     this.editor?.on("selectionUpdate", this.#comments.syncActiveCommentCard);
     this.editor?.on("selectionUpdate", this.#revisions.syncActiveRevision);
-    this.editor?.on("selectionUpdate", this.#onSelectionUpdateForTabs);
     this.editor?.on("selectionUpdate", this.#onSelectionUpdateForTranslate);
     document.addEventListener("fullscreenchange", this.#onFullscreenChange);
     this.addEventListener("keydown", this.#onZoomKey);
@@ -2836,6 +2865,60 @@ class DocenDocument extends AddinHost<Editor> {
 
   #renderDoc(doc: JSONContent): void {
     this.#render.renderDoc(doc);
+    // Page geometry may have changed (page setup, sections) — keep the
+    // interactive ruler's width/margins in step.
+    this.#syncRuler();
+  }
+
+  /** Mount the interactive horizontal ruler above the pages (idempotent).
+   *  The stage keeps only the vertical strip; this strip owns the draggable
+   *  indent markers, tab stops and the unit toggle. */
+  #mountRuler(): void {
+    if (this.#ruler || !this.#stageHost) return;
+    const area = this.#stageHost.closest("docen-document-area");
+    if (!area) return;
+    const ruler = document.createElement("docen-ruler") as InteractiveRulerElement;
+    Object.assign(ruler.style, {
+      position: "sticky",
+      top: "0",
+      zIndex: "6",
+      margin: "0 auto",
+      display: "none",
+    } satisfies Partial<CSSStyleDeclaration>);
+    ruler.addEventListener("ruler:open-tabs", () => this.#insert.openTabsDialog());
+    // Direct child of the scroll container (NOT the flex canvas wrapper, where
+    // a second flex item would break the page centering).
+    area.insertBefore(ruler, area.firstChild);
+    this.#ruler = ruler;
+  }
+
+  /** Show/hide and re-geometry the interactive ruler from the current flow
+   *  box + zoom. Cheap when nothing changed (signature-guarded). */
+  #syncRuler(): void {
+    const ruler = this.#ruler;
+    if (!ruler) return;
+    const on = this.getShowRuler();
+    ruler.style.display = on ? "block" : "none";
+    if (!on) return;
+    const editor = this.#bridge?.activeEditor() ?? this.editor;
+    if (editor && editor !== this.#rulerEditor) {
+      this.#rulerEditor = editor;
+      ruler.bindEditor(editor);
+    }
+    const flow = this.#flow;
+    if (!flow) return;
+    const zoom = this.#stage ? this.#stage.zoom / 100 : 1;
+    const geometry = {
+      pageWidthPx: flow.pageWidthPx,
+      marginLeftPx: flow.contentLeftPx,
+      marginRightPx: flow.pageWidthPx - flow.contentLeftPx - flow.contentWidthPx,
+      scale: zoom,
+    };
+    const key = `${geometry.pageWidthPx}|${geometry.marginLeftPx}|${geometry.marginRightPx}|${zoom}`;
+    if (key === this.#rulerGeometry) return;
+    this.#rulerGeometry = key;
+    ruler.style.width = `${geometry.pageWidthPx * zoom}px`;
+    ruler.setParagraphAttrs(undefined, undefined, geometry);
   }
 
   /** Create the stage on first use and refresh its per-render context —
@@ -2851,8 +2934,6 @@ class DocenDocument extends AddinHost<Editor> {
       sectionOfPage: [],
       background: p.background,
     });
-    this.#stage.onAddTabStop = (posTw) => this.#addTabStopAt(posTw);
-    this.#stage.onOpenTabsDialog = () => this.#insert.openTabsDialog();
     // Viewport virtualization → overlay culling (the bridge paints squiggles,
     // selection and search only on pages the stage keeps painted).
     this.#stage.onLiveChange = (page, live) => this.#bridge?.setPageLive(page, live);
@@ -2874,6 +2955,7 @@ class DocenDocument extends AddinHost<Editor> {
     if (this.hasAttribute("show-marks")) this.#stage.setShowMarks(true);
     if (this.hasAttribute("show-ruler") || this.hasAttribute("ruler"))
       this.#stage.setShowRuler(true);
+    this.#syncRuler();
     if (this.#stage.viewMode !== p.viewMode) {
       this.#stage.setViewMode(p.viewMode);
       this.#syncReadChrome(p.viewMode === "read");
@@ -3420,18 +3502,6 @@ class DocenDocument extends AddinHost<Editor> {
 
   #insertSoftHyphen(): void {
     this.#insert.insertSoftHyphen();
-  }
-
-  #addTabStopAt(posTw: number): void {
-    this.#insert.addTabStopAt(posTw);
-  }
-
-  readonly #onSelectionUpdateForTabs = (): void => {
-    this.#syncActiveTabStops();
-  };
-
-  #syncActiveTabStops(): void {
-    this.#insert.syncActiveTabStops();
   }
 
   // The Paragraph dialog's OK — stamp its patch onto every selected paragraph
@@ -5965,6 +6035,7 @@ class DocenDocument extends AddinHost<Editor> {
     if (this.getShowRuler() === on) return;
     this.toggleAttribute("show-ruler", on);
     this.#stage?.setShowRuler(on);
+    this.#syncRuler();
     this.dispatchEvent(
       new CustomEvent("docen:ruler-change", {
         bubbles: true,

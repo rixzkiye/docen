@@ -274,30 +274,9 @@ export class CanvasStage {
    *  restarts). */
   private pageNumberOffsets: number[] = [];
 
-  onAddTabStop?: (positionTw: number) => void;
-  onOpenTabsDialog?: () => void;
   /** A page's paint app went live/dark (viewport virtualization) — the host
    *  mirrors it into the edit bridge so overlays cull to live pages. */
   onLiveChange?: (page: number, live: boolean) => void;
-  activeTabStops?: readonly {
-    positionPx: number;
-    type: "left" | "center" | "right" | "decimal" | "bar";
-  }[];
-
-  setActiveTabStops(
-    stops?: readonly {
-      positionPx: number;
-      type: "left" | "center" | "right" | "decimal" | "bar";
-    }[],
-  ): void {
-    this.activeTabStops = stops;
-    if (this.#showRuler) {
-      for (let i = 0; i < this.slots.length; i++) {
-        const frame = this.slots[i].el.parentElement;
-        if (frame) this.applyRulers(frame, i);
-      }
-    }
-  }
 
   /** The section a page belongs to (its flow box + furniture). */
   private sectionAt(page: number): CanvasStageSection {
@@ -892,13 +871,13 @@ export class CanvasStage {
       `${pad(flow.contentLeftPx)}`;
   }
 
-  /** Rulers (Word's View → Ruler): a horizontal strip above the page and a
-   *  vertical strip to its left, each an SVG of tick lines whose 0 sits on
-   *  the content-box edge (Word's margin-line origin — the margin shows
-   *  negative ticks). Inch ticks on en locales, centimetres otherwise; the
-   *  strips re-render on every sizeSlot, so zoom rescales the ticks. They
-   *  hang in the inter-page gutter (PAGE_GAP 24 > strip 20), covering
-   *  nothing on the page. */
+  /** Vertical ruler (Word's View → Ruler): a strip left of each page, an SVG
+   *  of tick lines whose 0 sits on the content-box edge (Word's margin-line
+   *  origin — the margin shows negative ticks). Inch ticks on en locales,
+   *  centimetres otherwise; the strips re-render on every sizeSlot, so zoom
+   *  rescales the ticks. The horizontal ruler is the interactive
+   *  `<docen-ruler>` strip the host mounts above the pages (draggable indent
+   *  markers, tab stops, unit toggle). */
   private applyRulers(frame: HTMLElement, page: number): void {
     frame.querySelectorAll(":scope > .h-ruler, :scope > .v-ruler").forEach((el) => el.remove());
     if (!this.#showRuler) return;
@@ -925,22 +904,6 @@ export class CanvasStage {
           out += `<line x1="${pos}" y1="${THICKNESS}" x2="${pos}" y2="${THICKNESS - len}"/>`;
           if (major)
             out += `<text x="${pos + 1}" y="${THICKNESS - len - 3}" stroke="none">${num}</text>`;
-        }
-      }
-      if (!vertical && this.activeTabStops) {
-        for (const stop of this.activeTabStops) {
-          const pos = zero + stop.positionPx * this.factor;
-          if (stop.type === "left") {
-            out += `<path d="M ${pos} ${THICKNESS} L ${pos} ${THICKNESS - 6} L ${pos + 5} ${THICKNESS - 6}" stroke="#2563eb" stroke-width="1.5" fill="none"/>`;
-          } else if (stop.type === "right") {
-            out += `<path d="M ${pos} ${THICKNESS} L ${pos} ${THICKNESS - 6} L ${pos - 5} ${THICKNESS - 6}" stroke="#2563eb" stroke-width="1.5" fill="none"/>`;
-          } else if (stop.type === "center") {
-            out += `<path d="M ${pos} ${THICKNESS} L ${pos} ${THICKNESS - 6} M ${pos - 3} ${THICKNESS - 6} L ${pos + 3} ${THICKNESS - 6}" stroke="#2563eb" stroke-width="1.5" fill="none"/>`;
-          } else if (stop.type === "decimal") {
-            out += `<path d="M ${pos} ${THICKNESS} L ${pos} ${THICKNESS - 6} M ${pos - 3} ${THICKNESS - 6} L ${pos + 3} ${THICKNESS - 6}" stroke="#2563eb" stroke-width="1.5" fill="none"/><circle cx="${pos + 2}" cy="${THICKNESS - 8}" r="1" fill="#2563eb"/>`;
-          } else if (stop.type === "bar") {
-            out += `<line x1="${pos}" y1="${THICKNESS}" x2="${pos}" y2="${THICKNESS - 8}" stroke="#2563eb" stroke-width="1.5"/>`;
-          }
         }
       }
       return (
@@ -970,41 +933,6 @@ export class CanvasStage {
       frame.append(div);
       return div;
     };
-    const hDiv = mount(
-      "h-ruler",
-      {
-        left: "0",
-        top: `-${THICKNESS}px`,
-        width: `${this.pageCss(flow.pageWidthPx)}px`,
-        height: `${THICKNESS}px`,
-        pointerEvents: "auto",
-        cursor: "pointer",
-      },
-      build(this.pageCss(flow.pageWidthPx), flow.contentLeftPx * this.factor, false),
-    );
-    const zeroX = flow.contentLeftPx * this.factor;
-    let clickTimer: ReturnType<typeof setTimeout> | undefined;
-    hDiv.addEventListener("click", (e: MouseEvent) => {
-      const rect = hDiv.getBoundingClientRect();
-      const clickX = e.clientX - rect.left;
-      const posPx = (clickX - zeroX) / this.factor;
-      if (posPx < 0) return;
-      const posTw = Math.round(posPx * 15);
-      if (clickTimer) {
-        clearTimeout(clickTimer);
-        clickTimer = undefined;
-      }
-      clickTimer = setTimeout(() => {
-        this.onAddTabStop?.(posTw);
-      }, 220);
-    });
-    hDiv.addEventListener("dblclick", () => {
-      if (clickTimer) {
-        clearTimeout(clickTimer);
-        clickTimer = undefined;
-      }
-      this.onOpenTabsDialog?.();
-    });
     mount(
       "v-ruler",
       {

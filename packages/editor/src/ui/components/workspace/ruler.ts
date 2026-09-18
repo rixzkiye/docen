@@ -7,9 +7,10 @@ import {
   html,
   observable,
   ref,
+  repeat,
 } from "@microsoft/fast-element";
 
-import { observeLang, resolveDir } from "../../i18n/localize";
+import { observeLang, resolveDir, t } from "../../i18n/localize";
 
 export interface RulerTabStop {
   position: number; // in twips
@@ -292,7 +293,7 @@ const template = html<DocenRuler>`
       <div
         class="marker first-line-marker ${(x) => (x.dragActiveMarker === "firstLine" ? "active" : "")}"
         part="marker-first-line"
-        title="First Line Indent"
+        title="${(x) => t("ruler.firstLine", x)}"
         style="left: ${(x) => x.firstLineMarkerX}px;"
         @pointerdown="${(x, c) => x.onMarkerPointerDown("firstLine", c.event as PointerEvent)}"
       ></div>
@@ -301,7 +302,7 @@ const template = html<DocenRuler>`
       <div
         class="marker hanging-marker ${(x) => (x.dragActiveMarker === "hanging" ? "active" : "")}"
         part="marker-hanging"
-        title="Hanging Indent"
+        title="${(x) => t("ruler.hanging", x)}"
         style="left: ${(x) => x.hangingMarkerX}px;"
         @pointerdown="${(x, c) => x.onMarkerPointerDown("hanging", c.event as PointerEvent)}"
       ></div>
@@ -310,7 +311,7 @@ const template = html<DocenRuler>`
       <div
         class="marker left-marker ${(x) => (x.dragActiveMarker === "left" ? "active" : "")}"
         part="marker-left"
-        title="Left Indent"
+        title="${(x) => t("ruler.leftIndent", x)}"
         style="left: ${(x) => x.hangingMarkerX}px;"
         @pointerdown="${(x, c) => x.onMarkerPointerDown("left", c.event as PointerEvent)}"
       ></div>
@@ -319,7 +320,7 @@ const template = html<DocenRuler>`
       <div
         class="marker right-marker ${(x) => (x.dragActiveMarker === "right" ? "active" : "")}"
         part="marker-right"
-        title="Right Indent"
+        title="${(x) => t("ruler.rightIndent", x)}"
         style="left: ${(x) => x.rightMarkerX}px;"
         @pointerdown="${(x, c) => x.onMarkerPointerDown("right", c.event as PointerEvent)}"
       ></div>
@@ -602,23 +603,31 @@ export class DocenRuler extends FASTElement {
 
   renderTabStops(): ReturnType<typeof html> {
     return html`
-      ${this.tabStops.map((stop, idx) => {
-        const x = this.isRtl
-          ? this.zeroXPx - this.twipsToContentPx(stop.position)
-          : this.zeroXPx + this.twipsToContentPx(stop.position);
-        const isDraggingThis = this.dragActiveMarker === "tabStop" && this.dragTabIdx === idx;
-        return html`
+      ${repeat(
+        () => this.tabStops,
+        html<RulerTabStop, DocenRuler>`
           <div
-            class="tab-stop-item ${isDraggingThis && this.dragOffRuler ? "drag-off" : ""}"
-            style="left: ${x}px;"
-            title="Tab Stop: ${this.formatMeasurement(stop.position)} (${stop.type})"
-            @pointerdown="${(ruler: DocenRuler, c) => ruler.onTabPointerDown(idx, c.event as PointerEvent)}"
-            @dblclick="${(ruler: DocenRuler, c) => ruler.onTabDblClick(idx, c.event as MouseEvent)}"
+            class="tab-stop-item ${(stop, c) =>
+              c.parent.dragActiveMarker === "tabStop" &&
+              c.parent.dragTabIdx === c.index &&
+              c.parent.dragOffRuler
+                ? "drag-off"
+                : ""}"
+            style="left: ${(stop, c) =>
+              c.parent.isRtl
+                ? c.parent.zeroXPx - c.parent.twipsToContentPx(stop.position)
+                : c.parent.zeroXPx + c.parent.twipsToContentPx(stop.position)}px;"
+            title="${(stop, c) =>
+              `${t("ruler.tabStop", c.parent)}: ${c.parent.formatMeasurement(stop.position)} (${stop.type})`}"
+            @pointerdown="${(stop, c) =>
+              c.parent.onTabPointerDown(c.index, c.event as PointerEvent)}"
+            @click="${(_stop, c) => c.event.stopPropagation()}"
+            @dblclick="${(stop, c) => c.parent.onTabDblClick(c.index, c.event as MouseEvent)}"
           >
-            <div class="tab-stop-icon type-${stop.type}"></div>
+            <div class="tab-stop-icon type-${(stop) => stop.type}"></div>
           </div>
-        `;
-      })}
+        `,
+      )}
     `;
   }
 
@@ -774,14 +783,16 @@ export class DocenRuler extends FASTElement {
     this.tooltipX = clientX - track.left;
 
     if (this.dragActiveMarker === "firstLine") {
-      this.tooltipText = `First Line: ${this.formatMeasurement(this.firstLineTwips)}`;
+      this.tooltipText = `${t("ruler.firstLine", this)}: ${this.formatMeasurement(this.firstLineTwips)}`;
     } else if (this.dragActiveMarker === "hanging" || this.dragActiveMarker === "left") {
-      this.tooltipText = `Left Indent: ${this.formatMeasurement(this.leftIndentTwips)}`;
+      this.tooltipText = `${t("ruler.leftIndent", this)}: ${this.formatMeasurement(this.leftIndentTwips)}`;
     } else if (this.dragActiveMarker === "right") {
-      this.tooltipText = `Right Indent: ${this.formatMeasurement(this.rightIndentTwips)}`;
+      this.tooltipText = `${t("ruler.rightIndent", this)}: ${this.formatMeasurement(this.rightIndentTwips)}`;
     } else if (this.dragActiveMarker === "tabStop" && this.dragTabIdx >= 0) {
       const stop = this.tabStops[this.dragTabIdx];
-      this.tooltipText = stop ? `Tab: ${this.formatMeasurement(stop.position)} (${stop.type})` : "";
+      this.tooltipText = stop
+        ? `${t("ruler.tabStop", this)}: ${this.formatMeasurement(stop.position)} (${stop.type})`
+        : "";
     }
   }
 

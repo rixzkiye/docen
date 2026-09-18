@@ -98,6 +98,11 @@ const translations = new Map<string, Record<string, string>>([
       "inspect.remove": "Remove All",
       "inspect.accept": "Accept All",
       "inspect.close": "Close",
+      "ruler.firstLine": "First Line Indent",
+      "ruler.hanging": "Hanging Indent",
+      "ruler.leftIndent": "Left Indent",
+      "ruler.rightIndent": "Right Indent",
+      "ruler.tabStop": "Tab Stop",
     },
   ],
   [
@@ -136,6 +141,11 @@ const translations = new Map<string, Record<string, string>>([
       "inspect.remove": "全部删除",
       "inspect.accept": "全部接受",
       "inspect.close": "关闭",
+      "ruler.firstLine": "首行缩进",
+      "ruler.hanging": "悬挂缩进",
+      "ruler.leftIndent": "左缩进",
+      "ruler.rightIndent": "右缩进",
+      "ruler.tabStop": "制表位",
     },
   ],
 ]);

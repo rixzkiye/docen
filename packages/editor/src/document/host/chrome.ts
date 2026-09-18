@@ -127,6 +127,9 @@ export interface ChromeHostView {
   getTaskpaneState(id: TaskPaneId): boolean;
   setTaskpane(id: TaskPaneId, open: boolean): void;
   updateStatus(): void;
+  /** Every event the host-command registry handles (chrome + editor domains) —
+   *  merged into the wired set so those ribbon controls stay enabled. */
+  hostCommandEvents(): ReadonlySet<string>;
   dispatch(event: Event): boolean;
 }
 
@@ -1130,7 +1133,11 @@ export class ChromeDomain {
    *  URL) via `commands`; their keys count as wired so {@link #applyRibbonGreying}
    *  doesn't disable the controls that dispatch them. */
   wiredCommands(): Set<string> {
-    const wired = new Set<string>([...WIRED_DISPATCH, ...LOCAL_HANDLED]);
+    const wired = new Set<string>([
+      ...WIRED_DISPATCH,
+      ...LOCAL_HANDLED,
+      ...this.host.hostCommandEvents(),
+    ]);
     for (const addin of this.host.addins()) {
       if (!addin.commands) continue;
       for (const key of Object.keys(addin.commands)) wired.add(key);

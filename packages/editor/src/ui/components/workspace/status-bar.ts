@@ -492,16 +492,16 @@ class DocenStatusBar extends FASTElement {
 
     const header = document.createElement("div");
     header.className = "status-menu-header";
-    header.textContent = "Customize Status Bar";
+    header.textContent = t("status.customize", this);
     menu.append(header);
 
     const WIDGETS: Array<{ key: keyof StatusBarWidgetsConfig; label: string }> = [
-      { key: "pageNumber", label: "Page Number" },
-      { key: "wordCount", label: "Word Count" },
-      { key: "language", label: "Language" },
-      { key: "extendSelection", label: "Extend Selection" },
-      { key: "capsLock", label: "Caps Lock" },
-      { key: "zoom", label: "Zoom" },
+      { key: "pageNumber", label: t("status.pageNumber", this) },
+      { key: "wordCount", label: t("status.wordCount", this) },
+      { key: "language", label: t("status.language", this) },
+      { key: "extendSelection", label: t("status.extendSelection", this) },
+      { key: "capsLock", label: t("status.capsLock", this) },
+      { key: "zoom", label: t("status.zoom", this) },
     ];
 
     for (const w of WIDGETS) {
@@ -586,14 +586,14 @@ class DocenStatusBar extends FASTElement {
       const caps = Boolean(e.getModifierState?.("CapsLock"));
       const el = this.capsLockEl ?? this.shadowRoot?.querySelector<HTMLElement>(".caps-lock");
       if (el) {
-        el.textContent = caps ? "Caps Lock" : "";
+        el.textContent = caps ? t("status.capsLock", this) : "";
         el.style.display = caps && this.#widgetConfig.capsLock ? "inline-flex" : "none";
       }
     };
     window.addEventListener("keydown", this.#onWindowKey);
     window.addEventListener("keyup", this.#onWindowKey);
     if (this.extendSelEl) {
-      this.extendSelEl.textContent = "Extend Selection";
+      this.extendSelEl.textContent = t("status.extendSelection", this);
     }
     // Slider drags live; the minus / plus buttons step by 10% (Word behavior).
     this.slider?.addEventListener("input", () => this.#emit(Number(this.slider?.value ?? 100)));
