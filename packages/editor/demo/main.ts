@@ -451,6 +451,8 @@ void registerComponents().then(async () => {
   el.setAttribute("filename", "Demo.docx");
   // Formatting marks (¶, →, ·) on by default — Word's Show/Hide ¶.
   el.setAttribute("show-marks", "");
+  // Ruler on by default — Word's View → Ruler.
+  el.setAttribute("show-ruler", "");
   // A hand-built doc carries no style library — normalizeDocument fills the
   // document-level defaults (doc attrs win over them), same as setJSON does.
   el.setAttribute("content", JSON.stringify(normalizeDocument(demoDocument())));

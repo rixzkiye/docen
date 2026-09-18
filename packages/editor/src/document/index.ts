@@ -2872,6 +2872,8 @@ class DocenDocument extends AddinHost<Editor> {
     // setters; the read-only + chrome trimming rides #applyView's gate).
     if (this.#stage.zoom !== this.#status.getZoom()) this.#stage.setZoom(this.#status.getZoom());
     if (this.hasAttribute("show-marks")) this.#stage.setShowMarks(true);
+    if (this.hasAttribute("show-ruler") || this.hasAttribute("ruler"))
+      this.#stage.setShowRuler(true);
     if (this.#stage.viewMode !== p.viewMode) {
       this.#stage.setViewMode(p.viewMode);
       this.#syncReadChrome(p.viewMode === "read");
@@ -4053,8 +4055,8 @@ class DocenDocument extends AddinHost<Editor> {
           syncEditModeMenu: () => this.#syncEditModeMenu(),
           setShowMarks: (on) => this.setShowMarks(on),
           getShowMarks: () => this.getShowMarks(),
-          showRuler: () => this.#stage?.showRuler ?? false,
-          setShowRuler: (on) => this.#stage?.setShowRuler(on),
+          showRuler: () => this.getShowRuler(),
+          setShowRuler: (on) => this.setShowRuler(on),
           showGridlines: () => this.#stage?.showGridlines ?? false,
           setShowGridlines: (on) => this.#stage?.setShowGridlines(on),
           setView: (view) => this.setAttribute("view", view),
@@ -5954,6 +5956,31 @@ class DocenDocument extends AddinHost<Editor> {
   /** Whether editing/formatting marks are currently shown. */
   getShowMarks(): boolean {
     return this.hasAttribute("show-marks");
+  }
+
+  // ── Ruler (method + event; boolean `show-ruler` / `ruler` attribute) ──
+
+  /** Toggle ruler on or off. Idempotent; dispatches `docen:ruler-change`. */
+  setShowRuler(on: boolean): void {
+    if (this.getShowRuler() === on) return;
+    this.toggleAttribute("show-ruler", on);
+    this.#stage?.setShowRuler(on);
+    this.dispatchEvent(
+      new CustomEvent("docen:ruler-change", {
+        bubbles: true,
+        composed: true,
+        detail: { showRuler: on },
+      }),
+    );
+  }
+
+  /** Whether ruler is currently shown. */
+  getShowRuler(): boolean {
+    return (
+      this.hasAttribute("show-ruler") ||
+      this.hasAttribute("ruler") ||
+      (this.#stage?.showRuler ?? false)
+    );
   }
 
   // ── Persisted settings (identity + writing toggles) ────────────────────────
