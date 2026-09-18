@@ -17,6 +17,12 @@ import { DocumentCommands, WIRED_DISPATCH } from "./extensions/commands";
 
 const Text = TextNode.create({ name: "text", group: "inline" });
 
+/** Flush happy-dom's custom-element reaction queue (connect/disconnect
+ *  callbacks run off the microtask queue). */
+async function settle(): Promise<void> {
+  for (let i = 0; i < 3; i++) await new Promise((resolve) => setTimeout(resolve, 0));
+}
+
 const buildEditor = (content = "Hello Docen Chrome W3"): EditorType => {
   const editor = new Editor({
     element: null,
@@ -40,26 +46,50 @@ describe("Lane W3 Chrome Pack (W3.1 - W3.5)", () => {
   describe("W3.1: Floating Mini Toolbar (<docen-mini-toolbar>)", () => {
     let toolbar: DocenMiniToolbar;
 
-    beforeEach(() => {
+    beforeEach(async () => {
+      localStorage.removeItem("docen.recent-fonts");
       toolbar = new DocenMiniToolbar();
       document.body.appendChild(toolbar);
+      // happy-dom flushes custom-element reactions on the microtask queue;
+      // let connect/disconnect reactions settle before the test body runs.
+      await settle();
     });
 
     afterEach(() => {
-      toolbar.remove();
+      // Each test gets a fresh toolbar; hide the old one but leave it attached
+      // — happy-dom's queued removal reaction otherwise fires the NEXT
+      // instance's disconnectedCallback mid-test. (Removal is exercised in the
+      // hide() spec and at runtime.)
+      toolbar.removeAttribute("data-open");
+      toolbar.style.display = "none";
     });
 
-    it("initializes and renders all 11 formatting controls", () => {
+    it("renders the font/size comboboxes plus all nine formatting buttons", () => {
       const shadow = toolbar.shadowRoot;
       expect(shadow).not.toBeNull();
 
-      // Font Family & Size selects
-      const fontSelect = shadow?.querySelector(".font-select") as HTMLSelectElement;
-      const sizeSelect = shadow?.querySelector(".size-select") as HTMLSelectElement;
-      expect(fontSelect).not.toBeNull();
-      expect(sizeSelect).not.toBeNull();
-      expect(fontSelect.options.length).toBeGreaterThan(5);
-      expect(sizeSelect.options.length).toBeGreaterThan(10);
+      // Font family & size are typeable comboboxes backed by the ribbon's
+      // control (WORD: the mini toolbar's boxes open a list and accept typing).
+      const fontCombo = shadow?.querySelector(".font-combo") as HTMLElement;
+      const sizeCombo = shadow?.querySelector(".size-combo") as HTMLElement;
+      expect(fontCombo).not.toBeNull();
+      expect(sizeCombo).not.toBeNull();
+      expect(fontCombo.tagName.toLowerCase()).toBe("docen-ribbon-combobox");
+
+      const fontItems = JSON.parse(fontCombo.getAttribute("items") ?? "[]") as Array<{
+        text: string;
+      }>;
+      const fontNames = fontItems.map((i) => i.text);
+      expect(fontNames).toContain("Calibri");
+      expect(fontNames).toContain("Georgia");
+      expect(fontNames).toContain("Microsoft YaHei");
+      expect(fontItems.length).toBeGreaterThan(5);
+
+      const sizeItems = JSON.parse(sizeCombo.getAttribute("items") ?? "[]") as Array<{
+        text: string;
+      }>;
+      expect(sizeItems.map((i) => i.text)).toContain("24");
+      expect(sizeItems.length).toBeGreaterThan(10);
 
       // Buttons: grow, shrink, bold, italic, underline, textColor, highlight, bullet, format-painter
       const buttons = shadow?.querySelectorAll("button[data-cmd]");
@@ -75,6 +105,63 @@ describe("Lane W3 Chrome Pack (W3.1 - W3.5)", () => {
       expect(cmds).toContain("highlight");
       expect(cmds).toContain("bullet-list");
       expect(cmds).toContain("format-painter");
+    });
+
+    it("exposes toolbar a11y roles/names and keeps focusable controls unblocked", () => {
+      expect(toolbar.getAttribute("role")).toBe("toolbar");
+      expect(toolbar.getAttribute("aria-label")).toBe("Mini Toolbar");
+
+      const shadow = toolbar.shadowRoot;
+      const bold = shadow?.querySelector('button[data-cmd="bold"]') as HTMLButtonElement;
+      expect(bold.getAttribute("aria-label")).toBe("Bold");
+      expect(bold.getAttribute("title")).toBe("Bold");
+      const fontCombo = shadow?.querySelector(".font-combo") as HTMLElement;
+      expect(fontCombo.getAttribute("aria-label")).toBe("Font Name");
+      expect(fontCombo.getAttribute("label")).toBe("Font Name");
+
+      // Buttons swallow mousedown (the selection must survive the click)…
+      const down = new MouseEvent("mousedown", {
+        bubbles: true,
+        composed: true,
+        cancelable: true,
+      });
+      bold.dispatchEvent(down);
+      expect(down.defaultPrevented).toBe(true);
+
+      // …but focusable controls (color pickers, combobox inputs) must not.
+      const colorInput = shadow?.querySelector(".color-input") as HTMLInputElement;
+      const inputDown = new MouseEvent("mousedown", {
+        bubbles: true,
+        composed: true,
+        cancelable: true,
+      });
+      colorInput.dispatchEvent(inputDown);
+      expect(inputDown.defaultPrevented).toBe(false);
+
+      const comboDown = new MouseEvent("mousedown", {
+        bubbles: true,
+        composed: true,
+        cancelable: true,
+      });
+      fontCombo.dispatchEvent(comboDown);
+      expect(comboDown.defaultPrevented).toBe(false);
+    });
+
+    it("lists theme fonts and recently used families in the font combo", () => {
+      localStorage.setItem("docen.recent-fonts", JSON.stringify(["Georgia"]));
+      const themed = new DocenMiniToolbar();
+      themed.style.setProperty("--docen-theme-font-major", "Aptos Display");
+      themed.style.setProperty("--docen-theme-font-minor", "Aptos");
+      document.body.appendChild(themed);
+      const themedCombo = themed.shadowRoot!.querySelector(".font-combo") as HTMLElement;
+      const names = (
+        JSON.parse(themedCombo.getAttribute("items") ?? "[]") as Array<{ text: string }>
+      ).map((i) => i.text);
+      themed.remove();
+      expect(names[0]).toBe("Georgia"); // recently used leads
+      expect(names).toContain("Aptos Display"); // theme major follows
+      expect(names).toContain("Aptos");
+      expect(names).toContain("Calibri"); // then the catalog
     });
 
     it("positions near selection bounds and sets data-open on showNear", () => {
@@ -96,7 +183,7 @@ describe("Lane W3 Chrome Pack (W3.1 - W3.5)", () => {
       expect(toolbar.style.opacity).toBe("0");
     });
 
-    it("updates formatting indicators accurately", () => {
+    it("updates formatting indicators accurately and clears stale values", () => {
       toolbar.updateFormatting({
         bold: true,
         italic: false,
@@ -116,10 +203,49 @@ describe("Lane W3 Chrome Pack (W3.1 - W3.5)", () => {
       expect(italicBtn?.getAttribute("aria-pressed")).toBe("false");
       expect(underlineBtn?.getAttribute("aria-pressed")).toBe("true");
 
-      const fontSelect = shadow?.querySelector(".font-select") as HTMLSelectElement;
-      const sizeSelect = shadow?.querySelector(".size-select") as HTMLSelectElement;
-      expect(fontSelect.value).toBe("Arial");
-      expect(sizeSelect.value).toBe("16");
+      const fontCombo = shadow?.querySelector(".font-combo") as HTMLElement;
+      const sizeCombo = shadow?.querySelector(".size-combo") as HTMLElement;
+      expect(fontCombo.getAttribute("value")).toBe("Arial");
+      expect(sizeCombo.getAttribute("value")).toBe("16");
+      // A font outside the catalog still shows (the ribbon combobox surfaces
+      // raw text when no option matches) and is seeded into the list.
+      toolbar.updateFormatting({ fontName: "Calibri Light", fontSize: "10.5" });
+      expect(fontCombo.getAttribute("value")).toBe("Calibri Light");
+      expect(sizeCombo.getAttribute("value")).toBe("10.5");
+      const names = (
+        JSON.parse(fontCombo.getAttribute("items") ?? "[]") as Array<{ text: string }>
+      ).map((i) => i.text);
+      expect(names[0]).toBe("Calibri Light");
+
+      // Mixed/unknown selection clears the boxes instead of leaving the
+      // previous caret's value behind.
+      toolbar.updateFormatting({ fontName: undefined, fontSize: undefined });
+      expect(fontCombo.hasAttribute("value")).toBe(false);
+      expect(sizeCombo.hasAttribute("value")).toBe(false);
+    });
+
+    it("greys grow/shrink out of context and at the size bounds", () => {
+      const shadow = toolbar.shadowRoot;
+      const grow = shadow?.querySelector('button[data-cmd="grow-font"]') as HTMLButtonElement;
+      const shrink = shadow?.querySelector('button[data-cmd="shrink-font"]') as HTMLButtonElement;
+
+      toolbar.updateFormatting({ editable: false, fontSize: "12" });
+      expect(grow.getAttribute("aria-disabled")).toBe("true");
+      expect(shrink.getAttribute("aria-disabled")).toBe("true");
+
+      const dispatched: string[] = [];
+      toolbar.addEventListener("command", ((e: CustomEvent) => {
+        dispatched.push(e.detail.event);
+      }) as EventListener);
+      grow.click();
+      expect(dispatched).toEqual([]); // disabled controls never act
+
+      toolbar.updateFormatting({ editable: true, fontSize: "1638" });
+      expect(grow.getAttribute("aria-disabled")).toBe("true");
+      expect(shrink.getAttribute("aria-disabled")).toBe("false");
+      toolbar.updateFormatting({ editable: true, fontSize: "1" });
+      expect(shrink.getAttribute("aria-disabled")).toBe("true");
+      expect(grow.getAttribute("aria-disabled")).toBe("false");
     });
 
     it("dispatches command events when controls are clicked or selected", () => {
@@ -141,11 +267,54 @@ describe("Lane W3 Chrome Pack (W3.1 - W3.5)", () => {
       painterBtn?.click();
       expect(dispatched[1].event).toBe("copy-format");
 
-      const fontSelect = shadow?.querySelector(".font-select") as HTMLSelectElement;
-      fontSelect.value = "Georgia";
-      fontSelect.dispatchEvent(new Event("change"));
+      // The combobox emits a composed `command`; the toolbar re-emits it for
+      // the host and remembers the family as recently used.
+      const fontCombo = shadow?.querySelector(".font-combo") as HTMLElement;
+      fontCombo.dispatchEvent(
+        new CustomEvent("command", {
+          bubbles: true,
+          composed: true,
+          detail: { event: "font-name", value: "Georgia" },
+        }),
+      );
       expect(dispatched[2].event).toBe("font-name");
       expect(dispatched[2].value).toBe("Georgia");
+      expect(localStorage.getItem("docen.recent-fonts")).toContain("Georgia");
+      const names = (
+        JSON.parse(fontCombo.getAttribute("items") ?? "[]") as Array<{ text: string }>
+      ).map((i) => i.text);
+      expect(names[0]).toBe("Georgia");
+    });
+
+    it("clamps typed font sizes and ignores non-numeric input", () => {
+      const dispatched: Array<{ event: string; value?: string }> = [];
+      toolbar.addEventListener("command", ((e: CustomEvent) => {
+        dispatched.push({ event: e.detail.event, value: e.detail.value });
+      }) as EventListener);
+
+      const sizeCombo = toolbar.shadowRoot?.querySelector(".size-combo") as HTMLElement;
+      const type = (value: string): void => {
+        sizeCombo.dispatchEvent(
+          new CustomEvent("command", {
+            bubbles: true,
+            composed: true,
+            detail: { event: "font-size", value },
+          }),
+        );
+      };
+
+      type("5000");
+      expect(dispatched[0]).toEqual({ event: "font-size", value: "1638" });
+      expect(sizeCombo.getAttribute("value")).toBe("1638");
+
+      type("0.2");
+      expect(dispatched[1]).toEqual({ event: "font-size", value: "1" });
+
+      type("abc");
+      expect(dispatched.length).toBe(2); // rejected, no command
+
+      type("10.5");
+      expect(dispatched[2]).toEqual({ event: "font-size", value: "10.5" });
     });
 
     it("fades out based on distance from pointer", () => {

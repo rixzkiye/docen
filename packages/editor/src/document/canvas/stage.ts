@@ -48,6 +48,11 @@ import type { FlowPage, FontMetrics, LaidOutParagraph, LaidOutStackItem } from "
 import { createMeasurer, stackBlocks } from "@docen/layout";
 import { App, Debug, Group, Line, Rect, Text, type IGroup } from "leafer-ui";
 
+import {
+  RULER_TICK_LEN,
+  rulerTicks,
+  type RulerUnit,
+} from "../../ui/components/workspace/ruler-ticks";
 import { getArtBorderSvgDataUri } from "./art-borders";
 import { collectPageParas } from "./caret-map";
 import { diffFlowItems } from "./item-diff";
@@ -871,78 +876,66 @@ export class CanvasStage {
       `${pad(flow.contentLeftPx)}`;
   }
 
-  /** Vertical ruler (Word's View → Ruler): a strip left of each page, an SVG
-   *  of tick lines whose 0 sits on the content-box edge (Word's margin-line
-   *  origin — the margin shows negative ticks). Inch ticks on en locales,
-   *  centimetres otherwise; the strips re-render on every sizeSlot, so zoom
-   *  rescales the ticks. The horizontal ruler is the interactive
-   *  `<docen-ruler>` strip the host mounts above the pages (draggable indent
-   *  markers, tab stops, unit toggle). */
+  /** Vertical ruler (Word's View → Ruler): a 20px strip hugging the left edge
+   *  of each page, drawn from the same four-level tick hierarchy as the
+   *  interactive horizontal `<docen-ruler>` the host mounts above the pages
+   *  (which owns the draggable markers, tab stops, and unit toggle). 0 sits on
+   *  the content-box edge (Word's margin-line origin — the margin shows
+   *  negative ticks). Inch ticks on en locales, centimetres otherwise. The
+   *  geometry key keeps a sync from rebuilding the SVG of every page on every
+   *  keystroke. */
   private applyRulers(frame: HTMLElement, page: number): void {
-    frame.querySelectorAll(":scope > .h-ruler, :scope > .v-ruler").forEach((el) => el.remove());
-    if (!this.#showRuler) return;
+    const existing = frame.querySelector<HTMLElement>(":scope > .v-ruler");
+    if (!this.#showRuler) {
+      existing?.remove();
+      return;
+    }
     const flow = this.sectionAt(page).flow;
     const THICKNESS = 20;
-    const metric = !/^en/i.test(navigator.language || "");
-    const unit = (metric ? 96 / 2.54 : 96) * this.factor;
-    const half = unit / 2;
-    const minor = metric ? unit / 10 : unit / 4;
-    const build = (length: number, zero: number, vertical: boolean): string => {
-      let out = "";
-      for (let p = Math.ceil(-zero / minor) * minor; p <= length - zero; p += minor) {
-        const whole = p / unit;
-        const major = Math.abs(whole - Math.round(whole)) < 1e-6;
-        const mid = Math.abs(p / half - Math.round(p / half)) < 1e-6;
-        const len = major ? THICKNESS - 2 : mid ? THICKNESS * 0.62 : THICKNESS * 0.38;
-        const pos = zero + p;
-        const num = Math.round(whole);
-        if (vertical) {
-          out += `<line x1="${THICKNESS}" y1="${pos}" x2="${THICKNESS - len}" y2="${pos}"/>`;
-          if (major)
-            out += `<text x="${THICKNESS - len - 2}" y="${pos + 2}" text-anchor="middle" transform="rotate(-90 ${THICKNESS - len - 2} ${pos + 2})">${num}</text>`;
-        } else {
-          out += `<line x1="${pos}" y1="${THICKNESS}" x2="${pos}" y2="${THICKNESS - len}"/>`;
-          if (major)
-            out += `<text x="${pos + 1}" y="${THICKNESS - len - 3}" stroke="none">${num}</text>`;
-        }
+    const UNIT: RulerUnit = /^en/i.test(navigator.language || "") ? "in" : "cm";
+    const heightPx = this.pageCss(flow.pageHeightPx);
+    const zeroPx = flow.contentTopPx * this.factor;
+    const key = `${heightPx}|${zeroPx}|${this.factor}|${UNIT}`;
+    if (existing?.dataset.geom === key) return;
+    existing?.remove();
+
+    let out = "";
+    for (const tick of rulerTicks({
+      lengthPx: heightPx,
+      zeroPx,
+      unit: UNIT,
+      scale: this.factor,
+    })) {
+      const y = Math.round(tick.pos) + 0.5;
+      const len = RULER_TICK_LEN[tick.level];
+      out += `<line x1="${THICKNESS}" y1="${y}" x2="${THICKNESS - len}" y2="${y}"/>`;
+      if (tick.label !== undefined) {
+        const tx = THICKNESS - RULER_TICK_LEN[0] - 4;
+        out += `<text x="${tx}" y="${y}" text-anchor="middle" transform="rotate(-90 ${tx} ${y})">${tick.label}</text>`;
       }
-      return (
-        `<svg xmlns="http://www.w3.org/2000/svg" width="100%" height="100%">` +
-        `<g stroke="#9aa4b2" stroke-width="1" fill="#5b6675" font-size="7"` +
-        ` font-family="Inter, sans-serif">${out}</g></svg>`
-      );
-    };
-    const mount = (cls: string, style: Partial<CSSStyleDeclaration>, svg: string): HTMLElement => {
-      const div = document.createElement("div");
-      div.className = cls;
-      // Two assign targets, not one spread object: the linter flags spreading
-      // a CSSStyleDeclaration-typed value (index-signature interface) into an
-      // object literal as an iterable spread.
-      Object.assign(
-        div.style,
-        {
-          position: "absolute",
-          pointerEvents: "none",
-          zIndex: "2",
-          background: "#fafbfc",
-          border: "1px solid #d8dce2",
-        } satisfies Partial<CSSStyleDeclaration>,
-        style,
-      );
-      div.innerHTML = svg;
-      frame.append(div);
-      return div;
-    };
-    mount(
-      "v-ruler",
-      {
-        left: `-${THICKNESS}px`,
-        top: "0",
-        width: `${THICKNESS}px`,
-        height: `${this.pageCss(flow.pageHeightPx)}px`,
-      },
-      build(this.pageCss(flow.pageHeightPx), flow.contentTopPx * this.factor, true),
-    );
+    }
+
+    const div = document.createElement("div");
+    div.className = "v-ruler";
+    // border-box so the 1px hairline never spills over the page edge.
+    Object.assign(div.style, {
+      position: "absolute",
+      pointerEvents: "none",
+      zIndex: "2",
+      boxSizing: "border-box",
+      background: "#f3f3f3",
+      border: "1px solid #c8c8c8",
+      left: `-${THICKNESS}px`,
+      top: "0",
+      width: `${THICKNESS}px`,
+      height: `${heightPx}px`,
+    } satisfies Partial<CSSStyleDeclaration>);
+    div.innerHTML =
+      `<svg xmlns="http://www.w3.org/2000/svg" width="100%" height="100%"` +
+      ` shape-rendering="crispEdges">` +
+      `<g stroke="#8f8f8f" stroke-width="1" fill="#555555" font-size="7">${out}</g></svg>`;
+    div.dataset.geom = key;
+    frame.append(div);
   }
 
   /** Lay out page slots for a flow result and repaint visible pages. The
