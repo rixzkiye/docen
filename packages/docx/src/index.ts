@@ -76,6 +76,18 @@ export {
 export { decodePassthroughData, encodePassthroughData } from "./extensions/passthrough";
 export { DOCX_EPOCH } from "./converters/determinism";
 export {
+  ENCRYPTED_DOCUMENT_CODE,
+  EncryptedDocumentError,
+  isEncryptedContainerBytes,
+} from "./converters/encrypted";
+export {
+  UNSUPPORTED_CONTENT_KINDS,
+  detectUnsupportedContent,
+  type UnsupportedContentItem,
+  type UnsupportedContentKind,
+  type UnsupportedContentReport,
+} from "./converters/unsupported";
+export {
   type TocSwitches,
   tokenizeTocInstruction,
   parseTocSwitches,

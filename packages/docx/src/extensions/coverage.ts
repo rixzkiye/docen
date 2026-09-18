@@ -148,3 +148,109 @@ export const RUN_CHILDREN_DROPPED: readonly { tag: string; reason: string }[] = 
   { tag: "yearShort", reason: "live date field, value recomputed at view time" },
   { tag: "yearLong", reason: "live date field, value recomputed at view time" },
 ];
+
+/** The R8-audited elements the model preserves but does not author. Every
+ *  entry is the written contract behind its passthrough disposition: where the
+ *  branch rides, why no editable node exists, and what a user sees. The
+ *  coverage spec enforces that each audited tag has a note AND that the note
+ *  does not contradict the disposition tables above.
+ *
+ *  SmartArt authoring is an explicit program exclusion; OLE payload editing,
+ *  3D/ink authoring and macro execution are likewise out of scope. Changing a
+ *  guarantee here is a product decision, not a refactor. */
+export interface PreserveOnlyElement {
+  /** office-open union tag (or the run child the note covers). */
+  readonly tag: string;
+  readonly where: "block" | "inline";
+  /** Why there is no editable Tiptap node/mark. */
+  readonly reason: string;
+  /** The user-visible behavior: rendering + what editing can/cannot do. */
+  readonly surface: string;
+}
+
+export const PRESERVE_ONLY_ELEMENTS: readonly PreserveOnlyElement[] = [
+  {
+    tag: "smartArt",
+    where: "inline",
+    reason:
+      "authoring is an explicit R8 exclusion — the SmartArt part model (data/layout/colors/styles + rels) is carried verbatim because a Tiptap node would have to re-implement the whole authoring surface",
+    surface:
+      "inert inlinePassthrough atom; canvas paints no preview today (the diagram part is not replayed); JSON/DOCX round-trip is byte-faithful",
+  },
+  {
+    tag: "object",
+    where: "inline",
+    reason:
+      "an embedded OLE payload (Excel sheet, equation, package) cannot be edited in the canvas — OLE payload editing is an explicit exclusion; the preview + embed bytes are preserved inside the atom",
+    surface:
+      "canvas paints the OLE object's vector preview (Excel-style or generic framed box, from the layout projection); the atom is atomic — no text editing inside, delete/move only",
+  },
+  {
+    tag: "symbolRun",
+    where: "inline",
+    reason:
+      "a w:sym run addresses a glyph by font-relative code (w:char + w:font, e.g. Wingdings F0A7); mapping it to Unicode needs per-font PUA tables the model does not own",
+    surface:
+      "carried verbatim through the inlinePassthrough atom; round-trip is byte-faithful. Symbol glyphs are not painted today (font-table mapping is out of the model's scope) — documented preserve-only, see docs/passthrough.md",
+  },
+  {
+    tag: "commentRangeStart",
+    where: "inline",
+    reason:
+      "range markers are zero-width metadata; the comment text itself IS editable through the comments pane, only the w:commentRangeStart/End/Reference markers stay opaque",
+    surface:
+      "canvas tints the marked range and anchors the comment balloon (layout projection reads the markers); the markers are atomic and cannot be edited directly",
+  },
+  {
+    tag: "commentRangeEnd",
+    where: "inline",
+    reason: "closes the range opened by commentRangeStart — metadata, not content",
+    surface: "zero-width; consumed by the comment tint/balloon projection",
+  },
+  {
+    tag: "commentReference",
+    where: "inline",
+    reason:
+      "the run-level anchor tying a range to its comment; the comment body is editable via the comments pane",
+    surface: "zero-width; consumed by the comment projection",
+  },
+  {
+    tag: "customXml",
+    where: "inline",
+    reason:
+      "a custom-XML markup wrapper carries arbitrary producer metadata (`w:customXml` element + attributes) with no document meaning",
+    surface:
+      "inline wrappers ride the inlinePassthrough atom; block-level customXml paints a labeled placeholder box in the canvas",
+  },
+  {
+    tag: "subDoc",
+    where: "inline",
+    reason:
+      "a w:subDoc is a relationship to an external document part; office-open keeps its bytes, but the referenced document is not guaranteed openable/embeddable in the canvas model",
+    surface:
+      "carried verbatim in the inlinePassthrough atom; the editor warns that the document contains uneditable subdocuments; no canvas rendering",
+  },
+  {
+    tag: "proofErr",
+    where: "inline",
+    reason:
+      "spell/grammar checker range metadata the consumer (editor) recomputes — the source hints carry no content",
+    surface: "zero-width metadata; correctly invisible in the canvas; round-trip byte-faithful",
+  },
+  {
+    tag: "rawXml",
+    where: "inline",
+    reason:
+      "raw OOXML the Tiptap schema does not model (except 3D/ink, which parse into their nodes); carried verbatim so unknown extensions survive",
+    surface:
+      "inline rawXml rides the inlinePassthrough atom; block-level rawXml paints a labeled placeholder box",
+  },
+  {
+    tag: "altChunk",
+    where: "block",
+    reason:
+      "an altChunk references an embedded HTML/RTF part whose content Word imports on open; docen cannot edit imported content that is not in the document part",
+    surface:
+      "block Passthrough atom + labeled placeholder box in the canvas; the editor warns that the document contains an imported-content chunk; round-trip byte-faithful",
+  },
+];

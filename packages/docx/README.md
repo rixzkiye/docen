@@ -200,6 +200,16 @@ zh-CN face (`等线`/DengXian).
 sync/async/stream); recorded numbers and thresholds live in
 [`bench/README.md`](./bench/README.md).
 
+### Preserve-only content
+
+Elements the Tiptap model deliberately carries without authoring — SmartArt,
+OLE objects, symbol runs, comment range markers, customXml, subDoc, proofErr,
+rawXml, altChunk — plus the complex-structure matrix (altChunk/subDoc/glossary/
+encrypted containers) are documented in
+[`docs/passthrough.md`](./docs/passthrough.md). Round-trip is byte-faithful;
+the editor warns when a loaded document contains uneditable container content
+instead of silently dropping it.
+
 ## Architecture
 
 ```

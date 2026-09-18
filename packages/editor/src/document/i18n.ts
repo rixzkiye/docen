@@ -1250,6 +1250,19 @@ export const ribbonEn: AdditionalLanguage = {
     "open.flat-opc-unsupported":
       "Flat OPC XML (.xml) documents are not supported yet — open the .docx or .docm version.",
     "open.unsupported": "Unsupported file type: {name}",
+    "open.encrypted": "This document is encrypted (password-protected) and cannot be opened here.",
+    // --- Unsupported-content warning bar (altChunk/subDoc/SmartArt/OLE/rawXml) ---
+    "contentWarning.title": "Some content can't be edited",
+    "contentWarning.body":
+      "This document contains {items}. They are preserved unchanged when you save.",
+    "contentWarning.dismiss": "Dismiss",
+    "contentWarning.kind.altChunk": "imported content (altChunk)",
+    "contentWarning.kind.subDoc": "referenced subdocuments",
+    "contentWarning.kind.smartArt": "SmartArt graphics",
+    "contentWarning.kind.oleObject": "embedded objects (OLE)",
+    "contentWarning.kind.rawXml": "raw XML extensions",
+    "contentWarning.kind.customXml": "custom XML data",
+    "contentWarning.kind.contentPart": "embedded content parts",
     "header.lang.zh": "中文",
     "header.lang.en": "English",
     // --- Header/footer edit stories (the canvas story chrome tag) ---
@@ -3073,6 +3086,18 @@ export const ribbonZhCN: AdditionalLanguage = {
     // --- 打开拒绝提示（文件选择 change 处理器弹出的警告） ---
     "open.flat-opc-unsupported": "尚不支持 Flat OPC XML（.xml）文档——请改用 .docx 或 .docm 版本。",
     "open.unsupported": "不支持的文件类型：{name}",
+    "open.encrypted": "此文档已加密（受密码保护），无法在此打开。",
+    // --- Unsupported-content warning bar (altChunk/subDoc/SmartArt/OLE/rawXml) ---
+    "contentWarning.title": "部分内容无法编辑",
+    "contentWarning.body": "此文档包含{items}。保存时会原样保留。",
+    "contentWarning.dismiss": "关闭",
+    "contentWarning.kind.altChunk": "导入的内容（altChunk）",
+    "contentWarning.kind.subDoc": "引用的子文档",
+    "contentWarning.kind.smartArt": "SmartArt 图形",
+    "contentWarning.kind.oleObject": "嵌入对象（OLE）",
+    "contentWarning.kind.rawXml": "原始 XML 扩展",
+    "contentWarning.kind.customXml": "自定义 XML 数据",
+    "contentWarning.kind.contentPart": "嵌入的内容部件",
     "header.lang.zh": "中文",
     "header.lang.en": "English",
     // --- Header/footer edit stories (the canvas story chrome tag) ---

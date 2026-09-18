@@ -51,6 +51,7 @@ import {
   normalizeArchiveInputSync,
 } from "./archive-guard";
 import { DOCX_EPOCH, toIsoDate, withGenerationScope } from "./determinism";
+import { EncryptedDocumentError, assertNotEncryptedContainer } from "./encrypted";
 import { prepareDocument, type PrepareStep } from "./prepare";
 import { docenDefaultSectionProperties } from "./section-defaults";
 import { buildTextBlock } from "./styles";
@@ -1862,8 +1863,13 @@ export async function parseDOCX(
   extensions?: Extensions,
 ): Promise<JSONContent> {
   const bytes = await normalizeArchiveInput(data);
+  assertNotEncryptedContainer(bytes);
   assertArchiveWithinLimits(bytes);
-  return getDocxManager(extensions).resolve(await parseDocument(bytes));
+  const parsed = await parseDocument(bytes);
+  // Belt-and-braces: a container office-open recognized as encrypted without
+  // the CFB signature (or a future input path we do not read bytes for).
+  if (parsed.encrypted) throw new EncryptedDocumentError();
+  return getDocxManager(extensions).resolve(parsed);
 }
 
 /**
@@ -1876,8 +1882,11 @@ export function parseDOCXSync(
   extensions?: Extensions,
 ): JSONContent {
   const bytes = normalizeArchiveInputSync(data);
+  assertNotEncryptedContainer(bytes);
   assertArchiveWithinLimits(bytes);
-  return getDocxManager(extensions).resolve(parseDocumentSync(bytes));
+  const parsed = parseDocumentSync(bytes);
+  if (parsed.encrypted) throw new EncryptedDocumentError();
+  return getDocxManager(extensions).resolve(parsed);
 }
 
 /**
