@@ -95,7 +95,6 @@ import "./components/format-pane";
 import "./components/outline";
 import "./components/styles-pane";
 import "../ui/components/workspace/alt-text-pane";
-
 import { ClipboardCommands } from "./commands/clipboard";
 import { CommentsCommands } from "./commands/comments";
 import { combineDocs, compareDocs } from "./commands/compare";
