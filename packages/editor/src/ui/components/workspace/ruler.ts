@@ -245,6 +245,7 @@ const template = html<DocenRuler>`
     <svg class="ticks-svg" part="ticks" ${ref("ticksSvg")}></svg>
 
     <button
+      type="button"
       class="unit-label"
       part="unit-toggle"
       title="${(x) => t("ruler.unitToggle", x)}"
@@ -356,6 +357,9 @@ export class DocenRuler extends FASTElement {
   @observable dragActiveMarker: "firstLine" | "hanging" | "left" | "right" | "tabStop" | null =
     null;
   @observable dragTabIdx = -1;
+  /** The stop object under the pointer — repeat reuses DOM nodes, so the
+   *  child scope's index can go stale after an array edit; identity survives. */
+  @observable dragStop: RulerTabStop | null = null;
   @observable dragOffRuler = false;
   @observable showTooltip = false;
   @observable tooltipText = "";
@@ -543,7 +547,7 @@ export class DocenRuler extends FASTElement {
           <div
             class="tab-stop-item ${(stop, c) =>
               c.parent.dragActiveMarker === "tabStop" &&
-              c.parent.dragTabIdx === c.index &&
+              c.parent.dragStop === stop &&
               c.parent.dragOffRuler
                 ? "drag-off"
                 : ""}"
@@ -555,10 +559,9 @@ export class DocenRuler extends FASTElement {
               `${t("ruler.tabStop", c.parent)}: ${c.parent.formatMeasurement(stop.position)} (${stop.type})`}"
             aria-label="${(stop, c) =>
               `${t("ruler.tabStop", c.parent)}: ${c.parent.formatMeasurement(stop.position)}`}"
-            @pointerdown="${(stop, c) =>
-              c.parent.onTabPointerDown(c.index, c.event as PointerEvent)}"
+            @pointerdown="${(stop, c) => c.parent.onTabPointerDown(stop, c.event as PointerEvent)}"
             @click="${(_stop, c) => c.event.stopPropagation()}"
-            @dblclick="${(stop, c) => c.parent.onTabDblClick(c.index, c.event as MouseEvent)}"
+            @dblclick="${(stop, c) => c.parent.onTabDblClick(stop, c.event as MouseEvent)}"
           >
             <svg class="tab-glyph" viewBox="0 0 9 10" aria-hidden="true">
               <path d="${(stop) => tabGlyphPath(stop.type)}"></path>
@@ -633,16 +636,18 @@ export class DocenRuler extends FASTElement {
     window.addEventListener("pointerup", onPointerUp);
   }
 
-  onTabPointerDown(idx: number, event: PointerEvent): void {
+  onTabPointerDown(ref: number | RulerTabStop, event: PointerEvent): void {
+    const idx = typeof ref === "number" ? ref : this.tabStops.indexOf(ref);
+    const stop = this.tabStops[idx];
+    if (!stop) return;
     event.preventDefault();
     event.stopPropagation();
     (event.target as HTMLElement).setPointerCapture(event.pointerId);
 
     this.dragActiveMarker = "tabStop";
     this.dragTabIdx = idx;
+    this.dragStop = stop;
     this.#dragStartX = event.clientX;
-    const stop = this.tabStops[idx];
-    if (!stop) return;
     this.#initialTabTwips = stop.position;
     this.dragOffRuler = false;
 
@@ -665,6 +670,8 @@ export class DocenRuler extends FASTElement {
 
       if (this.tabStops[idx]) {
         this.tabStops = this.tabStops.map((s, i) => (i === idx ? { ...s, position: newTwips } : s));
+        // The dragged object was replaced — keep the identity highlight fresh.
+        this.dragStop = this.tabStops[idx] ?? null;
       }
 
       this.showTooltip = e.altKey;
@@ -686,6 +693,7 @@ export class DocenRuler extends FASTElement {
 
       this.dragActiveMarker = null;
       this.dragTabIdx = -1;
+      this.dragStop = null;
       this.dragOffRuler = false;
       this.showTooltip = false;
       this.commitTabStopsToEditor();
@@ -695,9 +703,11 @@ export class DocenRuler extends FASTElement {
     window.addEventListener("pointerup", onPointerUp);
   }
 
-  onTabDblClick(idx: number, event: MouseEvent): void {
+  /** `ref` is the stop object from the repeat's child scope (the scoped index
+   *  can be stale after an array edit); a raw index stays accepted. */
+  onTabDblClick(ref: number | RulerTabStop, event: MouseEvent): void {
     event.stopPropagation();
-    const stop = this.tabStops[idx];
+    const stop = typeof ref === "number" ? this.tabStops[ref] : ref;
     this.$emit("ruler:open-tabs", { tabStop: stop });
     this.#dispatchTabsDialog();
   }

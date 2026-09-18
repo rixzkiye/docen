@@ -7,7 +7,11 @@ import { DocenRuler } from "./ruler";
 
 const created: DocenRuler[] = [];
 afterEach(() => {
-  while (created.length) created.pop()!.remove();
+  // Hide rather than remove: happy-dom's queued disconnect reaction can fire
+  // on the next test's freshly mounted ruler and tear down its template
+  // bindings. (Removal is covered at runtime and in the element's own tests.)
+  for (const el of created) el.style.display = "none";
+  created.length = 0;
 });
 
 async function settle(): Promise<void> {
@@ -108,6 +112,46 @@ describe("DocenRuler (<docen-ruler>) (W5.2)", () => {
     // Release pointer
     window.dispatchEvent(new PointerEvent("pointerup"));
     expect(ruler.dragActiveMarker).toBeNull();
+  });
+
+  it("binds each rendered tab-stop row to its own stop object", async () => {
+    // Rows must carry the stop itself (not a repeat-scoped index, which can go
+    // stale when the array is replaced): dragging row 2 moves stop 2 only.
+    const ruler = new DocenRuler();
+    created.push(ruler);
+    ruler.marginLeftPx = 96;
+    ruler.pageWidthPx = 816;
+    ruler.tabStops = [
+      { position: 1440, type: "left" },
+      { position: 2880, type: "center" },
+      { position: 4320, type: "right" },
+    ];
+    document.body.append(ruler);
+    // FAST batches DOM updates (repeat rows) behind rAF; let the queue flush.
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    const items = ruler.shadowRoot!.querySelectorAll<HTMLElement>(".tab-stop-item");
+    expect(items.length).toBe(3);
+    const target = items[2]!; // the right stop
+    target.setPointerCapture = () => {};
+    target.dispatchEvent(
+      new PointerEvent("pointerdown", {
+        bubbles: true,
+        composed: true,
+        clientX: 300,
+        pointerId: 5,
+      }),
+    );
+    expect(ruler.dragActiveMarker).toBe("tabStop");
+    expect(ruler.dragTabIdx).toBe(2);
+    expect(ruler.dragStop).toBe(ruler.tabStops[2]);
+
+    window.dispatchEvent(new PointerEvent("pointermove", { clientX: 324, clientY: 10 }));
+    expect(ruler.tabStops[2]!.position).toBe(4680); // +360 twips = +24px
+    expect(ruler.tabStops[0]!.position).toBe(1440); // untouched
+    expect(ruler.tabStops[1]!.position).toBe(2880); // untouched
+    window.dispatchEvent(new PointerEvent("pointerup"));
+    expect(ruler.dragStop).toBeNull();
   });
 
   it("handles tab stops: click to add, drag to move, drag off to delete, dblclick to open dialog", async () => {

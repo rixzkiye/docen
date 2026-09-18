@@ -331,8 +331,9 @@ export class DocenMiniToolbar extends FASTElement {
     if (this.painterIcon) renderIcon(this.painterIcon, "format-painter");
   }
 
-  /** Localized tooltips and accessible names for every control (Word's mini
-   *  toolbar labels; the ribbon command keys carry the translations). */
+  /** Localized tooltips and accessible names for every control — the mini
+   *  toolbar ships its own component-local translations so it works wherever
+   *  the ribbon's business tables are not loaded. */
   #applyLabels(): void {
     const name = (el: Element | undefined, key: string): void => {
       if (!el) return;

@@ -339,6 +339,7 @@ class DocenDocument extends AddinHost<Editor> {
       this.setAttribute("dir", nextDir);
     }
     this.#syncDirTo(nextDir);
+    this.#syncRulerDirection();
   };
 
   setUiDirection(direction: "ltr" | "rtl" | "auto"): void {
@@ -1599,6 +1600,9 @@ class DocenDocument extends AddinHost<Editor> {
     this.#syncDrawingMenus();
     this.#syncQuickPartsMenu();
     this.#syncMiniToolbar();
+    // The ruler's direction follows the caret's paragraph (Word mirrors the
+    // scale for RTL runs even in an LTR shell).
+    this.#syncRulerDirection();
     if (this.#uiSelectionDirty) {
       this.#uiSelectionDirty = false;
       // The status-bar language mirrors the caret's proofing language (Word).
@@ -2900,11 +2904,34 @@ class DocenDocument extends AddinHost<Editor> {
     this.#ruler = ruler;
   }
 
+  /** Mirror the interactive ruler for RTL paragraphs (Word flips the scale at
+   *  the caret) and for an RTL shell direction; LTR paragraphs in an LTR shell
+   *  keep Word's left-to-right scale. */
+  #syncRulerDirection(): void {
+    const ruler = this.#ruler;
+    if (!ruler) return;
+    const editor = this.#bridge?.activeEditor() ?? this.editor;
+    let bidi = false;
+    if (editor) {
+      const { $from } = editor.state.selection;
+      for (let d = $from.depth; d > 0; d--) {
+        const node = $from.node(d);
+        if (node.type.name === "paragraph" || node.type.name === "heading") {
+          bidi = node.attrs.bidirectional === true;
+          break;
+        }
+      }
+    }
+    const dir = bidi || this.getAttribute("dir") === "rtl" ? "rtl" : "ltr";
+    if (ruler.getAttribute("dir") !== dir) ruler.setAttribute("dir", dir);
+  }
+
   /** Show/hide and re-geometry the interactive ruler from the current flow
    *  box + zoom. Cheap when nothing changed (signature-guarded). */
   #syncRuler(): void {
     const ruler = this.#ruler;
     if (!ruler) return;
+    this.#syncRulerDirection();
     const on = this.getShowRuler();
     ruler.style.display = on ? "block" : "none";
     if (!on) return;
