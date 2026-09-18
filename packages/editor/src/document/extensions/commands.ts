@@ -23,6 +23,7 @@ import { NodeSelection, TextSelection } from "@tiptap/pm/state";
 import { DocAttrStep } from "@tiptap/pm/transform";
 
 import { freshChildEmu, memberEmuOf, unionBox, type Box } from "../../drawing";
+import { setUiDirection } from "../../ui/i18n/localize";
 import { autotextMatch, blocksOfDocAttrs, type BuildingBlock } from "../building-blocks";
 import { CellSelection, cellsInRect } from "../canvas/cell-selection";
 import { ExtendModeManager, MultiSelectionManager } from "../canvas/selection";
@@ -148,6 +149,7 @@ declare module "@tiptap/core" {
       "direction-ltr": () => ReturnType;
       "direction-rtl": () => ReturnType;
       "set-paragraph-direction": (direction: "ltr" | "rtl") => ReturnType;
+      "set-ui-direction": (direction?: "ltr" | "rtl" | "auto") => ReturnType;
       "line-spacing": (mult?: string) => ReturnType;
       "paragraph-dialog-apply": (patch?: ParagraphDialogPatch) => ReturnType;
       "paragraph-dialog-default": (patch?: ParagraphDialogPatch) => ReturnType;
@@ -2506,6 +2508,10 @@ export const DocumentCommands = Extension.create({
   addCommands() {
     return {
       "toggle-ribbon-minimized": () => () => {
+        return true;
+      },
+      "set-ui-direction": (direction?: "ltr" | "rtl" | "auto") => () => {
+        setUiDirection(direction ?? "auto");
         return true;
       },
       translate: () => () => {

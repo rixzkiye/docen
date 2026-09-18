@@ -8,6 +8,7 @@ import {
   ref,
 } from "@microsoft/fast-element";
 
+import { resolveDir } from "../../i18n";
 import {
   COMMAND_HOST_STYLE,
   appendMenuItems,
@@ -236,16 +237,19 @@ class DocenRibbonSplitButton extends FASTElement {
   }
 
   private applyAnchor(): void {
-    // Expose the primary action (left edge) as a CSS anchor for icon-only
-    // splits to left-align their dropdown to. The primary lives in this shadow
-    // root, so the anchor resolves same-shadow. Anchoring the host itself
-    // crosses the shadow boundary and the browser drops the popover at the
-    // viewport corner.
+    const isRtl = resolveDir(this) === "rtl";
     if (this.primary) this.primary.style.anchorName = this.anchorId;
     if (this.list) {
       this.list.style.positionAnchor = this.anchorId;
-      this.list.style.insetInlineStart = "anchor(self-start)";
-      this.list.style.insetInlineEnd = "unset";
+      if (isRtl) {
+        this.list.style.insetInlineEnd = "anchor(self-end)";
+        this.list.style.insetInlineStart = "unset";
+        this.list.setAttribute("dir", "rtl");
+      } else {
+        this.list.style.insetInlineStart = "anchor(self-start)";
+        this.list.style.insetInlineEnd = "unset";
+        this.list.removeAttribute("dir");
+      }
     }
     // The tooltip anchors to #target (the primary) but connects before this
     // host, so re-point it at the same anchor the primary now advertises.

@@ -12,7 +12,7 @@ import {
 } from "@microsoft/fast-element";
 
 import { detectNodeHeadingLevel, moveHeadingSection } from "../../../document/commands/outline";
-import { observeLang, t } from "../../i18n/localize";
+import { observeLang, resolveDir, t } from "../../i18n/localize";
 
 export interface NavHeadingItem {
   id: string;
@@ -65,6 +65,72 @@ const styles = css`
     background: var(--docen-color-bg, #fbfbfb);
     user-select: none;
     overflow: hidden;
+  }
+
+  :host([dir="rtl"]),
+  :host([data-dir="rtl"]),
+  :host-context([dir="rtl"]) {
+    direction: rtl;
+  }
+
+  :host([dir="rtl"]) .tree-view,
+  :host([data-dir="rtl"]) .tree-view,
+  :host-context([dir="rtl"]) .tree-view {
+    direction: rtl;
+  }
+
+  :host([dir="rtl"]) .tree-item,
+  :host([data-dir="rtl"]) .tree-item,
+  :host-context([dir="rtl"]) .tree-item {
+    border-left: none;
+    border-right: 3px solid transparent;
+    text-align: right;
+  }
+
+  :host([dir="rtl"]) .tree-item.active,
+  :host([data-dir="rtl"]) .tree-item.active,
+  :host-context([dir="rtl"]) .tree-item.active {
+    border-left-color: transparent;
+    border-right-color: #0f6cbd;
+  }
+
+  :host([dir="rtl"]) .chevron,
+  :host([data-dir="rtl"]) .chevron,
+  :host-context([dir="rtl"]) .chevron {
+    margin-right: 0;
+    margin-left: 4px;
+    transform: scaleX(-1);
+  }
+
+  :host([dir="rtl"]) .chevron.collapsed,
+  :host([data-dir="rtl"]) .chevron.collapsed,
+  :host-context([dir="rtl"]) .chevron.collapsed {
+    transform: scaleX(-1) rotate(-90deg);
+  }
+
+  :host([dir="rtl"]) .heading-title,
+  :host([data-dir="rtl"]) .heading-title,
+  :host-context([dir="rtl"]) .heading-title {
+    text-align: right;
+  }
+
+  :host([dir="rtl"]) .search-box,
+  :host([data-dir="rtl"]) .search-box,
+  :host-context([dir="rtl"]) .search-box {
+    direction: rtl;
+  }
+
+  :host([dir="rtl"]) .search-icon,
+  :host([data-dir="rtl"]) .search-icon,
+  :host-context([dir="rtl"]) .search-icon {
+    margin-right: 0;
+    margin-left: 6px;
+  }
+
+  :host([dir="rtl"]) .tab-strip,
+  :host([data-dir="rtl"]) .tab-strip,
+  :host-context([dir="rtl"]) .tab-strip {
+    direction: rtl;
   }
 
   /* ── Search Bar ── */
@@ -527,6 +593,7 @@ const template = html<DocenNavPane>`
 @customElement({ name: "docen-nav-pane", template, styles })
 export class DocenNavPane extends FASTElement {
   @attr tab: "headings" | "pages" | "results" = "headings";
+  @attr dir: "ltr" | "rtl" = "ltr";
 
   @observable searchQuery = "";
   @observable headings: NavHeadingItem[] = [];
@@ -553,6 +620,24 @@ export class DocenNavPane extends FASTElement {
   #isScrollingProgrammatically = false;
   #unobserveLang?: () => void;
 
+  get isRtl(): boolean {
+    const d = this.dir || this.getAttribute("dir");
+    return d === "rtl" || resolveDir(this) === "rtl";
+  }
+
+  dirChanged(): void {
+    this.renderHeadingsTree();
+  }
+
+  #syncDir = (): void => {
+    const d = this.dir || this.getAttribute("dir");
+    if (d === "rtl" || d === "ltr") return;
+    const nextDir = resolveDir(this);
+    if (this.getAttribute("dir") !== nextDir) {
+      this.setAttribute("dir", nextDir);
+    }
+  };
+
   #onTransaction = (): void => {
     this.parseHeadingsFromDoc();
   };
@@ -564,9 +649,13 @@ export class DocenNavPane extends FASTElement {
 
   override connectedCallback(): void {
     super.connectedCallback();
+    this.#syncDir();
     this.tabChanged("", this.tab || "headings");
     this.parseHeadingsFromDoc();
-    this.#unobserveLang = observeLang(() => this.applyFilter());
+    this.#unobserveLang = observeLang(() => {
+      this.#syncDir();
+      this.applyFilter();
+    });
   }
 
   override disconnectedCallback(): void {
@@ -848,11 +937,18 @@ export class DocenNavPane extends FASTElement {
       return;
     }
 
+    const isRtl = this.isRtl;
     for (const h of list) {
       const itemEl = document.createElement("div");
       itemEl.setAttribute("role", "treeitem");
       itemEl.className = this.getHeadingItemClass(h);
-      itemEl.style.paddingLeft = `${(h.level - 1) * 16 + 8}px`;
+      if (isRtl) {
+        itemEl.style.paddingRight = `${(h.level - 1) * 16 + 8}px`;
+        itemEl.style.paddingLeft = "8px";
+      } else {
+        itemEl.style.paddingLeft = `${(h.level - 1) * 16 + 8}px`;
+        itemEl.style.paddingRight = "8px";
+      }
       itemEl.setAttribute("aria-level", String(h.level));
       if (h.hasChildren) {
         itemEl.setAttribute("aria-expanded", !h.collapsed ? "true" : "false");

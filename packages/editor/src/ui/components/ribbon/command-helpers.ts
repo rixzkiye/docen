@@ -1,3 +1,4 @@
+import { resolveDir } from "../../i18n";
 import { ribbonIcon } from "./icons";
 
 /**
@@ -210,6 +211,12 @@ export function appendMenuItems<T extends MenuItemLike>(
     if (hasSubmenu && subItems) {
       const subList = document.createElement("fluent-menu-list");
       subList.setAttribute("slot", "submenu");
+      const isRtl = resolveDir(list) === "rtl";
+      if (isRtl) {
+        subList.setAttribute("dir", "rtl");
+        subList.style.right = "100%";
+        subList.style.left = "auto";
+      }
       appendMenuItems(subList, subItems, onSelect, options);
       menuItem.append(subList);
     }

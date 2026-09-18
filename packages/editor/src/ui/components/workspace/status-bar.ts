@@ -8,7 +8,7 @@ import {
   ref,
 } from "@microsoft/fast-element";
 
-import { observeLang, t } from "../../i18n/localize";
+import { observeLang, resolveDir, t } from "../../i18n/localize";
 
 export interface StatusBarWidgetsConfig {
   pageNumber: boolean;
@@ -37,6 +37,17 @@ const styles = css`
     align-items: center;
     gap: 8px;
     width: 100%;
+  }
+  :host([dir="rtl"]),
+  :host([data-dir="rtl"]),
+  :host-context([dir="rtl"]) {
+    flex-direction: row-reverse;
+    direction: rtl;
+  }
+  :host([dir="rtl"]) .pct,
+  :host([data-dir="rtl"]) .pct,
+  :host-context([dir="rtl"]) .pct {
+    text-align: left;
   }
   .left {
     display: flex;
@@ -389,6 +400,27 @@ class DocenStatusBar extends FASTElement {
   @attr language?: string;
   /** Extend selection mode ("EXT" Word status indicator). */
   @attr extend?: string;
+  @attr dir: "ltr" | "rtl" = "ltr";
+
+  get isRtl(): boolean {
+    return this.dir === "rtl" || this.getAttribute("dir") === "rtl" || resolveDir(this) === "rtl";
+  }
+
+  dirChanged(): void {
+    this.#syncDir();
+  }
+
+  #syncDir(): void {
+    const isRtl = (this.dir ?? resolveDir(this)) === "rtl";
+    this.toggleAttribute("data-dir", isRtl);
+    if (isRtl) {
+      this.setAttribute("dir", "rtl");
+    } else if (this.getAttribute("dir") === "rtl" && !this.getAttribute("data-dir")) {
+      // keep explicit attr
+    } else {
+      this.removeAttribute("dir");
+    }
+  }
 
   @observable sectionEl?: HTMLElement;
   @observable pagesEl?: HTMLElement;
@@ -544,6 +576,7 @@ class DocenStatusBar extends FASTElement {
 
   connectedCallback(): void {
     super.connectedCallback();
+    this.#syncDir();
     this.#widgetConfig = this.#loadWidgetConfig();
     this.#renderAll();
     this.#applyWidgetConfig();
@@ -588,6 +621,7 @@ class DocenStatusBar extends FASTElement {
       );
     }
     this.#unsubscribe = observeLang(() => {
+      this.#syncDir();
       this.#renderAll();
       this.#renderViewTitles();
     });

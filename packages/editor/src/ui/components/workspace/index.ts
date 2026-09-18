@@ -77,4 +77,4 @@ export { DocenOutlineView, default as DocenOutlineViewDefault } from "./outline-
 export { DocenRuler, default as DocenRulerDefault } from "./ruler";
 export { DocenNavPane, default as DocenNavPaneDefault } from "./nav-pane";
 export { DocenPrintPreview, default as DocenPrintPreviewDefault } from "./print-preview";
-
+export { DocenTouchHandles, default as DocenTouchHandlesDefault } from "./touch-handles";

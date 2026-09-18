@@ -8,6 +8,7 @@ import {
   ref,
 } from "@microsoft/fast-element";
 
+import { resolveDir } from "../../i18n";
 import {
   COMMAND_HOST_STYLE,
   appendMenuItems,
@@ -185,13 +186,19 @@ class DocenRibbonMenu extends FASTElement {
   private readonly onMousedown = (event: Event): void => event.preventDefault();
 
   private applyAnchor(): void {
-    // Anchor the popover list to the trigger (left-aligned under it). Without
-    // this the dropdown opens at the viewport corner.
+    const isRtl = resolveDir(this) === "rtl";
     if (this.trigger) this.trigger.style.anchorName = this.anchorId;
     if (this.list) {
       this.list.style.positionAnchor = this.anchorId;
-      this.list.style.insetInlineStart = "anchor(self-start)";
-      this.list.style.insetInlineEnd = "unset";
+      if (isRtl) {
+        this.list.style.insetInlineEnd = "anchor(self-end)";
+        this.list.style.insetInlineStart = "unset";
+        this.list.setAttribute("dir", "rtl");
+      } else {
+        this.list.style.insetInlineStart = "anchor(self-start)";
+        this.list.style.insetInlineEnd = "unset";
+        this.list.removeAttribute("dir");
+      }
     }
     // The tooltip's connectedCallback runs before this host's, so its anchor
     // resolves before anchorName is set — re-point it at this instance's anchor.
