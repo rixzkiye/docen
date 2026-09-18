@@ -4200,7 +4200,7 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
               const prev = TextSelection.near(active().editor.state.doc.resolve(beforePos - 1), -1);
               target = prev.$from.start();
             } else {
-              target = 0;
+              target = TextSelection.near(active().editor.state.doc.resolve(0), 1).from;
             }
           }
           apply(target, extend);
@@ -4235,7 +4235,10 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
         if (event.altKey && cellAt(active().editor.state.selection.$from)) {
           target = firstCellInRowPos(active().editor.state) ?? 0;
         } else if (event.ctrlKey || event.metaKey) {
-          target = 0;
+          // Word's Ctrl+Home: the body's first caret position — the first
+          // valid text position, not the doc boundary (PM position 0 sits
+          // before the first block and cannot hold a text caret).
+          target = TextSelection.near(active().editor.state.doc.resolve(0), 1).from;
         } else {
           target = edgeTarget(active().editor.state, head(), false);
         }

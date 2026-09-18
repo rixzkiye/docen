@@ -943,6 +943,31 @@ function formattableBlock(
     : null;
 }
 
+/** Dispatch a host-owned chrome command (a ribbon action with no Tiptap
+ *  document body: Font dialog, Show/Hide ¶, New Comment, Insert Footnote) to
+ *  the editor element. The host listens on its SHADOW ROOT, so the event must
+ *  be dispatched there — an event fired on the light-DOM host element never
+ *  reaches the shadow root's listener. */
+function dispatchHostCommand(
+  editor: { options: { element?: unknown } },
+  event: string,
+  value?: string,
+): boolean {
+  const viaClosest = (editor.options.element as HTMLElement | null)?.closest?.("docen-document");
+  const hostEl =
+    viaClosest ??
+    (typeof document !== "undefined" ? document.querySelector("docen-document") : null);
+  if (!hostEl) return false;
+  (hostEl.shadowRoot ?? hostEl).dispatchEvent(
+    new CustomEvent("command", {
+      bubbles: true,
+      composed: true,
+      detail: value === undefined ? { event } : { event, value },
+    }),
+  );
+  return true;
+}
+
 // ── Flat list helpers (a list paragraph carries bullet/numbering attrs) ──
 
 /** A paragraph's list state: which list kind it belongs to, which marker
@@ -2888,76 +2913,20 @@ export const DocumentCommands = Extension.create({
           moveBlockDown(editor, tr),
       "font-dialog":
         () =>
-        ({ editor }) => {
-          const hostEl =
-            (editor.options.element as HTMLElement | null)?.closest?.("docen-document") ??
-            (typeof document !== "undefined" ? document.querySelector("docen-document") : null);
-          if (hostEl) {
-            hostEl.dispatchEvent(
-              new CustomEvent("command", {
-                bubbles: true,
-                composed: true,
-                detail: { event: "font-dialog" },
-              }),
-            );
-            return true;
-          }
-          return false;
-        },
+        ({ editor }) =>
+          dispatchHostCommand(editor, "font-dialog"),
       "show-marks":
         () =>
-        ({ editor }) => {
-          const hostEl =
-            (editor.options.element as HTMLElement | null)?.closest?.("docen-document") ??
-            (typeof document !== "undefined" ? document.querySelector("docen-document") : null);
-          if (hostEl) {
-            hostEl.dispatchEvent(
-              new CustomEvent("command", {
-                bubbles: true,
-                composed: true,
-                detail: { event: "show-marks" },
-              }),
-            );
-            return true;
-          }
-          return false;
-        },
+        ({ editor }) =>
+          dispatchHostCommand(editor, "show-marks"),
       "new-comment":
         () =>
-        ({ editor }) => {
-          const hostEl =
-            (editor.options.element as HTMLElement | null)?.closest?.("docen-document") ??
-            (typeof document !== "undefined" ? document.querySelector("docen-document") : null);
-          if (hostEl) {
-            hostEl.dispatchEvent(
-              new CustomEvent("command", {
-                bubbles: true,
-                composed: true,
-                detail: { event: "new-comment" },
-              }),
-            );
-            return true;
-          }
-          return false;
-        },
+        ({ editor }) =>
+          dispatchHostCommand(editor, "new-comment"),
       "insert-footnote":
         (type) =>
-        ({ editor }) => {
-          const hostEl =
-            (editor.options.element as HTMLElement | null)?.closest?.("docen-document") ??
-            (typeof document !== "undefined" ? document.querySelector("docen-document") : null);
-          if (hostEl) {
-            hostEl.dispatchEvent(
-              new CustomEvent("command", {
-                bubbles: true,
-                composed: true,
-                detail: { event: "insert-footnote", value: type },
-              }),
-            );
-            return true;
-          }
-          return false;
-        },
+        ({ editor }) =>
+          dispatchHostCommand(editor, "insert-footnote", type),
       "direction-ltr":
         () =>
         ({ state, tr }) =>

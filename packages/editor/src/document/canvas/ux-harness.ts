@@ -113,34 +113,46 @@ export function parseShortcut(combo: string): {
   let code = `Key${key}`;
   let keyCode = key.charCodeAt(0);
 
-  if (rawKey === "up" || rawKey === "arrowup") {
-    key = "ArrowUp";
-    code = "ArrowUp";
-    keyCode = 38;
-  } else if (rawKey === "down" || rawKey === "arrowdown") {
-    key = "ArrowDown";
-    code = "ArrowDown";
-    keyCode = 40;
-  } else if (rawKey === "left" || rawKey === "arrowleft") {
-    key = "ArrowLeft";
-    code = "ArrowLeft";
-    keyCode = 37;
-  } else if (rawKey === "right" || rawKey === "arrowright") {
-    key = "ArrowRight";
-    code = "ArrowRight";
-    keyCode = 39;
-  } else if (rawKey === "enter") {
-    key = "Enter";
-    code = "Enter";
-    keyCode = 13;
-  } else if (rawKey === "escape" || rawKey === "esc") {
-    key = "Escape";
-    code = "Escape";
-    keyCode = 27;
-  } else if (rawKey === "space") {
-    key = " ";
-    code = "Space";
-    keyCode = 32;
+  const named: Record<string, { key: string; code: string; keyCode: number }> = {
+    up: { key: "ArrowUp", code: "ArrowUp", keyCode: 38 },
+    arrowup: { key: "ArrowUp", code: "ArrowUp", keyCode: 38 },
+    down: { key: "ArrowDown", code: "ArrowDown", keyCode: 40 },
+    arrowdown: { key: "ArrowDown", code: "ArrowDown", keyCode: 40 },
+    left: { key: "ArrowLeft", code: "ArrowLeft", keyCode: 37 },
+    arrowleft: { key: "ArrowLeft", code: "ArrowLeft", keyCode: 37 },
+    right: { key: "ArrowRight", code: "ArrowRight", keyCode: 39 },
+    arrowright: { key: "ArrowRight", code: "ArrowRight", keyCode: 39 },
+    enter: { key: "Enter", code: "Enter", keyCode: 13 },
+    escape: { key: "Escape", code: "Escape", keyCode: 27 },
+    esc: { key: "Escape", code: "Escape", keyCode: 27 },
+    space: { key: " ", code: "Space", keyCode: 32 },
+    tab: { key: "Tab", code: "Tab", keyCode: 9 },
+    home: { key: "Home", code: "Home", keyCode: 36 },
+    end: { key: "End", code: "End", keyCode: 35 },
+    pageup: { key: "PageUp", code: "PageUp", keyCode: 33 },
+    pagedown: { key: "PageDown", code: "PageDown", keyCode: 34 },
+    delete: { key: "Delete", code: "Delete", keyCode: 46 },
+    del: { key: "Delete", code: "Delete", keyCode: 46 },
+    backspace: { key: "Backspace", code: "Backspace", keyCode: 8 },
+    insert: { key: "Insert", code: "Insert", keyCode: 45 },
+  };
+  const fn = rawKey.match(/^f(\d{1,2})$/);
+  if (named[rawKey]) {
+    ({ key, code, keyCode } = named[rawKey]);
+  } else if (fn) {
+    const n = Number(fn[1]);
+    key = `F${n}`;
+    code = `F${n}`;
+    keyCode = 111 + n;
+  } else if (/^\d$/.test(rawKey)) {
+    key = rawKey;
+    code = `Digit${rawKey}`;
+    keyCode = rawKey.charCodeAt(0);
+  } else if (rawKey.length === 1 && !/[a-z]/i.test(rawKey)) {
+    // Punctuation/symbol keys keep their character as-is (e.g. "-", "=").
+    key = rawKey;
+    code = `Key${rawKey.toUpperCase()}`;
+    keyCode = rawKey.charCodeAt(0);
   }
 
   return { key, code, modifiers, keyCode };
