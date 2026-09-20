@@ -192,6 +192,8 @@ export interface PdfExportOptions {
     keywords?: string;
     creator?: string;
     producer?: string;
+    creationDate?: Date | string;
+    modDate?: Date | string;
   };
   /** Produce a Tagged PDF with /MarkInfo and /StructTreeRoot (default: true). */
   tagged?: boolean;
@@ -1016,12 +1018,21 @@ export async function pagesToPdf(
   const author = options?.metadata?.author ?? "Docen";
   const creator = options?.metadata?.creator ?? "Docen Word Processor";
   const producer = options?.metadata?.producer ?? "Docen PDF Engine";
-  const dateStr = formatPdfDate();
+  const creationDateStr = options?.metadata?.creationDate
+    ? options.metadata.creationDate instanceof Date
+      ? formatPdfDate(options.metadata.creationDate)
+      : options.metadata.creationDate
+    : formatPdfDate();
+  const modDateStr = options?.metadata?.modDate
+    ? options.metadata.modDate instanceof Date
+      ? formatPdfDate(options.metadata.modDate)
+      : options.metadata.modDate
+    : creationDateStr;
 
   let infoDict =
     `<< /Title (${escapePdfString(title)}) /Author (${escapePdfString(author)}) ` +
     `/Creator (${escapePdfString(creator)}) /Producer (${escapePdfString(producer)}) ` +
-    `/CreationDate (${dateStr}) /ModDate (${dateStr})`;
+    `/CreationDate (${creationDateStr}) /ModDate (${modDateStr})`;
   if (options?.metadata?.subject) {
     infoDict += ` /Subject (${escapePdfString(options.metadata.subject)})`;
   }

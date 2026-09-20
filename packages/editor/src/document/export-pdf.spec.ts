@@ -1519,3 +1519,220 @@ describe("P3 structure and navigation acceptance", () => {
     expect(pdfStr).toContain("/T (Table 1)");
   });
 });
+
+describe("P4 QA, determinism, and performance acceptance", () => {
+  const blankShot = (pageIndex: number): PdfPageShot => ({
+    width: 612,
+    height: 792,
+    jpeg: DUMMY_JPEG,
+    textSpans: [
+      {
+        text: `Page ${pageIndex + 1} content in test document`,
+        x: 72,
+        y: 700,
+        width: 200,
+        height: 14,
+        fontSize: 12,
+      },
+    ],
+  });
+
+  it("P4 determinism: repeated exports of identical document with fixed creationDate yield byte-identical buffers", async () => {
+    const fixedDate = new Date("2026-01-15T10:30:00Z");
+    const shots = [blankShot(0), blankShot(1), blankShot(2)];
+    const options = {
+      metadata: {
+        title: "Deterministic Specification",
+        author: "Docen Quality Assurance",
+        subject: "Repeatable Vector PDF Builds",
+        keywords: "reproducible, deterministic, pdf",
+        creationDate: fixedDate,
+        modDate: fixedDate,
+      },
+      outline: [
+        {
+          title: "Introduction",
+          dest: { pageIndex: 0, top: 750 },
+          children: [{ title: "Background", dest: { pageIndex: 1, top: 700 } }],
+        },
+        { title: "Conclusion", dest: 2 },
+      ],
+      pageLabels: [
+        { startPageIndex: 0, style: "romanLower" as const },
+        { startPageIndex: 1, style: "decimal" as const, startNumber: 1 },
+      ],
+      destinations: {
+        "intro-anchor": { pageIndex: 0, x: 72, y: 750 },
+      },
+      formFields: [
+        {
+          name: "confirmed",
+          type: "checkbox" as const,
+          pageIndex: 2,
+          rect: [100, 500, 120, 520] as [number, number, number, number],
+          value: true,
+        },
+      ],
+    };
+
+    const [blob1, blob2] = await Promise.all([
+      pagesToPdf(shots, options),
+      pagesToPdf(shots, options),
+    ]);
+
+    const buf1 = Buffer.from(await blob1.arrayBuffer());
+    const buf2 = Buffer.from(await blob2.arrayBuffer());
+
+    expect(buf1.byteLength).toBe(buf2.byteLength);
+    expect(Buffer.compare(buf1, buf2)).toBe(0);
+    expect(buf1.equals(buf2)).toBe(true);
+  });
+
+  it("P4 300+ page benchmark: exports 300 pages efficiently with valid xref and document structure", async () => {
+    const count = 300;
+    const shots = Array.from({ length: count }, (_, i) => ({
+      width: 612,
+      height: 792,
+      jpeg: DUMMY_JPEG,
+      textSpans: [
+        {
+          text: `Page ${i + 1} of ${count} in high-throughput PDF generation benchmark.`,
+          x: 72,
+          y: 700,
+          width: 350,
+          height: 14,
+          fontSize: 12,
+        },
+      ],
+    }));
+
+    const start = performance.now();
+    const blob = await pagesToPdf(shots, {
+      metadata: {
+        title: "300 Page Stress Test",
+        creationDate: new Date("2026-01-01T00:00:00Z"),
+      },
+      pageLabels: [{ startPageIndex: 0, style: "decimal" }],
+    });
+    const elapsed = performance.now() - start;
+    const pdfBuf = Buffer.from(await blob.arrayBuffer());
+
+    // File generated with proper size
+    expect(pdfBuf.byteLength).toBeGreaterThan(150 * 1024);
+
+    // Throughput assertion: 300 pages must take less than 5000ms (< 17ms per page)
+    expect(elapsed).toBeLessThan(5000);
+
+    // Validate with pdfinfo to ensure xref table and catalog for 300 pages are completely valid
+    const tmpPdf = path.join(os.tmpdir(), `pdf-300p-${Date.now()}.pdf`);
+    try {
+      fs.writeFileSync(tmpPdf, pdfBuf);
+      const infoOut = execFileSync("pdfinfo", [tmpPdf], { encoding: "utf-8" });
+      expect(infoOut).toContain("Pages:           300");
+    } finally {
+      fs.rmSync(tmpPdf, { force: true });
+    }
+  });
+
+  it("P4 smoke multi-viewer validation: verify poppler tools parse rich P1-P3 features cleanly", async () => {
+    const vectorScene: PdfScenePage = {
+      width: 612,
+      height: 792,
+      nodes: [
+        {
+          type: "shape",
+          matrix: { a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 },
+          path: "M 72 72 L 540 72 L 540 200 L 72 200 Z",
+          fill: "#f1f5f9",
+          stroke: "#cbd5e1",
+          strokeWidth: 1,
+        },
+        {
+          type: "shape",
+          matrix: { a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 },
+          path: "M 100 150 C 150 100 200 200 250 150",
+          stroke: "#2563eb",
+          strokeWidth: 2,
+        },
+      ],
+    };
+
+    const shot: PdfPageShot = {
+      width: 612,
+      height: 792,
+      scene: vectorScene,
+      textSpans: [
+        {
+          text: "Executive Summary & Performance Metrics",
+          x: 72,
+          y: 500,
+          width: 300,
+          height: 18,
+          fontSize: 16,
+          bold: true,
+        },
+      ],
+      links: [
+        {
+          rect: [72, 490, 200, 510],
+          url: "https://docen.dev",
+          title: "Docen Documentation",
+        },
+      ],
+    };
+
+    const blob = await pagesToPdf([shot], {
+      metadata: {
+        title: "Executive Report",
+        author: "Chief Architect",
+        subject: "Quarterly Systems Audit",
+        keywords: "executive, audit, vector",
+        creationDate: new Date("2026-02-01T00:00:00Z"),
+      },
+      outline: [{ title: "Executive Summary", dest: { pageIndex: 0, top: 500 } }],
+      formFields: [
+        {
+          name: "approved",
+          type: "checkbox",
+          pageIndex: 0,
+          rect: [72, 440, 90, 458],
+          value: true,
+        },
+      ],
+      structElements: [
+        {
+          type: "Figure",
+          pageIndex: 0,
+          altText: "System health metric diagram",
+          title: "Figure 1",
+        },
+      ],
+    });
+
+    const pdfBuf = Buffer.from(await blob.arrayBuffer());
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pdf-smoke-"));
+    const tmpPdf = path.join(tmpDir, "smoke.pdf");
+    const ppmPrefix = path.join(tmpDir, "smoke-page");
+
+    try {
+      fs.writeFileSync(tmpPdf, pdfBuf);
+
+      // 1. pdfinfo inspection
+      const info = execFileSync("pdfinfo", [tmpPdf], { encoding: "utf-8" });
+      expect(info).toMatch(/Title:\s+Executive Report/);
+      expect(info).toMatch(/Author:\s+Chief Architect/);
+      expect(info).toMatch(/Subject:\s+Quarterly Systems Audit/);
+      expect(info).toMatch(/Pages:\s+1/);
+
+      // 2. pdftoppm rasterization
+      execFileSync("pdftoppm", ["-png", "-r", "150", tmpPdf, ppmPrefix]);
+      expect(fs.existsSync(`${ppmPrefix}-1.png`)).toBe(true);
+
+      // 3. pdftotext extraction
+      const text = execFileSync("pdftotext", [tmpPdf, "-"], { encoding: "utf-8" });
+      expect(text).toContain("Executive Summary & Performance Metrics");
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+});
