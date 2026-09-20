@@ -244,7 +244,8 @@ export function paintColor(value: unknown): string | undefined {
     return undefined;
   }
   if (value && typeof value === "object") {
-    const paint = value as { type?: string; stops?: { color?: string }[] };
+    const paint = value as { type?: string; stops?: { color?: string }[]; color?: string };
+    if (typeof paint.color === "string") return paint.color;
     if (paint.type === "linear" || paint.type === "radial") return paint.stops?.[0]?.color;
   }
   return undefined;

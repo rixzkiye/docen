@@ -959,7 +959,16 @@ export async function pagesToPdf(
       continue;
     }
     if (!data.rgba) continue;
-    const stream = await flateEncode(data.rgba);
+    let rgb = data.rgba;
+    if (imageAlloc.smaskId !== undefined || data.hasAlpha) {
+      rgb = new Uint8Array(data.width * data.height * 3);
+      for (let p = 0; p < data.width * data.height; p++) {
+        rgb[p * 3] = data.rgba[p * 4]!;
+        rgb[p * 3 + 1] = data.rgba[p * 4 + 1]!;
+        rgb[p * 3 + 2] = data.rgba[p * 4 + 2]!;
+      }
+    }
+    const stream = await flateEncode(rgb);
     const smask = imageAlloc.smaskId !== undefined ? ` /SMask ${imageAlloc.smaskId} 0 R` : "";
     addObject(
       imageAlloc.id,

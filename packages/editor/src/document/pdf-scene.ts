@@ -215,6 +215,12 @@ export function parseColor(input: string | undefined): PdfRgba | undefined {
     }
     return undefined;
   }
+  if (
+    /^[0-9a-f]{3,8}$/i.test(value) &&
+    (value.length === 3 || value.length === 4 || value.length === 6 || value.length === 8)
+  ) {
+    return parseColor("#" + value);
+  }
   const fn = /^rgba?\(([^)]+)\)$/.exec(value);
   if (fn) {
     const parts = fn[1]!
@@ -614,10 +620,10 @@ function emitTextRow(
   if (fill) out.push(`${colorOperands(fill)} rg`);
   if (stroke) {
     out.push(`${colorOperands(stroke)} RG`);
-    if (node.strokeWidth) out.push(`${pdfNum(node.strokeWidth, 3)} w`);
+    const strokeWidth = node.strokeWidth ?? 1;
+    out.push(`${pdfNum(strokeWidth, 3)} w`);
   }
   out.push(`/${font.resource} ${pdfNum(node.fontSize, 3)} Tf`);
-  out.push(`${matrixOperands(node.matrix)} cm`);
   out.push(`1 0 0 -1 ${pdfNum(row.x, 3)} ${pdfNum(row.y, 3)} Tm`);
   if (font.isUnicode) out.push(`<${encodeHexUtf16(row.text)}> Tj`);
   else out.push(`(${escapeLiteral(row.text)}) Tj`);
@@ -710,9 +716,10 @@ export function planSceneContent(
         if (ops) {
           out.push(ops);
           if (fill) out.push(`${colorOperands(fill)} rg`);
-          if (stroke && node.strokeWidth) {
+          if (stroke) {
             out.push(`${colorOperands(stroke)} RG`);
-            out.push(`${pdfNum(node.strokeWidth, 3)} w`);
+            const width = node.strokeWidth ?? 1;
+            out.push(`${pdfNum(width, 3)} w`);
             if (node.join)
               out.push(`${node.join === "round" ? 1 : node.join === "bevel" ? 2 : 0} j`);
             if (node.cap) out.push(`${node.cap === "round" ? 1 : node.cap === "square" ? 2 : 0} J`);
@@ -760,6 +767,17 @@ export function planSceneContent(
         out.push("q");
         const state = stateFor(node, fillAlpha, strokeAlpha);
         out.push(`${state} gs`);
+        if (
+          node.matrix &&
+          (node.matrix.a !== 1 ||
+            node.matrix.b !== 0 ||
+            node.matrix.c !== 0 ||
+            node.matrix.d !== 1 ||
+            node.matrix.e !== 0 ||
+            node.matrix.f !== 0)
+        ) {
+          out.push(`${matrixOperands(node.matrix)} cm`);
+        }
         for (const row of node.rows) {
           if (!row.text) continue;
           emitTextRow(out, node, row, font, fill, stroke);

@@ -683,3 +683,565 @@ describe("P1 vector core acceptance (A1-A3)", () => {
     }
   });
 });
+
+describe("P2 graphics fidelity acceptance", () => {
+  it("P2 table fidelity: cell shading and dashed/solid borders emit vector paths and dash patterns", async () => {
+    const tableScene: PdfScenePage = {
+      width: 612,
+      height: 792,
+      nodes: [
+        // Cell 1 shading
+        {
+          type: "shape",
+          matrix: { a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 },
+          path: "M 50 100 L 250 100 L 250 150 L 50 150 Z",
+          fill: "#2563eb",
+        },
+        // Cell 2 shading
+        {
+          type: "shape",
+          matrix: { a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 },
+          path: "M 250 100 L 450 100 L 450 150 L 250 150 Z",
+          fill: "#e0f2fe",
+        },
+        // Dashed border between cells
+        {
+          type: "shape",
+          matrix: { a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 },
+          path: "M 250 100 L 250 150",
+          stroke: "#1e40af",
+          strokeWidth: 2,
+          dash: [4, 2],
+        },
+        // Outer table border (solid)
+        {
+          type: "shape",
+          matrix: { a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 },
+          path: "M 50 100 L 450 100 L 450 150 L 50 150 Z",
+          stroke: "#0f172a",
+          strokeWidth: 1.5,
+        },
+      ],
+    };
+
+    const tableSpans: PdfTextSpan[] = [
+      { text: "Header Col 1", x: 60, y: 500, width: 100, height: 14, fontSize: 11 },
+      { text: "Header Col 2", x: 260, y: 500, width: 100, height: 14, fontSize: 11 },
+    ];
+
+    const shot: PdfPageShot = {
+      width: 612,
+      height: 792,
+      scene: tableScene,
+      textSpans: tableSpans,
+    };
+
+    const blob = await pagesToPdf([shot]);
+    const pdfBuf = Buffer.from(await blob.arrayBuffer());
+    const pdfStr = pdfBuf.toString("latin1");
+
+    // Zero image XObjects
+    expect((pdfStr.match(/\/Subtype\s*\/Image\b/g) || []).length).toBe(0);
+
+    // Decompress and verify operators
+    const streamMatches = [
+      ...pdfStr.matchAll(/<<([^>]*)>>\s*stream\r?\n([\s\S]*?)\r?\nendstream/g),
+    ];
+    let decompressed = "";
+    for (const m of streamMatches) {
+      if (m[1].includes("/FlateDecode")) {
+        decompressed += inflateSync(Buffer.from(m[2], "latin1")).toString("latin1");
+      }
+    }
+
+    expect(decompressed).toContain("[ 4 2 ] 0 d"); // dash pattern
+    expect(decompressed).toMatch(/\b(f\*?|B\*?)\b/); // fill
+    expect(decompressed).toMatch(/\b(S|B\*?)\b/); // stroke
+
+    // Verify render and text extraction
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pdf-tbl-"));
+    const tmpPdf = path.join(tmpDir, "table.pdf");
+    const ppmPrefix = path.join(tmpDir, "table-page");
+    try {
+      fs.writeFileSync(tmpPdf, pdfBuf);
+      execFileSync("pdftoppm", ["-png", "-r", "150", tmpPdf, ppmPrefix]);
+      expect(fs.existsSync(`${ppmPrefix}-1.png`)).toBe(true);
+
+      const extracted = execFileSync("pdftotext", [tmpPdf, "-"], { encoding: "utf-8" });
+      expect(extracted).toContain("Header Col 1");
+      expect(extracted).toContain("Header Col 2");
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("P2 shapes & drawings: custGeom, ellipse, and text box emit bezier curves without rasterization", async () => {
+    const drawingScene: PdfScenePage = {
+      width: 612,
+      height: 792,
+      nodes: [
+        // Ellipse (arc to cubic)
+        {
+          type: "shape",
+          matrix: { a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 },
+          path: "M 100 50 A 50 30 0 1 0 100 49.9 Z",
+          fill: "#f59e0b",
+          stroke: "#b45309",
+          strokeWidth: 2,
+        },
+        // Custom geometry with cubics
+        {
+          type: "shape",
+          matrix: { a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 },
+          path: "M 200 200 C 220 150 280 150 300 200 C 320 250 280 300 200 200 Z",
+          fill: "#10b981",
+          stroke: "#047857",
+          strokeWidth: 1.5,
+        },
+        // Textbox clip group with background
+        {
+          type: "group",
+          clip: {
+            path: "M 50 350 L 250 350 L 250 450 L 50 450 Z",
+            matrix: { a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 },
+          },
+          children: [
+            {
+              type: "shape",
+              matrix: { a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 },
+              path: "M 50 350 L 250 350 L 250 450 L 50 450 Z",
+              fill: "#f8fafc",
+              stroke: "#94a3b8",
+              strokeWidth: 1,
+            },
+            {
+              type: "text",
+              matrix: { a: 1, b: 0, c: 0, d: 1, e: 60, f: 380 },
+              fontSize: 12,
+              fill: "#1e293b",
+              rows: [{ x: 0, y: 0, width: 150, text: "Textbox inner text content" }],
+            },
+          ],
+        },
+      ],
+    };
+
+    const shot: PdfPageShot = {
+      width: 612,
+      height: 792,
+      scene: drawingScene,
+      textSpans: [
+        { text: "Textbox inner text content", x: 60, y: 300, width: 150, height: 14, fontSize: 12 },
+      ],
+    };
+
+    const blob = await pagesToPdf([shot]);
+    const pdfBuf = Buffer.from(await blob.arrayBuffer());
+    const pdfStr = pdfBuf.toString("latin1");
+
+    // Zero image XObjects
+    expect((pdfStr.match(/\/Subtype\s*\/Image\b/g) || []).length).toBe(0);
+
+    // Decompress and verify operators
+    const streamMatches = [
+      ...pdfStr.matchAll(/<<([^>]*)>>\s*stream\r?\n([\s\S]*?)\r?\nendstream/g),
+    ];
+    let decompressed = "";
+    for (const m of streamMatches) {
+      if (m[1].includes("/FlateDecode")) {
+        decompressed += inflateSync(Buffer.from(m[2], "latin1")).toString("latin1");
+      }
+    }
+
+    expect(decompressed).toMatch(/\bc\b/); // cubics from arc/custGeom
+    expect(decompressed).toContain("W n"); // clip operator
+
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pdf-draw-"));
+    const tmpPdf = path.join(tmpDir, "drawing.pdf");
+    const ppmPrefix = path.join(tmpDir, "drawing-page");
+    try {
+      fs.writeFileSync(tmpPdf, pdfBuf);
+      execFileSync("pdftoppm", ["-png", "-r", "150", tmpPdf, ppmPrefix]);
+      expect(fs.existsSync(`${ppmPrefix}-1.png`)).toBe(true);
+
+      const extracted = execFileSync("pdftotext", [tmpPdf, "-"], { encoding: "utf-8" });
+      expect(extracted).toContain("Textbox inner text content");
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("P2 transparent images: emits DeviceRGB stream with 3 bytes/pixel and DeviceGray SMask", async () => {
+    // 2x2 semi-transparent image
+    const width = 2;
+    const height = 2;
+    const rgba = new Uint8Array([
+      255,
+      0,
+      0,
+      128, // red, 50% alpha
+      0,
+      255,
+      0,
+      64, // green, 25% alpha
+      0,
+      0,
+      255,
+      200, // blue, ~78% alpha
+      255,
+      255,
+      255,
+      255, // white, opaque
+    ]);
+
+    const transScene: PdfScenePage = {
+      width: 612,
+      height: 792,
+      nodes: [
+        {
+          type: "image",
+          matrix: { a: 1, b: 0, c: 0, d: 1, e: 100, f: 100 },
+          width: 200,
+          height: 200,
+          image: {
+            key: "test-trans-alpha-key",
+            width,
+            height,
+            rgba,
+            hasAlpha: true,
+          },
+        },
+      ],
+    };
+
+    const shot: PdfPageShot = {
+      width: 612,
+      height: 792,
+      scene: transScene,
+    };
+
+    const blob = await pagesToPdf([shot]);
+    const pdfBuf = Buffer.from(await blob.arrayBuffer());
+    const pdfStr = pdfBuf.toString("latin1");
+
+    // Must have SMask reference
+    expect(pdfStr).toMatch(/\/SMask\s+\d+\s+0\s+R/);
+
+    // Verify image and SMask stream sizes
+    const streamMatches = [
+      ...pdfStr.matchAll(/<<([^>]*)>>\s*stream\r?\n([\s\S]*?)\r?\nendstream/g),
+    ];
+    let rgbDecompressedLen = 0;
+    let smaskDecompressedLen = 0;
+
+    for (const m of streamMatches) {
+      const dict = m[1]!;
+      if (dict.includes("/ColorSpace /DeviceRGB") && dict.includes("/Subtype /Image")) {
+        const dec = inflateSync(Buffer.from(m[2], "latin1"));
+        rgbDecompressedLen = dec.length;
+      }
+      if (dict.includes("/ColorSpace /DeviceGray") && dict.includes("/Subtype /Image")) {
+        const dec = inflateSync(Buffer.from(m[2], "latin1"));
+        smaskDecompressedLen = dec.length;
+      }
+    }
+
+    // DeviceRGB must be 2*2*3 = 12 bytes (NOT 16 bytes!)
+    expect(rgbDecompressedLen).toBe(12);
+    // SMask must be 2*2*1 = 4 bytes
+    expect(smaskDecompressedLen).toBe(4);
+
+    // Verify pdftoppm renders cleanly
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pdf-img-"));
+    const tmpPdf = path.join(tmpDir, "image.pdf");
+    const ppmPrefix = path.join(tmpDir, "image-page");
+    try {
+      fs.writeFileSync(tmpPdf, pdfBuf);
+      execFileSync("pdftoppm", ["-png", "-r", "150", tmpPdf, ppmPrefix]);
+      expect(fs.existsSync(`${ppmPrefix}-1.png`)).toBe(true);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("P2 vector chart: series bars, axis lines, and labels render as vectors", async () => {
+    const chartScene: PdfScenePage = {
+      width: 612,
+      height: 792,
+      nodes: [
+        // Chart title
+        {
+          type: "text",
+          matrix: { a: 1, b: 0, c: 0, d: 1, e: 200, f: 100 },
+          fontSize: 16,
+          bold: true,
+          fill: "#333333",
+          rows: [{ x: 0, y: 0, width: 200, text: "Quarterly Revenue Breakdown" }],
+        },
+        // Gridlines
+        {
+          type: "shape",
+          matrix: { a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 },
+          path: "M 100 250 L 500 250 M 100 200 L 500 200 M 100 150 L 500 150",
+          stroke: "#d9d9d9",
+          strokeWidth: 1,
+          dash: [2, 2],
+        },
+        // Axis lines
+        {
+          type: "shape",
+          matrix: { a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 },
+          path: "M 100 150 L 100 300 L 500 300",
+          stroke: "#595959",
+          strokeWidth: 1.5,
+        },
+        // Series Bar 1 (Q1)
+        {
+          type: "shape",
+          matrix: { a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 },
+          path: "M 140 200 L 180 200 L 180 300 L 140 300 Z",
+          fill: "#4472c4", // Accent color
+        },
+        // Series Bar 2 (Q2)
+        {
+          type: "shape",
+          matrix: { a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 },
+          path: "M 220 160 L 260 160 L 260 300 L 220 300 Z",
+          fill: "#ed7d31", // Accent color
+        },
+      ],
+    };
+
+    const chartSpans: PdfTextSpan[] = [
+      { text: "Quarterly Revenue Breakdown", x: 200, y: 550, width: 200, height: 18, fontSize: 16 },
+    ];
+
+    const shot: PdfPageShot = {
+      width: 612,
+      height: 792,
+      scene: chartScene,
+      textSpans: chartSpans,
+    };
+
+    const blob = await pagesToPdf([shot]);
+    const pdfBuf = Buffer.from(await blob.arrayBuffer());
+    const pdfStr = pdfBuf.toString("latin1");
+
+    // Zero image XObjects — chart is 100% vector
+    expect((pdfStr.match(/\/Subtype\s*\/Image\b/g) || []).length).toBe(0);
+
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pdf-ch-"));
+    const tmpPdf = path.join(tmpDir, "chart.pdf");
+    const ppmPrefix = path.join(tmpDir, "chart-page");
+    try {
+      fs.writeFileSync(tmpPdf, pdfBuf);
+      execFileSync("pdftoppm", ["-png", "-r", "150", tmpPdf, ppmPrefix]);
+      expect(fs.existsSync(`${ppmPrefix}-1.png`)).toBe(true);
+
+      const extracted = execFileSync("pdftotext", [tmpPdf, "-"], { encoding: "utf-8" });
+      expect(extracted).toContain("Quarterly Revenue Breakdown");
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("P2 math equations: radical surd, fraction line, and math symbols emit vector paths", async () => {
+    const mathScene: PdfScenePage = {
+      width: 612,
+      height: 792,
+      nodes: [
+        // Radical surd tick and bar
+        {
+          type: "shape",
+          matrix: { a: 1, b: 0, c: 0, d: 1, e: 100, f: 100 },
+          path: "M 0 12 L 3 10 L 6 20 L 10 1 L 60 1",
+          stroke: "#000000",
+          strokeWidth: 1.5,
+        },
+        // Fraction bar
+        {
+          type: "shape",
+          matrix: { a: 1, b: 0, c: 0, d: 1, e: 120, f: 110 },
+          path: "M 0 0 L 40 0",
+          stroke: "#000000",
+          strokeWidth: 1.2,
+        },
+        // Formula text
+        {
+          type: "text",
+          matrix: { a: 1, b: 0, c: 0, d: 1, e: 70, f: 112 },
+          fontSize: 14,
+          fill: "#000000",
+          rows: [{ x: 0, y: 0, width: 30, text: "E = " }],
+        },
+      ],
+    };
+
+    const mathSpans: PdfTextSpan[] = [
+      { text: "E = mc^2", x: 70, y: 550, width: 80, height: 16, fontSize: 14 },
+    ];
+
+    const shot: PdfPageShot = {
+      width: 612,
+      height: 792,
+      scene: mathScene,
+      textSpans: mathSpans,
+    };
+
+    const blob = await pagesToPdf([shot]);
+    const pdfBuf = Buffer.from(await blob.arrayBuffer());
+    const pdfStr = pdfBuf.toString("latin1");
+
+    // Zero image XObjects
+    expect((pdfStr.match(/\/Subtype\s*\/Image\b/g) || []).length).toBe(0);
+
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pdf-math-"));
+    const tmpPdf = path.join(tmpDir, "math.pdf");
+    const ppmPrefix = path.join(tmpDir, "math-page");
+    try {
+      fs.writeFileSync(tmpPdf, pdfBuf);
+      execFileSync("pdftoppm", ["-png", "-r", "150", tmpPdf, ppmPrefix]);
+      expect(fs.existsSync(`${ppmPrefix}-1.png`)).toBe(true);
+
+      const extracted = execFileSync("pdftotext", [tmpPdf, "-"], { encoding: "utf-8" });
+      expect(extracted).toContain("E = mc^2");
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("P2 watermarks & 3D/ink: rotated semi-transparent watermark and 3D isometric cube", async () => {
+    const angle = (-45 * Math.PI) / 180;
+    const cos = Math.cos(angle);
+    const sin = Math.sin(angle);
+
+    const watermarkScene: PdfScenePage = {
+      width: 612,
+      height: 792,
+      nodes: [
+        // Rotated diagonal watermark text
+        {
+          type: "text",
+          matrix: { a: cos, b: sin, c: -sin, d: cos, e: 200, f: 400 },
+          opacity: 0.35,
+          fontSize: 54,
+          bold: true,
+          fill: "#c0c0c0", // silver watermark
+          rows: [{ x: 0, y: 0, width: 350, text: "CONFIDENTIAL" }],
+        },
+        // 3D wireframe isometric cube faces
+        {
+          type: "shape",
+          matrix: { a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 },
+          path: "M 400 200 L 450 230 L 400 260 L 350 230 Z",
+          fill: "#93c5fd",
+          stroke: "#1e3a8a",
+          strokeWidth: 1,
+        },
+        {
+          type: "shape",
+          matrix: { a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 },
+          path: "M 350 230 L 400 260 L 400 320 L 350 290 Z",
+          fill: "#60a5fa",
+          stroke: "#1e3a8a",
+          strokeWidth: 1,
+        },
+        // Cursive ink stroke
+        {
+          type: "shape",
+          matrix: { a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 },
+          path: "M 100 600 C 150 550 200 650 250 580 C 300 510 350 620 400 570",
+          stroke: "#1e293b",
+          strokeWidth: 2.5,
+          cap: "round",
+          join: "round",
+        },
+      ],
+    };
+
+    const shot: PdfPageShot = {
+      width: 612,
+      height: 792,
+      scene: watermarkScene,
+      textSpans: [{ text: "CONFIDENTIAL", x: 50, y: 350, width: 250, height: 36, fontSize: 36 }],
+    };
+
+    const blob = await pagesToPdf([shot]);
+    const pdfBuf = Buffer.from(await blob.arrayBuffer());
+    const pdfStr = pdfBuf.toString("latin1");
+
+    // Verify opacity ExtGState
+    expect(pdfStr).toContain("/ca 0.35");
+    expect(pdfStr).toContain("/CA 0.35");
+
+    // Zero image XObjects
+    expect((pdfStr.match(/\/Subtype\s*\/Image\b/g) || []).length).toBe(0);
+
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pdf-wm-"));
+    const tmpPdf = path.join(tmpDir, "watermark.pdf");
+    const ppmPrefix = path.join(tmpDir, "wm-page");
+    try {
+      fs.writeFileSync(tmpPdf, pdfBuf);
+      execFileSync("pdftoppm", ["-png", "-r", "150", tmpPdf, ppmPrefix]);
+      expect(fs.existsSync(`${ppmPrefix}-1.png`)).toBe(true);
+
+      const extracted = execFileSync("pdftotext", [tmpPdf, "-"], { encoding: "utf-8" });
+      expect(extracted).toContain("CONFIDENTIAL");
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("P2 ruby phonetic guide: renders annotation text aligned above base text", async () => {
+    const rubyScene: PdfScenePage = {
+      width: 612,
+      height: 792,
+      nodes: [
+        // Ruby furigana annotation text
+        {
+          type: "text",
+          matrix: { a: 1, b: 0, c: 0, d: 1, e: 100, f: 180 },
+          fontSize: 8,
+          fill: "#64748b",
+          rows: [{ x: 0, y: 0, width: 40, text: "とうきょう" }],
+        },
+        // Base kanji text
+        {
+          type: "text",
+          matrix: { a: 1, b: 0, c: 0, d: 1, e: 100, f: 200 },
+          fontSize: 16,
+          fill: "#0f172a",
+          rows: [{ x: 0, y: 0, width: 40, text: "東京" }],
+        },
+      ],
+    };
+
+    const shot: PdfPageShot = {
+      width: 612,
+      height: 792,
+      scene: rubyScene,
+      textSpans: [
+        { text: "とうきょう", x: 100, y: 440, width: 40, height: 10, fontSize: 8 },
+        { text: "東京", x: 100, y: 420, width: 40, height: 18, fontSize: 16 },
+      ],
+    };
+
+    const blob = await pagesToPdf([shot]);
+    const pdfBuf = Buffer.from(await blob.arrayBuffer());
+
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pdf-ruby-"));
+    const tmpPdf = path.join(tmpDir, "ruby.pdf");
+    const ppmPrefix = path.join(tmpDir, "ruby-page");
+    try {
+      fs.writeFileSync(tmpPdf, pdfBuf);
+      execFileSync("pdftoppm", ["-png", "-r", "150", tmpPdf, ppmPrefix]);
+      expect(fs.existsSync(`${ppmPrefix}-1.png`)).toBe(true);
+
+      const extracted = execFileSync("pdftotext", [tmpPdf, "-"], { encoding: "utf-8" });
+      expect(extracted).toContain("とうきょう");
+      expect(extracted).toContain("東京");
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+});
