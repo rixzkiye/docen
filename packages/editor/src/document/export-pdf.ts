@@ -999,7 +999,7 @@ export async function pagesToPdf(
 
   addObject(
     uniCidFontId,
-    `${uniCidFontId} 0 obj\n<< /Type /Font /Subtype /CIDFontType2 /BaseFont /Helvetica /CIDSystemInfo << /Registry (Adobe) /Ordering (Identity) /Supplement 0 >> /FontDescriptor ${uniFontDescId} 0 R /DW 1000 >>\nendobj\n`,
+    `${uniCidFontId} 0 obj\n<< /Type /Font /Subtype /CIDFontType2 /BaseFont /Helvetica /CIDSystemInfo << /Registry (Adobe) /Ordering (Identity) /Supplement 0 >> /FontDescriptor ${uniFontDescId} 0 R /DW 1000 /W [ 0 255 500 ] >>\nendobj\n`,
   );
 
   addObject(

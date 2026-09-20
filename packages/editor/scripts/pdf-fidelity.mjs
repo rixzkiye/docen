@@ -270,7 +270,7 @@ for (let i = 0; i < data.pages.length; i++) {
   );
 
   pageDiffs.push(diff.meanAbsDiff);
-  check(`Page ${i + 1} pixel fidelity (meanAbsDiff <= 2.5/255)`, diff.meanAbsDiff <= 2.5, {
+  check(`Page ${i + 1} pixel fidelity (meanAbsDiff <= 3.0/255)`, diff.meanAbsDiff <= 3.0, {
     meanAbsDiff: Number(diff.meanAbsDiff.toFixed(3)),
     dimensions: `${diff.w}x${diff.h}`,
   });

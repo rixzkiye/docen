@@ -962,7 +962,7 @@ describe("P2 graphics fidelity acceptance", () => {
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
-  });
+  }, 15000); // Ample timeout for external CLI pdftoppm under parallel suite CPU contention
 
   it("P2 vector chart: series bars, axis lines, and labels render as vectors", async () => {
     const chartScene: PdfScenePage = {
