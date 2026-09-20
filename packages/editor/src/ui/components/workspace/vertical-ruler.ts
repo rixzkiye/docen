@@ -441,7 +441,7 @@ export class DocenVerticalRuler extends FASTElement {
 
   // ── SVG ticks (the shared four-level hierarchy) ──
 
-  /** Ticks span the full pane height (Word's continuous ruler) with 0 at the
+  /** Ticks render within the active page bounds with 0 at the
    *  content-top origin; the scale slides under the fixed strip as the page
    *  scrolls. */
   renderTicks(): void {
@@ -449,9 +449,13 @@ export class DocenVerticalRuler extends FASTElement {
     if (!svg) return;
     const height = this.#hostHeight;
     if (!(height > 0)) return;
+    const pageTop = this.originY;
+    const pageBottom = this.originY + this.pageHeightPx;
+    const zeroY = this.originY + this.contentTopPx;
+
     const ticks = rulerTicks({
       lengthPx: height,
-      zeroPx: this.originY,
+      zeroPx: zeroY,
       unit: this.unit,
       scale: this.scale,
     });
@@ -459,6 +463,7 @@ export class DocenVerticalRuler extends FASTElement {
     let texts = "";
     for (const tick of ticks) {
       const y = Math.round(tick.pos) + 0.5;
+      if (y < pageTop || y > pageBottom) continue;
       const len = RULER_TICK_LEN[tick.level];
       lines += `<line x1="${VERTICAL_RULER_THICKNESS}" y1="${y}" x2="${VERTICAL_RULER_THICKNESS - len}" y2="${y}"/>`;
       if (tick.label !== undefined) {

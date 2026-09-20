@@ -388,17 +388,30 @@ const shot = async (name) => {
     const a = area.getBoundingClientRect();
     const origin1 = Math.round(vr.originY);
 
-    // Scroll so page 2 enters the top of the viewport and is active
+    // 1. Scroll while on Page 1: vertical ruler must NOT nabras (no ticks outside page 1 bounds)
+    area.scrollTop = 300;
+    await new Promise((r) => setTimeout(r, 200));
+    const vrSvg = vr.shadowRoot.querySelector(".ticks-svg");
+    const tickLines = [...vrSvg.querySelectorAll("line")];
+    const invalidTicks = tickLines.filter((l) => {
+      const y = Number(l.getAttribute("y1"));
+      return y < vr.originY - 0.5 || y > vr.originY + vr.pageHeightPx + 0.5;
+    });
+
+    // 2. Scroll to Page 2 and click Page 2 so Page 2 becomes active
     const p2Top = pages[1].offsetTop || 1211;
-    area.scrollTop = p2Top + 40;
+    area.scrollTop = p2Top - 40;
+    await new Promise((r) => setTimeout(r, 250));
+    pages[1].dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, composed: true }));
     await new Promise((r) => setTimeout(r, 300));
 
     const origin2 = Math.round(vr.originY);
-    const p2Rect = pages[1].getBoundingClientRect();
-    const expectedOrigin2 = Math.round(p2Rect.top - a.top);
+    const expectedOrigin2 = Math.round(pages[1].getBoundingClientRect().top - a.top);
 
-    // Scroll back to page 1
+    // 3. Scroll back to Page 1 and click Page 1
     area.scrollTop = 0;
+    await new Promise((r) => setTimeout(r, 250));
+    pages[0].dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, composed: true }));
     await new Promise((r) => setTimeout(r, 300));
     const originBack = Math.round(vr.originY);
 
@@ -410,16 +423,23 @@ const shot = async (name) => {
       shiftedToPage2: Math.abs(origin2 - expectedOrigin2) <= 2,
       originBack,
       shiftedBack: Math.abs(originBack - origin1) <= 2,
+      noNabras: invalidTicks.length === 0,
+      invalidTicksCount: invalidTicks.length,
     };
   });
   if (vShiftResult.multiPage) {
+    check(
+      "vertical ruler has zero ticks outside active page bounds",
+      vShiftResult.noNabras === true,
+      { invalidTicksCount: vShiftResult.invalidTicksCount },
+    );
     check(
       "vertical ruler shifts to page 2 when page 2 is active",
       vShiftResult.shiftedToPage2 === true,
       { origin2: vShiftResult.origin2, expected: vShiftResult.expectedOrigin2 },
     );
     check(
-      "vertical ruler returns to page 1 when scrolling back to page 1",
+      "vertical ruler returns to page 1 when clicking back to page 1",
       vShiftResult.shiftedBack === true,
       { originBack: vShiftResult.originBack, origin1: vShiftResult.origin1 },
     );

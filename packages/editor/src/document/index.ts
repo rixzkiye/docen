@@ -3178,7 +3178,7 @@ class DocenDocument extends AddinHost<Editor> {
   }
 
   /** The active page for ruler alignment (Word tracks the caret's page when
-   *  visible, falling back to clicked page, then viewport top). */
+   *  its page is in view, falling back to clicked page, then viewport top). */
   #getActivePage(frames: HTMLElement[]): number {
     if (frames.length <= 1) return 0;
     const area = this.#stageHost?.closest("docen-document-area") as HTMLElement | null;
@@ -3186,7 +3186,7 @@ class DocenDocument extends AddinHost<Editor> {
     const areaTop = areaRect ? areaRect.top : 0;
     const areaBottom = areaRect ? areaRect.bottom : window.innerHeight;
 
-    // 1. If user explicitly clicked a page and that page is in view
+    // 1. Explicitly clicked page if still in view
     if (this.#clickedPage != null && this.#clickedPage >= 0 && this.#clickedPage < frames.length) {
       const clickedRect = frames[this.#clickedPage]?.getBoundingClientRect();
       if (clickedRect && clickedRect.bottom > areaTop && clickedRect.top < areaBottom) {
@@ -3194,18 +3194,15 @@ class DocenDocument extends AddinHost<Editor> {
       }
     }
 
-    // 2. Caret's page, if that caret is currently visible in the viewport
+    // 2. Caret / selection's page, if that page is in view
     const editor = this.#bridge?.activeEditor() ?? this.editor;
     const cursor = editor?.state?.selection?.from;
     if (cursor != null && this.#bridge) {
       try {
         const page = this.#bridge.pageOf(cursor);
         if (typeof page === "number" && page >= 0 && page < frames.length) {
-          const selRect = this.#bridge.selectionClientRect(cursor, cursor);
-          const caretVisible = selRect
-            ? selRect.top >= areaTop - 10 && selRect.top <= areaBottom + 10
-            : (frames[page]?.getBoundingClientRect().top ?? -999) >= areaTop - 50;
-          if (caretVisible) {
+          const pageRect = frames[page]?.getBoundingClientRect();
+          if (pageRect && pageRect.bottom > areaTop && pageRect.top < areaBottom) {
             return page;
           }
         }
@@ -3214,7 +3211,7 @@ class DocenDocument extends AddinHost<Editor> {
       }
     }
 
-    // 3. Viewport top: first page whose bottom edge is below areaTop
+    // 3. Viewport top fallback: first page whose bottom edge is below areaTop
     let page = 0;
     for (let i = 0; i < frames.length; i++) {
       if (frames[i]!.getBoundingClientRect().bottom > areaTop) {
