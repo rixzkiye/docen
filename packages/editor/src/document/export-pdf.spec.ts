@@ -1245,3 +1245,277 @@ describe("P2 graphics fidelity acceptance", () => {
     }
   });
 });
+
+describe("P3 structure and navigation acceptance", () => {
+  const blankShot = (pageIndex: number): PdfPageShot => ({
+    width: 612,
+    height: 792,
+    jpeg: DUMMY_JPEG,
+    textSpans: [
+      {
+        text: `Page ${pageIndex + 1} content`,
+        x: 72,
+        y: 700,
+        width: 150,
+        height: 14,
+        fontSize: 12,
+      },
+    ],
+  });
+
+  it("P3 outlines (bookmarks): builds hierarchical outline tree with parent, prev, next, first, last, count and target dest", async () => {
+    const shots = [blankShot(0), blankShot(1)];
+    const blob = await pagesToPdf(shots, {
+      outline: [
+        {
+          title: "Chapter 1",
+          dest: { pageIndex: 0, top: 750 },
+          children: [
+            { title: "Section 1.1", dest: { pageIndex: 0, top: 700 } },
+            { title: "Section 1.2", dest: { pageIndex: 0, top: 600 } },
+          ],
+        },
+        {
+          title: "Chapter 2",
+          dest: 1,
+        },
+      ],
+    });
+    const pdfBuf = Buffer.from(await blob.arrayBuffer());
+    const pdfStr = pdfBuf.toString("latin1");
+
+    // Catalog references Outlines
+    expect(pdfStr).toMatch(/\/Type\s*\/Catalog[^\n]*\/Outlines\s+(\d+)\s+0\s+R/);
+    const outlineRootMatch = pdfStr.match(/\/Type\s*\/Catalog[^\n]*\/Outlines\s+(\d+)\s+0\s+R/);
+    const outlineRootId = outlineRootMatch![1];
+
+    // Outlines root dictionary
+    expect(pdfStr).toContain(`${outlineRootId} 0 obj\n<< /Type /Outlines`);
+    expect(pdfStr).toMatch(
+      new RegExp(
+        `${outlineRootId} 0 obj\\n<< \\/Type \\/Outlines \\/First (\\d+) 0 R \\/Last (\\d+) 0 R \\/Count 4 >>`,
+      ),
+    );
+
+    // Outline items
+    expect(pdfStr).toContain("/Title (Chapter 1)");
+    expect(pdfStr).toContain("/Title (Section 1.1)");
+    expect(pdfStr).toContain("/Title (Section 1.2)");
+    expect(pdfStr).toContain("/Title (Chapter 2)");
+
+    // Parent/child relations
+    expect(pdfStr).toMatch(/\/Title \(Chapter 1\)[^\n]*\/Count 2/);
+    expect(pdfStr).toMatch(/\/Title \(Chapter 1\)[^\n]*\/Dest \[ \d+ 0 R \/XYZ 0 750\.00 0 \]/);
+    expect(pdfStr).toMatch(/\/Title \(Chapter 2\)[^\n]*\/Dest \[ \d+ 0 R \/XYZ 0 792\.00 0 \]/);
+
+    // Verify xref valid via pdfinfo
+    const tmpPdf = path.join(os.tmpdir(), `pdf-outline-${Date.now()}.pdf`);
+    try {
+      fs.writeFileSync(tmpPdf, pdfBuf);
+      const infoOut = execFileSync("pdfinfo", [tmpPdf], { encoding: "utf-8" });
+      expect(infoOut).toContain("Pages:           2");
+    } finally {
+      fs.rmSync(tmpPdf, { force: true });
+    }
+  });
+
+  it("P3 page labels: emits section-based numbering with roman, decimal, and prefix styles", async () => {
+    const shots = [blankShot(0), blankShot(1), blankShot(2)];
+    const blob = await pagesToPdf(shots, {
+      pageLabels: [
+        { startPageIndex: 0, style: "romanLower" },
+        { startPageIndex: 1, style: "decimal", prefix: "App-", startNumber: 1 },
+      ],
+    });
+    const pdfBuf = Buffer.from(await blob.arrayBuffer());
+    const pdfStr = pdfBuf.toString("latin1");
+
+    expect(pdfStr).toContain(
+      "/PageLabels << /Nums [ 0 << /S /r >> 1 << /S /D /P (App-) /St 1 >> ] >>",
+    );
+
+    const tmpPdf = path.join(os.tmpdir(), `pdf-labels-${Date.now()}.pdf`);
+    try {
+      fs.writeFileSync(tmpPdf, pdfBuf);
+      const infoOut = execFileSync("pdfinfo", [tmpPdf], { encoding: "utf-8" });
+      expect(infoOut).toContain("Pages:           3");
+    } finally {
+      fs.rmSync(tmpPdf, { force: true });
+    }
+  });
+
+  it("P3 document metadata: emits title, author, subject, keywords, creation and modification dates; verified via pdfinfo", async () => {
+    const shots = [blankShot(0)];
+    const blob = await pagesToPdf(shots, {
+      metadata: {
+        title: "Docen Technical Whitepaper",
+        author: "Docen Platform Team",
+        subject: "Vector PDF Export Architecture",
+        keywords: "pdf, vector, docen, typography",
+      },
+    });
+    const pdfBuf = Buffer.from(await blob.arrayBuffer());
+    const pdfStr = pdfBuf.toString("latin1");
+
+    expect(pdfStr).toContain("/Title (Docen Technical Whitepaper)");
+    expect(pdfStr).toContain("/Author (Docen Platform Team)");
+    expect(pdfStr).toContain("/Subject (Vector PDF Export Architecture)");
+    expect(pdfStr).toContain("/Keywords (pdf, vector, docen, typography)");
+    expect(pdfStr).toContain("/ModDate (D:");
+
+    const tmpPdf = path.join(os.tmpdir(), `pdf-meta-${Date.now()}.pdf`);
+    try {
+      fs.writeFileSync(tmpPdf, pdfBuf);
+      const infoOut = execFileSync("pdfinfo", [tmpPdf], { encoding: "utf-8" });
+      expect(infoOut).toMatch(/Title:\s+Docen Technical Whitepaper/);
+      expect(infoOut).toMatch(/Author:\s+Docen Platform Team/);
+      expect(infoOut).toMatch(/Subject:\s+Vector PDF Export Architecture/);
+      expect(infoOut).toMatch(/Keywords:\s+pdf, vector, docen, typography/);
+      expect(infoOut).toMatch(/Creator:\s+Docen Word Processor/);
+      expect(infoOut).toMatch(/Producer:\s+Docen PDF Engine/);
+    } finally {
+      fs.rmSync(tmpPdf, { force: true });
+    }
+  });
+
+  it("P3 viewer preferences: emits displayDocTitle, centerWindow, fitWindow, hideToolbar", async () => {
+    const shots = [blankShot(0)];
+    const blob = await pagesToPdf(shots, {
+      viewerPreferences: {
+        displayDocTitle: true,
+        centerWindow: true,
+        fitWindow: true,
+        hideToolbar: false,
+      },
+    });
+    const pdfBuf = Buffer.from(await blob.arrayBuffer());
+    const pdfStr = pdfBuf.toString("latin1");
+
+    expect(pdfStr).toContain(
+      "/ViewerPreferences << /DisplayDocTitle true /HideToolbar false /CenterWindow true /FitWindow true >>",
+    );
+  });
+
+  it("P3 named destinations: emits targetable destinations in Catalog /Dests and link resolution", async () => {
+    const shots = [
+      {
+        ...blankShot(0),
+        links: [
+          {
+            rect: [72, 600, 150, 615] as [number, number, number, number],
+            url: "#summary-table",
+          },
+        ],
+      },
+      blankShot(1),
+    ];
+    const blob = await pagesToPdf(shots, {
+      destinations: {
+        "summary-table": { pageIndex: 1, x: 72, y: 650, zoom: 1 },
+      },
+    });
+    const pdfBuf = Buffer.from(await blob.arrayBuffer());
+    const pdfStr = pdfBuf.toString("latin1");
+
+    expect(pdfStr).toMatch(/\/Dests << \/summary-table \[ \d+ 0 R \/XYZ 72\.00 650\.00 1 \] >>/);
+    expect(pdfStr).toContain("/Dest (summary-table)");
+  });
+
+  it("P3 AcroForm form fields: generates text fields and checkboxes with widget annotations", async () => {
+    const shots = [blankShot(0)];
+    const blob = await pagesToPdf(shots, {
+      formFields: [
+        {
+          name: "customer_name",
+          type: "text",
+          pageIndex: 0,
+          rect: [100, 600, 300, 620],
+          value: "Jane Smith",
+          readOnly: true,
+        },
+        {
+          name: "subscribe_newsletter",
+          type: "checkbox",
+          pageIndex: 0,
+          rect: [100, 550, 120, 570],
+          value: true,
+        },
+        {
+          name: "opt_in_sms",
+          type: "checkbox",
+          pageIndex: 0,
+          rect: [100, 500, 120, 520],
+          value: false,
+        },
+      ],
+    });
+    const pdfBuf = Buffer.from(await blob.arrayBuffer());
+    const pdfStr = pdfBuf.toString("latin1");
+
+    // Catalog has AcroForm
+    expect(pdfStr).toMatch(/\/Type\s*\/Catalog[^\n]*\/AcroForm\s+(\d+)\s+0\s+R/);
+
+    // AcroForm object
+    expect(pdfStr).toMatch(
+      /<< \/Fields \[ ((\d+ 0 R )+)\] \/NeedAppearances true \/DA \(\/F1 12 Tf 0 g\) >>/,
+    );
+
+    // Text field widget
+    expect(pdfStr).toContain("/Subtype /Widget");
+    expect(pdfStr).toContain("/FT /Tx");
+    expect(pdfStr).toContain("/T (customer_name)");
+    expect(pdfStr).toContain("/V (Jane Smith)");
+    expect(pdfStr).toContain("/Ff 1"); // Read-only
+
+    // Checked checkbox widget
+    expect(pdfStr).toContain("/FT /Btn");
+    expect(pdfStr).toContain("/T (subscribe_newsletter)");
+    expect(pdfStr).toContain("/V /Yes");
+    expect(pdfStr).toContain("/AS /Yes");
+
+    // Unchecked checkbox widget
+    expect(pdfStr).toContain("/T (opt_in_sms)");
+    expect(pdfStr).toContain("/V /Off");
+    expect(pdfStr).toContain("/AS /Off");
+
+    // Page Annots contains all 3 widget IDs
+    const pageAnnotsMatch = pdfStr.match(/\/Type\s*\/Page[^\n]*\/Annots\s*\[\s*([^\]]+)\]/);
+    expect(pageAnnotsMatch).not.toBeNull();
+    const annotRefs = pageAnnotsMatch![1]!.trim().split(/\s+/);
+    expect(annotRefs.length).toBe(9); // 3 annots * 3 tokens ("id 0 R") = 9 tokens
+  });
+
+  it("P3 tagged PDF accessibility: emits StructElem with Alt text for figure / table", async () => {
+    const shots = [blankShot(0)];
+    const blob = await pagesToPdf(shots, {
+      tagged: true,
+      structElements: [
+        {
+          type: "Figure",
+          pageIndex: 0,
+          altText: "Quarterly revenue bar chart comparing Q1-Q4 2025",
+          title: "Figure 1: Revenue Chart",
+        },
+        {
+          type: "Table",
+          pageIndex: 0,
+          altText: "Summary table of financial metrics",
+          title: "Table 1",
+        },
+      ],
+    });
+    const pdfBuf = Buffer.from(await blob.arrayBuffer());
+    const pdfStr = pdfBuf.toString("latin1");
+
+    expect(pdfStr).toContain("/Type /StructTreeRoot");
+    expect(pdfStr).toContain(
+      "/RoleMap << /H1 /H /H2 /H /H3 /H /H4 /H /P /P /Table /Table /Figure /Figure >>",
+    );
+    expect(pdfStr).toContain("/S /Figure");
+    expect(pdfStr).toContain("/Alt (Quarterly revenue bar chart comparing Q1-Q4 2025)");
+    expect(pdfStr).toContain("/T (Figure 1: Revenue Chart)");
+    expect(pdfStr).toContain("/S /Table");
+    expect(pdfStr).toContain("/Alt (Summary table of financial metrics)");
+    expect(pdfStr).toContain("/T (Table 1)");
+  });
+});

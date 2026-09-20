@@ -121,6 +121,68 @@ export interface PdfEmbeddableFontSource {
   readonly fsType?: number;
 }
 
+/** One outline item (bookmark) in the document outline tree. */
+export interface PdfOutlineItem {
+  title: string;
+  /** Destination: 0-based page index or target with optional top in pt. */
+  dest: number | { pageIndex: number; top?: number };
+  children?: readonly PdfOutlineItem[];
+}
+
+/** Page label range specification. */
+export interface PdfPageLabelRange {
+  startPageIndex: number;
+  style?: "decimal" | "romanUpper" | "romanLower" | "alphaUpper" | "alphaLower" | "none";
+  prefix?: string;
+  startNumber?: number;
+}
+
+/** Named destination target in PDF points. */
+export interface PdfDestination {
+  pageIndex: number;
+  x?: number;
+  y?: number;
+  zoom?: number;
+}
+
+/** Standard PDF viewer preferences. */
+export interface PdfViewerPreferences {
+  displayDocTitle?: boolean;
+  hideToolbar?: boolean;
+  hideMenubar?: boolean;
+  centerWindow?: boolean;
+  fitWindow?: boolean;
+}
+
+/** Interactive form field for AcroForm. */
+export interface PdfFormField {
+  name: string;
+  type: "text" | "checkbox";
+  pageIndex: number;
+  rect: [number, number, number, number]; // [left, bottom, right, top] in pt
+  value?: string | boolean;
+  readOnly?: boolean;
+}
+
+/** Accessibility structure element with semantic tag and alt text. */
+export interface PdfStructElement {
+  type:
+    | "Document"
+    | "Part"
+    | "Art"
+    | "Sect"
+    | "Div"
+    | "H1"
+    | "H2"
+    | "H3"
+    | "P"
+    | "Table"
+    | "Figure";
+  pageIndex: number;
+  altText?: string;
+  title?: string;
+}
+
 /** Options for PDF document generation. */
 export interface PdfExportOptions {
   metadata?: {
@@ -142,6 +204,18 @@ export interface PdfExportOptions {
    *    visibly through the embedded/standard fonts (smaller files; used for
    *    the size/fidelity measurement — see the R10-P1 report). */
   textMode?: "outlines" | "embedded";
+  /** Document outline bookmarks hierarchy. */
+  outline?: readonly PdfOutlineItem[];
+  /** Page labels for section page numbering. */
+  pageLabels?: readonly PdfPageLabelRange[];
+  /** Named destination targets (#anchor or external reference). */
+  destinations?: Record<string, number | PdfDestination>;
+  /** Viewer preferences for window display. */
+  viewerPreferences?: PdfViewerPreferences;
+  /** Interactive form fields for AcroForm. */
+  formFields?: readonly PdfFormField[];
+  /** Semantic structure elements with alt text for figures and tables. */
+  structElements?: readonly PdfStructElement[];
 }
 
 /** Decode a snapshot PNG and flatten it onto white — the print canvases are
@@ -227,6 +301,14 @@ export function escapePdfString(str: string): string {
     .replace(/\)/g, "\\)")
     .replace(/\r/g, "\\r")
     .replace(/\n/g, "\\n");
+}
+
+/** Escape special characters for PDF name literals (/name). */
+export function escapePdfName(name: string): string {
+  return name.replace(
+    /[^a-zA-Z0-9_-]/g,
+    (c) => `#${c.charCodeAt(0).toString(16).padStart(2, "0")}`,
+  );
 }
 
 /** Encode a Unicode string as 2-byte hexadecimal CIDs for /Identity-H fonts. */
@@ -565,6 +647,7 @@ export async function pagesToPdf(
     /** Per-page ExtGState object ids, /GS0… in plan order. */
     stateIds: number[];
     annotIds: number[];
+    fieldAnnotIds: number[];
     structElemIds: number[];
   }
 
@@ -581,6 +664,10 @@ export async function pagesToPdf(
     }));
     const stateIds = (plan?.extGStates ?? []).map(() => allocId());
     const annotIds = (shot.links ?? []).map(() => allocId());
+    const pageFields = (options?.formFields ?? []).filter(
+      (f) => Math.max(0, Math.min(shots.length - 1, f.pageIndex)) === index,
+    );
+    const fieldAnnotIds = pageFields.map(() => allocId());
     const structElemIds = isTagged && (pageTextSpans[index]?.length ?? 0) > 0 ? [allocId()] : [];
     pageAllocs.push({
       pageId,
@@ -590,14 +677,160 @@ export async function pagesToPdf(
       imageRefs,
       stateIds,
       annotIds,
+      fieldAnnotIds,
       structElemIds,
     });
   }
+
+  // Outline Tree (/Outlines)
+  let outlineRootId: number | undefined;
+  interface OutlineItemAlloc {
+    id: number;
+    item: PdfOutlineItem;
+    parentId: number;
+    prevId?: number;
+    nextId?: number;
+    firstChildId?: number;
+    lastChildId?: number;
+    count: number;
+  }
+  const outlineAllocs: OutlineItemAlloc[] = [];
+
+  if (options?.outline && options.outline.length > 0) {
+    outlineRootId = allocId();
+    const buildOutlineLevel = (
+      items: readonly PdfOutlineItem[],
+      parentId: number,
+    ): { firstId: number; lastId: number; totalCount: number } => {
+      const levelAllocs: OutlineItemAlloc[] = items.map((item) => ({
+        id: allocId(),
+        item,
+        parentId,
+        count: 0,
+      }));
+      for (let i = 0; i < levelAllocs.length; i++) {
+        if (i > 0) levelAllocs[i]!.prevId = levelAllocs[i - 1]!.id;
+        if (i < levelAllocs.length - 1) levelAllocs[i]!.nextId = levelAllocs[i + 1]!.id;
+      }
+      let totalCount = 0;
+      for (const node of levelAllocs) {
+        if (node.item.children && node.item.children.length > 0) {
+          const childLevel = buildOutlineLevel(node.item.children, node.id);
+          node.firstChildId = childLevel.firstId;
+          node.lastChildId = childLevel.lastId;
+          node.count = childLevel.totalCount;
+          totalCount += childLevel.totalCount;
+        }
+        totalCount += 1;
+        outlineAllocs.push(node);
+      }
+      return {
+        firstId: levelAllocs[0]!.id,
+        lastId: levelAllocs[levelAllocs.length - 1]!.id,
+        totalCount,
+      };
+    };
+
+    const rootLevel = buildOutlineLevel(options.outline, outlineRootId);
+    addObject(
+      outlineRootId,
+      `${outlineRootId} 0 obj\n<< /Type /Outlines /First ${rootLevel.firstId} 0 R /Last ${rootLevel.lastId} 0 R /Count ${rootLevel.totalCount} >>\nendobj\n`,
+    );
+
+    for (const node of outlineAllocs) {
+      const pIdx = typeof node.item.dest === "number" ? node.item.dest : node.item.dest.pageIndex;
+      const targetPageId = (pageAllocs[pIdx] ?? pageAllocs[0]!).pageId;
+      const top =
+        typeof node.item.dest === "object" && node.item.dest.top != null ? node.item.dest.top : 792;
+      let dict =
+        `<< /Title (${escapePdfString(node.item.title)}) /Parent ${node.parentId} 0 R ` +
+        `/Dest [ ${targetPageId} 0 R /XYZ 0 ${top.toFixed(2)} 0 ]`;
+      if (node.prevId) dict += ` /Prev ${node.prevId} 0 R`;
+      if (node.nextId) dict += ` /Next ${node.nextId} 0 R`;
+      if (node.firstChildId && node.lastChildId) {
+        dict += ` /First ${node.firstChildId} 0 R /Last ${node.lastChildId} 0 R /Count ${node.count}`;
+      }
+      dict += ` >>\nendobj\n`;
+      addObject(node.id, `${node.id} 0 obj\n${dict}`);
+    }
+  }
+
+  // Page Labels (/PageLabels)
+  let pageLabelsDict = "";
+  if (options?.pageLabels && options.pageLabels.length > 0) {
+    const sortedLabels = [...options.pageLabels].sort(
+      (a, b) => a.startPageIndex - b.startPageIndex,
+    );
+    const numsEntries: string[] = [];
+    for (const range of sortedLabels) {
+      let dict = "<<";
+      if (range.style && range.style !== "none") {
+        const styleCode =
+          {
+            decimal: "/D",
+            romanUpper: "/R",
+            romanLower: "/r",
+            alphaUpper: "/A",
+            alphaLower: "/a",
+          }[range.style] ?? "/D";
+        dict += ` /S ${styleCode}`;
+      }
+      if (range.prefix) dict += ` /P (${escapePdfString(range.prefix)})`;
+      if (range.startNumber != null) dict += ` /St ${range.startNumber}`;
+      dict += " >>";
+      numsEntries.push(`${range.startPageIndex} ${dict}`);
+    }
+    pageLabelsDict = ` /PageLabels << /Nums [ ${numsEntries.join(" ")} ] >>`;
+  }
+
+  // Named Destinations (/Dests)
+  let destsDict = "";
+  if (options?.destinations && Object.keys(options.destinations).length > 0) {
+    const destEntries: string[] = [];
+    for (const [name, target] of Object.entries(options.destinations)) {
+      const pIdx = typeof target === "number" ? target : target.pageIndex;
+      const targetPageId = (pageAllocs[pIdx] ?? pageAllocs[0]!).pageId;
+      const x = typeof target === "object" && target.x != null ? target.x : 0;
+      const y = typeof target === "object" && target.y != null ? target.y : 0;
+      const zoom = typeof target === "object" && target.zoom != null ? target.zoom : 0;
+      destEntries.push(
+        `/${escapePdfName(name)} [ ${targetPageId} 0 R /XYZ ${x.toFixed(2)} ${y.toFixed(2)} ${zoom} ]`,
+      );
+    }
+    if (destEntries.length > 0) {
+      destsDict = ` /Dests << ${destEntries.join(" ")} >>`;
+    }
+  }
+
+  // Viewer Preferences (/ViewerPreferences)
+  let viewerPrefsDict = "";
+  if (options?.viewerPreferences) {
+    const prefs: string[] = [];
+    const vp = options.viewerPreferences;
+    if (vp.displayDocTitle != null) prefs.push(`/DisplayDocTitle ${vp.displayDocTitle}`);
+    if (vp.hideToolbar != null) prefs.push(`/HideToolbar ${vp.hideToolbar}`);
+    if (vp.hideMenubar != null) prefs.push(`/HideMenubar ${vp.hideMenubar}`);
+    if (vp.centerWindow != null) prefs.push(`/CenterWindow ${vp.centerWindow}`);
+    if (vp.fitWindow != null) prefs.push(`/FitWindow ${vp.fitWindow}`);
+    if (prefs.length > 0) viewerPrefsDict = ` /ViewerPreferences << ${prefs.join(" ")} >>`;
+  }
+
+  // AcroForm object ID
+  const acroFormId = options?.formFields && options.formFields.length > 0 ? allocId() : undefined;
 
   // 1. Catalog Object
   let catDict = `<< /Type /Catalog /Pages ${pagesId} 0 R`;
   if (isTagged && structTreeRootId) {
     catDict += ` /MarkInfo << /Marked true >> /StructTreeRoot ${structTreeRootId} 0 R`;
+  }
+  if (outlineRootId !== undefined) {
+    catDict += ` /Outlines ${outlineRootId} 0 R`;
+  }
+  if (pageLabelsDict) catDict += pageLabelsDict;
+  if (destsDict) catDict += destsDict;
+  if (viewerPrefsDict) catDict += viewerPrefsDict;
+  if (acroFormId !== undefined) {
+    catDict += ` /AcroForm ${acroFormId} 0 R`;
   }
   catDict += ` >>\nendobj\n`;
   addObject(catalogId, `${catalogId} 0 obj\n${catDict}`);
@@ -609,14 +842,40 @@ export async function pagesToPdf(
     `${pagesId} 0 obj\n<< /Type /Pages /Kids [ ${kids} ] /Count ${shots.length} >>\nendobj\n`,
   );
 
+  // Custom accessibility struct elements
+  const customStructIds: number[] = [];
+  if (isTagged && structTreeRootId && options?.structElements) {
+    for (const elem of options.structElements) {
+      const id = allocId();
+      customStructIds.push(id);
+      const targetPageId = (pageAllocs[elem.pageIndex] ?? pageAllocs[0]!).pageId;
+      let dict = `${id} 0 obj\n<< /Type /StructElem /S /${elem.type} /P ${structTreeRootId} 0 R /Pg ${targetPageId} 0 R /K 0`;
+      if (elem.altText) dict += ` /Alt (${escapePdfString(elem.altText)})`;
+      if (elem.title) dict += ` /T (${escapePdfString(elem.title)})`;
+      dict += ` >>\nendobj\n`;
+      addObject(id, dict);
+    }
+  }
+
   // 3. StructTreeRoot Object (if tagged)
   if (isTagged && structTreeRootId) {
-    const allStructKids = pageAllocs
-      .flatMap((p) => p.structElemIds.map((id) => `${id} 0 R`))
-      .join(" ");
+    const allStructKids = [
+      ...pageAllocs.flatMap((p) => p.structElemIds.map((id) => `${id} 0 R`)),
+      ...customStructIds.map((id) => `${id} 0 R`),
+    ].join(" ");
     addObject(
       structTreeRootId,
-      `${structTreeRootId} 0 obj\n<< /Type /StructTreeRoot /RoleMap << /H1 /H /H2 /H /H3 /H /H4 /H /P /P /Table /Table >> /K [ ${allStructKids} ] >>\nendobj\n`,
+      `${structTreeRootId} 0 obj\n<< /Type /StructTreeRoot /RoleMap << /H1 /H /H2 /H /H3 /H /H4 /H /P /P /Table /Table /Figure /Figure >> /K [ ${allStructKids} ] >>\nendobj\n`,
+    );
+  }
+
+  // 3b. AcroForm Object
+  if (acroFormId !== undefined) {
+    const allFieldIds = pageAllocs.flatMap((p) => p.fieldAnnotIds);
+    const fieldsRef = allFieldIds.map((id) => `${id} 0 R`).join(" ");
+    addObject(
+      acroFormId,
+      `${acroFormId} 0 obj\n<< /Fields [ ${fieldsRef} ] /NeedAppearances true /DA (/F1 12 Tf 0 g) >>\nendobj\n`,
     );
   }
 
@@ -759,10 +1018,18 @@ export async function pagesToPdf(
   const producer = options?.metadata?.producer ?? "Docen PDF Engine";
   const dateStr = formatPdfDate();
 
-  addObject(
-    infoId,
-    `${infoId} 0 obj\n<< /Title (${escapePdfString(title)}) /Author (${escapePdfString(author)}) /Creator (${escapePdfString(creator)}) /Producer (${escapePdfString(producer)}) /CreationDate (${dateStr}) >>\nendobj\n`,
-  );
+  let infoDict =
+    `<< /Title (${escapePdfString(title)}) /Author (${escapePdfString(author)}) ` +
+    `/Creator (${escapePdfString(creator)}) /Producer (${escapePdfString(producer)}) ` +
+    `/CreationDate (${dateStr}) /ModDate (${dateStr})`;
+  if (options?.metadata?.subject) {
+    infoDict += ` /Subject (${escapePdfString(options.metadata.subject)})`;
+  }
+  if (options?.metadata?.keywords) {
+    infoDict += ` /Keywords (${escapePdfString(options.metadata.keywords)})`;
+  }
+  infoDict += ` >>\nendobj\n`;
+  addObject(infoId, `${infoId} 0 obj\n${infoDict}`);
 
   // 6. Per-Page Objects
   const fontEntries = [
@@ -803,8 +1070,9 @@ export async function pagesToPdf(
       `<< /Type /Page /Parent ${pagesId} 0 R /MediaBox [ 0 0 ${w} ${h} ] ` +
       `${resources} /Contents ${contents}`;
 
-    if (alloc.annotIds.length > 0) {
-      const annots = alloc.annotIds.map((id) => `${id} 0 R`).join(" ");
+    const allAnnots = [...alloc.annotIds, ...alloc.fieldAnnotIds];
+    if (allAnnots.length > 0) {
+      const annots = allAnnots.map((id) => `${id} 0 R`).join(" ");
       pageDict += ` /Annots [ ${annots} ]`;
     }
     if (isTagged) {
@@ -931,6 +1199,36 @@ export async function pagesToPdf(
       }
       annotObj += ` >>\nendobj\n`;
       addObject(annotId, annotObj);
+    }
+
+    // Form Field Annotations (AcroForm Widgets)
+    const pageFields = (options?.formFields ?? []).filter(
+      (f) => Math.max(0, Math.min(shots.length - 1, f.pageIndex)) === i,
+    );
+    for (let fIdx = 0; fIdx < pageFields.length; fIdx++) {
+      const field = pageFields[fIdx]!;
+      const fieldId = alloc.fieldAnnotIds[fIdx]!;
+      const [x1, y1, x2, y2] = field.rect;
+      let fieldDict =
+        `${fieldId} 0 obj\n<< /Type /Annot /Subtype /Widget ` +
+        `/P ${alloc.pageId} 0 R ` +
+        `/Rect [ ${x1.toFixed(2)} ${y1.toFixed(2)} ${x2.toFixed(2)} ${y2.toFixed(2)} ] ` +
+        `/T (${escapePdfString(field.name)}) /F 4`;
+
+      if (field.readOnly) {
+        fieldDict += ` /Ff 1`;
+      }
+
+      if (field.type === "text") {
+        const val = typeof field.value === "string" ? field.value : "";
+        fieldDict += ` /FT /Tx /V (${escapePdfString(val)}) /DA (/F1 12 Tf 0 g)`;
+      } else if (field.type === "checkbox") {
+        const isChecked = field.value === true;
+        const state = isChecked ? "/Yes" : "/Off";
+        fieldDict += ` /FT /Btn /V ${state} /AS ${state}`;
+      }
+      fieldDict += ` >>\nendobj\n`;
+      addObject(fieldId, fieldDict);
     }
 
     // Structure Element (if tagged)
