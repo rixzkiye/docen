@@ -116,6 +116,22 @@ export const documentStyles = css`
     padding: 32px 0;
     cursor: text;
   }
+  /* The document pane's scroll chrome: the area keeps no padding so the sticky
+     horizontal ruler's containing block starts at the true top of the
+     scrollport (with padding it pinned 24px below, leaving a strip of page
+     content visible above the ruler). The page gap moves to the slotted
+     wrapper. */
+  docen-document-area {
+    padding: 0;
+  }
+  docen-context-menu {
+    padding: var(--docen-page-gap, 24px);
+  }
+  @media print {
+    docen-context-menu {
+      padding: 0;
+    }
+  }
   /* Open-progress veil over the canvas (Word centers its opening spinner in
        the document area too): label + Fluent progress bar, centered on a
        translucent white wash so the not-yet-laid-out document doesn't flash
@@ -130,9 +146,8 @@ export const documentStyles = css`
   .load-veil {
     position: sticky;
     top: 0;
-    /* 100% = the area's content box (its 24px paddings stay uncovered — under
-       the translucent wash the not-yet-replaced document shows as a hairline
-       edge, invisible against a blank first load). */
+    /* 100% = the area's box (the pane's 24px page gap now lives on the
+       slotted wrapper, under the translucent wash). */
     height: 100%;
     display: flex;
     flex-direction: column;

@@ -265,6 +265,7 @@ export type VisibilityMode = "taskpane" | "hidden";
 /** The interactive horizontal ruler element (View → Ruler): the
  *  `<docen-ruler>` component surface the host drives. */
 interface InteractiveRulerElement extends HTMLElement {
+  unit: "in" | "cm";
   bindEditor(editor: Editor): void;
   setParagraphAttrs(
     indent?: { left?: number; right?: number; firstLine?: number; hanging?: number },
@@ -274,8 +275,22 @@ interface InteractiveRulerElement extends HTMLElement {
       marginLeftPx?: number;
       marginRightPx?: number;
       scale?: number;
+      pageLeftPx?: number;
     },
   ): void;
+}
+
+/** The fixed vertical ruler element (Print Layout only): the
+ *  `<docen-vertical-ruler>` component surface the host drives. All px values
+ *  are zoom-scaled; `scale` stays the twips↔px conversion factor. */
+interface VerticalRulerElement extends HTMLElement {
+  unit: "in" | "cm";
+  originY: number;
+  pageHeightPx: number;
+  contentTopPx: number;
+  contentHeightPx: number;
+  scale: number;
+  renderTicks(): void;
 }
 
 @customElement({ name: "docen-document", template: documentTemplate, styles: documentStyles })
@@ -650,6 +665,10 @@ class DocenDocument extends AddinHost<Editor> {
     sectionOfPage: () => this.#sectionOfPage,
     setSectionOfPage: (sectionOfPage) => {
       this.#sectionOfPage = sectionOfPage;
+      // The fixed vertical ruler reads this map for the page at the pane top;
+      // the incremental open path publishes it after the walk, with no other
+      // sync in between.
+      this.#syncRuler();
     },
     flow: () => this.#flow,
     setFlow: (flow) => {
@@ -698,11 +717,21 @@ class DocenDocument extends AddinHost<Editor> {
     isPageField: (child) => DocenDocument.isPageField(child),
   });
   #stageHost?: HTMLElement;
-  /** The interactive horizontal ruler (View → Ruler). Mounted above the
-   *  pages; the vertical strip stays on the stage. */
+  /** The interactive horizontal ruler (View → Ruler). Mounted as the first
+   *  child of the scroll container and pinned to its true top; the fixed
+   *  vertical ruler (Print Layout) rides beside it. */
   #ruler?: InteractiveRulerElement;
+  #vRuler?: VerticalRulerElement;
   #rulerGeometry = "";
   #rulerEditor?: Editor;
+  /** The section the fixed vertical ruler currently reflects (the page nearest
+   *  the pane top). */
+  #vRulerSection = 0;
+  /** The section a live vertical-ruler margin drag targets — frozen at drag
+   *  start so a reflow cannot retarget the drag. */
+  #vRulerDragSection: number | null = null;
+  #vRulerFrame = 0;
+  #rulerResizeObserver?: ResizeObserver;
   readonly #a11yMirror = new A11yMirror();
   #a11yTimer?: number;
   #versionSnapshots: Array<{
@@ -3031,9 +3060,12 @@ class DocenDocument extends AddinHost<Editor> {
     if (bar) bar.hidden = true;
   }
 
-  /** Mount the interactive horizontal ruler above the pages (idempotent).
-   *  The stage keeps only the vertical strip; this strip owns the draggable
-   *  indent markers, tab stops and the unit toggle. */
+  /** Mount the interactive rulers (idempotent). Both are direct children of
+   *  the scroll container: the horizontal band pins to the true top of the
+   *  scrollport and owns the indent markers/tab stops/unit toggle; the fixed
+   *  vertical ruler (Print Layout) owns the section's top/bottom margin
+   *  handles. The page column keeps its flex centering (neither ruler is a
+   *  flex item of the canvas wrapper). */
   #mountRuler(): void {
     if (this.#ruler || !this.#stageHost) return;
     const area = this.#stageHost.closest("docen-document-area");
@@ -3043,14 +3075,29 @@ class DocenDocument extends AddinHost<Editor> {
       position: "sticky",
       top: "0",
       zIndex: "6",
-      margin: "0 auto",
       display: "none",
     } satisfies Partial<CSSStyleDeclaration>);
     ruler.addEventListener("ruler:open-tabs", () => this.#insert.openTabsDialog());
-    // Direct child of the scroll container (NOT the flex canvas wrapper, where
-    // a second flex item would break the page centering).
+    // Word has one measurement unit per view — the vertical ruler follows the
+    // horizontal badge.
+    ruler.addEventListener("ruler:unit-change", ((event: CustomEvent<{ unit?: "in" | "cm" }>) => {
+      const unit = event.detail?.unit;
+      if (unit && this.#vRuler) this.#vRuler.unit = unit;
+    }) as EventListener);
+    const vRuler = document.createElement("docen-vertical-ruler") as VerticalRulerElement;
+    Object.assign(vRuler.style, { display: "none" } satisfies Partial<CSSStyleDeclaration>);
+    vRuler.addEventListener("v-ruler:margin-start", this.#onVRulerMarginStart as EventListener);
+    vRuler.addEventListener("v-ruler:margin-input", this.#onVRulerMargin as EventListener);
+    vRuler.addEventListener("v-ruler:margin-commit", this.#onVRulerMargin as EventListener);
     area.insertBefore(ruler, area.firstChild);
+    area.insertBefore(vRuler, ruler.nextSibling);
     this.#ruler = ruler;
+    this.#vRuler = vRuler;
+    // The vertical strip's scale slides with the scrolled page; pane resizes
+    // move both bands' geometry.
+    area.addEventListener("scroll", this.#onRulerScroll, { passive: true });
+    this.#rulerResizeObserver = new ResizeObserver(() => this.#syncRuler());
+    this.#rulerResizeObserver.observe(area);
   }
 
   /** Mirror the interactive ruler for RTL paragraphs (Word flips the scale at
@@ -3075,35 +3122,153 @@ class DocenDocument extends AddinHost<Editor> {
     if (ruler.getAttribute("dir") !== dir) ruler.setAttribute("dir", dir);
   }
 
-  /** Show/hide and re-geometry the interactive ruler from the current flow
-   *  box + zoom. Cheap when nothing changed (signature-guarded). */
+  /** Show/hide and re-geometry both rulers. Word's visibility matrix: the
+   *  horizontal ruler shows in Print Layout, Web Layout and Draft when View →
+   *  Ruler is on (hidden in Read Mode and Outline); the vertical ruler only in
+   *  Print Layout, gated by its own option. Cheap when nothing moved
+   *  (signature-guarded). */
   #syncRuler(): void {
     const ruler = this.#ruler;
     if (!ruler) return;
     this.#syncRulerDirection();
-    const on = this.getShowRuler();
+    const mode = this.#viewMode();
+    const on = this.getShowRuler() && mode !== "read" && mode !== "outline";
     ruler.style.display = on ? "block" : "none";
-    if (!on) return;
-    const editor = this.#bridge?.activeEditor() ?? this.editor;
-    if (editor && editor !== this.#rulerEditor) {
-      this.#rulerEditor = editor;
-      ruler.bindEditor(editor);
+    if (on) {
+      const editor = this.#bridge?.activeEditor() ?? this.editor;
+      if (editor && editor !== this.#rulerEditor) {
+        this.#rulerEditor = editor;
+        ruler.bindEditor(editor);
+      }
+      this.#syncRulerBand(ruler);
     }
+    this.#syncVerticalRuler();
+  }
+
+  /** Size the horizontal band to the scroll content and offset its scale to
+   *  the centered page column. The host sets the width (the band spans the
+   *  whole pane, so content can never show through at its sides) and passes
+   *  the page's left edge so a wider-than-pane page keeps its tick alignment. */
+  #syncRulerBand(ruler: InteractiveRulerElement): void {
     const flow = this.#flow;
     if (!flow) return;
     const zoom = this.#stage ? this.#stage.zoom / 100 : 1;
+    const area = this.#stageHost?.closest("docen-document-area") as HTMLElement | null;
+    const frame = this.#stageHost?.querySelector<HTMLElement>(".canvas-pages > div");
+    let pageLeftPx = 0;
+    if (area && frame) {
+      const areaRect = area.getBoundingClientRect();
+      const frameRect = frame.getBoundingClientRect();
+      pageLeftPx = Math.max(0, (frameRect.left - areaRect.left + area.scrollLeft) / (zoom || 1));
+    }
+    const bandWidth = Math.max(
+      area?.clientWidth ?? 0,
+      Math.round((pageLeftPx + flow.pageWidthPx) * zoom + 24),
+    );
     const geometry = {
       pageWidthPx: flow.pageWidthPx,
       marginLeftPx: flow.contentLeftPx,
       marginRightPx: flow.pageWidthPx - flow.contentLeftPx - flow.contentWidthPx,
       scale: zoom,
+      pageLeftPx,
     };
-    const key = `${geometry.pageWidthPx}|${geometry.marginLeftPx}|${geometry.marginRightPx}|${zoom}`;
+    const key = `${geometry.pageWidthPx}|${geometry.marginLeftPx}|${geometry.marginRightPx}|${zoom}|${Math.round(pageLeftPx)}|${bandWidth}`;
     if (key === this.#rulerGeometry) return;
     this.#rulerGeometry = key;
-    ruler.style.width = `${geometry.pageWidthPx * zoom}px`;
+    ruler.style.width = `${bandWidth}px`;
     ruler.setParagraphAttrs(undefined, undefined, geometry);
   }
+
+  /** Position the fixed vertical ruler over the pane's left edge: Word keeps
+   *  it on the left (RTL included), aligned to the current page's left edge
+   *  and clamped into the visible pane. The page nearest the ruler's top
+   *  supplies the vertical scale (multi-section documents switch sections as
+   *  you scroll) and the section a margin drag lands on. */
+  #syncVerticalRuler(): void {
+    const vr = this.#vRuler;
+    const area = this.#stageHost?.closest("docen-document-area") as HTMLElement | null;
+    if (!vr || !area) return;
+    const on = this.getShowRuler() && this.getShowVerticalRuler() && this.#viewMode() === "print";
+    const shell = this.#stageHost?.querySelector<HTMLElement>(".canvas-pages");
+    const frames = shell ? ([...shell.children] as HTMLElement[]) : [];
+    if (!on || frames.length === 0) {
+      vr.style.display = "none";
+      return;
+    }
+    const areaRect = area.getBoundingClientRect();
+    // The horizontal ruler occupies the pane's top band (Word's ruler corner).
+    const hRuler = this.#ruler;
+    const top =
+      hRuler && hRuler.style.display !== "none"
+        ? Math.max(areaRect.top, hRuler.getBoundingClientRect().bottom)
+        : areaRect.top;
+    const height = Math.max(0, areaRect.bottom - top);
+    if (height <= 0) {
+      vr.style.display = "none";
+      return;
+    }
+    let page = frames.length - 1;
+    for (let i = 0; i < frames.length; i++) {
+      if (frames[i]!.getBoundingClientRect().bottom > top) {
+        page = i;
+        break;
+      }
+    }
+    const section = this.#sectionOfPage[page] ?? 0;
+    const flow = this.#stage?.sectionFlowAt(page) ?? this.#lastRun?.sections[section]?.flow;
+    if (!flow) {
+      vr.style.display = "none";
+      return;
+    }
+    this.#vRulerSection = section;
+    const zoom = this.#stage ? this.#stage.zoom / 100 : 1;
+    const frameRect = frames[page]!.getBoundingClientRect();
+    const left = Math.max(areaRect.left, Math.min(frameRect.left - 20, areaRect.right - 20));
+    Object.assign(vr.style, {
+      display: "block",
+      left: `${Math.round(left)}px`,
+      top: `${Math.round(top)}px`,
+      height: `${Math.round(height)}px`,
+    } satisfies Partial<CSSStyleDeclaration>);
+    vr.unit = this.#ruler?.unit ?? vr.unit;
+    vr.scale = zoom;
+    vr.pageHeightPx = flow.pageHeightPx * zoom;
+    vr.contentTopPx = flow.contentTopPx * zoom;
+    vr.contentHeightPx = flow.contentHeightPx * zoom;
+    vr.originY = frameRect.top - top;
+  }
+
+  /** The scroll that moves the fixed vertical ruler's scale (vertical) or the
+   *  page under it (horizontal) — one geometry sync per frame. */
+  readonly #onRulerScroll = (): void => {
+    if (!this.#vRuler || this.#vRuler.style.display === "none") return;
+    if (this.#vRulerFrame) return;
+    this.#vRulerFrame = requestAnimationFrame(() => {
+      this.#vRulerFrame = 0;
+      this.#syncVerticalRuler();
+    });
+  };
+
+  /** The vertical ruler's margin drag opens on the section it reflects. */
+  readonly #onVRulerMarginStart = (): void => {
+    this.#vRulerDragSection = this.#vRulerSection;
+  };
+
+  /** A live or committed margin drag — Word reflows the section during the
+   *  drag and commits on release. Protected/read-only documents keep their
+   *  page geometry. */
+  readonly #onVRulerMargin = (event: Event): void => {
+    const detail = (event as CustomEvent<{ side?: "top" | "bottom"; twips?: number }>).detail;
+    if (!detail || typeof detail.twips !== "number") return;
+    if (detail.side !== "top" && detail.side !== "bottom") return;
+    const section = this.#vRulerDragSection ?? this.#vRulerSection;
+    if (this.editable === "false" || this.#docProtected || this.#viewMode() === "read") return;
+    this.#sections.setSectionMargin(section, detail.side, detail.twips);
+    if (event.type === "v-ruler:margin-commit") {
+      this.#vRulerDragSection = null;
+      this.#syncVerticalRuler();
+    }
+  };
 
   /** Create the stage on first use and refresh its per-render context —
    *  idempotent setters both render paths call before their first sync. */
@@ -3138,8 +3303,6 @@ class DocenDocument extends AddinHost<Editor> {
     // setters; the read-only + chrome trimming rides #applyView's gate).
     if (this.#stage.zoom !== this.#status.getZoom()) this.#stage.setZoom(this.#status.getZoom());
     if (this.hasAttribute("show-marks")) this.#stage.setShowMarks(true);
-    if (this.hasAttribute("show-ruler") || this.hasAttribute("ruler"))
-      this.#stage.setShowRuler(true);
     this.#syncRuler();
     if (this.#stage.viewMode !== p.viewMode) {
       this.#stage.setViewMode(p.viewMode);
@@ -3168,6 +3331,12 @@ class DocenDocument extends AddinHost<Editor> {
     this.#langObserver?.disconnect();
     this.#unobserveLang?.();
     this.#unobserveLang = undefined;
+    const rulerArea = this.#stageHost?.closest("docen-document-area");
+    rulerArea?.removeEventListener("scroll", this.#onRulerScroll);
+    this.#rulerResizeObserver?.disconnect();
+    this.#rulerResizeObserver = undefined;
+    if (this.#vRulerFrame) cancelAnimationFrame(this.#vRulerFrame);
+    this.#vRulerFrame = 0;
     this.shadowRoot?.removeEventListener("command", this.#onCommand as EventListener);
     this.shadowRoot?.removeEventListener("item-context", this.#onItemContext as EventListener);
     this.shadowRoot?.removeEventListener("item-preview", this.#onItemPreview as EventListener);
@@ -5177,6 +5346,9 @@ class DocenDocument extends AddinHost<Editor> {
           // `user` attribute only overrides the rendered header).
           (optionsEl as unknown as { identity?: IdentitySettings }).identity =
             getSettings().identity;
+          // View section — Word's "Show vertical ruler in Print Layout view".
+          (optionsEl as unknown as { showVerticalRuler?: boolean }).showVerticalRuler =
+            this.getShowVerticalRuler();
           (optionsEl as unknown as { show?: () => void }).show?.();
         }
         break;
@@ -5338,6 +5510,7 @@ class DocenDocument extends AddinHost<Editor> {
       spellcheck,
       markdown,
       identity,
+      showVerticalRuler,
       document: docSettings,
     } = (
       event as CustomEvent<{
@@ -5346,6 +5519,7 @@ class DocenDocument extends AddinHost<Editor> {
         spellcheck?: boolean;
         markdown?: boolean;
         identity?: { name?: string; initials?: string };
+        showVerticalRuler?: boolean;
         document?: {
           defaultTabStop?: number;
           updateFields?: boolean;
@@ -5371,6 +5545,7 @@ class DocenDocument extends AddinHost<Editor> {
       this.#syncFormatButtons();
     }
     if (identity) updateSettings({ identity });
+    if (typeof showVerticalRuler === "boolean") this.setShowVerticalRuler(showVerticalRuler);
     if (docSettings) this.#applyDocumentSettings(docSettings);
   };
 
@@ -6399,7 +6574,6 @@ class DocenDocument extends AddinHost<Editor> {
   setShowRuler(on: boolean): void {
     if (this.getShowRuler() === on) return;
     this.toggleAttribute("show-ruler", on);
-    this.#stage?.setShowRuler(on);
     this.#syncRuler();
     this.dispatchEvent(
       new CustomEvent("docen:ruler-change", {
@@ -6412,11 +6586,30 @@ class DocenDocument extends AddinHost<Editor> {
 
   /** Whether ruler is currently shown. */
   getShowRuler(): boolean {
-    return (
-      this.hasAttribute("show-ruler") ||
-      this.hasAttribute("ruler") ||
-      (this.#stage?.showRuler ?? false)
+    return this.hasAttribute("show-ruler") || this.hasAttribute("ruler");
+  }
+
+  // ── Vertical ruler (Word's Options → Advanced → Display setting) ───────────
+
+  /** Whether the vertical ruler is enabled in Print Layout (Word's "Show
+   *  vertical ruler in Print Layout view"). Default on; the `show-vertical-
+   *  ruler` attribute carries "false" to disable. Idempotent. */
+  setShowVerticalRuler(on: boolean): void {
+    if (this.getShowVerticalRuler() === on) return;
+    this.setAttribute("show-vertical-ruler", on ? "true" : "false");
+    this.#syncVerticalRuler();
+    this.dispatchEvent(
+      new CustomEvent("docen:vertical-ruler-change", {
+        bubbles: true,
+        composed: true,
+        detail: { showVerticalRuler: on },
+      }),
     );
+  }
+
+  /** Whether the vertical ruler option is on (default: on). */
+  getShowVerticalRuler(): boolean {
+    return this.getAttribute("show-vertical-ruler") !== "false";
   }
 
   // ── Persisted settings (identity + writing toggles) ────────────────────────

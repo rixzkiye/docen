@@ -4,7 +4,11 @@ import type { RibbonMenuItem } from "./ribbon/ribbon-menu";
 const template = document.createElement("template");
 template.innerHTML = `
   <style>
-    :host { display: flex; flex-direction: column; }
+    /* display: flex + a stacking context, so page-painted overlays
+       (caret/selection/search, z-index up to 38 on the page frames) can never
+       paint above the pane's sticky rulers. Menus/dialogs stay in the top
+       layer. */
+    :host { display: flex; flex-direction: column; isolation: isolate; }
     /* The trigger wraps the slotted workspace and fills the host so it stays a
        valid anchor/ARIA owner for fluent-menu. */
     [part="trigger"] { flex: 1; min-height: 0; display: flex; }

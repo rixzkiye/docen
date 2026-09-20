@@ -60,4 +60,22 @@ describe("ruler tick hierarchy", () => {
   it("returns no ticks for a degenerate strip", () => {
     expect(rulerTicks({ lengthPx: 0, zeroPx: 0, unit: "in", scale: 0 })).toEqual([]);
   });
+
+  it("covers the whole strip when the origin sits off-strip (fixed vertical ruler)", () => {
+    // The page's content-top origin can lie above the pane (scrolled down) or
+    // below it (scrolled up); the ticks must still span the visible strip.
+    const above = rulerTicks({ lengthPx: 600, zeroPx: -150, unit: "in", scale: 1 });
+    expect(above.length).toBeGreaterThan(40);
+    expect(above[0]!.pos).toBeGreaterThanOrEqual(0);
+    expect(above[0]!.pos).toBeLessThan(12);
+    expect(Math.max(...above.map((t) => t.pos))).toBeLessThanOrEqual(600);
+    expect(Math.max(...above.map((t) => t.pos))).toBeGreaterThan(588);
+    expect(above.filter((t) => t.label !== undefined).length).toBeGreaterThan(3);
+
+    const below = rulerTicks({ lengthPx: 600, zeroPx: 900, unit: "in", scale: 1 });
+    expect(below[0]!.pos).toBeGreaterThanOrEqual(0);
+    expect(Math.min(...below.map((t) => t.pos))).toBeLessThan(12);
+    expect(Math.max(...below.map((t) => t.pos))).toBeLessThanOrEqual(600);
+    expect(Math.max(...below.map((t) => t.pos))).toBeGreaterThan(588);
+  });
 });

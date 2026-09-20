@@ -462,4 +462,51 @@ describe("DocenRuler (<docen-ruler>) (W5.2)", () => {
     expect(contentBg.style.left).toBe("72px");
     expect(contentBg.style.width).toBe("624px");
   });
+
+  it("offsets the whole scale to the page's left edge in the full-width band", async () => {
+    const ruler = await mountRuler();
+    ruler.unit = "in";
+    ruler.pageWidthPx = 816;
+    ruler.marginLeftPx = 96;
+    ruler.marginRightPx = 96;
+    ruler.scale = 1;
+    ruler.setParagraphAttrs({ left: 720, firstLine: 360, right: 1440 }, undefined, {
+      pageLeftPx: 200,
+    });
+
+    expect(ruler.zeroXPx).toBe(296); // 200 + 96
+    expect(ruler.contentStartPx).toBe(296);
+    expect(ruler.contentWidthPx).toBe(624);
+    expect(ruler.hangingMarkerX).toBe(344); // zero + 48
+    expect(ruler.firstLineMarkerX).toBe(368); // zero + 72
+    expect(ruler.rightMarkerX).toBe(824); // 296 + 624 - 96
+    // The CM/IN badge rides at the page's start margin, not the pane edge.
+    expect(ruler.unitLabelX).toBe(202);
+
+    ruler.renderTicks();
+    const svg = ruler.shadowRoot!.querySelector(".ticks-svg") as SVGSVGElement;
+    const xs = Array.from(svg.querySelectorAll("line")).map((l) => Math.floor(Number(l.getAttribute("x1"))));
+    // 0 (the margin line) sits at 296; one inch in at 392.
+    expect(xs).toContain(296);
+    expect(xs).toContain(392);
+  });
+
+  it("keeps the page-edge offset when the scale mirrors for RTL", async () => {
+    const ruler = new DocenRuler();
+    created.push(ruler);
+    ruler.dir = "rtl";
+    ruler.pageWidthPx = 816;
+    ruler.marginLeftPx = 72; // physical left
+    ruler.marginRightPx = 120; // physical right = start margin in RTL
+    ruler.scale = 1;
+    ruler.setParagraphAttrs({ left: 720, right: 720 }, undefined, { pageLeftPx: 150 });
+    document.body.append(ruler);
+    await settle();
+
+    expect(ruler.zeroXPx).toBe(846); // 150 + 816 - 120
+    expect(ruler.contentStartPx).toBe(222); // 150 + 72
+    expect(ruler.hangingMarkerX).toBe(798); // zero - 48
+    expect(ruler.rightMarkerX).toBe(270); // contentStart + 48
+    expect(ruler.unitLabelX).toBe(942); // page left + page width - 24
+  });
 });

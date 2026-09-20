@@ -25,6 +25,9 @@ export interface RulerIndent {
   hanging?: number; // twips
 }
 
+/** The strip thickness in CSS px (Word's horizontal ruler is 20px tall). */
+export const HORIZONTAL_RULER_HEIGHT = 20;
+
 /** SVG path (viewBox 0 0 9 10) per Word tab-stop type: left ⌊, center ⊤,
  *  right ⌋, decimal ⌊ with a point, bar |. */
 function tabGlyphPath(type: RulerTabStop["type"]): string {
@@ -45,6 +48,8 @@ function tabGlyphPath(type: RulerTabStop["type"]): string {
 const styles = css`
   :host {
     display: block;
+    /* Keep in sync with HORIZONTAL_RULER_HEIGHT (the css tag rejects a numeric
+       interpolation). */
     height: 20px;
     background: var(--docen-ruler-bg, #f3f3f3);
     border-top: 1px solid var(--docen-ruler-border, #e3e3e3);
@@ -78,11 +83,10 @@ const styles = css`
     box-sizing: border-box;
   }
 
-  /* Unit badge — Word's small CM/IN label sits in the start margin, not in a
-     toolbar-like button. Clicking it switches the unit. */
+  /* Unit badge — Word's small CM/IN label sits at the page's start margin, not
+     in a toolbar-like button. Clicking it switches the unit. */
   .unit-label {
     position: absolute;
-    left: 0;
     top: 1px;
     width: 22px;
     height: 12px;
@@ -97,12 +101,6 @@ const styles = css`
     text-align: center;
     cursor: pointer;
     z-index: 6;
-  }
-
-  :host([dir="rtl"]) .unit-label,
-  :host([data-dir]) .unit-label {
-    left: auto;
-    right: 0;
   }
 
   .unit-label:hover {
@@ -202,10 +200,11 @@ const styles = css`
     stroke: var(--docen-color-accent, #0f6cbd);
   }
 
-  /* Tooltip & Guideline */
+  /* Tooltip & Guideline. The strip pins to the true pane top, so the tooltip
+     floats below it (Word drops it below the ruler at the top of the pane). */
   .alt-tooltip {
     position: absolute;
-    top: -22px;
+    top: 22px;
     transform: translateX(-50%);
     background: #242424;
     color: #ffffff;
@@ -248,6 +247,7 @@ const template = html<DocenRuler>`
       type="button"
       class="unit-label"
       part="unit-toggle"
+      style="left: ${(x) => x.unitLabelX}px;"
       title="${(x) => t("ruler.unitToggle", x)}"
       aria-label="${(x) => t("ruler.unitToggle", x)}"
       @click="${(x) => x.toggleUnit()}"
@@ -321,6 +321,11 @@ export class DocenRuler extends FASTElement {
   @observable marginLeftPx = 96; // 1" * 96
   @observable marginRightPx = 96; // 1" * 96
   @observable scale = 1;
+  /** The page's left edge in unzoomed strip px — the band spans the whole
+   *  document pane, so every page-relative coordinate is offset by this. The
+   *  host measures it from the centered page column (0 before the first
+   *  layout, when the band is exactly the page width). */
+  @observable pageLeftPx = 0;
 
   get isRtl(): boolean {
     return (this.dir ?? resolveDir(this)) === "rtl";
@@ -391,6 +396,10 @@ export class DocenRuler extends FASTElement {
     this.renderTicks();
   }
 
+  pageLeftPxChanged(): void {
+    this.renderTicks();
+  }
+
   #editor: Editor | null = null;
   #onTransaction = (): void => {
     this.syncFromEditor();
@@ -453,12 +462,17 @@ export class DocenRuler extends FASTElement {
 
   // ── Coordinates & Markers Math ──
 
+  /** The page's left edge in zoomed strip px. */
+  get pageLeftPxViewport(): number {
+    return this.pageLeftPx * this.scale;
+  }
+
   /** The content-origin (margin line) in strip px — Word's 0. */
   get zeroXPx(): number {
     if (this.isRtl) {
-      return (this.pageWidthPx - this.marginRightPx) * this.scale;
+      return this.pageLeftPxViewport + (this.pageWidthPx - this.marginRightPx) * this.scale;
     }
-    return this.marginLeftPx * this.scale;
+    return this.pageLeftPxViewport + this.marginLeftPx * this.scale;
   }
 
   get contentWidthPx(): number {
@@ -468,7 +482,15 @@ export class DocenRuler extends FASTElement {
   /** The content panel's physical screen start — margins stay physical in RTL;
    *  only the tick scale and the markers mirror around the right margin line. */
   get contentStartPx(): number {
-    return this.marginLeftPx * this.scale;
+    return this.pageLeftPxViewport + this.marginLeftPx * this.scale;
+  }
+
+  /** The CM/IN badge sits at the page's start margin (RTL: end margin). */
+  get unitLabelX(): number {
+    if (this.isRtl) {
+      return this.pageLeftPxViewport + this.pageWidthPx * this.scale - 24;
+    }
+    return this.pageLeftPxViewport + 2;
   }
 
   get hangingMarkerX(): number {
@@ -484,7 +506,7 @@ export class DocenRuler extends FASTElement {
   get rightMarkerX(): number {
     const px = (this.rightIndentTwips / 15) * this.scale;
     if (this.isRtl) {
-      return this.marginLeftPx * this.scale + px;
+      return this.contentStartPx + px;
     }
     return this.zeroXPx + this.contentWidthPx - px;
   }
@@ -927,6 +949,7 @@ export class DocenRuler extends FASTElement {
       marginLeftPx?: number;
       marginRightPx?: number;
       scale?: number;
+      pageLeftPx?: number;
     },
   ): void {
     if (geometry) {
@@ -934,6 +957,7 @@ export class DocenRuler extends FASTElement {
       if (geometry.marginLeftPx != null) this.marginLeftPx = geometry.marginLeftPx;
       if (geometry.marginRightPx != null) this.marginRightPx = geometry.marginRightPx;
       if (geometry.scale != null) this.scale = geometry.scale;
+      if (geometry.pageLeftPx != null) this.pageLeftPx = geometry.pageLeftPx;
     }
     if (indent) {
       this.leftIndentTwips = indent.left ?? 0;
