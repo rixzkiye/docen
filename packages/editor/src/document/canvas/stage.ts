@@ -414,8 +414,10 @@ export class CanvasStage {
    *  (css × pixelRatio) covers whole device pixels — the canvas then composites
    *  1:1 with no resampling, which is what keeps text sharp at EVERY zoom
    *  level (fractional scales like 110% otherwise resample and blur). */
+  /** A page's on-screen CSS size at the current zoom, snapped to whole integer pixels
+   *  so that frames and canvas elements never land on fractional coordinates. */
   private pageCss(px: number): number {
-    return Math.round(px * this.factor * devicePixelRatio) / devicePixelRatio;
+    return Math.round(px * this.factor);
   }
 
   /** Bitmap-width cap: A4 at 500% on a 2× screen would be a ~360MB bitmap per
@@ -423,9 +425,16 @@ export class CanvasStage {
    *  exhausting memory. */
   private static readonly BITMAP_CAP = 3600;
 
+  /** Render at a minimum of 2× pixel ratio even on standard 100% (1× DPR) monitors.
+   *  Canvas 2D text uses grayscale antialiasing; rendering at ≥2× and downsampling via
+   *  CSS produces razor-sharp typography matching native Word desktop ClearType. */
   private renderPixelRatio(flow: ProjectedFlowBox): number {
     const w = flow.pageWidthPx * this.factor;
-    return Math.min(devicePixelRatio, CanvasStage.BITMAP_CAP / Math.max(w, 1));
+    const dpr = Math.max(
+      typeof window !== "undefined" && window.devicePixelRatio ? window.devicePixelRatio : 1,
+      2,
+    );
+    return Math.min(dpr, CanvasStage.BITMAP_CAP / Math.max(w, 1));
   }
 
   /** Zoom change → resize every slot to the scaled page and re-render its

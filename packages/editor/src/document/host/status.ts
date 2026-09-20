@@ -32,6 +32,8 @@ export interface StatusHostView {
   stage(): CanvasStage | undefined;
   pages(): readonly FlowPage[];
   sectionOfPage(): readonly number[];
+  /** The current active page index (0-based) from viewport/caret tracking. */
+  activePage?(): number;
   /** The first section's flow box (page-size presets read its geometry). */
   flow(): ProjectedFlowBox | undefined;
   /** The active view, normalized. */
@@ -177,7 +179,13 @@ export class StatusDomain {
     if (!root) return;
     const bar = root.querySelector<HTMLElement>("docen-status-bar");
     const editor = this.host.editor();
-    const page = editor ? (this.host.bridge()?.pageOf(editor.state.selection.from) ?? -1) + 1 : 0;
+    const activeIdx =
+      this.host.activePage != null
+        ? this.host.activePage()
+        : editor
+          ? (this.host.bridge()?.pageOf(editor.state.selection.from) ?? 0)
+          : 0;
+    const page = activeIdx >= 0 ? activeIdx + 1 : 1;
     const total = this.host.pages().length;
     // The caret's section: the section its page belongs to (1-based).
     const section = page > 0 ? (this.host.sectionOfPage()[page - 1] ?? 0) + 1 : 1;

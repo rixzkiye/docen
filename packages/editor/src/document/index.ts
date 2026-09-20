@@ -487,6 +487,7 @@ class DocenDocument extends AddinHost<Editor> {
     stage: () => this.#stage,
     pages: () => this.#pages,
     sectionOfPage: () => this.#sectionOfPage,
+    activePage: () => this.#activePage(),
     flow: () => this.#flow,
     viewMode: () => this.#viewMode(),
     caretLanguage: () => this.#caretLanguage(),
@@ -3222,6 +3223,13 @@ class DocenDocument extends AddinHost<Editor> {
     return Math.min(page, frames.length - 1);
   }
 
+  /** The current active page index (0-based) across caret, click, and viewport scrolling. */
+  #activePage(): number {
+    const shell = this.#stageHost?.querySelector<HTMLElement>(".canvas-pages");
+    const frames = shell ? ([...shell.children] as HTMLElement[]) : [];
+    return this.#getActivePage(frames);
+  }
+
   /** Size the horizontal ruler to the active page width and position it directly
    *  above the page column in the horizontal ruler slot. */
   #syncRulerBand(ruler: InteractiveRulerElement): void {
@@ -3340,6 +3348,7 @@ class DocenDocument extends AddinHost<Editor> {
       if (this.#vRuler && this.#vRuler.style.display !== "none") {
         this.#syncVerticalRuler();
       }
+      this.#status.updateStatus();
     });
   };
 

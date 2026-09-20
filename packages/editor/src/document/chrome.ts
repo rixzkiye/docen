@@ -116,6 +116,10 @@ export const documentStyles = css`
     padding: 32px 0;
     cursor: text;
   }
+  .docen-canvas canvas {
+    display: block;
+    image-rendering: -webkit-optimize-contrast;
+  }
   /* Word-parity workspace grid: corner tab-selector + horizontal ruler on top,
      vertical ruler in the left window gutter, document scrollport in the center. */
   .docen-workspace-grid {
