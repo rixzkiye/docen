@@ -120,7 +120,7 @@ export const documentStyles = css`
      vertical ruler in the left window gutter, document scrollport in the center. */
   .docen-workspace-grid {
     display: grid;
-    grid-template-columns: 100%;
+    grid-template-columns: 20px 1fr;
     grid-template-rows: 20px 1fr;
     flex: 1 1 auto;
     width: 100%;
@@ -132,9 +132,8 @@ export const documentStyles = css`
     overflow: hidden;
   }
   .docen-ruler-corner {
-    position: absolute;
-    top: 0;
-    left: var(--docen-ruler-corner-left, 0px);
+    grid-column: 1;
+    grid-row: 1;
     width: 20px;
     height: 20px;
     box-sizing: border-box;
@@ -148,29 +147,29 @@ export const documentStyles = css`
     height: 100%;
   }
   .docen-ruler-h-slot {
-    grid-column: 1;
+    grid-column: 2;
     grid-row: 1;
     height: 20px;
     overflow: hidden;
     position: relative;
-    background: var(--docen-ruler-bg, #f3f3f3);
-    border-bottom: 1px solid var(--docen-ruler-border-strong, #c8c8c8);
+    background: var(--docen-color-canvas, #f3f3f3);
+    box-sizing: border-box;
     z-index: 9;
   }
   .docen-ruler-h-slot docen-ruler {
     display: block;
-    width: 100%;
+    position: absolute;
+    top: 0;
     height: 20px;
   }
   .docen-ruler-v-slot {
-    position: absolute;
-    top: 20px;
-    left: var(--docen-ruler-corner-left, 0px);
+    grid-column: 1;
+    grid-row: 2;
     width: 20px;
-    bottom: 0;
+    height: 100%;
     overflow: hidden;
-    background: var(--docen-ruler-bg, #f3f3f3);
-    border-right: 1px solid var(--docen-ruler-border-strong, #c8c8c8);
+    position: relative;
+    background: var(--docen-color-canvas, #f3f3f3);
     box-sizing: border-box;
     z-index: 10;
   }
@@ -180,7 +179,7 @@ export const documentStyles = css`
     height: 100%;
   }
   .docen-workspace-grid docen-document-area {
-    grid-column: 1;
+    grid-column: 2;
     grid-row: 2;
     width: 100%;
     height: 100%;
@@ -191,6 +190,10 @@ export const documentStyles = css`
     box-sizing: border-box;
   }
   /* Gating visibility states */
+  .docen-workspace-grid[data-show-v-ruler="false"] {
+    grid-template-columns: 0 1fr;
+  }
+  .docen-workspace-grid[data-show-v-ruler="false"] .docen-ruler-corner,
   .docen-workspace-grid[data-show-v-ruler="false"] .docen-ruler-v-slot {
     display: none !important;
   }

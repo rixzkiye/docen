@@ -107,7 +107,8 @@ const shot = async (name) => {
         if (
           cur === ruler ||
           cur.tagName?.toLowerCase() === "docen-tab-selector" ||
-          cur.classList?.contains?.("docen-ruler-corner")
+          cur.classList?.contains?.("docen-ruler-corner") ||
+          cur.classList?.contains?.("docen-ruler-h-slot")
         ) {
           return true;
         }
@@ -117,11 +118,13 @@ const shot = async (name) => {
     };
     const rows = [];
     const offsets = [0, 150, 400, 900, 1500, 2400];
+    const frame = sr.querySelector(".canvas-pages > div");
     for (const st of offsets) {
       area.scrollTop = st;
       await wait(140);
       const areaRect = area.getBoundingClientRect();
       const rulerRect = ruler.getBoundingClientRect();
+      const frameRect = frame ? frame.getBoundingClientRect() : null;
       const bandHits = [];
       for (const dy of [1, 5, 10, 15, 19]) {
         for (const fx of [0.01, 0.5, 0.99]) {
@@ -135,7 +138,8 @@ const shot = async (name) => {
         scrollTop: st,
         pinned: Math.abs(rulerRect.bottom - areaRect.top) <= 1,
         bandHeight: Math.round(rulerRect.height),
-        span: rulerRect.width >= areaRect.width - 1,
+        pageWidth: Math.abs(rulerRect.width - ruler.pageWidthPx * ruler.scale) <= 2,
+        alignedWithPage: frameRect ? Math.abs(rulerRect.left - frameRect.left) <= 2 : true,
         pageLeftPx: ruler.pageLeftPx,
         zeroXPx: ruler.zeroXPx,
         marginLeftPx: ruler.marginLeftPx,
@@ -154,7 +158,8 @@ const shot = async (name) => {
       row.misses.length === 0,
       row.misses,
     );
-    check(`band spans the pane at scrollTop=${row.scrollTop}`, row.span);
+    check(`horizontal ruler matches page width at scrollTop=${row.scrollTop}`, row.pageWidth);
+    check(`horizontal ruler aligned over page at scrollTop=${row.scrollTop}`, row.alignedWithPage);
   }
   const first = result[0];
   check(
@@ -222,7 +227,7 @@ const shot = async (name) => {
         v: getComputedStyle(vr).display,
         fixedTop: vr.style.display === "none" ? null : Math.abs(v.top - a.top) <= 1,
         spansPane: vr.style.display === "none" ? null : Math.abs(v.height - a.height) <= 1,
-        atPageLeft: vr.style.display === "none" ? null : Math.abs(v.right - fr.left) <= 1,
+        inGutter: vr.style.display === "none" ? null : Math.abs(v.left - 0) <= 2,
         ticks: vr.shadowRoot.querySelectorAll("line").length,
         handles: vr.shadowRoot.querySelectorAll(".margin-handle").length,
         hasTopGap: fr ? fr.top >= hr.bottom + 16 : null,
@@ -247,7 +252,7 @@ const shot = async (name) => {
   );
   check("vertical ruler pinned alongside the document area", matrix[0].fixedTop === true);
   check("vertical ruler spans the pane height", matrix[0].spansPane === true);
-  check("vertical ruler sits at the left page edge", matrix[0].atPageLeft === true);
+  check("vertical ruler sits in the left window gutter (x=0)", matrix[0].inGutter === true);
   check("workspace has top gap between horizontal ruler and page", matrix[0].hasTopGap === true);
   check(
     "vertical ruler renders the tick scale and two margin handles",
@@ -369,6 +374,56 @@ const shot = async (name) => {
     result.afterOff,
   );
   check("vertical-ruler option restores on", result.restored === true);
+}
+
+// ── 3c. Active page tracking: vertical ruler aligns with active page ────────
+{
+  const vShiftResult = await page.evaluate(async () => {
+    const d = document.querySelector("docen-document");
+    const sr = d.shadowRoot;
+    const area = sr.querySelector("docen-document-area");
+    const vr = sr.querySelector("docen-vertical-ruler");
+    const pages = sr.querySelectorAll(".canvas-pages > div");
+    if (pages.length < 2) return { multiPage: false };
+    const a = area.getBoundingClientRect();
+    const origin1 = Math.round(vr.originY);
+
+    // Scroll so page 2 enters the top of the viewport and is active
+    const p2Top = pages[1].offsetTop || 1211;
+    area.scrollTop = p2Top + 40;
+    await new Promise((r) => setTimeout(r, 300));
+
+    const origin2 = Math.round(vr.originY);
+    const p2Rect = pages[1].getBoundingClientRect();
+    const expectedOrigin2 = Math.round(p2Rect.top - a.top);
+
+    // Scroll back to page 1
+    area.scrollTop = 0;
+    await new Promise((r) => setTimeout(r, 300));
+    const originBack = Math.round(vr.originY);
+
+    return {
+      multiPage: true,
+      origin1,
+      origin2,
+      expectedOrigin2,
+      shiftedToPage2: Math.abs(origin2 - expectedOrigin2) <= 2,
+      originBack,
+      shiftedBack: Math.abs(originBack - origin1) <= 2,
+    };
+  });
+  if (vShiftResult.multiPage) {
+    check(
+      "vertical ruler shifts to page 2 when page 2 is active",
+      vShiftResult.shiftedToPage2 === true,
+      { origin2: vShiftResult.origin2, expected: vShiftResult.expectedOrigin2 },
+    );
+    check(
+      "vertical ruler returns to page 1 when scrolling back to page 1",
+      vShiftResult.shiftedBack === true,
+      { originBack: vShiftResult.originBack, origin1: vShiftResult.origin1 },
+    );
+  }
 }
 
 // ── 4. Margin handles drag the pane-top section live and commit twips ───────

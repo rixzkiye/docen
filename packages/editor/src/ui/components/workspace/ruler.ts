@@ -53,8 +53,7 @@ const styles = css`
        interpolation). */
     height: 20px;
     background: var(--docen-ruler-bg, #f3f3f3);
-    border-top: 1px solid var(--docen-ruler-border, #e3e3e3);
-    border-bottom: 1px solid var(--docen-ruler-border-strong, #c8c8c8);
+    border: 1px solid var(--docen-ruler-border-strong, #c8c8c8);
     box-sizing: border-box;
     position: relative;
     user-select: none;

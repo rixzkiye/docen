@@ -21,8 +21,7 @@ const styles = css`
     width: 20px;
     height: 100%;
     box-sizing: border-box;
-    background: var(--docen-ruler-bg, #f3f3f3);
-    border-right: 1px solid var(--docen-ruler-border-strong, #c8c8c8);
+    background: transparent;
     overflow: hidden;
     user-select: none;
     font-family: var(--docen-font-family, "Segoe UI", -apple-system, sans-serif);
@@ -36,6 +35,29 @@ const styles = css`
     height: 100%;
   }
 
+  /* Shaded margin boxes (top and bottom) matching Word's shaded margin gutter */
+  .margin-box {
+    position: absolute;
+    left: 0;
+    right: 0;
+    background: var(--docen-ruler-bg, #f3f3f3);
+    border-left: 1px solid var(--docen-ruler-border-strong, #c8c8c8);
+    border-right: 1px solid var(--docen-ruler-border-strong, #c8c8c8);
+    box-sizing: border-box;
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  .margin-box.top-margin {
+    border-top: 1px solid var(--docen-ruler-border-strong, #c8c8c8);
+    border-bottom: 1px solid var(--docen-ruler-margin-line, #d0d0d0);
+  }
+
+  .margin-box.bottom-margin {
+    border-top: 1px solid var(--docen-ruler-margin-line, #d0d0d0);
+    border-bottom: 1px solid var(--docen-ruler-border-strong, #c8c8c8);
+  }
+
   /* Word's ruler shows the text column as the white band between the two
      margin lines; the margins stay neutral. */
   .content-bg {
@@ -43,6 +65,8 @@ const styles = css`
     left: 0;
     right: 0;
     background: var(--docen-ruler-content-bg, #ffffff);
+    border-left: 1px solid var(--docen-ruler-border-strong, #c8c8c8);
+    border-right: 1px solid var(--docen-ruler-border-strong, #c8c8c8);
     border-top: 1px solid var(--docen-ruler-margin-line, #d0d0d0);
     border-bottom: 1px solid var(--docen-ruler-margin-line, #d0d0d0);
     box-sizing: border-box;
@@ -84,7 +108,7 @@ const styles = css`
 
   .alt-tooltip {
     position: absolute;
-    right: 24px;
+    left: 24px;
     transform: translateY(-50%);
     background: #242424;
     color: #ffffff;
@@ -102,9 +126,21 @@ const styles = css`
 const template = html<DocenVerticalRuler>`
   <div class="vr-track" part="track">
     <div
+      class="margin-box top-margin"
+      part="margin-top-box"
+      style="top: ${(x) => x.originY}px; height: ${(x) => x.contentTopPx}px;"
+    ></div>
+
+    <div
       class="content-bg"
       part="content-bg"
       style="top: ${(x) => x.contentTopYPx}px; height: ${(x) => x.contentHeightPx}px;"
+    ></div>
+
+    <div
+      class="margin-box bottom-margin"
+      part="margin-bottom-box"
+      style="top: ${(x) => x.contentTopYPx + x.contentHeightPx}px; height: ${(x) => Math.max(0, x.pageHeightPx - x.contentTopPx - x.contentHeightPx)}px;"
     ></div>
 
     <svg class="ticks-svg" part="ticks" ${ref("ticksSvg")}></svg>

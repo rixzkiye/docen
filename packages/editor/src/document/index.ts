@@ -737,6 +737,7 @@ class DocenDocument extends AddinHost<Editor> {
    *  start so a reflow cannot retarget the drag. */
   #vRulerDragSection: number | null = null;
   #vRulerFrame = 0;
+  #clickedPage?: number;
   #rulerResizeObserver?: ResizeObserver;
   readonly #a11yMirror = new A11yMirror();
   #a11yTimer?: number;
@@ -1670,6 +1671,12 @@ class DocenDocument extends AddinHost<Editor> {
     // The ruler's direction follows the caret's paragraph (Word mirrors the
     // scale for RTL runs even in an LTR shell).
     this.#syncRulerDirection();
+    if (this.#ruler && this.#ruler.style.display !== "none") {
+      this.#syncRulerBand(this.#ruler);
+    }
+    if (this.#vRuler && this.#vRuler.style.display !== "none") {
+      this.#syncVerticalRuler();
+    }
     if (this.#uiSelectionDirty) {
       this.#uiSelectionDirty = false;
       // The status-bar language mirrors the caret's proofing language (Word).
@@ -3117,6 +3124,7 @@ class DocenDocument extends AddinHost<Editor> {
 
     // The vertical and horizontal strips slide with the scrolled document
     area.addEventListener("scroll", this.#onRulerScroll, { passive: true });
+    area.addEventListener("pointerdown", this.#onAreaPointerDown, { passive: true });
     this.#rulerResizeObserver = new ResizeObserver(() => this.#syncRuler());
     this.#rulerResizeObserver.observe(area);
   }
@@ -3169,45 +3177,101 @@ class DocenDocument extends AddinHost<Editor> {
     this.#syncVerticalRuler();
   }
 
-  /** Size the horizontal band to the scroll content and offset its scale to
-   *  the centered page column. */
+  /** The active page for ruler alignment (Word tracks the caret's page when
+   *  visible, falling back to clicked page, then viewport top). */
+  #getActivePage(frames: HTMLElement[]): number {
+    if (frames.length <= 1) return 0;
+    const area = this.#stageHost?.closest("docen-document-area") as HTMLElement | null;
+    const areaRect = area?.getBoundingClientRect();
+    const areaTop = areaRect ? areaRect.top : 0;
+    const areaBottom = areaRect ? areaRect.bottom : window.innerHeight;
+
+    // 1. If user explicitly clicked a page and that page is in view
+    if (this.#clickedPage != null && this.#clickedPage >= 0 && this.#clickedPage < frames.length) {
+      const clickedRect = frames[this.#clickedPage]?.getBoundingClientRect();
+      if (clickedRect && clickedRect.bottom > areaTop && clickedRect.top < areaBottom) {
+        return this.#clickedPage;
+      }
+    }
+
+    // 2. Caret's page, if that caret is currently visible in the viewport
+    const editor = this.#bridge?.activeEditor() ?? this.editor;
+    const cursor = editor?.state?.selection?.from;
+    if (cursor != null && this.#bridge) {
+      try {
+        const page = this.#bridge.pageOf(cursor);
+        if (typeof page === "number" && page >= 0 && page < frames.length) {
+          const selRect = this.#bridge.selectionClientRect(cursor, cursor);
+          const caretVisible = selRect
+            ? selRect.top >= areaTop - 10 && selRect.top <= areaBottom + 10
+            : (frames[page]?.getBoundingClientRect().top ?? -999) >= areaTop - 50;
+          if (caretVisible) {
+            return page;
+          }
+        }
+      } catch {
+        // bridge pageOf can fail if unmounted or outside
+      }
+    }
+
+    // 3. Viewport top: first page whose bottom edge is below areaTop
+    let page = 0;
+    for (let i = 0; i < frames.length; i++) {
+      if (frames[i]!.getBoundingClientRect().bottom > areaTop) {
+        page = i;
+        break;
+      }
+    }
+    return Math.min(page, frames.length - 1);
+  }
+
+  /** Size the horizontal ruler to the active page width and position it directly
+   *  above the page column in the horizontal ruler slot. */
   #syncRulerBand(ruler: InteractiveRulerElement): void {
-    const flow = this.#flow;
+    const area = this.#stageHost?.closest("docen-document-area") as HTMLElement | null;
+    const shell = this.#stageHost?.querySelector<HTMLElement>(".canvas-pages");
+    const frames = shell ? ([...shell.children] as HTMLElement[]) : [];
+    const activePage = this.#getActivePage(frames);
+    const frame =
+      frames[activePage] ??
+      frames[0] ??
+      this.#stageHost?.querySelector<HTMLElement>(".canvas-pages > div");
+    const section = this.#sectionOfPage[activePage] ?? 0;
+    const flow =
+      this.#stage?.sectionFlowAt(activePage) ??
+      this.#lastRun?.sections[section]?.flow ??
+      this.#flow;
     if (!flow) return;
     const zoom = this.#stage ? this.#stage.zoom / 100 : 1;
-    const area = this.#stageHost?.closest("docen-document-area") as HTMLElement | null;
-    const frame = this.#stageHost?.querySelector<HTMLElement>(".canvas-pages > div");
     const hSlot = this.shadowRoot?.querySelector<HTMLElement>(".docen-ruler-h-slot");
-    const grid = this.shadowRoot?.querySelector<HTMLElement>(".docen-workspace-grid");
-    let pageLeftPx = 0;
-    if (area && frame) {
-      const hSlotRect = hSlot?.getBoundingClientRect() ?? area.getBoundingClientRect();
+
+    let leftPx = 0;
+    if (area && frame && hSlot) {
+      const hSlotRect = hSlot.getBoundingClientRect();
       const frameRect = frame.getBoundingClientRect();
-      pageLeftPx = Math.max(0, (frameRect.left - hSlotRect.left) / (zoom || 1));
-      const cornerLeftPx = Math.max(0, frameRect.left - hSlotRect.left - 20);
-      grid?.style.setProperty("--docen-ruler-corner-left", `${Math.round(cornerLeftPx)}px`);
+      leftPx = frameRect.left - hSlotRect.left;
     }
-    const bandWidth = Math.max(
-      hSlot?.clientWidth ?? area?.clientWidth ?? 0,
-      Math.round((pageLeftPx + flow.pageWidthPx) * zoom + 24),
-    );
+    const widthPx = Math.round(flow.pageWidthPx * zoom);
+    ruler.style.position = "absolute";
+    ruler.style.left = `${Math.round(leftPx)}px`;
+    ruler.style.width = `${widthPx}px`;
+
     const geometry = {
       pageWidthPx: flow.pageWidthPx,
       marginLeftPx: flow.contentLeftPx,
       marginRightPx: flow.pageWidthPx - flow.contentLeftPx - flow.contentWidthPx,
       scale: zoom,
-      pageLeftPx,
+      pageLeftPx: 0,
     };
-    const key = `${geometry.pageWidthPx}|${geometry.marginLeftPx}|${geometry.marginRightPx}|${zoom}|${Math.round(pageLeftPx)}|${bandWidth}`;
+    const key = `${geometry.pageWidthPx}|${geometry.marginLeftPx}|${geometry.marginRightPx}|${zoom}|${Math.round(leftPx)}|${widthPx}`;
     if (key === this.#rulerGeometry) return;
     this.#rulerGeometry = key;
-    ruler.style.width = `${bandWidth}px`;
     ruler.setParagraphAttrs(undefined, undefined, geometry);
   }
 
-  /** Position the fixed vertical ruler alongside the page: Word keeps it on
-   *  the left of the page (RTL included), fixed to the viewport height,
-   *  showing the current page's scale and margin boundaries. */
+  /** Position the fixed vertical ruler in the left window gutter: Word anchors
+   *  it at x=0 below the corner tab selector, scaled and bounded to the active
+   *  page height, shifting as the active page changes. */
   #syncVerticalRuler(): void {
     const vr = this.#vRuler;
     const area = this.#stageHost?.closest("docen-document-area") as HTMLElement | null;
@@ -3231,15 +3295,10 @@ class DocenDocument extends AddinHost<Editor> {
       if (grid) grid.dataset.showVRuler = "false";
       return;
     }
-    let page = frames.length - 1;
-    for (let i = 0; i < frames.length; i++) {
-      if (frames[i]!.getBoundingClientRect().bottom > top) {
-        page = i;
-        break;
-      }
-    }
+    const page = this.#getActivePage(frames);
     const section = this.#sectionOfPage[page] ?? 0;
-    const flow = this.#stage?.sectionFlowAt(page) ?? this.#lastRun?.sections[section]?.flow;
+    const flow =
+      this.#stage?.sectionFlowAt(page) ?? this.#lastRun?.sections[section]?.flow ?? this.#flow;
     if (!flow) {
       vr.style.display = "none";
       if (grid) grid.dataset.showVRuler = "false";
@@ -3248,9 +3307,6 @@ class DocenDocument extends AddinHost<Editor> {
     this.#vRulerSection = section;
     const zoom = this.#stage ? this.#stage.zoom / 100 : 1;
     const frameRect = frames[page]!.getBoundingClientRect();
-
-    const cornerLeftPx = Math.max(0, frameRect.left - areaRect.left - 20);
-    grid?.style.setProperty("--docen-ruler-corner-left", `${Math.round(cornerLeftPx)}px`);
 
     vr.style.display = "block";
     vr.unit = this.#ruler?.unit ?? vr.unit;
@@ -3262,6 +3318,18 @@ class DocenDocument extends AddinHost<Editor> {
     vr.hostHeight = height;
     vr.renderTicks();
   }
+
+  readonly #onAreaPointerDown = (e: Event): void => {
+    const target = e.target as HTMLElement | null;
+    const pageEl = target?.closest(".canvas-pages > div") as HTMLElement | null;
+    if (pageEl && pageEl.parentElement) {
+      const idx = Array.prototype.indexOf.call(pageEl.parentElement.children, pageEl);
+      if (idx >= 0 && idx !== this.#clickedPage) {
+        this.#clickedPage = idx;
+        this.#syncRuler();
+      }
+    }
+  };
 
   /** The scroll that moves the fixed vertical ruler's scale (vertical) or the
    *  horizontal ruler's scale (horizontal) — one geometry sync per frame. */
@@ -3362,6 +3430,7 @@ class DocenDocument extends AddinHost<Editor> {
     this.#unobserveLang = undefined;
     const rulerArea = this.#stageHost?.closest("docen-document-area");
     rulerArea?.removeEventListener("scroll", this.#onRulerScroll);
+    rulerArea?.removeEventListener("pointerdown", this.#onAreaPointerDown);
     this.#rulerResizeObserver?.disconnect();
     this.#rulerResizeObserver = undefined;
     if (this.#vRulerFrame) cancelAnimationFrame(this.#vRulerFrame);
