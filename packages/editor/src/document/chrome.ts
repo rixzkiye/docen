@@ -122,6 +122,10 @@ export const documentStyles = css`
     display: grid;
     grid-template-columns: 100%;
     grid-template-rows: 20px 1fr;
+    flex: 1 1 auto;
+    width: 100%;
+    min-width: 0;
+    min-height: 0;
     height: 100%;
     position: relative;
     background: var(--docen-color-canvas, #f3f3f3);
