@@ -154,6 +154,10 @@ export function paintGlyphRun(
       strokeWidth: options.strokeWidth,
       shadow: options.shadow,
       opacity: options.opacity,
+      // Marks glyph outlines for the PDF exporter: the vector export emits
+      // them as paths (or drops them in embedded-font text measurement mode,
+      // where the invisible text layer renders visibly instead).
+      data: { docenGlyph: true },
       hittable: false,
     });
 

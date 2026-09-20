@@ -57,6 +57,8 @@ import { getArtBorderSvgDataUri } from "./art-borders";
 import { collectPageParas } from "./caret-map";
 import { diffFlowItems } from "./item-diff";
 import { computeLineNumbers } from "./line-numbers";
+import { SceneImageCache, serializePageScene } from "./scene-export";
+import type { PdfScenePage } from "../pdf-scene";
 
 const PAGE_GAP = 24;
 
@@ -178,6 +180,15 @@ export interface CanvasStageSection {
 
 /** [default, first, even] slot pick order. */
 const FURNITURE_SLOTS = [0, 1, 2] as const;
+
+/** A page's vector scene export: the page's CSS-px size, the preview PNG, and
+ *  the serialized leafer scene the PDF exporter consumes. */
+export interface ScenePageSnapshot {
+  width: number;
+  height: number;
+  url: string;
+  scene: PdfScenePage;
+}
 
 /** A group's rendered extent in the tree's world space, or null when nothing
  *  painted — the incremental repaint's dirty-region input. `getLayoutBounds`
@@ -1226,11 +1237,76 @@ export class CanvasStage {
     }
   }
 
+  // ── PDF vector scene snapshots (R10-P1) ────────────────────────────────────
+  // The scene is already a vector IR; this pass mirrors printSnapshots (every
+  // page App forced, print background stripped, live view restored) and adds
+  // one serialized scene per page for the PDF content-stream exporter. Kept
+  // apart from the raster path so the print flow is untouched.
+
+  /** Serialize every page's painted leafer scene for the vector PDF exporter,
+   *  alongside the preview PNG each page's canvas already produces. Page
+   *  sizes are the section flow boxes in unzoomed CSS px (the print paper
+   *  size) — never the zoomed canvas size. */
+  async sceneSnapshots(options?: { markup?: boolean }): Promise<ScenePageSnapshot[]> {
+    if (options?.markup === false) this.#suppressBalloons = true;
+    const imageCache = new SceneImageCache();
+    const apps: App[] = [];
+    this.#suppressBackground = true;
+    try {
+      for (const [index, slot] of this.slots.entries()) {
+        this.ensure(slot);
+        if (!slot.app) continue;
+        this.repaint(slot.app, index);
+        slot.app.forceRender();
+        apps.push(slot.app);
+      }
+      // Settle first: async image decodes must land before the scene walk
+      // (an un-decoded Image leaf would be skipped as a placeholder). An
+      // image swap is scheduled on the next animation frame, so a second
+      // settle after one frame catches the real leaves.
+      await this.#settleCanvases(apps);
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+      await this.#settleCanvases(apps);
+      const scenes: PdfScenePage[] = [];
+      for (const [index, slot] of this.slots.entries()) {
+        const flow = this.sectionAt(index).flow;
+        scenes.push(
+          slot.app
+            ? await serializePageScene(slot.app, flow.pageWidthPx, flow.pageHeightPx, imageCache)
+            : { width: flow.pageWidthPx, height: flow.pageHeightPx, nodes: [] },
+        );
+      }
+      return this.slots.map((slot, index) => {
+        const canvas = slot.el.querySelector("canvas");
+        const flow = this.sectionAt(index).flow;
+        let url = "";
+        try {
+          url = canvas?.toDataURL("image/png") ?? "";
+        } catch {
+          url = "";
+        }
+        return {
+          width: flow.pageWidthPx,
+          height: flow.pageHeightPx,
+          url,
+          scene: scenes[index]!,
+        };
+      });
+    } finally {
+      this.#suppressBackground = false;
+      this.#suppressBalloons = false;
+      for (const [index, slot] of this.slots.entries()) {
+        if (!slot.app) continue;
+        this.repaint(slot.app, index);
+        slot.app.forceRender();
+      }
+    }
+  }
+
   /** Shared full-document raster pass: strip the page color for the export
    *  (see repaint's background note), force every slot through a render,
    *  settle the canvases, then restore the live view. */
-  async #rasterizeAll(): Promise<(string | null)[]> {
-    this.#suppressBackground = true;
+  async #rasterizeAll(): Promise<(string | null)[]> {    this.#suppressBackground = true;
     try {
       const apps: App[] = [];
       for (const [index, slot] of this.slots.entries()) {
