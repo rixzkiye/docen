@@ -2208,8 +2208,8 @@ class DocenDocument extends AddinHost<Editor> {
 
     // command = ribbon buttons; change = menu items + auto-save switch. Listen
     // on the shadow root so non-composed Fluent events (menu-item "change")
-    // reach us, not just composed ones (ribbon "command").
     this.shadowRoot!.addEventListener("command", this.#onCommand as EventListener);
+    this.addEventListener("command", this.#onHostCommand as EventListener);
     // Ribbon gallery right-click (Word's gallery context entry) — only the
     // Styles gallery routes it today: Modify the right-clicked style.
     this.shadowRoot!.addEventListener("item-context", this.#onItemContext as EventListener);
@@ -3338,6 +3338,7 @@ class DocenDocument extends AddinHost<Editor> {
     if (this.#vRulerFrame) cancelAnimationFrame(this.#vRulerFrame);
     this.#vRulerFrame = 0;
     this.shadowRoot?.removeEventListener("command", this.#onCommand as EventListener);
+    this.removeEventListener("command", this.#onHostCommand as EventListener);
     this.shadowRoot?.removeEventListener("item-context", this.#onItemContext as EventListener);
     this.shadowRoot?.removeEventListener("item-preview", this.#onItemPreview as EventListener);
     this.shadowRoot?.removeEventListener(
@@ -5117,6 +5118,10 @@ class DocenDocument extends AddinHost<Editor> {
       this.#openTranslate(selected);
       return;
     }
+    if (name === "options") {
+      this.#openOptionsDialog();
+      return;
+    }
     if (name === "theme" || name === "theme-color" || name === "theme-font") {
       this.#applyDocumentTheme(name, value);
       return;
@@ -5319,42 +5324,44 @@ class DocenDocument extends AddinHost<Editor> {
       case "new-from-template":
         this.#openTemplateDialog();
         break;
-      case "options": {
-        // Filename menu → open the Options dialog (UI language + theme +
-        // spell-as-you-type + Markdown input + the document settings).
-        const optionsEl = this.shadowRoot?.querySelector("docen-options-dialog");
-        if (optionsEl) {
-          optionsEl.setAttribute("locale", this.lang || document.documentElement.lang || "zh-CN");
-          optionsEl.setAttribute("theme", this.theme ?? "light");
-          optionsEl.setAttribute("proofing", String(this.#spelling.enabled()));
-          optionsEl.setAttribute("markdown", String(this.#markdown));
-          // The Document section seeds from the settings.xml slice; the tab
-          // stop converts twips → cm (round-trip of convertMillimetersToTwip).
-          const s = this.#documentSettings();
-          (optionsEl as unknown as { document?: unknown }).document = {
-            defaultTabStop:
-              typeof s.defaultTabStop === "number"
-                ? Math.round((s.defaultTabStop / (1440 / 2.54)) * 100) / 100
-                : undefined,
-            updateFields: s.updateFields === true,
-            updateFieldsBeforePrint: this.#updateFieldsBeforePrint,
-            fieldShading: this.#fieldShading,
-            protection: (s.documentProtection as { edit?: string } | undefined)?.edit ?? "none",
-            compatVersion: (s.compatibility as { version?: number } | undefined)?.version ?? 15,
-          };
-          // General/User section — the store is the source of truth (the
-          // `user` attribute only overrides the rendered header).
-          (optionsEl as unknown as { identity?: IdentitySettings }).identity =
-            getSettings().identity;
-          // View section — Word's "Show vertical ruler in Print Layout view".
-          (optionsEl as unknown as { showVerticalRuler?: boolean }).showVerticalRuler =
-            this.getShowVerticalRuler();
-          (optionsEl as unknown as { show?: () => void }).show?.();
-        }
+      case "options":
+        this.#openOptionsDialog();
         break;
-      }
     }
   };
+
+  /** Filename menu / command → open the Options dialog (UI language + theme +
+   *  spell-as-you-type + Markdown input + the document settings). */
+  #openOptionsDialog(): void {
+    const optionsEl = this.shadowRoot?.querySelector("docen-options-dialog");
+    if (optionsEl) {
+      optionsEl.setAttribute("locale", this.lang || document.documentElement.lang || "zh-CN");
+      optionsEl.setAttribute("theme", this.theme ?? "light");
+      optionsEl.setAttribute("proofing", String(this.#spelling.enabled()));
+      optionsEl.setAttribute("markdown", String(this.#markdown));
+      // The Document section seeds from the settings.xml slice; the tab
+      // stop converts twips → cm (round-trip of convertMillimetersToTwip).
+      const s = this.#documentSettings();
+      (optionsEl as unknown as { document?: unknown }).document = {
+        defaultTabStop:
+          typeof s.defaultTabStop === "number"
+            ? Math.round((s.defaultTabStop / (1440 / 2.54)) * 100) / 100
+            : undefined,
+        updateFields: s.updateFields === true,
+        updateFieldsBeforePrint: this.#updateFieldsBeforePrint,
+        fieldShading: this.#fieldShading,
+        protection: (s.documentProtection as { edit?: string } | undefined)?.edit ?? "none",
+        compatVersion: (s.compatibility as { version?: number } | undefined)?.version ?? 15,
+      };
+      // General/User section — the store is the source of truth (the
+      // `user` attribute only overrides the rendered header).
+      (optionsEl as unknown as { identity?: IdentitySettings }).identity = getSettings().identity;
+      // View section — Word's "Show vertical ruler in Print Layout view".
+      (optionsEl as unknown as { showVerticalRuler?: boolean }).showVerticalRuler =
+        this.getShowVerticalRuler();
+      (optionsEl as unknown as { show?: () => void }).show?.();
+    }
+  }
 
   /** Forward this host's `lang` attribute to the internal <docen-workspace>
    *  and notify locale observers. Called on connect and whenever `lang`
@@ -5490,6 +5497,11 @@ class DocenDocument extends AddinHost<Editor> {
         }
       }
     }
+  };
+
+  readonly #onHostCommand = (event: Event): void => {
+    if (this.shadowRoot && event.composedPath().includes(this.shadowRoot)) return;
+    this.#onCommand(event as CustomEvent<{ event?: string; value?: string }>);
   };
 
   readonly #onDocenTranslate = (event: Event): void => {

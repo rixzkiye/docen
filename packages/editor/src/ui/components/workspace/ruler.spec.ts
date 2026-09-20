@@ -485,7 +485,9 @@ describe("DocenRuler (<docen-ruler>) (W5.2)", () => {
 
     ruler.renderTicks();
     const svg = ruler.shadowRoot!.querySelector(".ticks-svg") as SVGSVGElement;
-    const xs = Array.from(svg.querySelectorAll("line")).map((l) => Math.floor(Number(l.getAttribute("x1"))));
+    const xs = Array.from(svg.querySelectorAll("line")).map((l) =>
+      Math.floor(Number(l.getAttribute("x1"))),
+    );
     // 0 (the margin line) sits at 296; one inch in at 392.
     expect(xs).toContain(296);
     expect(xs).toContain(392);

@@ -460,8 +460,8 @@ class DocenOptionsDialog extends FASTElement {
           markdown: this.markdownBox?.checked !== false,
           showVerticalRuler: this.verticalRulerBox?.checked !== false,
           identity: {
-            name: this.userNameInput?.value.trim() ?? "",
-            initials: this.initialsInput?.value.trim() ?? "",
+            name: this.userNameInput?.value?.trim() ?? "",
+            initials: this.initialsInput?.value?.trim() ?? "",
           } satisfies UserIdentity,
           document: {
             defaultTabStop: Number.isFinite(tab) ? tab : undefined,

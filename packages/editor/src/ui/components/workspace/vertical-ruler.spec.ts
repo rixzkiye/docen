@@ -59,7 +59,9 @@ describe.sequential("DocenVerticalRuler (<docen-vertical-ruler>) — Word's fixe
     ruler.originY = -300; // page top far above the pane
     ruler.renderTicks();
     const svg = ruler.shadowRoot!.querySelector(".ticks-svg") as SVGSVGElement;
-    const ys = Array.from(svg.querySelectorAll("line")).map((l) => Math.floor(Number(l.getAttribute("y1"))));
+    const ys = Array.from(svg.querySelectorAll("line")).map((l) =>
+      Math.floor(Number(l.getAttribute("y1"))),
+    );
     expect(ys.length).toBeGreaterThan(20);
     expect(Math.min(...ys)).toBeLessThan(8); // reaches the pane top
     expect(Math.max(...ys)).toBeGreaterThan(590); // reaches the pane bottom

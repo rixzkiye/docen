@@ -24,7 +24,7 @@
  * Exits non-zero when any check fails. Screenshots land in `--shots` (default
  * /tmp/opencode) as r9-ruler-*.png.
  */
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 
 const args = process.argv.slice(2);
@@ -43,7 +43,9 @@ const { chromium } = await import(process.env.PLAYWRIGHT_MODULE || "playwright")
 
 let failures = 0;
 const check = (name, ok, detail) => {
-  console.log(`${ok ? "PASS" : "FAIL"}  ${name}${detail !== undefined ? `  ${JSON.stringify(detail)}` : ""}`);
+  console.log(
+    `${ok ? "PASS" : "FAIL"}  ${name}${detail !== undefined ? `  ${JSON.stringify(detail)}` : ""}`,
+  );
   if (!ok) failures++;
 };
 
@@ -67,7 +69,13 @@ await page.waitForFunction(
 await page.evaluate(() => {
   const d = document.querySelector("docen-document");
   if (!d.getShowRuler()) {
-    d.dispatchEvent(new CustomEvent("command", { bubbles: true, composed: true, detail: { event: "toggle-ruler" } }));
+    d.dispatchEvent(
+      new CustomEvent("command", {
+        bubbles: true,
+        composed: true,
+        detail: { event: "toggle-ruler" },
+      }),
+    );
   }
 });
 await page.waitForTimeout(400);
@@ -135,13 +143,18 @@ const shot = async (name) => {
   });
   for (const row of result) {
     check(`band pinned at scrollTop=${row.scrollTop}`, row.pinned, { top: "area/ruler" });
-    check(`band clear of page content at scrollTop=${row.scrollTop}`, row.misses.length === 0, row.misses);
+    check(
+      `band clear of page content at scrollTop=${row.scrollTop}`,
+      row.misses.length === 0,
+      row.misses,
+    );
     check(`band spans the pane at scrollTop=${row.scrollTop}`, row.span);
   }
   const first = result[0];
   check(
     "band scale is offset to the centered page column",
-    Math.abs(first.zeroXPx - (first.pageLeftPx * first.scale + first.marginLeftPx * first.scale)) < 1,
+    Math.abs(first.zeroXPx - (first.pageLeftPx * first.scale + first.marginLeftPx * first.scale)) <
+      1,
     { zeroXPx: first.zeroXPx, pageLeftPx: first.pageLeftPx },
   );
   await shot("band");
@@ -151,7 +164,10 @@ const shot = async (name) => {
 {
   const matrix = [];
   for (const view of ["print", "web", "draft", "read", "outline"]) {
-    await page.evaluate((v) => document.querySelector("docen-document").setAttribute("view", v), view);
+    await page.evaluate(
+      (v) => document.querySelector("docen-document").setAttribute("view", v),
+      view,
+    );
     await page.waitForTimeout(300);
     const row = await page.evaluate(() => {
       const d = document.querySelector("docen-document");
@@ -168,9 +184,16 @@ const shot = async (name) => {
         view: d.getAttribute("view") ?? "print",
         h: getComputedStyle(h).display,
         v: getComputedStyle(vr).display,
-        fixedTop: vr.style.display === "none" ? null : Math.abs(Number.parseFloat(vr.style.top) - hr.bottom) <= 1,
-        spansPane: vr.style.display === "none" ? null : Math.abs(v.height - (a.bottom - hr.bottom)) <= 1,
-        atPageLeft: vr.style.display === "none" || !fr ? null : Math.abs(v.left + 20 - Math.max(a.left + 20, Math.min(fr.left, a.right))) <= 1,
+        fixedTop:
+          vr.style.display === "none"
+            ? null
+            : Math.abs(Number.parseFloat(vr.style.top) - hr.bottom) <= 1,
+        spansPane:
+          vr.style.display === "none" ? null : Math.abs(v.height - (a.bottom - hr.bottom)) <= 1,
+        atPageLeft:
+          vr.style.display === "none" || !fr
+            ? null
+            : Math.abs(v.left + 20 - Math.max(a.left + 20, Math.min(fr.left, a.right))) <= 1,
         ticks: vr.shadowRoot.querySelectorAll("line").length,
         handles: vr.shadowRoot.querySelectorAll(".margin-handle").length,
       };
@@ -179,20 +202,44 @@ const shot = async (name) => {
   }
   await page.evaluate(() => document.querySelector("docen-document").setAttribute("view", "print"));
   await page.waitForTimeout(300);
-  check("horizontal ruler visible in print/web/draft", matrix.slice(0, 3).every((r) => r.h !== "none"), matrix.map((r) => [r.view, r.h]));
-  check("horizontal ruler hidden in read/outline", matrix.slice(3).every((r) => r.h === "none"));
-  check("vertical ruler Print-Layout-only", matrix[0].v !== "none" && matrix.slice(1).every((r) => r.v === "none"));
+  check(
+    "horizontal ruler visible in print/web/draft",
+    matrix.slice(0, 3).every((r) => r.h !== "none"),
+    matrix.map((r) => [r.view, r.h]),
+  );
+  check(
+    "horizontal ruler hidden in read/outline",
+    matrix.slice(3).every((r) => r.h === "none"),
+  );
+  check(
+    "vertical ruler Print-Layout-only",
+    matrix[0].v !== "none" && matrix.slice(1).every((r) => r.v === "none"),
+  );
   check("vertical ruler pinned under the horizontal band", matrix[0].fixedTop === true);
   check("vertical ruler spans the pane height", matrix[0].spansPane === true);
   check("vertical ruler sits at the page's left edge", matrix[0].atPageLeft === true);
-  check("vertical ruler renders the tick scale and two margin handles", matrix[0].ticks > 20 && matrix[0].handles === 2, { ticks: matrix[0].ticks });
+  check(
+    "vertical ruler renders the tick scale and two margin handles",
+    matrix[0].ticks > 20 && matrix[0].handles === 2,
+    { ticks: matrix[0].ticks },
+  );
 
   await page.evaluate(() => document.querySelector("docen-document").setShowVerticalRuler(false));
   await page.waitForTimeout(200);
-  const off = await page.evaluate(() => getComputedStyle(document.querySelector("docen-document").shadowRoot.querySelector("docen-vertical-ruler")).display);
+  const off = await page.evaluate(
+    () =>
+      getComputedStyle(
+        document.querySelector("docen-document").shadowRoot.querySelector("docen-vertical-ruler"),
+      ).display,
+  );
   await page.evaluate(() => document.querySelector("docen-document").setShowVerticalRuler(true));
   await page.waitForTimeout(200);
-  const on = await page.evaluate(() => getComputedStyle(document.querySelector("docen-document").shadowRoot.querySelector("docen-vertical-ruler")).display);
+  const on = await page.evaluate(
+    () =>
+      getComputedStyle(
+        document.querySelector("docen-document").shadowRoot.querySelector("docen-vertical-ruler"),
+      ).display,
+  );
   check("vertical ruler option gates visibility", off === "none" && on !== "none", { off, on });
   await shot("vertical-ruler");
 }
@@ -201,7 +248,9 @@ const shot = async (name) => {
 {
   const result = await page.evaluate(async () => {
     const d = document.querySelector("docen-document");
-    d.dispatchEvent(new CustomEvent("command", { bubbles: true, composed: true, detail: { event: "options" } }));
+    d.dispatchEvent(
+      new CustomEvent("command", { bubbles: true, composed: true, detail: { event: "options" } }),
+    );
     await new Promise((r) => setTimeout(r, 350));
     const od = d.shadowRoot.querySelector("docen-options-dialog");
     const label = od.verticalRulerLabelEl?.textContent ?? null;
@@ -211,14 +260,25 @@ const shot = async (name) => {
     od.onOk();
     await new Promise((r) => setTimeout(r, 250));
     const vr = d.shadowRoot.querySelector("docen-vertical-ruler");
-    const afterOff = { attr: d.getAttribute("show-vertical-ruler"), display: getComputedStyle(vr).display };
+    const afterOff = {
+      attr: d.getAttribute("show-vertical-ruler"),
+      display: getComputedStyle(vr).display,
+    };
     d.setShowVerticalRuler(true);
     await new Promise((r) => setTimeout(r, 200));
     return { label, checked, afterOff, restored: d.getShowVerticalRuler() };
   });
-  check("Options → View shows the Word label", typeof result.label === "string" && /vertical ruler/i.test(result.label), { label: result.label });
+  check(
+    "Options → View shows the Word label",
+    typeof result.label === "string" && /vertical ruler/i.test(result.label),
+    { label: result.label },
+  );
   check("Options → View seeds the current option", result.checked === true);
-  check("Options OK applies the vertical-ruler option", result.afterOff.attr === "false" && result.afterOff.display === "none", result.afterOff);
+  check(
+    "Options OK applies the vertical-ruler option",
+    result.afterOff.attr === "false" && result.afterOff.display === "none",
+    result.afterOff,
+  );
   check("vertical-ruler option restores on", result.restored === true);
 }
 
@@ -242,10 +302,16 @@ const shot = async (name) => {
   const baseline = await page.evaluate(() => {
     const d = document.querySelector("docen-document");
     const vr = d.shadowRoot.querySelector("docen-vertical-ruler");
-    return { top: Math.round(vr.contentTopPx * 15), height: Math.round(vr.contentHeightPx * 15), page: Math.round(vr.pageHeightPx * 15) };
+    return {
+      top: Math.round(vr.contentTopPx * 15),
+      height: Math.round(vr.contentHeightPx * 15),
+      page: Math.round(vr.pageHeightPx * 15),
+    };
   });
   const dragHandle = async (side, dy) => {
-    const box = await page.locator(`docen-document docen-vertical-ruler .margin-handle.${side}`).boundingBox();
+    const box = await page
+      .locator(`docen-document docen-vertical-ruler .margin-handle.${side}`)
+      .boundingBox();
     if (!box) return null;
     await page.mouse.move(box.x + 5, box.y + box.height / 2);
     await page.mouse.down();
@@ -268,9 +334,15 @@ const shot = async (name) => {
   await page.waitForTimeout(200);
   const afterTop = await margins();
   // At 100% zoom 48px = 720 twips.
-  check("top margin drags live", liveTop === baseline.top + 720, { liveTop, expected: baseline.top + 720 });
+  check("top margin drags live", liveTop === baseline.top + 720, {
+    liveTop,
+    expected: baseline.top + 720,
+  });
   check("top margin commits twips on release", afterTop.firstTop === baseline.top + 720, afterTop);
-  check("the other sides survive the drag", afterTop.firstBottom === before.firstBottom && afterTop.bodyTop === before.bodyTop);
+  check(
+    "the other sides survive the drag",
+    afterTop.firstBottom === before.firstBottom && afterTop.bodyTop === before.bodyTop,
+  );
   // Drag back to the implicit default.
   const back = await dragHandle("top", -48);
   await back?.release();
@@ -278,13 +350,16 @@ const shot = async (name) => {
 
   // Bottom handle: the pane must show the content-bottom boundary.
   await page.evaluate(() => {
-    const area = document.querySelector("docen-document").shadowRoot.querySelector("docen-document-area");
+    const area = document
+      .querySelector("docen-document")
+      .shadowRoot.querySelector("docen-document-area");
     area.scrollTop = 700;
   });
   await page.waitForTimeout(350);
-  const bottomBefore = await margins();
   const bottomBase = await page.evaluate(() => {
-    const vr = document.querySelector("docen-document").shadowRoot.querySelector("docen-vertical-ruler");
+    const vr = document
+      .querySelector("docen-document")
+      .shadowRoot.querySelector("docen-vertical-ruler");
     return Math.round((vr.pageHeightPx - vr.contentTopPx - vr.contentHeightPx) * 15);
   });
   const bottom = await dragHandle("bottom", -24);
@@ -292,8 +367,15 @@ const shot = async (name) => {
   await bottom?.release();
   await page.waitForTimeout(250);
   const bottomAfter = await margins();
-  check("bottom margin drags live (up grows the margin)", liveBottom === bottomBase + 360, { liveBottom, expected: bottomBase + 360 });
-  check("bottom margin commits twips on release", bottomAfter.firstBottom === bottomBase + 360, bottomAfter);
+  check("bottom margin drags live (up grows the margin)", liveBottom === bottomBase + 360, {
+    liveBottom,
+    expected: bottomBase + 360,
+  });
+  check(
+    "bottom margin commits twips on release",
+    bottomAfter.firstBottom === bottomBase + 360,
+    bottomAfter,
+  );
   // Drag back.
   const bottomBack = await dragHandle("bottom", 24);
   await bottomBack?.release();
@@ -301,13 +383,17 @@ const shot = async (name) => {
 
   // Multi-section: at the last page the body-level sectPr is the target.
   await page.evaluate(() => {
-    const area = document.querySelector("docen-document").shadowRoot.querySelector("docen-document-area");
+    const area = document
+      .querySelector("docen-document")
+      .shadowRoot.querySelector("docen-document-area");
     area.scrollTop = area.scrollHeight;
   });
   await page.waitForTimeout(400);
   const bodyBefore = await margins();
   const bodyBase = await page.evaluate(() => {
-    const vr = document.querySelector("docen-document").shadowRoot.querySelector("docen-vertical-ruler");
+    const vr = document
+      .querySelector("docen-document")
+      .shadowRoot.querySelector("docen-vertical-ruler");
     return Math.round((vr.pageHeightPx - vr.contentTopPx - vr.contentHeightPx) * 15);
   });
   const bodyDrag = await dragHandle("bottom", -20);
@@ -315,12 +401,16 @@ const shot = async (name) => {
   const bodyAfter = await margins();
   check(
     "a multi-section drag targets the pane-top section (body sectPr)",
-    bodyDrag != null && bodyAfter.bodyBottom === bodyBase + 300 && bodyAfter.firstBottom === bodyBefore.firstBottom,
+    bodyDrag != null &&
+      bodyAfter.bodyBottom === bodyBase + 300 &&
+      bodyAfter.firstBottom === bodyBefore.firstBottom,
     { after: bodyAfter, base: bodyBase },
   );
   // Restore for later checks.
   await page.evaluate(() => {
-    const area = document.querySelector("docen-document").shadowRoot.querySelector("docen-document-area");
+    const area = document
+      .querySelector("docen-document")
+      .shadowRoot.querySelector("docen-document-area");
     area.scrollTop = 0;
   });
   await page.waitForTimeout(300);
@@ -330,10 +420,15 @@ const shot = async (name) => {
 // ── 5. R8 behavior re-verification ─────────────────────────────────────────
 {
   // First-line indent marker drag.
-  await page.evaluate(() => document.querySelector("docen-document").editor.commands.setTextSelection(2));
+  await page.evaluate(() =>
+    document.querySelector("docen-document").editor.commands.setTextSelection(2),
+  );
   await page.waitForTimeout(200);
   const marker = await page.evaluate(() => {
-    const m = document.querySelector("docen-document").shadowRoot.querySelector("docen-ruler").shadowRoot.querySelector(".first-line-marker");
+    const m = document
+      .querySelector("docen-document")
+      .shadowRoot.querySelector("docen-ruler")
+      .shadowRoot.querySelector(".first-line-marker");
     const r = m.getBoundingClientRect();
     return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
   });
@@ -343,11 +438,18 @@ const shot = async (name) => {
   await page.waitForTimeout(150);
   const dragLive = await page.evaluate(() => {
     const d = document.querySelector("docen-document");
-    return { ruler: d.shadowRoot.querySelector("docen-ruler").firstLineTwips, para: d.editor.state.doc.child(0).attrs.indent?.firstLine ?? null };
+    return {
+      ruler: d.shadowRoot.querySelector("docen-ruler").firstLineTwips,
+      para: d.editor.state.doc.child(0).attrs.indent?.firstLine ?? null,
+    };
   });
   await page.mouse.up();
   await page.waitForTimeout(200);
-  check("indent marker drag updates the paragraph live", dragLive.ruler === 360 && dragLive.para === 360, dragLive);
+  check(
+    "indent marker drag updates the paragraph live",
+    dragLive.ruler === 360 && dragLive.para === 360,
+    dragLive,
+  );
 
   // Tab stop: click adds a stop at the clicked offset (band-relative click).
   const tabAdd = await page.evaluate(() => {
@@ -355,10 +457,25 @@ const shot = async (name) => {
     const ruler = d.shadowRoot.querySelector("docen-ruler");
     const track = ruler.shadowRoot.querySelector(".ruler-track");
     const r = track.getBoundingClientRect();
-    track.dispatchEvent(new MouseEvent("click", { bubbles: true, composed: true, clientX: r.left + ruler.zeroXPx + 120, clientY: r.top + 10 }));
-    return { stops: ruler.tabStops.length, pos: ruler.tabStops[0]?.position ?? null, paraStops: d.editor.state.doc.child(0).attrs.tabStops?.length ?? 0 };
+    track.dispatchEvent(
+      new MouseEvent("click", {
+        bubbles: true,
+        composed: true,
+        clientX: r.left + ruler.zeroXPx + 120,
+        clientY: r.top + 10,
+      }),
+    );
+    return {
+      stops: ruler.tabStops.length,
+      pos: ruler.tabStops[0]?.position ?? null,
+      paraStops: d.editor.state.doc.child(0).attrs.tabStops?.length ?? 0,
+    };
   });
-  check("click adds a tab stop to the ruler and paragraph", tabAdd.stops === 1 && tabAdd.pos === 1800 && tabAdd.paraStops === 1, tabAdd);
+  check(
+    "click adds a tab stop to the ruler and paragraph",
+    tabAdd.stops === 1 && tabAdd.pos === 1800 && tabAdd.paraStops === 1,
+    tabAdd,
+  );
 
   // The stop glyph renders behind FAST's rAF batch — wait for the row.
   await page.waitForFunction(
@@ -373,7 +490,10 @@ const shot = async (name) => {
 
   // Drag the stop 24px right.
   const stop = await page.evaluate(() => {
-    const item = document.querySelector("docen-document").shadowRoot.querySelector("docen-ruler").shadowRoot.querySelector(".tab-stop-item");
+    const item = document
+      .querySelector("docen-document")
+      .shadowRoot.querySelector("docen-ruler")
+      .shadowRoot.querySelector(".tab-stop-item");
     const r = item.getBoundingClientRect();
     return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
   });
@@ -394,11 +514,20 @@ const shot = async (name) => {
     const ruler = d.shadowRoot.querySelector("docen-ruler");
     const track = ruler.shadowRoot.querySelector(".ruler-track");
     const r = track.getBoundingClientRect();
-    track.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, composed: true, clientX: r.left + ruler.zeroXPx + 300, clientY: r.top + 10 }));
+    track.dispatchEvent(
+      new MouseEvent("dblclick", {
+        bubbles: true,
+        composed: true,
+        clientX: r.left + ruler.zeroXPx + 300,
+        clientY: r.top + 10,
+      }),
+    );
   });
   await page.waitForTimeout(350);
   const tabsOpen = await page.evaluate(() => {
-    const tabs = document.querySelector("docen-document").shadowRoot.querySelector("docen-tabs-dialog");
+    const tabs = document
+      .querySelector("docen-document")
+      .shadowRoot.querySelector("docen-tabs-dialog");
     return tabs?.shadowRoot?.querySelector("docen-dialog")?.hasAttribute("open") ?? false;
   });
   check("double-clicking the ruler opens the Tabs dialog", tabsOpen === true);
@@ -415,7 +544,12 @@ const shot = async (name) => {
     ed.view.dispatch(tr);
     await new Promise((r) => setTimeout(r, 300));
     const ruler = d.shadowRoot.querySelector("docen-ruler");
-    return { dir: ruler.getAttribute("dir"), zero: ruler.zeroXPx, unitLabel: ruler.unitLabelX, width: ruler.pageWidthPx };
+    return {
+      dir: ruler.getAttribute("dir"),
+      zero: ruler.zeroXPx,
+      unitLabel: ruler.unitLabelX,
+      width: ruler.pageWidthPx,
+    };
   });
   check("ruler mirrors for a bidi paragraph", rtl.dir === "rtl" && rtl.unitLabel > rtl.zero, rtl);
   await shot("rtl");
@@ -434,5 +568,9 @@ const shot = async (name) => {
 check("no page errors during the run", pageErrors.length === 0, pageErrors.slice(0, 3));
 
 await browser.close();
-console.log(failures === 0 ? `\nALL CHECKS PASSED (screenshots in ${SHOTS})` : `\n${failures} CHECK(S) FAILED`);
+console.log(
+  failures === 0
+    ? `\nALL CHECKS PASSED (screenshots in ${SHOTS})`
+    : `\n${failures} CHECK(S) FAILED`,
+);
 process.exit(failures === 0 ? 0 : 1);
