@@ -69,7 +69,7 @@ export function readGlyphAdvances(fontBytes: Uint8Array): number[] {
   const lastAdvanceOffset = hmtx.offset + (numberOfHMetrics - 1) * 4;
   if (lastAdvanceOffset + 2 > fontBytes.byteLength) return [];
   const scale = 1000 / unitsPerEm;
-  const advances: number[] = new Array(numGlyphs);
+  const advances: number[] = Array.from({ length: numGlyphs });
   for (let gid = 0; gid < numGlyphs; gid++) {
     const offset = gid < numberOfHMetrics ? hmtx.offset + gid * 4 : lastAdvanceOffset;
     const advance = offset + 2 <= fontBytes.byteLength ? rawView.getUint16(offset) : 0;

@@ -529,9 +529,7 @@ export async function pagesToPdf(
     if (!shot.scene || !scenePlans[index] || textMode === "embedded") return spans;
     const placements = sceneTextPlacements(shot.scene);
     if (placements.length === 0) return spans;
-    return spans.filter(
-      (span) => !consumeVisiblePlacement(placements, span, shot.scene!.height),
-    );
+    return spans.filter((span) => !consumeVisiblePlacement(placements, span, shot.scene!.height));
   });
 
   // Image XObjects dedupe globally by content key; an SMask is allocated only

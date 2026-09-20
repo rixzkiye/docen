@@ -3,6 +3,7 @@ import { execFileSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { inflateSync } from "node:zlib";
 
 import type { FlowPage, LaidOutParagraph, LaidOutTable } from "@docen/layout";
 import { readCmap, subsetFontWithPlan } from "@docen/shaping/subsetter";
@@ -19,6 +20,7 @@ import {
   type PdfPageShot,
   type PdfTextSpan,
 } from "./export-pdf";
+import type { PdfScenePage } from "./pdf-scene";
 
 // A minimal valid 1x1 white JPEG image byte sequence
 const DUMMY_JPEG = new Uint8Array([
@@ -573,5 +575,111 @@ describe("buildEmbeddedPdfFonts", () => {
     expect(whole).toHaveLength(1);
     expect(whole[0]!.fontData).toBe(fontData); // untouched full font
     expect(whole[0]!.fontName).toBe("NoSubsetFont");
+  });
+});
+
+describe("P1 vector core acceptance (A1-A3)", () => {
+  const sampleScene: PdfScenePage = {
+    width: 612,
+    height: 792,
+    nodes: [
+      {
+        type: "shape",
+        matrix: { a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 },
+        path: "M 50 50 L 250 50 L 250 250 Z",
+        fill: "#0066cc",
+        stroke: "#003366",
+        strokeWidth: 2,
+      },
+      {
+        type: "shape",
+        matrix: { a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 },
+        path: "M 100 100 C 120 180 180 180 200 100",
+        stroke: "#cc0000",
+        strokeWidth: 1.5,
+      },
+    ],
+  };
+
+  const sampleSpans: PdfTextSpan[] = [
+    {
+      text: "Vector Core Fidelity Test",
+      x: 50,
+      y: 500,
+      width: 200,
+      height: 18,
+      fontSize: 14,
+    },
+    {
+      text: "Layout text extraction with pdftotext 100%",
+      x: 50,
+      y: 470,
+      width: 280,
+      height: 14,
+      fontSize: 11,
+    },
+  ];
+
+  it("A1: page with scene has no full-page Image XObject and emits path operators", async () => {
+    const shot: PdfPageShot = {
+      width: 612,
+      height: 792,
+      scene: sampleScene,
+      textSpans: sampleSpans,
+    };
+    const blob = await pagesToPdf([shot]);
+    const pdfBuf = Buffer.from(await blob.arrayBuffer());
+    const pdfStr = pdfBuf.toString("latin1");
+
+    // Must not contain full-page Image XObject
+    const imageCount = (pdfStr.match(/\/Subtype\s*\/Image\b/g) || []).length;
+    expect(imageCount).toBe(0);
+
+    // Decompress stream and check path operators
+    const streamMatches = [
+      ...pdfStr.matchAll(/<<([^>]*)>>\s*stream\r?\n([\s\S]*?)\r?\nendstream/g),
+    ];
+    let decompressed = "";
+    for (const m of streamMatches) {
+      if (m[1].includes("/FlateDecode")) {
+        decompressed += inflateSync(Buffer.from(m[2], "latin1")).toString("latin1");
+      }
+    }
+
+    expect(decompressed).toMatch(/\bm\b/); // moveto
+    expect(decompressed).toMatch(/\bl\b/); // lineto
+    expect(decompressed).toMatch(/\bc\b/); // curveto
+    expect(decompressed).toMatch(/\b(f\*?|B\*?)\b/); // fill or fill-and-stroke
+    expect(decompressed).toMatch(/\b(S|B\*?)\b/); // stroke
+  });
+
+  it("A2 & A3: pdftoppm renders without error and pdftotext extracts layout text", async () => {
+    const shot: PdfPageShot = {
+      width: 612,
+      height: 792,
+      scene: sampleScene,
+      textSpans: sampleSpans,
+    };
+    const blob = await pagesToPdf([shot]);
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pdf-test-"));
+    const tmpPdf = path.join(tmpDir, "test.pdf");
+    const ppmPrefix = path.join(tmpDir, "page");
+
+    try {
+      fs.writeFileSync(tmpPdf, Buffer.from(await blob.arrayBuffer()));
+
+      // A2: pdftoppm renders page PNG
+      execFileSync("pdftoppm", ["-png", "-r", "150", tmpPdf, ppmPrefix]);
+      const renderedPng = `${ppmPrefix}-1.png`;
+      expect(fs.existsSync(renderedPng)).toBe(true);
+      expect(fs.statSync(renderedPng).size).toBeGreaterThan(1000);
+
+      // A3: pdftotext extracts text
+      const extracted = execFileSync("pdftotext", [tmpPdf, "-"], { encoding: "utf-8" });
+      expect(extracted).toContain("Vector Core Fidelity Test");
+      expect(extracted).toContain("Layout text extraction with pdftotext 100%");
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
   });
 });

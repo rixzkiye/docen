@@ -45,19 +45,6 @@ interface LeaferTextRow {
   words?: { data?: { char?: string }[] }[];
 }
 
-function rowText(row: LeaferTextRow): string {
-  if (typeof row.text === "string" && row.text.length > 0) return row.text;
-  let text = "";
-  if (row.data) for (const char of row.data) if (typeof char.char === "string") text += char.char;
-  if (text) return text;
-  if (!row.words) return "";
-  for (const word of row.words) {
-    if (!word.data) continue;
-    for (const char of word.data) if (typeof char.char === "string") text += char.char;
-  }
-  return text;
-}
-
 /** Rebuild one element's row strings. Plain rows carry their own `text`; in
  *  char mode Leafer strips spaces from `data`, so the element's source string
  *  is walked in parallel to re-insert them (spaces are gaps in char mode, and
@@ -124,12 +111,14 @@ function decodeBase64(base64: string): Uint8Array | undefined {
 }
 
 /** The data-URL mime + payload, or undefined for a non-data URL. */
-function parseDataUrl(url: string): { mime: string; base64?: string; payload?: string } | undefined {
+function parseDataUrl(
+  url: string,
+): { mime: string; base64?: string; payload?: string } | undefined {
   const match = /^data:([^,]*),/.exec(url);
   if (!match) return undefined;
   const header = match[1] ?? "";
   const payload = url.slice(match[0].length);
-  const isBase64 = /;base64$/.test(header);
+  const isBase64 = header.endsWith(";base64");
   return {
     mime: header.replace(/;base64$/, ""),
     ...(isBase64 ? { base64: payload } : { payload }),
@@ -290,8 +279,7 @@ export async function serializePageScene(
   const normalize = invertMatrix(tree.worldTransform as PdfMatrix);
   const matrixOf = (el: IUI): PdfMatrix =>
     composeMatrix(normalize, el.worldTransform as unknown as PdfMatrix);
-  const childrenOf = (el: IUI): IUI[] =>
-    (el as unknown as { children?: IUI[] }).children ?? [];
+  const childrenOf = (el: IUI): IUI[] => (el as unknown as { children?: IUI[] }).children ?? [];
 
   const walk = async (parent: IUI, sink: PdfSceneNode[]): Promise<void> => {
     for (const el of childrenOf(parent)) {
@@ -392,7 +380,8 @@ export async function serializePageScene(
         const stroke = paintColor(textEl.stroke);
         const strokeWidth = numberOr(textEl.strokeWidth);
         const weight = textEl.fontWeight;
-        const bold = typeof weight === "number" ? weight >= 600 : weight === "bold" || weight === "600";
+        const bold =
+          typeof weight === "number" ? weight >= 600 : weight === "bold" || weight === "600";
         const letterSpacing = numberOr(textEl.letterSpacing);
         const text: PdfSceneTextNode = {
           type: "text",
@@ -420,7 +409,11 @@ export async function serializePageScene(
           image?: { width?: number; height?: number };
         };
         if (!imageEl.url || imageEl.ready === false) continue;
-        const image = await imageCache.get(imageEl.url, imageEl.image?.width, imageEl.image?.height);
+        const image = await imageCache.get(
+          imageEl.url,
+          imageEl.image?.width,
+          imageEl.image?.height,
+        );
         if (!image) continue;
         sink.push({
           type: "image",

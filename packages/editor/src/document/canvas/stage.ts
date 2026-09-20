@@ -53,12 +53,12 @@ import {
   rulerTicks,
   type RulerUnit,
 } from "../../ui/components/workspace/ruler-ticks";
+import type { PdfScenePage } from "../pdf-scene";
 import { getArtBorderSvgDataUri } from "./art-borders";
 import { collectPageParas } from "./caret-map";
 import { diffFlowItems } from "./item-diff";
 import { computeLineNumbers } from "./line-numbers";
 import { SceneImageCache, serializePageScene } from "./scene-export";
-import type { PdfScenePage } from "../pdf-scene";
 
 const PAGE_GAP = 24;
 
@@ -1306,7 +1306,8 @@ export class CanvasStage {
   /** Shared full-document raster pass: strip the page color for the export
    *  (see repaint's background note), force every slot through a render,
    *  settle the canvases, then restore the live view. */
-  async #rasterizeAll(): Promise<(string | null)[]> {    this.#suppressBackground = true;
+  async #rasterizeAll(): Promise<(string | null)[]> {
+    this.#suppressBackground = true;
     try {
       const apps: App[] = [];
       for (const [index, slot] of this.slots.entries()) {

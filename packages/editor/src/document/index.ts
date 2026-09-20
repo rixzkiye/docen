@@ -131,6 +131,7 @@ import {
   readDocumentDefaults,
   writeDocumentDefaults,
 } from "./defaults";
+import type { PdfPageShot } from "./export-pdf";
 import type { NewStyleDefinition } from "./extensions/commands";
 import type { ModifyStylePatch, ParagraphDialogPatch } from "./extensions/commands";
 import { stampStyleRunPatches } from "./extensions/commands";
@@ -140,12 +141,11 @@ import { ChromeDomain } from "./host/chrome";
 import { InsertDomain } from "./host/insert";
 import { IODomain } from "./host/io";
 import { RenderDomain } from "./host/render";
-import { StatusDomain } from "./host/status";
 // Side-effect import: registers the ribbon/header translation tables.
 import "./i18n";
+import { StatusDomain } from "./host/status";
 import { pageInsets, StoriesDomain } from "./host/stories";
 import { StylesDomain } from "./host/styles";
-import type { PdfPageShot } from "./export-pdf";
 import { mergeSectionProperties } from "./page-setup";
 import { compressPictureSrc, pickTransparentColor, type CropRect } from "./pixels";
 import {

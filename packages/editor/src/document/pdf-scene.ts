@@ -217,7 +217,10 @@ export function parseColor(input: string | undefined): PdfRgba | undefined {
   }
   const fn = /^rgba?\(([^)]+)\)$/.exec(value);
   if (fn) {
-    const parts = fn[1]!.split(/[,\s/]+/).filter(Boolean).map(Number);
+    const parts = fn[1]!
+      .split(/[,\s/]+/)
+      .filter(Boolean)
+      .map(Number);
     if (parts.length >= 3 && parts.slice(0, 3).every((n) => Number.isFinite(n))) {
       return {
         r: parts[0]!,
@@ -313,7 +316,14 @@ export function svgPathToPdf(path: string): string {
     x = nx;
     y = ny;
   };
-  const curveTo = (c1x: number, c1y: number, c2x: number, c2y: number, nx: number, ny: number): void => {
+  const curveTo = (
+    c1x: number,
+    c1y: number,
+    c2x: number,
+    c2y: number,
+    nx: number,
+    ny: number,
+  ): void => {
     out.push(
       `${pdfNum(c1x, 3)} ${pdfNum(c1y, 3)} ${pdfNum(c2x, 3)} ${pdfNum(c2y, 3)} ` +
         `${pdfNum(nx, 3)} ${pdfNum(ny, 3)} c`,
@@ -347,8 +357,7 @@ export function svgPathToPdf(path: string): string {
         break;
       case "L":
       case "l":
-        while (hasNum())
-          lineTo(num() + (cmd === "l" ? x : 0), num() + (cmd === "l" ? y : 0));
+        while (hasNum()) lineTo(num() + (cmd === "l" ? x : 0), num() + (cmd === "l" ? y : 0));
         break;
       case "H":
       case "h":
@@ -686,7 +695,15 @@ export function planSceneContent(
         out.push("q");
         const state = stateFor(node, fillAlpha, strokeAlpha);
         out.push(`${state} gs`);
-        if (node.matrix && (node.matrix.a !== 1 || node.matrix.b !== 0 || node.matrix.c !== 0 || node.matrix.d !== 1 || node.matrix.e !== 0 || node.matrix.f !== 0)) {
+        if (
+          node.matrix &&
+          (node.matrix.a !== 1 ||
+            node.matrix.b !== 0 ||
+            node.matrix.c !== 0 ||
+            node.matrix.d !== 1 ||
+            node.matrix.e !== 0 ||
+            node.matrix.f !== 0)
+        ) {
           out.push(`${matrixOperands(node.matrix)} cm`);
         }
         const ops = svgPathToPdf(node.path);
@@ -696,7 +713,8 @@ export function planSceneContent(
           if (stroke && node.strokeWidth) {
             out.push(`${colorOperands(stroke)} RG`);
             out.push(`${pdfNum(node.strokeWidth, 3)} w`);
-            if (node.join) out.push(`${node.join === "round" ? 1 : node.join === "bevel" ? 2 : 0} j`);
+            if (node.join)
+              out.push(`${node.join === "round" ? 1 : node.join === "bevel" ? 2 : 0} j`);
             if (node.cap) out.push(`${node.cap === "round" ? 1 : node.cap === "square" ? 2 : 0} J`);
             if (node.dash && node.dash.length > 0) {
               out.push(`[ ${node.dash.map((d) => pdfNum(d, 3)).join(" ")} ] 0 d`);
@@ -764,10 +782,5 @@ export function planSceneContent(
  *  text layer carries the document's structure. */
 export function wrapSceneContent(content: string, pageHeightPx: number): string {
   const height = pdfNum(pageHeightPx * 0.75, 2);
-  return (
-    `q\n/Artifact BMC\n` +
-    `0.75 0 0 -0.75 0 ${height} cm\n` +
-    content +
-    `\nEMC\nQ\n`
-  );
+  return `q\n/Artifact BMC\n` + `0.75 0 0 -0.75 0 ${height} cm\n` + content + `\nEMC\nQ\n`;
 }
