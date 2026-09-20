@@ -130,6 +130,8 @@ export const documentStyles = css`
     position: relative;
     background: var(--docen-color-canvas, #f3f3f3);
     overflow: hidden;
+    box-sizing: border-box;
+    padding-top: 6px;
   }
   .docen-ruler-corner {
     grid-column: 1;
@@ -199,6 +201,7 @@ export const documentStyles = css`
   }
   .docen-workspace-grid[data-show-h-ruler="false"] {
     grid-template-rows: 0 1fr;
+    padding-top: 0;
   }
   .docen-workspace-grid[data-show-h-ruler="false"] .docen-ruler-corner,
   .docen-workspace-grid[data-show-h-ruler="false"] .docen-ruler-h-slot {
