@@ -17,20 +17,13 @@ export const VERTICAL_RULER_THICKNESS = 20;
 const styles = css`
   :host {
     display: block;
-    position: fixed;
-    /* Keep in sync with VERTICAL_RULER_THICKNESS (the css tag rejects a
-       numeric interpolation). */
+    position: relative;
     width: 20px;
+    height: 100%;
     box-sizing: border-box;
     background: var(--docen-ruler-bg, #f3f3f3);
-    /* The horizontal ruler's bottom border is the pane seam — no top border
-       (the corner stays flush when both rulers are shown). */
-    border: 1px solid var(--docen-ruler-border-strong, #c8c8c8);
-    border-top: none;
-    /* The page column slides under the fixed strip — nothing may paint past
-       its edges. */
+    border-right: 1px solid var(--docen-ruler-border-strong, #c8c8c8);
     overflow: hidden;
-    z-index: 6;
     user-select: none;
     font-family: var(--docen-font-family, "Segoe UI", -apple-system, sans-serif);
     font-size: 10px;

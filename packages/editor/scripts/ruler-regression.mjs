@@ -127,7 +127,7 @@ const shot = async (name) => {
       }
       rows.push({
         scrollTop: st,
-        pinned: Math.abs(rulerRect.top - areaRect.top) <= 1,
+        pinned: Math.abs(rulerRect.bottom - areaRect.top) <= 1,
         bandHeight: Math.round(rulerRect.height),
         span: rulerRect.width >= areaRect.width - 1,
         pageLeftPx: ruler.pageLeftPx,
@@ -160,7 +160,7 @@ const shot = async (name) => {
   await shot("band");
 }
 
-// ── 3. Vertical ruler: fixed, Print-only, option-gated, page-anchored ───────
+// ── 3. Vertical ruler: fixed, Print-only, option-gated, gutter-anchored ─────
 {
   const matrix = [];
   for (const view of ["print", "web", "draft", "read", "outline"]) {
@@ -184,18 +184,12 @@ const shot = async (name) => {
         view: d.getAttribute("view") ?? "print",
         h: getComputedStyle(h).display,
         v: getComputedStyle(vr).display,
-        fixedTop:
-          vr.style.display === "none"
-            ? null
-            : Math.abs(Number.parseFloat(vr.style.top) - hr.bottom) <= 1,
-        spansPane:
-          vr.style.display === "none" ? null : Math.abs(v.height - (a.bottom - hr.bottom)) <= 1,
-        atPageLeft:
-          vr.style.display === "none" || !fr
-            ? null
-            : Math.abs(v.left + 20 - Math.max(a.left + 20, Math.min(fr.left, a.right))) <= 1,
+        fixedTop: vr.style.display === "none" ? null : Math.abs(v.top - a.top) <= 1,
+        spansPane: vr.style.display === "none" ? null : Math.abs(v.height - a.height) <= 1,
+        inGutter: vr.style.display === "none" ? null : Math.abs(v.right - a.left) <= 1,
         ticks: vr.shadowRoot.querySelectorAll("line").length,
         handles: vr.shadowRoot.querySelectorAll(".margin-handle").length,
+        hasTopGap: fr ? fr.top >= hr.bottom + 16 : null,
       };
     });
     matrix.push(row);
@@ -215,9 +209,10 @@ const shot = async (name) => {
     "vertical ruler Print-Layout-only",
     matrix[0].v !== "none" && matrix.slice(1).every((r) => r.v === "none"),
   );
-  check("vertical ruler pinned under the horizontal band", matrix[0].fixedTop === true);
+  check("vertical ruler pinned alongside the document area", matrix[0].fixedTop === true);
   check("vertical ruler spans the pane height", matrix[0].spansPane === true);
-  check("vertical ruler sits at the page's left edge", matrix[0].atPageLeft === true);
+  check("vertical ruler sits in the left window gutter", matrix[0].inGutter === true);
+  check("workspace has top gap between horizontal ruler and page", matrix[0].hasTopGap === true);
   check(
     "vertical ruler renders the tick scale and two margin handles",
     matrix[0].ticks > 20 && matrix[0].handles === 2,
@@ -242,6 +237,64 @@ const shot = async (name) => {
   );
   check("vertical ruler option gates visibility", off === "none" && on !== "none", { off, on });
   await shot("vertical-ruler");
+}
+
+// ── 3a. Corner Tab Selector button (Word-parity) ────────────────────────────
+{
+  const tsResult = await page.evaluate(async () => {
+    const d = document.querySelector("docen-document");
+    const sr = d.shadowRoot;
+    const ts = sr.querySelector("docen-tab-selector");
+    const h = sr.querySelector("docen-ruler");
+    const vr = sr.querySelector("docen-vertical-ruler");
+    if (!ts) return { exists: false };
+    const tsRect = ts.getBoundingClientRect();
+    const hr = h.getBoundingClientRect();
+    const v = vr.getBoundingClientRect();
+
+    const initialType = ts.activeType;
+    const cycledTypes = [];
+    for (let i = 0; i < 7; i++) {
+      ts.cycle();
+      cycledTypes.push({
+        tsType: ts.activeType,
+        rulerType: h.activeTabType,
+      });
+    }
+
+    return {
+      exists: true,
+      display: getComputedStyle(ts).display,
+      width: Math.round(tsRect.width),
+      height: Math.round(tsRect.height),
+      alignedWithRulers:
+        Math.abs(tsRect.right - hr.left) <= 1 &&
+        Math.abs(tsRect.bottom - v.top) <= 1 &&
+        Math.abs(tsRect.top - hr.top) <= 1 &&
+        Math.abs(tsRect.left - v.left) <= 1,
+      initialType,
+      cycledTypes,
+    };
+  });
+
+  check(
+    "corner Tab Selector exists and is visible",
+    tsResult.exists && tsResult.display !== "none",
+  );
+  check("corner Tab Selector is 20x20px", tsResult.width === 20 && tsResult.height === 20, {
+    width: tsResult.width,
+    height: tsResult.height,
+  });
+  check(
+    "corner Tab Selector is aligned with horizontal and vertical rulers",
+    tsResult.alignedWithRulers === true,
+  );
+  check(
+    "corner Tab Selector cycles through 7 tab types and syncs with horizontal ruler",
+    tsResult.cycledTypes?.every((c) => c.tsType === c.rulerType) &&
+      tsResult.cycledTypes?.[tsResult.cycledTypes.length - 1]?.tsType === "left",
+    tsResult.cycledTypes,
+  );
 }
 
 // ── 3b. Options → View entry drives the vertical ruler option ───────────────

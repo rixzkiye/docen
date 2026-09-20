@@ -116,18 +116,100 @@ export const documentStyles = css`
     padding: 32px 0;
     cursor: text;
   }
-  /* The document pane's scroll chrome: the area keeps no padding so the sticky
-     horizontal ruler's containing block starts at the true top of the
-     scrollport (with padding it pinned 24px below, leaving a strip of page
-     content visible above the ruler). The page gap moves to the slotted
-     wrapper. */
-  docen-document-area {
+  /* Word-parity workspace grid: corner tab-selector + horizontal ruler on top,
+     vertical ruler in the left window gutter, document scrollport in the center. */
+  .docen-workspace-grid {
+    display: grid;
+    grid-template-columns: 20px 1fr;
+    grid-template-rows: 20px 1fr;
+    flex: 1 1 auto;
+    min-width: 0;
+    min-height: 0;
+    height: 100%;
+    position: relative;
+    background: var(--docen-color-canvas, #f3f3f3);
+    overflow: hidden;
+  }
+  .docen-ruler-corner {
+    grid-column: 1;
+    grid-row: 1;
+    width: 20px;
+    height: 20px;
+    box-sizing: border-box;
+    background: var(--docen-ruler-bg, #f3f3f3);
+    overflow: hidden;
+    z-index: 10;
+  }
+  .docen-ruler-h-slot {
+    grid-column: 2;
+    grid-row: 1;
+    height: 20px;
+    overflow: hidden;
+    position: relative;
+    background: var(--docen-ruler-bg, #f3f3f3);
+    border-bottom: 1px solid var(--docen-ruler-border-strong, #c8c8c8);
+    z-index: 9;
+  }
+  .docen-ruler-h-slot docen-ruler {
+    display: block;
+    width: 100%;
+    height: 20px;
+  }
+  .docen-ruler-v-slot {
+    grid-column: 1;
+    grid-row: 2;
+    width: 20px;
+    height: 100%;
+    overflow: hidden;
+    position: relative;
+    background: var(--docen-ruler-bg, #f3f3f3);
+    z-index: 8;
+  }
+  .docen-ruler-v-slot docen-vertical-ruler {
+    display: block;
+    width: 20px;
+    height: 100%;
+  }
+  .docen-workspace-grid docen-document-area {
+    grid-column: 2;
+    grid-row: 2;
+    width: 100%;
+    height: 100%;
+    min-width: 0;
+    min-height: 0;
+    overflow: auto;
     padding: 0;
+    box-sizing: border-box;
+  }
+  /* Gating visibility states */
+  .docen-workspace-grid[data-show-v-ruler="false"] {
+    grid-template-columns: 0 1fr;
+  }
+  .docen-workspace-grid[data-show-v-ruler="false"] .docen-ruler-corner,
+  .docen-workspace-grid[data-show-v-ruler="false"] .docen-ruler-v-slot {
+    display: none;
+  }
+  .docen-workspace-grid[data-show-h-ruler="false"] {
+    grid-template-rows: 0 1fr;
+  }
+  .docen-workspace-grid[data-show-h-ruler="false"] .docen-ruler-corner,
+  .docen-workspace-grid[data-show-h-ruler="false"] .docen-ruler-h-slot {
+    display: none;
   }
   docen-context-menu {
     padding: var(--docen-page-gap, 24px);
   }
   @media print {
+    .docen-ruler-corner,
+    .docen-ruler-h-slot,
+    .docen-ruler-v-slot {
+      display: none !important;
+    }
+    .docen-workspace-grid {
+      display: block;
+      height: auto;
+      background: #fff;
+    }
     docen-context-menu {
       padding: 0;
     }
@@ -261,20 +343,36 @@ export const documentTemplate = html`
         <div class="search-results" slot="results" part="search-results"></div>
       </docen-navigation-pane>
     </docen-task-pane>
-    <docen-document-area>
-      <div class="load-veil" part="load-veil" hidden>
-        <fluent-progress-bar></fluent-progress-bar>
-        <span class="load-label"></span>
+    <div
+      class="docen-workspace-grid"
+      part="workspace-grid"
+      data-show-h-ruler="false"
+      data-show-v-ruler="false"
+    >
+      <div class="docen-ruler-corner" part="ruler-corner">
+        <docen-tab-selector part="tab-selector"></docen-tab-selector>
       </div>
-      <div class="content-warning" part="content-warning" role="status" hidden>
-        <span class="content-warning-icon" aria-hidden="true">⚠️</span>
-        <span class="content-warning-text"></span>
-        <button class="content-warning-close" type="button">✕</button>
+      <div class="docen-ruler-h-slot" part="ruler-h-slot">
+        <docen-ruler part="horizontal-ruler"></docen-ruler>
       </div>
-      <docen-context-menu part="context-menu">
-        <div class="docen-canvas" part="page"></div>
-      </docen-context-menu>
-    </docen-document-area>
+      <div class="docen-ruler-v-slot" part="ruler-v-slot">
+        <docen-vertical-ruler part="vertical-ruler"></docen-vertical-ruler>
+      </div>
+      <docen-document-area part="document-area">
+        <div class="load-veil" part="load-veil" hidden>
+          <fluent-progress-bar></fluent-progress-bar>
+          <span class="load-label"></span>
+        </div>
+        <div class="content-warning" part="content-warning" role="status" hidden>
+          <span class="content-warning-icon" aria-hidden="true">⚠️</span>
+          <span class="content-warning-text"></span>
+          <button class="content-warning-close" type="button">✕</button>
+        </div>
+        <docen-context-menu part="context-menu">
+          <div class="docen-canvas" part="page"></div>
+        </docen-context-menu>
+      </docen-document-area>
+    </div>
     <docen-task-pane slot="task-pane-end" position="end" part="props-pane">
       <slot name="properties">
         <docen-format-pane></docen-format-pane>

@@ -12,6 +12,7 @@ import {
 
 import { observeLang, resolveDir, t } from "../../i18n/localize";
 import { RULER_TICK_LEN, rulerTicks } from "./ruler-ticks";
+import type { TabSelectorType } from "./tab-selector";
 
 export interface RulerTabStop {
   position: number; // in twips
@@ -357,6 +358,9 @@ export class DocenRuler extends FASTElement {
 
   // Tab stops
   @observable tabStops: RulerTabStop[] = [];
+  @attr({ attribute: "active-tab-type" })
+  @observable
+  activeTabType: TabSelectorType = "left";
 
   // Drag interaction state
   @observable dragActiveMarker: "firstLine" | "hanging" | "left" | "right" | "tabStop" | null =
@@ -765,9 +769,30 @@ export class DocenRuler extends FASTElement {
     if (clickX >= contentLeft && clickX <= contentRight) {
       const offsetPx = this.isRtl ? contentRight - clickX : clickX - contentLeft;
       const twips = this.contentPxToTwips(offsetPx);
+
+      if (this.activeTabType === "first-line") {
+        this.firstLineTwips = twips - this.leftIndentTwips;
+        this.#emitIndentChange();
+        this.#queueLiveCommit();
+        return;
+      }
+      if (this.activeTabType === "hanging") {
+        this.leftIndentTwips = twips;
+        this.#emitIndentChange();
+        this.#queueLiveCommit();
+        return;
+      }
+
       // Word never stacks two stops on the same spot — an existing stop wins.
       if (this.tabStops.some((s) => Math.abs(s.position - twips) < 30)) return;
-      const newStop: RulerTabStop = { position: twips, type: "left" };
+      const stopType: RulerTabStop["type"] =
+        this.activeTabType === "bar" ||
+        this.activeTabType === "center" ||
+        this.activeTabType === "right" ||
+        this.activeTabType === "decimal"
+          ? this.activeTabType
+          : "left";
+      const newStop: RulerTabStop = { position: twips, type: stopType };
       this.tabStops = [...this.tabStops, newStop].sort((a, b) => a.position - b.position);
       this.#lastAutoStop = { position: twips, at: Date.now() };
       this.$emit("ruler:tabstop-add", { tabStop: newStop });
