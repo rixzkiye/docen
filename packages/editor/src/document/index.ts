@@ -3178,11 +3178,14 @@ class DocenDocument extends AddinHost<Editor> {
     const area = this.#stageHost?.closest("docen-document-area") as HTMLElement | null;
     const frame = this.#stageHost?.querySelector<HTMLElement>(".canvas-pages > div");
     const hSlot = this.shadowRoot?.querySelector<HTMLElement>(".docen-ruler-h-slot");
+    const grid = this.shadowRoot?.querySelector<HTMLElement>(".docen-workspace-grid");
     let pageLeftPx = 0;
     if (area && frame) {
       const hSlotRect = hSlot?.getBoundingClientRect() ?? area.getBoundingClientRect();
       const frameRect = frame.getBoundingClientRect();
       pageLeftPx = Math.max(0, (frameRect.left - hSlotRect.left) / (zoom || 1));
+      const cornerLeftPx = Math.max(0, frameRect.left - hSlotRect.left - 20);
+      grid?.style.setProperty("--docen-ruler-corner-left", `${Math.round(cornerLeftPx)}px`);
     }
     const bandWidth = Math.max(
       hSlot?.clientWidth ?? area?.clientWidth ?? 0,
@@ -3202,9 +3205,9 @@ class DocenDocument extends AddinHost<Editor> {
     ruler.setParagraphAttrs(undefined, undefined, geometry);
   }
 
-  /** Position the fixed vertical ruler in the window gutter: Word keeps it on
-   *  the left (RTL included), fixed to the viewport height, showing the
-   *  current page's scale and margin boundaries. */
+  /** Position the fixed vertical ruler alongside the page: Word keeps it on
+   *  the left of the page (RTL included), fixed to the viewport height,
+   *  showing the current page's scale and margin boundaries. */
   #syncVerticalRuler(): void {
     const vr = this.#vRuler;
     const area = this.#stageHost?.closest("docen-document-area") as HTMLElement | null;
@@ -3220,10 +3223,9 @@ class DocenDocument extends AddinHost<Editor> {
       vr.style.display = "none";
       return;
     }
-    const vSlot = this.shadowRoot?.querySelector<HTMLElement>(".docen-ruler-v-slot");
-    const vSlotRect = vSlot?.getBoundingClientRect() ?? area.getBoundingClientRect();
-    const top = vSlotRect.top;
-    const height = vSlotRect.height || area.clientHeight;
+    const areaRect = area.getBoundingClientRect();
+    const top = areaRect.top;
+    const height = areaRect.height;
     if (height <= 0) {
       vr.style.display = "none";
       if (grid) grid.dataset.showVRuler = "false";
@@ -3246,6 +3248,9 @@ class DocenDocument extends AddinHost<Editor> {
     this.#vRulerSection = section;
     const zoom = this.#stage ? this.#stage.zoom / 100 : 1;
     const frameRect = frames[page]!.getBoundingClientRect();
+
+    const cornerLeftPx = Math.max(0, frameRect.left - areaRect.left - 20);
+    grid?.style.setProperty("--docen-ruler-corner-left", `${Math.round(cornerLeftPx)}px`);
 
     vr.style.display = "block";
     vr.unit = this.#ruler?.unit ?? vr.unit;

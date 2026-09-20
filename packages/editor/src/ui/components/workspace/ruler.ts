@@ -537,9 +537,12 @@ export class DocenRuler extends FASTElement {
   renderTicks(): void {
     const svg = this.ticksSvg;
     if (!svg) return;
+    const pageZeroX = this.isRtl
+      ? (this.pageWidthPx - this.marginRightPx) * this.scale
+      : this.marginLeftPx * this.scale;
     const ticks = rulerTicks({
       lengthPx: this.pageWidthPx * this.scale,
-      zeroPx: this.zeroXPx,
+      zeroPx: pageZeroX,
       unit: this.unit,
       scale: this.scale,
       mirror: this.isRtl,
@@ -550,7 +553,7 @@ export class DocenRuler extends FASTElement {
     let lines = "";
     let texts = "";
     for (const tick of ticks) {
-      const x = Math.round(tick.pos) + 0.5;
+      const x = Math.round(this.pageLeftPxViewport + tick.pos) + 0.5;
       const len = RULER_TICK_LEN[tick.level];
       lines += `<line x1="${x}" y1="${height}" x2="${x}" y2="${height - len}"/>`;
       if (tick.label !== undefined) {
@@ -743,6 +746,17 @@ export class DocenRuler extends FASTElement {
   onTrackDblClick(event: MouseEvent): void {
     const target = event.target as Element | null;
     if (target?.closest?.(".marker, .tab-stop-item, .unit-label")) return;
+    const track = event.currentTarget as HTMLElement | null;
+    if (track) {
+      const rect = track.getBoundingClientRect();
+      const clickX = event.clientX - rect.left;
+      if (
+        clickX < this.pageLeftPxViewport ||
+        clickX > this.pageLeftPxViewport + this.pageWidthPx * this.scale
+      ) {
+        return;
+      }
+    }
     const auto = this.#lastAutoStop;
     if (auto && Date.now() - auto.at < 700) {
       this.tabStops = this.tabStops.filter((s) => s.position !== auto.position);

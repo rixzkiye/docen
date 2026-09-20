@@ -104,7 +104,13 @@ const shot = async (name) => {
     };
     const inRuler = (el) => {
       for (let cur = el; cur; cur = cur.parentElement ?? cur.getRootNode?.().host) {
-        if (cur === ruler) return true;
+        if (
+          cur === ruler ||
+          cur.tagName?.toLowerCase() === "docen-tab-selector" ||
+          cur.classList?.contains?.("docen-ruler-corner")
+        ) {
+          return true;
+        }
         if (cur === document.documentElement) break;
       }
       return false;
@@ -157,7 +163,37 @@ const shot = async (name) => {
       1,
     { zeroXPx: first.zeroXPx, pageLeftPx: first.pageLeftPx },
   );
+  const voidTicksCount = await page.evaluate(() => {
+    const d = document.querySelector("docen-document");
+    const h = d.shadowRoot.querySelector("docen-ruler");
+    const lines = Array.from(h.shadowRoot.querySelectorAll(".ticks-svg line"));
+    const minX = h.pageLeftPx * h.scale;
+    const maxX = (h.pageLeftPx + h.pageWidthPx) * h.scale;
+    const outside = lines.filter((l) => {
+      const x = Number(l.getAttribute("x1"));
+      return x < minX - 1 || x > maxX + 1;
+    });
+    return outside.length;
+  });
+  check("horizontal ruler has zero ticks in the void outside page", voidTicksCount === 0, {
+    voidTicksCount,
+  });
   await shot("band");
+  await page.evaluate(() => {
+    const area = document
+      .querySelector("docen-document")
+      .shadowRoot.querySelector("docen-document-area");
+    area.scrollTop = 600;
+  });
+  await page.waitForTimeout(300);
+  await shot("scrolled");
+  await page.evaluate(() => {
+    const area = document
+      .querySelector("docen-document")
+      .shadowRoot.querySelector("docen-document-area");
+    area.scrollTop = 0;
+  });
+  await page.waitForTimeout(300);
 }
 
 // ── 3. Vertical ruler: fixed, Print-only, option-gated, gutter-anchored ─────
@@ -186,7 +222,7 @@ const shot = async (name) => {
         v: getComputedStyle(vr).display,
         fixedTop: vr.style.display === "none" ? null : Math.abs(v.top - a.top) <= 1,
         spansPane: vr.style.display === "none" ? null : Math.abs(v.height - a.height) <= 1,
-        inGutter: vr.style.display === "none" ? null : Math.abs(v.right - a.left) <= 1,
+        atPageLeft: vr.style.display === "none" ? null : Math.abs(v.right - fr.left) <= 1,
         ticks: vr.shadowRoot.querySelectorAll("line").length,
         handles: vr.shadowRoot.querySelectorAll(".margin-handle").length,
         hasTopGap: fr ? fr.top >= hr.bottom + 16 : null,
@@ -211,7 +247,7 @@ const shot = async (name) => {
   );
   check("vertical ruler pinned alongside the document area", matrix[0].fixedTop === true);
   check("vertical ruler spans the pane height", matrix[0].spansPane === true);
-  check("vertical ruler sits in the left window gutter", matrix[0].inGutter === true);
+  check("vertical ruler sits at the left page edge", matrix[0].atPageLeft === true);
   check("workspace has top gap between horizontal ruler and page", matrix[0].hasTopGap === true);
   check(
     "vertical ruler renders the tick scale and two margin handles",
@@ -268,10 +304,10 @@ const shot = async (name) => {
       width: Math.round(tsRect.width),
       height: Math.round(tsRect.height),
       alignedWithRulers:
-        Math.abs(tsRect.right - hr.left) <= 1 &&
+        Math.abs(tsRect.left - v.left) <= 1 &&
+        Math.abs(tsRect.right - v.right) <= 1 &&
         Math.abs(tsRect.bottom - v.top) <= 1 &&
-        Math.abs(tsRect.top - hr.top) <= 1 &&
-        Math.abs(tsRect.left - v.left) <= 1,
+        Math.abs(tsRect.top - hr.top) <= 1,
       initialType,
       cycledTypes,
     };

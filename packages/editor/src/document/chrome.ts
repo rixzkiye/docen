@@ -120,28 +120,31 @@ export const documentStyles = css`
      vertical ruler in the left window gutter, document scrollport in the center. */
   .docen-workspace-grid {
     display: grid;
-    grid-template-columns: 20px 1fr;
+    grid-template-columns: 100%;
     grid-template-rows: 20px 1fr;
-    flex: 1 1 auto;
-    min-width: 0;
-    min-height: 0;
     height: 100%;
     position: relative;
     background: var(--docen-color-canvas, #f3f3f3);
     overflow: hidden;
   }
   .docen-ruler-corner {
-    grid-column: 1;
-    grid-row: 1;
+    position: absolute;
+    top: 0;
+    left: var(--docen-ruler-corner-left, 0px);
     width: 20px;
     height: 20px;
     box-sizing: border-box;
     background: var(--docen-ruler-bg, #f3f3f3);
     overflow: hidden;
-    z-index: 10;
+    z-index: 12;
+  }
+  .docen-ruler-corner docen-tab-selector {
+    display: block;
+    width: 100%;
+    height: 100%;
   }
   .docen-ruler-h-slot {
-    grid-column: 2;
+    grid-column: 1;
     grid-row: 1;
     height: 20px;
     overflow: hidden;
@@ -156,14 +159,16 @@ export const documentStyles = css`
     height: 20px;
   }
   .docen-ruler-v-slot {
-    grid-column: 1;
-    grid-row: 2;
+    position: absolute;
+    top: 20px;
+    left: var(--docen-ruler-corner-left, 0px);
     width: 20px;
-    height: 100%;
+    bottom: 0;
     overflow: hidden;
-    position: relative;
     background: var(--docen-ruler-bg, #f3f3f3);
-    z-index: 8;
+    border-right: 1px solid var(--docen-ruler-border-strong, #c8c8c8);
+    box-sizing: border-box;
+    z-index: 10;
   }
   .docen-ruler-v-slot docen-vertical-ruler {
     display: block;
@@ -171,7 +176,7 @@ export const documentStyles = css`
     height: 100%;
   }
   .docen-workspace-grid docen-document-area {
-    grid-column: 2;
+    grid-column: 1;
     grid-row: 2;
     width: 100%;
     height: 100%;
@@ -182,19 +187,15 @@ export const documentStyles = css`
     box-sizing: border-box;
   }
   /* Gating visibility states */
-  .docen-workspace-grid[data-show-v-ruler="false"] {
-    grid-template-columns: 0 1fr;
-  }
-  .docen-workspace-grid[data-show-v-ruler="false"] .docen-ruler-corner,
   .docen-workspace-grid[data-show-v-ruler="false"] .docen-ruler-v-slot {
-    display: none;
+    display: none !important;
   }
   .docen-workspace-grid[data-show-h-ruler="false"] {
     grid-template-rows: 0 1fr;
   }
   .docen-workspace-grid[data-show-h-ruler="false"] .docen-ruler-corner,
   .docen-workspace-grid[data-show-h-ruler="false"] .docen-ruler-h-slot {
-    display: none;
+    display: none !important;
   }
   docen-context-menu {
     padding: var(--docen-page-gap, 24px);
