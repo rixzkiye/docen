@@ -1,6 +1,7 @@
 import type { LaidOutGlyphRun } from "@docen/layout";
 import { getShapingBackend, hasShapingBackend, type PathCommand } from "@docen/shaping";
-import { Path, type IGroup } from "leafer-ui";
+
+import { leaferKit } from "./kit";
 
 /**
  * Converts unscaled OpenType glyph outline commands (with Y pointing up)
@@ -115,13 +116,15 @@ export interface PaintGlyphRunOptions {
   /** Extra x-advance stretch (justification / CJK advance compression): both
    *  the glyph positions and the x scale multiply by it. */
   advanceScale?: number;
+  /** Graphics element factory kit. Defaults to leaferKit if not provided. */
+  kit?: import("./kit").PaintKit;
 }
 
 /**
  * Paints a laid-out OpenType glyph run as high-fidelity vector paths into the scene tree.
  */
 export function paintGlyphRun(
-  tree: IGroup,
+  tree: any,
   glyphRun: LaidOutGlyphRun,
   options: PaintGlyphRunOptions,
 ): boolean {
@@ -129,6 +132,7 @@ export function paintGlyphRun(
     return false;
   }
 
+  const kit = options.kit ?? leaferKit;
   const fontId = glyphRun.fontId ?? 1;
   const cache = options.outlineCache ?? defaultGlyphOutlineCache;
   const unitsPerEm = options.unitsPerEm ?? glyphRun.unitsPerEm ?? 1000;
@@ -143,7 +147,7 @@ export function paintGlyphRun(
     const pathStr = cache.getGlyphPath(fontId, glyph.glyphId, glyphRun.variations);
     if (!pathStr) continue;
 
-    const glyphEl = new Path({
+    const glyphEl = kit.createPath({
       x: options.x + glyph.xPx * advanceScale,
       y: options.y + glyph.yPx,
       scaleX,

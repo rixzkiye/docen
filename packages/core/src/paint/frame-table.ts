@@ -5,10 +5,11 @@ import {
   type LayoutBlock,
   type LayoutBorderEdge,
 } from "@docen/layout";
-import { Rect, type IGroup } from "leafer-ui";
 
 import { paintBlock } from "../painter";
 import type { PaintContext } from "./context";
+import type { IGroup } from "./kit";
+import { Rect } from "./kit";
 import { drawDiagonal, drawEdge } from "./table";
 
 // ── graphic-frame table painter ──

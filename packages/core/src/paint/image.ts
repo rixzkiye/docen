@@ -1,14 +1,14 @@
 import type { LayoutDrawingLine, LayoutDrawingMember, LayoutDrawingShadow } from "@docen/layout";
-import {
-  Image as LeaferImage,
-  ImageManager,
-  Rect,
-  Resource,
-  type IGroup,
-  type ILeaferImage,
-} from "leafer-ui";
 
 import type { PaintContext } from "./context";
+import {
+  getRegisteredLeafer,
+  Image,
+  Image as LeaferImage,
+  Rect,
+  type IGroup,
+  type ILeaferImage,
+} from "./kit";
 import { strokePropsOf } from "./line";
 
 /** The projected blip adjustments riding a picture: a CSS-filter composite
@@ -70,20 +70,24 @@ function effectsOf(adjust: PictureAdjust): Partial<LeaferImage> {
 const pinnedImages = new Map<string, ILeaferImage>();
 
 export function pinImage(url: string): ILeaferImage {
+  const leafer = getRegisteredLeafer();
+  if (!leafer?.ImageManager) return undefined;
   let image = pinnedImages.get(url);
   // A tree clear can briefly drive the shared entry's use count to zero, and
   // Leafer's recycle judges eviction on a setTimeout — after the repaint has
   // already re-added the leaf. The Resource-table entry then disappears while
   // this stale handle still reports ready, and every later paint resolves the
   // url into a fresh async decode nothing ever frames. Re-anchor instead.
-  if (image && !Resource.get(url)) {
+  if (image && leafer.Resource && !leafer.Resource.get(url)) {
     pinnedImages.delete(url);
     image = undefined;
   }
   if (!image) {
-    image = ImageManager.get({ url }, "image");
-    pinnedImages.set(url, image);
-    image.load();
+    image = leafer.ImageManager.get({ url }, "image");
+    if (image) {
+      pinnedImages.set(url, image);
+      image.load?.();
+    }
   }
   return image;
 }
@@ -121,7 +125,10 @@ function cacheDerived(fingerprint: string, url: string): void {
  *  large entries it no longer shares. Derived composites die with the
  *  document they were produced from. */
 export function releasePinnedImages(): void {
-  for (const image of pinnedImages.values()) ImageManager.recycle(image);
+  const leafer = getRegisteredLeafer();
+  if (leafer?.ImageManager) {
+    for (const image of pinnedImages.values()) leafer.ImageManager.recycle(image);
+  }
   pinnedImages.clear();
   derivedImages.clear();
 }
@@ -176,7 +183,7 @@ function placeImage(
   slot?: Rect,
   adjust?: PictureAdjust,
 ): void {
-  if (image.ready) {
+  if (!image || image.ready) {
     const leaf = plainImageLeaf(src, x, y, width, height, flipH, flipV, adjust);
     if (slot) swapSlot(tree, slot, leaf, ctx);
     else tree.add(leaf);
@@ -499,7 +506,11 @@ export function addCroppedImage(
     tree,
     fingerprint,
     (deliver) => {
-      const el = new Image();
+      if (typeof window === "undefined" || typeof (window as any).Image === "undefined") {
+        deliver(src);
+        return;
+      }
+      const el = new (window as any).Image();
       el.onload = () => {
         const sx = Math.round(crop.left * el.naturalWidth);
         const sy = Math.round(crop.top * el.naturalHeight);

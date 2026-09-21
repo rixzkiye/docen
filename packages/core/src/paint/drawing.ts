@@ -9,10 +9,11 @@ import {
   type LayoutDrawingMember,
   type LayoutDrawingShadow,
 } from "@docen/layout";
-import { Box, Ellipse, Group, Path as LeaferPath, Rect, type IGroup } from "leafer-ui";
 
 import { paintBlock } from "../painter";
 import { paint3DModelMember, paintInkMember } from "./3d-ink";
+import type { IGroup } from "./kit";
+import { Box, Ellipse, Group, Path as LeaferPath, Rect } from "./kit";
 export { paint3DModelMember, paintInkMember };
 import { paintChartMember } from "./chart";
 import type { DrawingHitBox, PaintColumn, PaintContext } from "./context";

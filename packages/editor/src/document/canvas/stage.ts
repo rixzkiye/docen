@@ -17,6 +17,7 @@ import {
   type PaintContext,
   type ShapeTextStack,
 } from "@docen/core";
+import { registerLeafer } from "@docen/core";
 import {
   computePageNumberOffsets,
   type FlowItem,
@@ -46,7 +47,22 @@ import {
  */
 import type { FlowPage, FontMetrics, LaidOutParagraph, LaidOutStackItem } from "@docen/layout";
 import { createMeasurer, stackBlocks } from "@docen/layout";
-import { App, Debug, Group, Line, Rect, Text, type IGroup } from "leafer-ui";
+import {
+  App,
+  Box,
+  Debug,
+  Ellipse,
+  Group,
+  Image,
+  ImageManager,
+  Line,
+  Path,
+  Rect,
+  Resource,
+  Text,
+  type IGroup,
+} from "leafer-ui";
+registerLeafer({ Group, Box, Rect, Line, Text, Path, Ellipse, Image, ImageManager, Resource });
 
 import type { PdfScenePage } from "../pdf-scene";
 import { getArtBorderSvgDataUri } from "./art-borders";

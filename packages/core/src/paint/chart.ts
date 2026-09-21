@@ -1,7 +1,8 @@
 import type { LayoutDrawingMember } from "@docen/layout";
-import { Ellipse, Group, Path as LeaferPath, Rect, Text, type IGroup } from "leafer-ui";
 
 import type { ChartHitContext, ChartPartHit, ChartPartShape } from "./context";
+import type { IGroup } from "./kit";
+import { Ellipse, Group, Path as LeaferPath, Rect, Text } from "./kit";
 
 // ── chart member painter ──
 //
