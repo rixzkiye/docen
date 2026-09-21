@@ -64,7 +64,7 @@
     },
     "./pdf": {
       "types": "./dist/pdf.d.mts",
-      "import": "./dist/pdf.mjs"
+      "node": "./dist/pdf.mjs"
     }
   },
   "scripts": {

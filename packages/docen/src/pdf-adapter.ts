@@ -1,4 +1,3 @@
-import { execFileSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -89,6 +88,9 @@ export const chromiumBackendAdapter: PdfBackendAdapter = {
     }
 
     try {
+      // Lazy so bundlers never pull node:child_process statically; this
+      // adapter is server-only (see the node-only "./pdf" export).
+      const { execFileSync } = await import("node:child_process");
       const env = {
         ...process.env,
         ...(options?.chromium?.chromePath ? { CHROME_PATH: options.chromium.chromePath } : {}),
