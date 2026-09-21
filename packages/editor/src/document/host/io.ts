@@ -51,6 +51,7 @@ import {
 } from "../file-formats";
 import { findTemplate, templateLocale } from "../templates";
 import { collectBookmarkPages, collectFieldPages, collectTocTargetPages } from "./field-pages";
+import { buildPdfStructure } from "./pdf-structure";
 
 /** The file-I/O domain's view of the host — only what its bodies touch. */
 export interface IOHostView {
@@ -222,7 +223,13 @@ export class IODomain {
    *  shared body of the menu action and the public export API. Every page's
    *  leafer scene serializes to a vector content stream; the returned pages
    *  carry both the scene and the preview PNG the caller can compare against.
-   *  A non-print view re-projects for the export and falls back afterwards. */
+   *  A non-print view re-projects for the export and falls back afterwards.
+   *
+   *  The document's structure options (heading outline, section page labels,
+   *  bookmark destinations, figure/table struct elements) derive from the
+   *  live print run — the caret map's page boxes and the section projection —
+   *  before a non-print view restores, so the navigation matches the pages
+   *  the export rasterizes. */
   async buildPdf(): Promise<{
     blob: Blob;
     pages: readonly PdfPageShot[];
@@ -234,6 +241,13 @@ export class IODomain {
       this.host.renderDoc(this.getJSON());
     }
     const shots = (await this.host.stage()?.sceneSnapshots()) ?? [];
+    const structure = buildPdfStructure({
+      doc: this.host.editor()?.state.doc,
+      sections: this.host.lastRun()?.sections ?? [],
+      sectionOfPage: this.host.sectionOfPage(),
+      pages: this.host.pages(),
+      boxOf: (pos) => this.host.bridge()?.caretBox(pos) ?? null,
+    });
     if (mode !== "print") {
       this.host.stage()?.setViewMode(mode);
       this.host.renderDoc(this.getJSON());
@@ -271,6 +285,12 @@ export class IODomain {
       metadata: { title, author: "Docen" },
       tagged: true,
       ...(embeddedFonts.length > 0 ? { embeddedFonts } : {}),
+      ...(structure.outline.length > 0 ? { outline: structure.outline } : {}),
+      ...(structure.pageLabels.length > 0 ? { pageLabels: structure.pageLabels } : {}),
+      ...(Object.keys(structure.destinations).length > 0
+        ? { destinations: structure.destinations }
+        : {}),
+      ...(structure.structElements.length > 0 ? { structElements: structure.structElements } : {}),
     });
     return { blob, pages: shotsWithLayers, embeddedFonts };
   }
