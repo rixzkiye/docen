@@ -131,7 +131,7 @@ import {
   readDocumentDefaults,
   writeDocumentDefaults,
 } from "./defaults";
-import type { PdfEmbeddedFont, PdfPageShot } from "./export-pdf";
+import type { PdfEmbeddedFont, PdfExportOptions, PdfPageShot } from "./export-pdf";
 import type { NewStyleDefinition } from "./extensions/commands";
 import type { ModifyStylePatch, ParagraphDialogPatch } from "./extensions/commands";
 import { stampStyleRunPatches } from "./extensions/commands";
@@ -6380,14 +6380,16 @@ class DocenDocument extends AddinHost<Editor> {
    * the export was built from — CSS-px size, preview PNG and the vector scene
    * — the fidelity harness's raster reference. The print-view round-trip
    * matches {@link openPrintPreview}: a non-print view re-projects for the
-   * export, then falls back.
+   * export, then falls back. `options.metadata` overrides the Info-dict
+   * defaults (e.g. a fixed `creationDate` for byte-deterministic server
+   * renders — the default stamps the wall clock).
    */
-  async exportPdf(): Promise<{
+  async exportPdf(options?: { metadata?: PdfExportOptions["metadata"] }): Promise<{
     data: Uint8Array;
     pages: readonly PdfPageShot[];
     embeddedFonts?: readonly PdfEmbeddedFont[];
   }> {
-    const { blob, pages, embeddedFonts } = await this.#io.buildPdf();
+    const { blob, pages, embeddedFonts } = await this.#io.buildPdf(options);
     return { data: new Uint8Array(await blob.arrayBuffer()), pages, embeddedFonts };
   }
 

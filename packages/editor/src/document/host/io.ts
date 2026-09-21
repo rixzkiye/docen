@@ -39,6 +39,7 @@ import {
   pagesToPdf,
   sceneTextSpans,
   type PdfEmbeddedFont,
+  type PdfExportOptions,
   type PdfPageShot,
 } from "../export-pdf";
 import { collectRevisions } from "../extensions/track-changes";
@@ -222,8 +223,11 @@ export class IODomain {
    *  shared body of the menu action and the public export API. Every page's
    *  leafer scene serializes to a vector content stream; the returned pages
    *  carry both the scene and the preview PNG the caller can compare against.
-   *  A non-print view re-projects for the export and falls back afterwards. */
-  async buildPdf(): Promise<{
+   *  A non-print view re-projects for the export and falls back afterwards.
+   *  `options.metadata` overrides the Info-dict defaults — a fixed
+   *  `creationDate`/`modDate` makes the export byte-deterministic for
+   *  server-side rendering and caching. */
+  async buildPdf(options?: { metadata?: PdfExportOptions["metadata"] }): Promise<{
     blob: Blob;
     pages: readonly PdfPageShot[];
     embeddedFonts: readonly PdfEmbeddedFont[];
@@ -268,7 +272,7 @@ export class IODomain {
         : [];
     const title = this.host.getAttribute("filename") ?? t("header.doc-name", this.host.element());
     const blob = await pagesToPdf(shotsWithLayers, {
-      metadata: { title, author: "Docen" },
+      metadata: { title, author: "Docen", ...options?.metadata },
       tagged: true,
       ...(embeddedFonts.length > 0 ? { embeddedFonts } : {}),
     });
