@@ -3,6 +3,7 @@ import type { LayoutDrawingMember } from "@docen/layout";
 import type { ChartHitContext, ChartPartHit, ChartPartShape } from "./context";
 import type { IGroup } from "./kit";
 import { Ellipse, Group, Path as LeaferPath, Rect, Text } from "./kit";
+import { measureChromeText } from "./text-measure";
 
 // ── chart member painter ──
 //
@@ -383,8 +384,10 @@ function paintErrorBars(
 }
 
 /** Text label, horizontally centered on x (or left/right-anchored by align).
- *  With a fixed maxWidth box Leafer anchors the Text at its top-left corner,
- *  so center/right anchors shift the box to keep x on the anchor edge. */
+ *  The position is computed from a deterministic width (measureChromeText)
+ *  and the Text is left-aligned: Leafer would otherwise center with the
+ *  platform font the canvas substitutes, so the same scene would land
+ *  differently in the browser canvas and the server PDF. */
 function label(
   tree: IGroup,
   text: string,
@@ -395,16 +398,16 @@ function label(
   maxWidth?: number,
 ): void {
   if (!text) return;
-  const bx =
-    maxWidth == null || align === "left" ? x : align === "center" ? x - maxWidth / 2 : x - maxWidth;
+  const width = measureChromeText(text, size);
+  const anchor = align === "left" ? x : align === "center" ? x - width / 2 : x - width;
   tree.add(
     new Text({
-      x: bx,
+      x: anchor,
       y,
       text,
       fontSize: size,
       fill: AXIS_TEXT,
-      textAlign: align,
+      textAlign: "left",
       verticalAlign: "middle",
       ...(maxWidth != null ? { width: maxWidth, overflow: "ellipsis" } : {}),
     }),
@@ -413,18 +416,6 @@ function label(
 
 /** Gap between neighboring legend entries in a horizontal row. */
 const LEGEND_GAP = 24;
-
-/** The painted width of a label, for centering a legend row — the hidden
- *  canvas the break-row marks measure with (node-safe: without a document,
- *  a per-character estimate). */
-let legendCtx: CanvasRenderingContext2D | null | undefined;
-function measureLabelWidth(text: string, px: number): number {
-  legendCtx ??=
-    typeof document === "undefined" ? null : document.createElement("canvas").getContext("2d");
-  if (!legendCtx) return text.length * px;
-  legendCtx.font = `${px}px sans-serif`;
-  return legendCtx.measureText(text).width;
-}
 
 /** One straight hairline. */
 function segment(
@@ -1624,7 +1615,7 @@ function paintLegend(tree: IGroup, model: ChartModel, box: PlotBox, reg?: Elemen
   // swatch then label — centered as a whole in its band, never spread
   // edge-to-edge.
   const y = model.legendPosition === "top" ? box.y : box.y + box.height - 18;
-  const widths = entries.map((e) => 14 + measureLabelWidth(e.name, LABEL_PX - 1));
+  const widths = entries.map((e) => 14 + measureChromeText(e.name, LABEL_PX - 1));
   const total =
     widths.reduce((sum, w) => sum + w, 0) + LEGEND_GAP * Math.max(0, entries.length - 1);
   let x = box.x + Math.max(0, (box.width - total) / 2);

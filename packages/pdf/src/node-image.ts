@@ -344,11 +344,28 @@ export class NodeImageCache implements PdfImageCache {
       if (decoded) {
         const width = naturalWidth ?? decoded.width;
         const height = naturalHeight ?? decoded.height;
+        // PdfSceneImageData's channel contract (shared with the browser
+        // scene-export path): 3-channel RGB when the bitmap is opaque,
+        // 4-channel RGBA when it has alpha — the exporter strips alpha into
+        // an /SMask, but embeds an opaque buffer as raw DeviceRGB as-is.
+        // Returning 4 channels for an opaque bitmap would write RGBA bytes
+        // into a DeviceRGB image and shear every row.
+        let rgba = decoded.rgba;
+        if (!decoded.hasAlpha) {
+          const pixels = decoded.width * decoded.height;
+          const rgb = new Uint8Array(pixels * 3);
+          for (let p = 0; p < pixels; p++) {
+            rgb[p * 3] = decoded.rgba[p * 4]!;
+            rgb[p * 3 + 1] = decoded.rgba[p * 4 + 1]!;
+            rgb[p * 3 + 2] = decoded.rgba[p * 4 + 2]!;
+          }
+          rgba = rgb;
+        }
         return {
-          key: hashBytes(decoded.rgba),
+          key: hashBytes(rgba),
           width,
           height,
-          rgba: decoded.rgba,
+          rgba,
           hasAlpha: decoded.hasAlpha,
         };
       }

@@ -75,7 +75,12 @@ describe("PaintKit abstraction", () => {
 
     const text = new NodeText({ text: "Hello World", fontSize: 16, width: 120 });
     expect(text.textDrawData.rows[0]?.text).toBe("Hello World");
-    expect(text.textDrawData.rows[0]?.y).toBe(16 * 0.8);
+    // Leafer's baseline: ((lineHeight + 0.7 × fontSize) / 2). The painter pins
+    // lineHeight to the size, so the row baseline is 0.85 × size — the value
+    // the browser scene export produces (was 0.8 × size, a Node-only drift).
+    expect(text.textDrawData.rows[0]?.y).toBe(16 * 0.85);
+    const taller = new NodeText({ text: "Hello", fontSize: 10, lineHeight: 20 });
+    expect(taller.textDrawData.rows[0]?.y).toBe((20 + 0.7 * 10) / 2);
   });
 
   it("supports dynamic withKit context switching", () => {

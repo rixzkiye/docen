@@ -1679,6 +1679,34 @@ describe("P3 structure and navigation acceptance", () => {
   });
 });
 
+/**
+ * veraPDF CLI for the PDF/A-2b + PDF/UA-1 conformance test: PATH first, then
+ * the local install. Resolved once at collection time so the test can be
+ * skipped (or, with DOCEN_REQUIRE_VERAPDF=1, failed) instead of silently
+ * passing when the tool is absent.
+ */
+function resolveVerapdf(): string | null {
+  try {
+    execFileSync("verapdf", ["--version"], { stdio: "ignore" });
+    return "verapdf";
+  } catch {
+    if (fs.existsSync("/home/rixzkiye/.local/bin/verapdf")) {
+      return "/home/rixzkiye/.local/bin/verapdf";
+    }
+    return null;
+  }
+}
+
+const VERAPDF_PATH = resolveVerapdf();
+const REQUIRE_VERAPDF = process.env.DOCEN_REQUIRE_VERAPDF === "1";
+if (!VERAPDF_PATH) {
+  console.warn(
+    "[docen/pdf] veraPDF CLI not found (PATH or /home/rixzkiye/.local/bin/verapdf) — " +
+      "SKIPPING the PDF/A-2b + PDF/UA-1 conformance test. " +
+      "Set DOCEN_REQUIRE_VERAPDF=1 to make a missing veraPDF a hard failure.",
+  );
+}
+
 describe("P4 QA, determinism, and performance acceptance", () => {
   const blankShot = (pageIndex: number): PdfPageShot => ({
     width: 612,
@@ -2158,55 +2186,55 @@ describe("P4 QA, determinism, and performance acceptance", () => {
       expect(pdfStr).toContain("/Tabs /S");
     });
 
-    it("verifies veraPDF validation on PDF/A-2b and PDF/UA-1 blobs", async () => {
-      let verapdfPath: string | null = null;
-      try {
-        execFileSync("verapdf", ["--version"], { stdio: "ignore" });
-        verapdfPath = "verapdf";
-      } catch {
-        if (fs.existsSync("/home/rixzkiye/.local/bin/verapdf")) {
-          verapdfPath = "/home/rixzkiye/.local/bin/verapdf";
+    it.skipIf(!VERAPDF_PATH && !REQUIRE_VERAPDF)(
+      "verifies veraPDF validation on PDF/A-2b and PDF/UA-1 blobs",
+      async () => {
+        if (!VERAPDF_PATH) {
+          throw new Error(
+            "[docen/pdf] DOCEN_REQUIRE_VERAPDF=1 but the veraPDF CLI is not available on PATH " +
+              "or at /home/rixzkiye/.local/bin/verapdf",
+          );
         }
-      }
 
-      if (!verapdfPath) {
-        console.warn("veraPDF CLI not detected; skipping veraPDF validation test.");
-        return;
-      }
+        const fixedDate = new Date("2026-09-21T12:00:00Z");
+        const blob2b = await pagesToPdf([blankShot], {
+          pdfa: "2b",
+          metadata: { title: "veraPDF 2b Test", creationDate: fixedDate, modDate: fixedDate },
+        });
+        const tmp2b = `/tmp/test-spec-2b-${Date.now()}.pdf`;
+        fs.writeFileSync(tmp2b, Buffer.from(await blob2b.arrayBuffer()));
 
-      const fixedDate = new Date("2026-09-21T12:00:00Z");
-      const blob2b = await pagesToPdf([blankShot], {
-        pdfa: "2b",
-        metadata: { title: "veraPDF 2b Test", creationDate: fixedDate, modDate: fixedDate },
-      });
-      const tmp2b = `/tmp/test-spec-2b-${Date.now()}.pdf`;
-      fs.writeFileSync(tmp2b, Buffer.from(await blob2b.arrayBuffer()));
+        try {
+          const out2b = execFileSync(VERAPDF_PATH, ["--flavour", "2b", tmp2b], {
+            encoding: "utf-8",
+          });
+          expect(out2b).toContain('isCompliant="true"');
+        } finally {
+          fs.rmSync(tmp2b, { force: true });
+        }
 
-      try {
-        const out2b = execFileSync(verapdfPath, ["--flavour", "2b", tmp2b], { encoding: "utf-8" });
-        expect(out2b).toContain('isCompliant="true"');
-      } finally {
-        fs.rmSync(tmp2b, { force: true });
-      }
+        const blobUa = await pagesToPdf([blankShot], {
+          pdfUa: true,
+          metadata: {
+            title: "veraPDF UA Test",
+            creationDate: fixedDate,
+            modDate: fixedDate,
+            language: "en-US",
+          },
+        });
+        const tmpUa = `/tmp/test-spec-ua-${Date.now()}.pdf`;
+        fs.writeFileSync(tmpUa, Buffer.from(await blobUa.arrayBuffer()));
 
-      const blobUa = await pagesToPdf([blankShot], {
-        pdfUa: true,
-        metadata: {
-          title: "veraPDF UA Test",
-          creationDate: fixedDate,
-          modDate: fixedDate,
-          language: "en-US",
-        },
-      });
-      const tmpUa = `/tmp/test-spec-ua-${Date.now()}.pdf`;
-      fs.writeFileSync(tmpUa, Buffer.from(await blobUa.arrayBuffer()));
-
-      try {
-        const outUa = execFileSync(verapdfPath, ["--flavour", "ua1", tmpUa], { encoding: "utf-8" });
-        expect(outUa).toContain('isCompliant="true"');
-      } finally {
-        fs.rmSync(tmpUa, { force: true });
-      }
-    }, 30000);
+        try {
+          const outUa = execFileSync(VERAPDF_PATH, ["--flavour", "ua1", tmpUa], {
+            encoding: "utf-8",
+          });
+          expect(outUa).toContain('isCompliant="true"');
+        } finally {
+          fs.rmSync(tmpUa, { force: true });
+        }
+      },
+      30000,
+    );
   });
 });

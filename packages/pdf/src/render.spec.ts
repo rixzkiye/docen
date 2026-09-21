@@ -4,7 +4,14 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 
-import { describe, expect, it } from "vitest";
+import {
+  browserFontMetrics,
+  clearMissingFontWarnings,
+  createMeasurer,
+  getShapingFontManager,
+  ShapedMeasurer,
+} from "@docen/layout";
+import { describe, expect, it, vi } from "vitest";
 
 import { renderPdf } from "./render";
 
@@ -51,6 +58,42 @@ describe("renderPdf headless entry point", () => {
     const tail = new TextDecoder().decode(pdfBytes.subarray(-100));
     expect(tail).toContain("%%EOF");
   });
+
+  it("registers the bundled production faces before layout (zero missing-font warnings)", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      clearMissingFontWarnings();
+      await renderPdf({
+        type: "doc",
+        content: [
+          {
+            type: "paragraph",
+            content: [{ type: "text", text: "AVATAR office fi fl" }],
+          },
+        ],
+      });
+      const missingFontWarnings = warn.mock.calls
+        .map((call) => String(call[0]))
+        .filter((message) => message.includes("no face is registered"));
+      expect(missingFontWarnings).toEqual([]);
+
+      // The shared shaping manager holds the bundled families and the default
+      // measurer really shapes them — not the canvas shim fallback.
+      for (const family of ["Calibri", "Cambria", "Arial", "Times New Roman"]) {
+        expect(getShapingFontManager().getActiveFont(family), family).toBeDefined();
+      }
+      const measurer = createMeasurer(browserFontMetrics);
+      expect(measurer).toBeInstanceOf(ShapedMeasurer);
+      const run = (measurer as ShapedMeasurer).glyphRunOf("AVATAR office fi fl", {
+        family: "Calibri",
+        sizePx: 16,
+      });
+      expect(run).toBeDefined();
+      expect(run!.totalAdvancePx).toBeGreaterThan(0);
+    } finally {
+      warn.mockRestore();
+    }
+  }, 30000);
 
   it("extracts text byte-exact with pdftotext from headless render", async () => {
     const doc = {
@@ -173,6 +216,20 @@ describe("renderPdf headless entry point", () => {
       if (fs.existsSync("/home/rixzkiye/.local/bin/verapdf")) {
         verapdfPath = "/home/rixzkiye/.local/bin/verapdf";
       }
+    }
+
+    if (!verapdfPath && process.env.DOCEN_REQUIRE_VERAPDF === "1") {
+      throw new Error(
+        "[docen/pdf] DOCEN_REQUIRE_VERAPDF=1 but the veraPDF CLI is not available on PATH " +
+          "or at /home/rixzkiye/.local/bin/verapdf",
+      );
+    }
+    if (!verapdfPath) {
+      console.warn(
+        "[docen/pdf] veraPDF CLI not found (PATH or /home/rixzkiye/.local/bin/verapdf) — " +
+          "skipping the PDF/A-2b + PDF/UA-1 conformance validation. " +
+          "Set DOCEN_REQUIRE_VERAPDF=1 to make a missing veraPDF a hard failure.",
+      );
     }
 
     if (verapdfPath) {

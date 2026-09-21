@@ -1,4 +1,13 @@
-import { nodeKit, paintFurnitureStack, paintScene, withKit, type PaintContext } from "@docen/core";
+import {
+  nodeKit,
+  paintColumnSeparators,
+  paintEndnotes,
+  paintFootnotes,
+  paintFurnitureStack,
+  paintScene,
+  withKit,
+  type PaintContext,
+} from "@docen/core";
 import { compileDocument, type DocumentOptions, type JSONContent } from "@docen/docx";
 import { projectDocumentOptions, type ProjectedSection } from "@docen/docx/layout";
 import {
@@ -6,6 +15,7 @@ import {
   createMeasurer,
   layoutFlowSections,
   loadDefaultFonts,
+  registerDefaultFonts,
   type FlowSection,
   type TextMeasurer,
 } from "@docen/layout";
@@ -14,9 +24,12 @@ import {
   buildEmbeddedPdfFonts,
   extractPdfPageLayers,
   pagesToPdf,
+  sceneTextSpans,
   type PdfEmbeddableFontSource,
+  type PdfEmbeddedFont,
   type PdfExportOptions,
   type PdfPageShot,
+  type PdfTextSpan,
 } from "./export-pdf";
 import { NodeImageCache, type PdfImageCache } from "./node-image";
 import { serializeNodeScene } from "./node-scene";
@@ -42,14 +55,44 @@ async function getDefaultFontSources(): Promise<readonly PdfEmbeddableFontSource
   if (cachedDefaultFontSources) return cachedDefaultFontSources;
   try {
     const defaultFaces = await loadDefaultFonts();
-    cachedDefaultFontSources = defaultFaces.map((f) => ({
-      family: f.family,
-      fontData: f.bytes,
-    }));
+    // One face per family — the regular slot — matching the browser editor's
+    // export-embedding set (registerDefaultFonts keeps only regular faces in
+    // its font map; the exporter synthesizes bold/italic). Passing all four
+    // slots would let buildEmbeddedPdfFonts' family map keep the bold-italic
+    // face for every family, so all embedded text would render bold-italic.
+    cachedDefaultFontSources = defaultFaces
+      .filter((f) => !f.bold && !f.italic)
+      .map((f) => ({
+        family: f.family,
+        fontData: f.bytes,
+      }));
     return cachedDefaultFontSources;
   } catch {
     return [];
   }
+}
+
+/** One-entry cache of the last render's embedded subsets. A server that
+ *  re-renders the same document (or the memory-discipline loop) reuses the
+ *  subsetter's output instead of re-running it per render; the entry is
+ *  keyed by the rendered spans and the source array identity, so a different
+ *  document or caller-provided fonts always re-subsets. One entry keeps the
+ *  retained memory bounded. */
+let cachedEmbeddedFonts:
+  | {
+      key: string;
+      sources: readonly PdfEmbeddableFontSource[];
+      fonts: readonly PdfEmbeddedFont[];
+    }
+  | undefined;
+
+function embeddedFontsKey(spans: readonly PdfTextSpan[]): string {
+  const parts: string[] = [];
+  for (const span of spans) {
+    if (!span.text) continue;
+    parts.push(`${span.fontFamily ?? ""}\u0001${span.text}`);
+  }
+  return parts.join("\u0002");
 }
 
 function ensureNodeCanvas(): void {
@@ -82,6 +125,33 @@ function ensureNodeCanvas(): void {
       return ctx();
     }
   };
+}
+
+/** The bundled production faces are process-global (one shaping font manager),
+ *  so the first render registers them and every later render reuses that
+ *  promise. A failed attempt clears the cache so a later render can retry. */
+let defaultFontsRegistration: Promise<void> | undefined;
+
+/** Register docen's bundled faces before any layout/measuring so the default
+ *  Word families shape with their real metrics in Node exactly as they do in
+ *  the browser editor — without this the measurer silently falls back to the
+ *  rough OffscreenCanvas shim and the server PDF drifts from the browser
+ *  export. Failure is loud: the assets ship with @docen/layout, so their
+ *  absence is a broken install, not a supported degradation. */
+function ensureDefaultFonts(): Promise<void> {
+  defaultFontsRegistration ??= registerDefaultFonts().then(
+    () => undefined,
+    (err) => {
+      defaultFontsRegistration = undefined;
+      throw new Error(
+        "[@docen/pdf] failed to load the bundled production fonts — headless renders " +
+          "would measure the default Word families with the canvas shim instead of " +
+          "their real metrics and stop matching the browser export",
+        { cause: err },
+      );
+    },
+  );
+  return defaultFontsRegistration;
 }
 
 function normalizeJsonContent(node: JSONContent): JSONContent {
@@ -131,6 +201,10 @@ export async function renderPdf(
   options?: RenderPdfOptions,
 ): Promise<Uint8Array> {
   ensureNodeCanvas();
+  // Bundled faces before any layout/measuring: the furniture pass, the body
+  // measurer and the painter all resolve through the same process-global
+  // shaping font manager, so one registration covers the whole render.
+  await ensureDefaultFonts();
   const kit = nodeKit;
 
   const docOptions: DocumentOptions =
@@ -234,6 +308,12 @@ export async function renderPdf(
       }
 
       paintScene(body, page.items, ctx);
+      // The stage's flat path paints these after the body items; the server
+      // render must too or footnotes/endnotes/column rules are missing from
+      // the PDF (the invisible text layer would still carry their text).
+      paintColumnSeparators(body, ctx);
+      paintFootnotes(body, page.footnotes, ctx);
+      paintEndnotes(body, page.endnotes, ctx);
     });
 
     const scene = await serializeNodeScene(root, flow.pageWidthPx, flow.pageHeightPx, imageCache);
@@ -253,17 +333,33 @@ export async function renderPdf(
   const textMode = options?.textMode ?? (options?.pdfa || options?.pdfUa ? "embedded" : undefined);
   let embeddedFonts = options?.embeddedFonts;
   let fontSources = options?.fontSources;
-  if (
-    !embeddedFonts &&
-    (!fontSources || fontSources.length === 0) &&
-    (options?.pdfa || options?.pdfUa || textMode === "embedded")
-  ) {
+  if (!embeddedFonts && (!fontSources || fontSources.length === 0)) {
+    // The browser export always carries the registered faces. Outlines mode
+    // still paints unshaped runs (letter-spacing runs, fallback scripts)
+    // through the scene's text nodes, so without the embedded subset those
+    // runs fall back to standard-14 Helvetica and stop matching the browser.
     fontSources = await getDefaultFontSources();
   }
 
   if (!embeddedFonts && fontSources && fontSources.length > 0) {
-    const allSpans = shots.flatMap((s) => s.textSpans ?? []);
-    embeddedFonts = await buildEmbeddedPdfFonts(allSpans, fontSources);
+    // Visible scene text (chart/marks labels) uses the same subsets the
+    // browser export builds its font set from; the invisible span layer
+    // covers the body.
+    const allSpans = [
+      ...shots.flatMap((s) => s.textSpans ?? []),
+      ...shots.flatMap((s) => (s.scene ? sceneTextSpans(s.scene) : [])),
+    ];
+    const key = embeddedFontsKey(allSpans);
+    if (
+      cachedEmbeddedFonts &&
+      cachedEmbeddedFonts.key === key &&
+      cachedEmbeddedFonts.sources === fontSources
+    ) {
+      embeddedFonts = cachedEmbeddedFonts.fonts;
+    } else {
+      embeddedFonts = await buildEmbeddedPdfFonts(allSpans, fontSources);
+      cachedEmbeddedFonts = { key, sources: fontSources, fonts: embeddedFonts };
+    }
   }
 
   const exportOpts: PdfExportOptions = {
