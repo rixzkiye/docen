@@ -205,8 +205,9 @@ export interface FlowSection {
   opts: FlowOptions;
   /** The section break type (sectPr @w:type) — a "continuous" section merges
    *  onto the previous section's flow instead of opening a fresh page. The
-   *  page-per-section modes (nextPage/evenPage/oddPage/nextColumn) all open
-   *  a fresh page here; even/odd blank interleaves stay unmodeled. */
+   *  page-per-section modes (nextPage/nextColumn) open a fresh page here;
+   *  `evenPage`/`oddPage` additionally insert the blank interleave page(s)
+   *  Word needs so the next section starts on the required parity. */
   type?: "nextPage" | "nextColumn" | "continuous" | "evenPage" | "oddPage";
 }
 

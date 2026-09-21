@@ -10,6 +10,7 @@ import {
   type ProjectedPageBorders,
   type ProjectedPageFurniture,
   type ProjectedPageNumbering,
+  type FlowSection,
 } from "@docen/layout";
 
 export interface LaidFurnitureSlot {
@@ -27,6 +28,9 @@ export interface LaidFurnitureSection {
  *  and the headers/footers its pages display. */
 export interface PdfStageSection {
   flow: ProjectedFlowBox;
+  /** The section break type (sectPr @w:type) — drives continuous merging and
+   *  even/odd blank interleaves in the flow; absent = nextPage. */
+  type?: FlowSection["type"];
   /** The section's page borders (w:pgBorders), absent when none. */
   pageBorders?: ProjectedPageBorders;
   /** The section's line numbering (w:lnNumType), absent when none. */

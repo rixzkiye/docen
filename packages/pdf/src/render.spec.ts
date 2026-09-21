@@ -296,3 +296,38 @@ describe("renderPdf headless entry point", () => {
     expect(rssDelta).toBeLessThan(30);
   }, 30000);
 });
+
+describe("section break semantics reach the headless flow", () => {
+  const pageCount = (bytes: Uint8Array): number => {
+    const text = new TextDecoder("latin1").decode(bytes);
+    return (text.match(/\/Type\s*\/Page(?![a-zA-Z])/g) ?? []).length;
+  };
+
+  const twoSections = (type: "continuous" | "oddPage") => ({
+    type: "doc" as const,
+    // The following (final) section's sectPr declares how IT starts; a break
+    // type on section A would make A itself start on that parity.
+    attrs: { sectionProperties: { type } },
+    content: [
+      {
+        type: "paragraph",
+        attrs: { sectionProperties: {} },
+        content: [{ type: "text", text: "Section A" }],
+      },
+      { type: "paragraph", content: [{ type: "text", text: "Section B" }] },
+    ],
+  });
+
+  it("keeps a continuous section on the same page", async () => {
+    const bytes = await renderPdf(twoSections("continuous"), { title: "Continuous" });
+    expect(pageCount(bytes)).toBe(1);
+  }, 30000);
+
+  it("inserts Word's blank interleave for an oddPage section start", async () => {
+    // Section A occupies physical page 1 (odd). An oddPage start must land on
+    // page 3, so Word inserts blank page 2 — the Node pipeline must project the
+    // sectPr type into the flow to produce the same three pages.
+    const bytes = await renderPdf(twoSections("oddPage"), { title: "Odd Page" });
+    expect(pageCount(bytes)).toBe(3);
+  }, 30000);
+});

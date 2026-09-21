@@ -216,6 +216,7 @@ export async function renderPdf(
   const stageSections: PdfStageSection[] = sections.map((sec: ProjectedSection) => ({
     flow: sec.flow,
     blocks: sec.blocks,
+    type: sec.type,
     pageBorders: sec.pageBorders,
     lineNumbers: sec.lineNumbers,
     pageNumbering: sec.pageNumbering,
@@ -234,6 +235,7 @@ export async function renderPdf(
     const insets = computePageInsets(sec.flow, sec.furniture, sec.furnitureLaid);
     return {
       blocks: sec.blocks ?? [],
+      ...(sec.type ? { type: sec.type } : {}),
       opts: {
         ...sec.flow,
         columns: sec.columns,
