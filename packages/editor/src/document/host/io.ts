@@ -235,7 +235,10 @@ export class IODomain {
    *  live print run — the caret map's page boxes and the section projection —
    *  before a non-print view restores, so the navigation matches the pages
    *  the export rasterizes. */
-  async buildPdf(options?: { metadata?: PdfExportOptions["metadata"] }): Promise<{
+  async buildPdf(options?: {
+    metadata?: PdfExportOptions["metadata"];
+    textMode?: PdfExportOptions["textMode"];
+  }): Promise<{
     blob: Blob;
     pages: readonly PdfPageShot[];
     embeddedFonts: readonly PdfEmbeddedFont[];
@@ -293,6 +296,7 @@ export class IODomain {
         : [];
     const title = this.host.getAttribute("filename") ?? t("header.doc-name", this.host.element());
     const blob = await pagesToPdf(shotsWithLayers, {
+      textMode: options?.textMode ?? "outlines",
       metadata: { title, author: "Docen", ...options?.metadata },
       tagged: true,
       ...(embeddedFonts.length > 0 ? { embeddedFonts } : {}),
