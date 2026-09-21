@@ -67,6 +67,8 @@ Render pool:
                          or 1970-01-01T00:00:00Z (deterministic + cacheable)
   --version <string>     build identifier in the cache key (default: editor
                          package version + git HEAD of this repo)
+  --pdfa [2b|2u]         PDF/A conformance level (default: 2b)
+  --pdf-ua               PDF/UA-1 conformance (Universal Accessibility)
   --no-sandbox           launch Chromium with --no-sandbox (root/containers)
   --keep-open            keep the browser open after rendering (debug)
 
@@ -105,6 +107,20 @@ const VALUE_FLAGS = new Set([
   "--cache-max-bytes",
   "--repeat",
 ]);
+
+let pdfaFlag = undefined;
+const pdfaIndex = argv.indexOf("--pdfa");
+if (pdfaIndex >= 0) {
+  const val = argv[pdfaIndex + 1];
+  if (val && (val === "2b" || val === "2u" || val === "ua")) {
+    pdfaFlag = val;
+    VALUE_FLAGS.add("--pdfa");
+  } else {
+    pdfaFlag = "2b";
+  }
+}
+const pdfUaFlag = has("--pdf-ua") || pdfaFlag === "ua";
+
 const positional = argv.filter((a, i) => !a.startsWith("-") && !VALUE_FLAGS.has(argv[i - 1]));
 const jsonPaths = [...takeValues("--json"), ...positional].map((p) => resolve(p));
 
@@ -247,7 +263,13 @@ class PdfCache {
         schema: CACHE_SCHEMA,
         build: buildId,
         json,
-        export: { tagged: true, textMode: "embedded", creationDate: exportDateISO },
+        export: {
+          tagged: true,
+          textMode: "embedded",
+          creationDate: exportDateISO,
+          ...(pdfaFlag ? { pdfa: pdfaFlag } : {}),
+          ...(pdfUaFlag ? { pdfUa: true } : {}),
+        },
         date: exportDateISO,
       }),
     );
@@ -345,7 +367,7 @@ class PdfCache {
 /** Runs inside the editor page — must stay self-contained (Playwright
  *  serializes the source). Waits for a settled canvas, injects the document
  *  through the public host methods, and returns the PDF as base64. */
-async function renderInPage({ json, iso, capture }) {
+async function renderInPage({ json, iso, capture, pdfa, pdfUa }) {
   const host = document.querySelector("docen-document");
   if (!host) throw new Error("docen-document element not found on the page");
   const canvasPages = () => host.shadowRoot?.querySelectorAll(".canvas-pages > *").length ?? 0;
@@ -377,6 +399,8 @@ async function renderInPage({ json, iso, capture }) {
   const result = await host.exportPdf({
     textMode: "embedded",
     metadata: { creationDate: new Date(iso), modDate: new Date(iso) },
+    ...(pdfa ? { pdfa } : {}),
+    ...(pdfUa ? { pdfUa: true } : {}),
   });
   const exportMs = performance.now() - exportStart;
   if (settled !== result.pages.length) {
@@ -481,7 +505,12 @@ class RenderPool {
         if (!row) return;
         const started = performance.now();
         try {
-          const out = await this.render({ json: row.json, iso: exportDateISO });
+          const out = await this.render({
+            json: row.json,
+            iso: exportDateISO,
+            pdfa: pdfaFlag,
+            pdfUa: pdfUaFlag,
+          });
           results.push({ row, out, wallMs: performance.now() - started });
         } catch (err) {
           results.push({

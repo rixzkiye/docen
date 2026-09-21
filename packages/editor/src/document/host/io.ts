@@ -238,6 +238,8 @@ export class IODomain {
   async buildPdf(options?: {
     metadata?: PdfExportOptions["metadata"];
     textMode?: PdfExportOptions["textMode"];
+    pdfa?: PdfExportOptions["pdfa"];
+    pdfUa?: PdfExportOptions["pdfUa"];
   }): Promise<{
     blob: Blob;
     pages: readonly PdfPageShot[];
@@ -301,6 +303,8 @@ export class IODomain {
       textMode: options?.textMode ?? "outlines",
       metadata: { title, author: "Docen", ...options?.metadata },
       tagged: true,
+      ...(options?.pdfa !== undefined ? { pdfa: options.pdfa } : {}),
+      ...(options?.pdfUa !== undefined ? { pdfUa: options.pdfUa } : {}),
       ...(embeddedFonts.length > 0 ? { embeddedFonts } : {}),
       ...(structure.outline.length > 0 ? { outline: structure.outline } : {}),
       ...(structure.pageLabels.length > 0 ? { pageLabels: structure.pageLabels } : {}),

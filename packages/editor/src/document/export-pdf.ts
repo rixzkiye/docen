@@ -35,6 +35,7 @@ import {
   type PdfSceneTextNode,
   type PdfTextFontRef,
 } from "./pdf-scene";
+import { getSrgbIccDeflated } from "./srgb-icc";
 
 /** One text span placed in the PDF text layer with exact coordinates (in pt). */
 export interface PdfTextSpan {
@@ -197,9 +198,18 @@ export interface PdfExportOptions {
     producer?: string;
     creationDate?: Date | string;
     modDate?: Date | string;
+    language?: string;
   };
   /** Produce a Tagged PDF with /MarkInfo and /StructTreeRoot (default: true). */
   tagged?: boolean;
+  /** PDF/A conformance level: "2b" | "2u" | "ua" or boolean (true = "2b").
+   *  Enables PDF/A-2 compliance (ISO 19005-2) with XMP metadata, OutputIntent ICC profile,
+   *  and font embedding guarantees. */
+  pdfa?: "2b" | "2u" | "ua" | boolean;
+  /** PDF/UA-1 conformance level for universal accessibility (ISO 14289-1).
+   *  Enables /ViewerPreferences /DisplayDocTitle, document /Lang, marked structure
+   *  hierarchy, and parent tree indexing. */
+  pdfUa?: boolean;
   /** Embedded subset TrueType/OpenType fonts for visual fidelity and text extraction. */
   embeddedFonts?: readonly PdfEmbeddedFont[];
   /** How visible text paints in a vector scene page:
@@ -348,8 +358,51 @@ function formatPdfDate(date: Date = new Date()): string {
   return `D:${y}${m}${d}${h}${min}${s}Z`;
 }
 
+/** Format an ISO 8601 UTC date string (YYYY-MM-DDThh:mm:ssZ) for XMP metadata. */
+function formatIsoDate(date: Date = new Date()): string {
+  return date.toISOString().replace(/\.\d{3}Z$/, "Z");
+}
+
+/** Convert a PDF date string (D:YYYYMMDDHHmmSSZ) to an ISO 8601 string for XMP. */
+function pdfDateToIso(pdfDate: string): string {
+  const m = pdfDate.match(/^D:(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})(.*)$/);
+  if (!m) return formatIsoDate();
+  const [, y, mon, d, h, min, s, tz] = m;
+  let tzStr = "Z";
+  if (tz && tz !== "Z") {
+    const tzMatch = tz.match(/^([+-])(\d{2})'(\d{2})'?$/);
+    if (tzMatch) {
+      tzStr = `${tzMatch[1]}${tzMatch[2]}:${tzMatch[3]}`;
+    }
+  }
+  return `${y}-${mon}-${d}T${h}:${min}:${s}${tzStr}`;
+}
+
+/** Deterministic 32-character hex ID derived from document title and timestamp for PDF trailer /ID. */
+function deterministicIdHex(title: string, date: string): string {
+  const str = `${title}:${date}`;
+  let h1 = 0x811c9dc5;
+  let h2 = 0x5a7b3c2d;
+  for (let i = 0; i < str.length; i++) {
+    const c = str.charCodeAt(i);
+    h1 ^= c;
+    h1 = Math.imul(h1, 0x01000193);
+    h2 = Math.imul(h2 ^ c, 0x5bd1e995);
+    h2 ^= h2 >>> 15;
+  }
+  const toHex8 = (n: number) => (n >>> 0).toString(16).padStart(8, "0");
+  return `${toHex8(h1)}${toHex8(h2)}${toHex8(h1 ^ h2)}${toHex8(h1 + h2)}`;
+}
+
 /** Select the best matching PDF font name and encoding mode for a text span. */
-function fontForSpan(span: PdfTextSpan): { fontName: string; isUnicode: boolean } {
+function fontForSpan(
+  span: PdfTextSpan,
+  forceEmbedded = false,
+  fallbackEmbedded?: { resourceName: string },
+): { fontName: string; isUnicode: boolean } {
+  if (forceEmbedded && fallbackEmbedded) {
+    return { fontName: fallbackEmbedded.resourceName, isUnicode: true };
+  }
   if (!isAsciiPrintable(span.text)) {
     return { fontName: "F_Uni", isUnicode: true };
   }
@@ -380,11 +433,12 @@ export async function buildEmbeddedPdfFonts(
   const { readCmap, subsetFontWithPlan } = await import("@docen/shaping/subsetter");
 
   const used = new Map<string, { source: PdfEmbeddableFontSource; codeUnits: Set<number> }>();
+  const primarySource = byFamily.values().next().value;
   for (const span of spans) {
-    const family = span.fontFamily?.trim().toLowerCase();
-    if (!family) continue;
-    let source = byFamily.get(family);
-    if (!source) {
+    const rawFamily = span.fontFamily?.trim().toLowerCase();
+    const family = rawFamily ? rawFamily.split(",")[0]?.trim().toLowerCase() : undefined;
+    let source = family ? byFamily.get(family) : undefined;
+    if (!source && family) {
       for (const [key, candidate] of byFamily) {
         if (family.includes(key) || key.includes(family)) {
           source = candidate;
@@ -392,6 +446,7 @@ export async function buildEmbeddedPdfFonts(
         }
       }
     }
+    source = source ?? primarySource;
     if (!source) continue;
     const entry = used.get(source.family) ?? { source, codeUnits: new Set<number>() };
     for (let i = 0; i < span.text.length; i++) entry.codeUnits.add(span.text.charCodeAt(i));
@@ -447,6 +502,7 @@ export async function buildEmbeddedPdfFonts(
       fontData,
       cidToGid,
       glyphAdvances: readGlyphAdvances(fontData),
+      toUnicodeMap: new Map([...codeUnits].map((cu) => [cu, cu])),
       unitsPerEm: readFontUnitsPerEm(source.fontData),
       fsType,
     });
@@ -509,9 +565,20 @@ export async function pagesToPdf(
   shots: readonly PdfPageShot[],
   options?: PdfExportOptions,
 ): Promise<Blob> {
+  const isPdfA = Boolean(options?.pdfa);
+  const pdfaFlavour: "2b" | "2u" | "ua" | undefined =
+    typeof options?.pdfa === "string" ? options.pdfa : options?.pdfa ? "2b" : undefined;
+  const isPdfUa = Boolean(options?.pdfUa || options?.pdfa === "ua");
+  const isTagged = options?.tagged !== false || isPdfUa;
+  const textMode = options?.textMode ?? "outlines";
+
   const { push, offset, bytes } = pdfWriter();
-  // %PDF-1.4 plus binary-marker comment line (raw bytes)
-  push("%PDF-1.4\n");
+  // Header: %PDF-1.7 for PDF/A-2 & PDF/UA-1; %PDF-1.4 for legacy/default
+  if (isPdfA || isPdfUa) {
+    push("%PDF-1.7\n");
+  } else {
+    push("%PDF-1.4\n");
+  }
   push(new Uint8Array([0x25, 0xe2, 0xe3, 0xcf, 0xd3, 0x0a]));
 
   interface PdfObject {
@@ -536,8 +603,11 @@ export async function pagesToPdf(
 
   const catalogId = allocId();
   const pagesId = allocId();
-  const isTagged = options?.tagged !== false;
   const structTreeRootId = isTagged ? allocId() : undefined;
+  const parentTreeId = isPdfUa && structTreeRootId ? allocId() : undefined;
+  const xmpMetadataId = isPdfA || isPdfUa ? allocId() : undefined;
+  const outputIntentId = isPdfA || isPdfUa ? allocId() : undefined;
+  const iccStreamId = isPdfA || isPdfUa ? allocId() : undefined;
 
   // Standard Type 1 fonts + universal non-embedded Unicode Type 0 font
   const fontIds: Record<string, number> = {
@@ -584,27 +654,46 @@ export async function pagesToPdf(
 
   // Vector scene plans — pure analysis (resource names are page-local) done
   // before any object is written, so every allocation below is final.
-  const textMode = options?.textMode ?? DEFAULT_EDITOR_TEXT_MODE;
+  const primaryEmbedded =
+    embeddedFonts.length > 0
+      ? embeddedFonts.reduce(
+          (best, cur) =>
+            (cur.font.cidToGid?.size ?? 0) > (best.font.cidToGid?.size ?? 0) ? cur : best,
+          embeddedFonts[0]!,
+        )
+      : undefined;
+
   // The face for a family: an exact family match wins, then the longest
   // substring match (so "Calibri" never resolves to "Calibri Light").
   const embeddedFontForFamily = (family: string | undefined): EmbeddedFontPlan | undefined => {
-    const key = (family ?? "").trim().toLowerCase();
-    if (!key || embeddedFonts.length === 0) return undefined;
+    const raw = (family ?? "").split(",")[0]!.trim().toLowerCase().replace(/['"]/g, "");
+    if (!raw || embeddedFonts.length === 0) return undefined;
     for (const emb of embeddedFonts) {
       const target = (emb.font.fontFamily ?? emb.font.fontName).trim().toLowerCase();
-      if (target && target === key) return emb;
+      if (target && target === raw) return emb;
     }
     let best: { plan: EmbeddedFontPlan; length: number } | undefined;
     for (const emb of embeddedFonts) {
       const target = (emb.font.fontFamily ?? emb.font.fontName).trim().toLowerCase();
       if (!target) continue;
-      if (!key.includes(target) && !target.includes(key)) continue;
+      if (!raw.includes(target) && !target.includes(raw)) continue;
       if (!best || target.length > best.length) best = { plan: emb, length: target.length };
     }
     return best?.plan;
   };
   const sceneFontForText = (node: PdfSceneTextNode): PdfTextFontRef => {
-    const embedded = embeddedFontForFamily(node.fontFamily);
+    let embedded = embeddedFontForFamily(node.fontFamily);
+    if (embedded && node.rows.length > 0 && node.rows[0]?.text) {
+      const firstChar = node.rows[0].text.charCodeAt(0);
+      if (
+        embedded.font.cidToGid &&
+        !embedded.font.cidToGid.has(firstChar) &&
+        primaryEmbedded?.font.cidToGid?.has(firstChar)
+      ) {
+        embedded = primaryEmbedded;
+      }
+    }
+    embedded = embedded ?? (isPdfA || isPdfUa ? primaryEmbedded : undefined);
     if (embedded) return { resource: embedded.resourceName, isUnicode: true };
     return {
       resource: standardFontFor(node.fontFamily, node.bold, node.italic),
@@ -665,8 +754,11 @@ export async function pagesToPdf(
     annotIds: number[];
     fieldAnnotIds: number[];
     structElemIds: number[];
+    linkStructElemIds: number[];
+    linkStructParentKeys: number[];
   }
 
+  let nextParentTreeKey = shots.length;
   const pageAllocs: PageAlloc[] = [];
   for (const [index, shot] of shots.entries()) {
     const plan = scenePlans[index];
@@ -680,6 +772,8 @@ export async function pagesToPdf(
     }));
     const stateIds = (plan?.extGStates ?? []).map(() => allocId());
     const annotIds = (shot.links ?? []).map(() => allocId());
+    const linkStructElemIds = isPdfUa ? (shot.links ?? []).map(() => allocId()) : [];
+    const linkStructParentKeys = isPdfUa ? (shot.links ?? []).map(() => nextParentTreeKey++) : [];
     const pageFields = formFields.filter(
       (f) => Math.max(0, Math.min(shots.length - 1, f.pageIndex)) === index,
     );
@@ -695,6 +789,8 @@ export async function pagesToPdf(
       annotIds,
       fieldAnnotIds,
       structElemIds,
+      linkStructElemIds,
+      linkStructParentKeys,
     });
   }
 
@@ -820,10 +916,12 @@ export async function pagesToPdf(
 
   // Viewer Preferences (/ViewerPreferences)
   let viewerPrefsDict = "";
-  if (options?.viewerPreferences) {
+  if (options?.viewerPreferences || isPdfUa) {
     const prefs: string[] = [];
-    const vp = options.viewerPreferences;
-    if (vp.displayDocTitle != null) prefs.push(`/DisplayDocTitle ${vp.displayDocTitle}`);
+    const vp = options?.viewerPreferences ?? {};
+    if (vp.displayDocTitle != null || isPdfUa) {
+      prefs.push(`/DisplayDocTitle ${vp.displayDocTitle ?? true}`);
+    }
     if (vp.hideToolbar != null) prefs.push(`/HideToolbar ${vp.hideToolbar}`);
     if (vp.hideMenubar != null) prefs.push(`/HideMenubar ${vp.hideMenubar}`);
     if (vp.centerWindow != null) prefs.push(`/CenterWindow ${vp.centerWindow}`);
@@ -845,8 +943,18 @@ export async function pagesToPdf(
   if (pageLabelsDict) catDict += pageLabelsDict;
   if (destsDict) catDict += destsDict;
   if (viewerPrefsDict) catDict += viewerPrefsDict;
+  if (isPdfUa) {
+    const lang = options?.metadata?.language ?? "en-US";
+    catDict += ` /Lang (${escapePdfString(lang)})`;
+  }
   if (acroFormId !== undefined) {
     catDict += ` /AcroForm ${acroFormId} 0 R`;
+  }
+  if (xmpMetadataId !== undefined) {
+    catDict += ` /Metadata ${xmpMetadataId} 0 R`;
+  }
+  if (outputIntentId !== undefined) {
+    catDict += ` /OutputIntents [ ${outputIntentId} 0 R ]`;
   }
   catDict += ` >>\nendobj\n`;
   addObject(catalogId, `${catalogId} 0 obj\n${catDict}`);
@@ -876,22 +984,49 @@ export async function pagesToPdf(
   // 3. StructTreeRoot Object (if tagged)
   if (isTagged && structTreeRootId) {
     const allStructKids = [
-      ...pageAllocs.flatMap((p) => p.structElemIds.map((id) => `${id} 0 R`)),
+      ...pageAllocs.flatMap((p) => [
+        ...p.structElemIds.map((id) => `${id} 0 R`),
+        ...p.linkStructElemIds.map((id) => `${id} 0 R`),
+      ]),
       ...customStructIds.map((id) => `${id} 0 R`),
     ].join(" ");
+    const parentTreeRef = parentTreeId !== undefined ? ` /ParentTree ${parentTreeId} 0 R` : "";
+    const roleMap = isPdfUa
+      ? `/RoleMap << /H1 /H /H2 /H /H3 /H /H4 /H >>`
+      : `/RoleMap << /H1 /H /H2 /H /H3 /H /H4 /H /P /P /Table /Table /Figure /Figure >>`;
     addObject(
       structTreeRootId,
-      `${structTreeRootId} 0 obj\n<< /Type /StructTreeRoot /RoleMap << /H1 /H /H2 /H /H3 /H /H4 /H /P /P /Table /Table /Figure /Figure >> /K [ ${allStructKids} ] >>\nendobj\n`,
+      `${structTreeRootId} 0 obj\n<< /Type /StructTreeRoot ${roleMap} /K [ ${allStructKids} ]${parentTreeRef} >>\nendobj\n`,
+    );
+  }
+
+  // 3a. ParentTree Object (for PDF/UA-1)
+  if (parentTreeId !== undefined) {
+    const parentTreeNums: string[] = [];
+    for (let i = 0; i < pageAllocs.length; i++) {
+      const alloc = pageAllocs[i]!;
+      const kids = alloc.structElemIds.map((id) => `${id} 0 R`).join(" ");
+      parentTreeNums.push(`${i} [ ${kids} ]`);
+      for (let l = 0; l < alloc.linkStructElemIds.length; l++) {
+        const key = alloc.linkStructParentKeys[l]!;
+        const elemId = alloc.linkStructElemIds[l]!;
+        parentTreeNums.push(`${key} ${elemId} 0 R`);
+      }
+    }
+    addObject(
+      parentTreeId,
+      `${parentTreeId} 0 obj\n<< /Nums [ ${parentTreeNums.join(" ")} ] >>\nendobj\n`,
     );
   }
 
   // 3b. AcroForm Object
+  const defaultFontName = (isPdfA || isPdfUa) && embeddedFonts.length > 0 ? "F_Emb0" : "F1";
   if (acroFormId !== undefined) {
     const allFieldIds = pageAllocs.flatMap((p) => p.fieldAnnotIds);
     const fieldsRef = allFieldIds.map((id) => `${id} 0 R`).join(" ");
     addObject(
       acroFormId,
-      `${acroFormId} 0 obj\n<< /Fields [ ${fieldsRef} ] /NeedAppearances true /DA (/F1 12 Tf 0 g) >>\nendobj\n`,
+      `${acroFormId} 0 obj\n<< /Fields [ ${fieldsRef} ] /NeedAppearances true /DA (/${defaultFontName} 12 Tf 0 g) >>\nendobj\n`,
     );
   }
 
@@ -927,9 +1062,40 @@ export async function pagesToPdf(
       "\nendstream\nendobj\n",
     );
 
-    const toUnicodeCMap = font.toUnicodeMap
-      ? generateToUnicodeCMap(font.toUnicodeMap, `Docen-ToUnicode-${emb.index}`)
-      : identityToUnicodeCMap();
+    const toUnicodeMap = new Map<number, number | string>();
+    if (font.toUnicodeMap) {
+      const entries = Array.isArray(font.toUnicodeMap)
+        ? font.toUnicodeMap
+        : font.toUnicodeMap.entries();
+      for (const [k, v] of entries) toUnicodeMap.set(k, v);
+    }
+    if (font.cidToGid) {
+      for (const cid of font.cidToGid.keys()) toUnicodeMap.set(cid, cid);
+    }
+    if (toUnicodeMap.size > 0 || font.cidToGid) {
+      for (const shot of shots) {
+        for (const span of shot.textSpans ?? []) {
+          if (!span.text) continue;
+          for (let c = 0; c < span.text.length; c++) {
+            const cu = span.text.charCodeAt(c);
+            toUnicodeMap.set(cu, cu);
+          }
+        }
+        if (shot.scene) {
+          for (const span of sceneTextSpans(shot.scene)) {
+            for (let c = 0; c < span.text.length; c++) {
+              const cu = span.text.charCodeAt(c);
+              toUnicodeMap.set(cu, cu);
+            }
+          }
+        }
+      }
+    }
+
+    const toUnicodeCMap =
+      toUnicodeMap.size > 0
+        ? generateToUnicodeCMap(toUnicodeMap, `Docen-ToUnicode-${emb.index}`)
+        : identityToUnicodeCMap();
     addObject(
       emb.toUnicodeId,
       `${emb.toUnicodeId} 0 obj\n<< /Length ${toUnicodeCMap.length} >>\nstream\n${toUnicodeCMap}\nendstream\nendobj\n`,
@@ -995,9 +1161,10 @@ export async function pagesToPdf(
       emb.type0Id,
       `${emb.type0Id} 0 obj\n<< /Type /Font /Subtype /Type0 /BaseFont /${baseFontName} /Encoding /Identity-H /DescendantFonts [ ${emb.cidFontId} 0 R ] /ToUnicode ${emb.toUnicodeId} 0 R >>\nendobj\n`,
     );
+    const cidToGidEntry = cidToGidRef || (isPdfA || isPdfUa ? " /CIDToGIDMap /Identity" : "");
     addObject(
       emb.cidFontId,
-      `${emb.cidFontId} 0 obj\n<< /Type /Font /Subtype /CIDFontType2 /BaseFont /${baseFontName} /CIDSystemInfo << /Registry (Adobe) /Ordering (Identity) /Supplement 0 >> /FontDescriptor ${emb.fontDescId} 0 R /DW 1000${widthsRef}${cidToGidRef} >>\nendobj\n`,
+      `${emb.cidFontId} 0 obj\n<< /Type /Font /Subtype /CIDFontType2 /BaseFont /${baseFontName} /CIDSystemInfo << /Registry (Adobe) /Ordering (Identity) /Supplement 0 >> /FontDescriptor ${emb.fontDescId} 0 R /DW 1000${widthsRef}${cidToGidEntry} >>\nendobj\n`,
     );
     addObject(
       emb.fontDescId,
@@ -1056,11 +1223,146 @@ export async function pagesToPdf(
   infoDict += ` >>\nendobj\n`;
   addObject(infoId, `${infoId} 0 obj\n${infoDict}`);
 
+  // 5a. OutputIntent & ICC Color Profile (PDF/A & PDF/UA)
+  if (outputIntentId !== undefined && iccStreamId !== undefined) {
+    addObject(
+      outputIntentId,
+      `${outputIntentId} 0 obj\n<< /Type /OutputIntent /S /GTS_PDFA1 ` +
+        `/OutputCondition (sRGB) /OutputConditionIdentifier (sRGB) ` +
+        `/RegistryName (http://www.color.org) /DestOutputProfile ${iccStreamId} 0 R ` +
+        `/Info (sRGB IEC61966-2.1) >>\nendobj\n`,
+    );
+    const iccDeflated = getSrgbIccDeflated();
+    addObject(
+      iccStreamId,
+      `${iccStreamId} 0 obj\n<< /N 3 /Filter /FlateDecode /Length ${iccDeflated.length} >>\nstream\n`,
+      iccDeflated,
+      "\nendstream\nendobj\n",
+    );
+  }
+
+  // 5b. XMP Metadata Stream (uncompressed UTF-8 per ISO 19005-2 §6.6.2.1)
+  if (xmpMetadataId !== undefined) {
+    const creationDateIso = options?.metadata?.creationDate
+      ? options.metadata.creationDate instanceof Date
+        ? formatIsoDate(options.metadata.creationDate)
+        : pdfDateToIso(options.metadata.creationDate)
+      : formatIsoDate();
+    const modDateIso = options?.metadata?.modDate
+      ? options.metadata.modDate instanceof Date
+        ? formatIsoDate(options.metadata.modDate)
+        : pdfDateToIso(options.metadata.modDate)
+      : creationDateIso;
+
+    const escapeXml = (str: string) =>
+      str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+
+    let xmpRdf =
+      `<?xpacket begin="\uFEFF" id="W5M0MpCehiHzreSzNTczkc9d"?>\n` +
+      `<x:xmpmeta xmlns:x="adobe:ns:meta/">\n` +
+      `  <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">\n`;
+
+    if (isPdfA) {
+      const conf = pdfaFlavour === "2u" ? "U" : "B";
+      xmpRdf +=
+        `    <rdf:Description rdf:about="" xmlns:pdfaid="http://www.aiim.org/pdfa/ns/id/">\n` +
+        `      <pdfaid:part>2</pdfaid:part>\n` +
+        `      <pdfaid:conformance>${conf}</pdfaid:conformance>\n` +
+        `    </rdf:Description>\n`;
+    }
+
+    if (isPdfUa) {
+      xmpRdf +=
+        `    <rdf:Description rdf:about="" xmlns:pdfuaid="http://www.aiim.org/pdfua/ns/id/">\n` +
+        `      <pdfuaid:part>1</pdfuaid:part>\n` +
+        `    </rdf:Description>\n`;
+    }
+
+    if (isPdfA && isPdfUa) {
+      xmpRdf +=
+        `    <rdf:Description rdf:about=""\n` +
+        `        xmlns:pdfaExtension="http://www.aiim.org/pdfa/ns/extension/"\n` +
+        `        xmlns:pdfaSchema="http://www.aiim.org/pdfa/ns/schema#"\n` +
+        `        xmlns:pdfaProperty="http://www.aiim.org/pdfa/ns/property#">\n` +
+        `      <pdfaExtension:schemas>\n` +
+        `        <rdf:Bag>\n` +
+        `          <rdf:li rdf:parseType="Resource">\n` +
+        `            <pdfaSchema:schema>PDF/UA Identification Schema</pdfaSchema:schema>\n` +
+        `            <pdfaSchema:namespaceURI>http://www.aiim.org/pdfua/ns/id/</pdfaSchema:namespaceURI>\n` +
+        `            <pdfaSchema:prefix>pdfuaid</pdfaSchema:prefix>\n` +
+        `            <pdfaSchema:property>\n` +
+        `              <rdf:Seq>\n` +
+        `                <rdf:li rdf:parseType="Resource">\n` +
+        `                  <pdfaProperty:name>part</pdfaProperty:name>\n` +
+        `                  <pdfaProperty:valueType>Integer</pdfaProperty:valueType>\n` +
+        `                  <pdfaProperty:category>internal</pdfaProperty:category>\n` +
+        `                  <pdfaProperty:description>Indicates, which part of ISO 14289 standard is followed</pdfaProperty:description>\n` +
+        `                </rdf:li>\n` +
+        `              </rdf:Seq>\n` +
+        `            </pdfaSchema:property>\n` +
+        `          </rdf:li>\n` +
+        `        </rdf:Bag>\n` +
+        `      </pdfaExtension:schemas>\n` +
+        `    </rdf:Description>\n`;
+    }
+
+    xmpRdf +=
+      `    <rdf:Description rdf:about="" xmlns:dc="http://purl.org/dc/elements/1.1/">\n` +
+      `      <dc:title>\n` +
+      `        <rdf:Alt>\n` +
+      `          <rdf:li xml:lang="x-default">${escapeXml(title)}</rdf:li>\n` +
+      `        </rdf:Alt>\n` +
+      `      </dc:title>\n` +
+      `      <dc:creator>\n` +
+      `        <rdf:Seq>\n` +
+      `          <rdf:li>${escapeXml(author)}</rdf:li>\n` +
+      `        </rdf:Seq>\n` +
+      `      </dc:creator>\n`;
+
+    if (options?.metadata?.subject) {
+      xmpRdf +=
+        `      <dc:description>\n` +
+        `        <rdf:Alt>\n` +
+        `          <rdf:li xml:lang="x-default">${escapeXml(options.metadata.subject)}</rdf:li>\n` +
+        `        </rdf:Alt>\n` +
+        `      </dc:description>\n`;
+    }
+    xmpRdf += `    </rdf:Description>\n`;
+
+    xmpRdf +=
+      `    <rdf:Description rdf:about="" xmlns:xmp="http://ns.adobe.com/xap/1.0/">\n` +
+      `      <xmp:CreatorTool>${escapeXml(creator)}</xmp:CreatorTool>\n` +
+      `      <xmp:CreateDate>${creationDateIso}</xmp:CreateDate>\n` +
+      `      <xmp:ModifyDate>${modDateIso}</xmp:ModifyDate>\n` +
+      `    </rdf:Description>\n`;
+
+    xmpRdf +=
+      `    <rdf:Description rdf:about="" xmlns:pdf="http://ns.adobe.com/pdf/1.3/">\n` +
+      `      <pdf:Producer>${escapeXml(producer)}</pdf:Producer>\n`;
+    if (options?.metadata?.keywords) {
+      xmpRdf += `      <pdf:Keywords>${escapeXml(options.metadata.keywords)}</pdf:Keywords>\n`;
+    }
+    xmpRdf += `    </rdf:Description>\n`;
+
+    xmpRdf += `  </rdf:RDF>\n` + `</x:xmpmeta>\n` + `<?xpacket end="w"?>\n`;
+
+    const xmpBytes = new TextEncoder().encode(xmpRdf);
+    addObject(
+      xmpMetadataId,
+      `${xmpMetadataId} 0 obj\n<< /Type /Metadata /Subtype /XML /Length ${xmpBytes.length} >>\nstream\n`,
+      xmpBytes,
+      "\nendstream\nendobj\n",
+    );
+  }
+
   // 6. Per-Page Objects
-  const fontEntries = [
-    ...Object.entries(fontIds).map(([k, id]) => `/${k} ${id} 0 R`),
-    ...embeddedFonts.map((emb) => `/${emb.resourceName} ${emb.type0Id} 0 R`),
-  ].join(" ");
+  const fontEntries =
+    (isPdfA || isPdfUa) && embeddedFonts.length > 0
+      ? embeddedFonts.map((emb) => `/${emb.resourceName} ${emb.type0Id} 0 R`).join(" ")
+      : [
+          ...Object.entries(fontIds).map(([k, id]) => `/${k} ${id} 0 R`),
+          ...embeddedFonts.map((emb) => `/${emb.resourceName} ${emb.type0Id} 0 R`),
+        ].join(" ");
 
   const embeddedFontForSpan = (span: PdfTextSpan): EmbeddedFontPlan | undefined => {
     if (embeddedFonts.length === 0) return undefined;
@@ -1103,6 +1405,9 @@ export async function pagesToPdf(
     if (isTagged) {
       pageDict += ` /StructParents ${i}`;
     }
+    if (isPdfUa) {
+      pageDict += ` /Tabs /S`;
+    }
     pageDict += ` >>\nendobj\n`;
 
     addObject(alloc.pageId, `${alloc.pageId} 0 obj\n${pageDict}`);
@@ -1126,7 +1431,11 @@ export async function pagesToPdf(
     // Embedded font measurement mode renders the text layer visibly; the
     // default outlines mode keeps it invisible (3 Tr) for search/selection.
     const visibleText = plan !== null && textMode === "embedded";
-    let content = plan ? "" : `q ${w} 0 0 ${h} 0 0 cm /Im0 Do Q\n`;
+    let content = plan
+      ? ""
+      : isPdfUa
+        ? `/Artifact BMC\nq ${w} 0 0 ${h} 0 0 cm /Im0 Do Q\nEMC\n`
+        : `q ${w} 0 0 ${h} 0 0 cm /Im0 Do Q\n`;
     if (spans.length > 0) {
       if (isTagged && alloc.structElemIds.length > 0) {
         content += `/P << /MCID 0 >> BDC\n`;
@@ -1140,7 +1449,7 @@ export async function pagesToPdf(
         const embedded = embeddedFontForSpan(span);
         const selected = embedded
           ? { fontName: embedded.resourceName, isUnicode: true }
-          : fontForSpan(span);
+          : fontForSpan(span, isPdfA || isPdfUa, embeddedFonts[0]);
         const { fontName, isUnicode } = selected;
         const sizeStr = span.fontSize.toFixed(2);
         if (currentFont !== fontName || currentSize !== sizeStr) {
@@ -1251,8 +1560,21 @@ export async function pagesToPdf(
       } else {
         annotObj += ` /A << /Type /Action /S /URI /URI (${escapePdfString(link.url)}) >>`;
       }
+      if (isPdfUa) {
+        const parentKey = alloc.linkStructParentKeys[lIdx]!;
+        annotObj += ` /Contents (${escapePdfString(link.url)}) /StructParent ${parentKey}`;
+      }
       annotObj += ` >>\nendobj\n`;
       addObject(annotId, annotObj);
+
+      if (isPdfUa && alloc.linkStructElemIds[lIdx] && structTreeRootId) {
+        const linkStructId = alloc.linkStructElemIds[lIdx]!;
+        const linkElemDict =
+          `${linkStructId} 0 obj\n<< /Type /StructElem /S /Link /P ${structTreeRootId} 0 R ` +
+          `/Pg ${alloc.pageId} 0 R /K [ << /Type /OBJR /Obj ${annotId} 0 R /Pg ${alloc.pageId} 0 R >> ] ` +
+          `/Alt (${escapePdfString(link.url)}) >>\nendobj\n`;
+        addObject(linkStructId, linkElemDict);
+      }
     }
 
     // Form Field Annotations (AcroForm Widgets)
@@ -1275,14 +1597,14 @@ export async function pagesToPdf(
 
       if (field.type === "text") {
         const val = typeof field.value === "string" ? field.value : "";
-        fieldDict += ` /FT /Tx /V (${escapePdfString(val)}) /DA (/F1 12 Tf 0 g)`;
+        fieldDict += ` /FT /Tx /V (${escapePdfString(val)}) /DA (/${defaultFontName} 12 Tf 0 g)`;
       } else if (field.type === "checkbox") {
         const isChecked = field.value === true;
         const state = isChecked ? "/Yes" : "/Off";
         fieldDict += ` /FT /Btn /V ${state} /AS ${state}`;
       } else if (field.type === "dropdown") {
         const opts = field.options?.map((o) => `(${escapePdfString(o)})`).join(" ") ?? "";
-        fieldDict += ` /FT /Ch /Opt [ ${opts} ] /V (${escapePdfString(String(field.value ?? ""))}) /DA (/F1 12 Tf 0 g)`;
+        fieldDict += ` /FT /Ch /Opt [ ${opts} ] /V (${escapePdfString(String(field.value ?? ""))}) /DA (/${defaultFontName} 12 Tf 0 g)`;
       }
       fieldDict += ` >>\nendobj\n`;
       addObject(fieldId, fieldDict);
@@ -1365,9 +1687,11 @@ export async function pagesToPdf(
   // 8. Xref Table & Trailer
   const xrefStart = offset();
   const size = nextId;
-  let xref = `xref\n0 ${size}\n0000000000 65535 f \n`;
-  for (let i = 1; i < size; i++) xref += `${xrefAt(offsets[i]!)} 00000 n \n`;
-  xref += `trailer\n<< /Size ${size} /Root ${catalogId} 0 R /Info ${infoId} 0 R >>\nstartxref\n${xrefStart}\n%%EOF\n`;
+  let xref = `xref\n0 ${size}\n0000000000 65535 f \r\n`;
+  for (let i = 1; i < size; i++) xref += `${xrefAt(offsets[i]!)} 00000 n \r\n`;
+  const idHash = deterministicIdHex(title, creationDateStr);
+  const idEntry = isPdfA || isPdfUa ? ` /ID [ <${idHash}> <${idHash}> ]` : "";
+  xref += `trailer\n<< /Size ${size} /Root ${catalogId} 0 R /Info ${infoId} 0 R${idEntry} >>\nstartxref\n${xrefStart}\n%%EOF\n`;
   push(xref);
 
   return new Blob([bytes()], { type: "application/pdf" });
