@@ -1734,7 +1734,7 @@ describe("P4 QA, determinism, and performance acceptance", () => {
     } finally {
       fs.rmSync(tmpPdf, { force: true });
     }
-  });
+  }, 30000); // 5×300-page exports + external pdfinfo: headroom under full-suite load
 
   it("P4 smoke multi-viewer validation: verify poppler tools parse rich P1-P3 features cleanly", async () => {
     const vectorScene: PdfScenePage = {
