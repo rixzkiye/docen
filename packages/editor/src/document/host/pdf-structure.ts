@@ -72,9 +72,6 @@ interface OutlineNode {
   children?: OutlineNode[];
 }
 
-/** CSS px → PDF pt (the page raster is 96 dpi; PDF user space is 72 dpi). */
-const toPt = (px: number): number => (px * 72) / 96;
-
 /** The section's page height in CSS px for a page (undefined when the page
  *  index or the section's flow is missing). */
 function pageHeightPxOf(view: PdfStructureView, page: number): number | undefined {
