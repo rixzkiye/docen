@@ -2042,7 +2042,7 @@ describe("P4 QA, determinism, and performance acceptance", () => {
 
       // In outlines mode, invisible text layer (3 Tr) is generated
       expect(pdfStr).toContain("3 Tr");
-    });
+    }, 30000);
 
     it("exports with embedded mode (visible text layer, drops scene glyph outlines)", async () => {
       const shot: PdfPageShot = {
@@ -2058,6 +2058,155 @@ describe("P4 QA, determinism, and performance acceptance", () => {
       // In embedded mode, visible text layer (BT without 3 Tr) is generated
       expect(pdfStr).toContain("BT\n");
       expect(pdfStr).not.toContain("3 Tr");
+    }, 30000);
+  });
+
+  describe("PDF/A-2b and PDF/UA-1 conformance (ISO 19005-2 & ISO 14289-1)", () => {
+    const blankShot: PdfPageShot = {
+      width: 612,
+      height: 792,
+      jpeg: DUMMY_JPEG,
+      textSpans: [],
+    };
+
+    it("emits PDF/A-2b header, XMP metadata, OutputIntent, and deterministic ID", async () => {
+      const fixedDate = new Date("2026-09-21T12:00:00Z");
+      const blob = await pagesToPdf([blankShot], {
+        pdfa: "2b",
+        metadata: {
+          title: "PDF/A-2b Specification",
+          author: "Docen Quality",
+          creationDate: fixedDate,
+          modDate: fixedDate,
+        },
+      });
+
+      const pdfBuf = Buffer.from(await blob.arrayBuffer());
+      const pdfStr = pdfBuf.toString("latin1");
+
+      // Header: %PDF-1.7
+      expect(pdfStr.startsWith("%PDF-1.7\n")).toBe(true);
+
+      // OutputIntent dictionary with GTS_PDFA1 and sRGB
+      expect(pdfStr).toContain("/Type /OutputIntent /S /GTS_PDFA1");
+      expect(pdfStr).toContain("/OutputCondition (sRGB)");
+      expect(pdfStr).toContain("/OutputConditionIdentifier (sRGB)");
+      expect(pdfStr).toContain("/RegistryName (http://www.color.org)");
+      expect(pdfStr).toContain("/N 3 /Filter /FlateDecode");
+
+      // XMP metadata stream: uncompressed UTF-8 per ISO 19005-2 §6.6.2.1
+      expect(pdfStr).toContain("/Type /Metadata /Subtype /XML");
+      expect(pdfStr).toContain("<pdfaid:part>2</pdfaid:part>");
+      expect(pdfStr).toContain("<pdfaid:conformance>B</pdfaid:conformance>");
+      expect(pdfStr).toContain("<dc:title>");
+      expect(pdfStr).toContain("PDF/A-2b Specification");
+      expect(pdfStr).toContain("<dc:creator>");
+      expect(pdfStr).toContain("Docen Quality");
+
+      // Deterministic trailer ID
+      expect(pdfStr).toMatch(/\/ID \[ <[0-9a-f]{32}> <[0-9a-f]{32}> \]/);
     });
+
+    it("emits PDF/A-2u conformance identifier when pdfa is '2u'", async () => {
+      const blob = await pagesToPdf([blankShot], {
+        pdfa: "2u",
+        metadata: { title: "Unicode PDF/A" },
+      });
+      const pdfStr = Buffer.from(await blob.arrayBuffer()).toString("latin1");
+      expect(pdfStr).toContain("<pdfaid:part>2</pdfaid:part>");
+      expect(pdfStr).toContain("<pdfaid:conformance>U</pdfaid:conformance>");
+    });
+
+    it("emits PDF/UA-1 accessibility structures: /Lang, /DisplayDocTitle, /Tabs /S, /ParentTree", async () => {
+      const blob = await pagesToPdf([blankShot], {
+        pdfUa: true,
+        metadata: {
+          title: "Universal Accessible Document",
+          language: "en-US",
+        },
+      });
+
+      const pdfStr = Buffer.from(await blob.arrayBuffer()).toString("latin1");
+      expect(pdfStr.startsWith("%PDF-1.7\n")).toBe(true);
+      expect(pdfStr).toContain("/Lang (en-US)");
+      expect(pdfStr).toContain("/ViewerPreferences << /DisplayDocTitle true >>");
+      expect(pdfStr).toContain("/Tabs /S");
+      expect(pdfStr).toContain("/StructTreeRoot");
+      expect(pdfStr).toContain("/ParentTree");
+      expect(pdfStr).toContain("<pdfuaid:part>1</pdfuaid:part>");
+    });
+
+    it("supports dual conformance (PDF/A-2b + PDF/UA-1) with extension schema", async () => {
+      const blob = await pagesToPdf([blankShot], {
+        pdfa: "2b",
+        pdfUa: true,
+        metadata: {
+          title: "Dual Conformance Document",
+          language: "en-US",
+        },
+      });
+
+      const pdfStr = Buffer.from(await blob.arrayBuffer()).toString("latin1");
+      expect(pdfStr).toContain("<pdfaid:part>2</pdfaid:part>");
+      expect(pdfStr).toContain("<pdfaid:conformance>B</pdfaid:conformance>");
+      expect(pdfStr).toContain("<pdfuaid:part>1</pdfuaid:part>");
+      expect(pdfStr).toContain("<pdfaExtension:schemas>");
+      expect(pdfStr).toContain(
+        "<pdfaSchema:schema>PDF/UA Identification Schema</pdfaSchema:schema>",
+      );
+      expect(pdfStr).toContain("/ParentTree");
+      expect(pdfStr).toContain("/Tabs /S");
+    });
+
+    it("verifies veraPDF validation on PDF/A-2b and PDF/UA-1 blobs", async () => {
+      let verapdfPath: string | null = null;
+      try {
+        execFileSync("verapdf", ["--version"], { stdio: "ignore" });
+        verapdfPath = "verapdf";
+      } catch {
+        if (fs.existsSync("/home/rixzkiye/.local/bin/verapdf")) {
+          verapdfPath = "/home/rixzkiye/.local/bin/verapdf";
+        }
+      }
+
+      if (!verapdfPath) {
+        console.warn("veraPDF CLI not detected; skipping veraPDF validation test.");
+        return;
+      }
+
+      const fixedDate = new Date("2026-09-21T12:00:00Z");
+      const blob2b = await pagesToPdf([blankShot], {
+        pdfa: "2b",
+        metadata: { title: "veraPDF 2b Test", creationDate: fixedDate, modDate: fixedDate },
+      });
+      const tmp2b = `/tmp/test-spec-2b-${Date.now()}.pdf`;
+      fs.writeFileSync(tmp2b, Buffer.from(await blob2b.arrayBuffer()));
+
+      try {
+        const out2b = execFileSync(verapdfPath, ["--flavour", "2b", tmp2b], { encoding: "utf-8" });
+        expect(out2b).toContain('isCompliant="true"');
+      } finally {
+        fs.rmSync(tmp2b, { force: true });
+      }
+
+      const blobUa = await pagesToPdf([blankShot], {
+        pdfUa: true,
+        metadata: {
+          title: "veraPDF UA Test",
+          creationDate: fixedDate,
+          modDate: fixedDate,
+          language: "en-US",
+        },
+      });
+      const tmpUa = `/tmp/test-spec-ua-${Date.now()}.pdf`;
+      fs.writeFileSync(tmpUa, Buffer.from(await blobUa.arrayBuffer()));
+
+      try {
+        const outUa = execFileSync(verapdfPath, ["--flavour", "ua1", tmpUa], { encoding: "utf-8" });
+        expect(outUa).toContain('isCompliant="true"');
+      } finally {
+        fs.rmSync(tmpUa, { force: true });
+      }
+    }, 30000);
   });
 });

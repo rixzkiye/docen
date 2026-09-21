@@ -96,3 +96,23 @@ export type {
 // add-ins a Fluent Theme object (fluentThemeData).
 export { createDarkTheme, createHighContrastTheme, createLightTheme } from "@fluentui/tokens";
 export type { BrandVariants, Theme } from "@fluentui/tokens";
+
+// PDF export engine and types (vector, PDF/A-2b, PDF/UA-1, fonts)
+export {
+  pagesToPdf,
+  buildEmbeddedPdfFonts,
+  DEFAULT_EDITOR_TEXT_MODE,
+  DEFAULT_SERVER_TEXT_MODE,
+} from "./document";
+export type {
+  PdfExportOptions,
+  PdfPageShot,
+  PdfEmbeddedFont,
+  PdfEmbeddableFontSource,
+  PdfViewerPreferences,
+  PdfFormField,
+  PdfStructElement,
+  PdfOutlineItem,
+  PdfPageLabelRange,
+  PdfDestination,
+} from "./document";

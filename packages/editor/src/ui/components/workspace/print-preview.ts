@@ -1,6 +1,6 @@
 import { FASTElement, css, customElement, html, observable, ref } from "@microsoft/fast-element";
 
-import { pagesToPdf, type PdfPageShot } from "../../../document/export-pdf";
+import { pagesToPdf, type PdfExportOptions, type PdfPageShot } from "../../../document/export-pdf";
 import { observeLang, t } from "../../i18n/localize";
 
 export type PageRangeType = "all" | "current" | "selection" | "custom";
@@ -522,6 +522,8 @@ export class DocenPrintPreview extends FASTElement {
   #orientation: OrientationPreset = "auto";
   #paperSize: PaperSizePreset = "auto";
   #printMarkup: PrintMarkupMode = "document";
+  #pdfa?: PdfExportOptions["pdfa"];
+  #pdfUa?: boolean;
   #activeViewIndex = 0; // index into effective views (pages or booklet sheets)
   #zoom = 1.0;
   #unobserveLang?: () => void;
@@ -547,12 +549,16 @@ export class DocenPrintPreview extends FASTElement {
     currentPage?: number;
     selectionPages?: number[];
     printMarkup?: boolean;
+    pdfa?: PdfExportOptions["pdfa"];
+    pdfUa?: boolean;
   }): void {
     this.#snapshots = options.snapshots ?? [];
     this.#documentFilename = options.filename ?? "Document";
     this.#currentPage = options.currentPage ?? 1;
     this.#selectionPages = options.selectionPages ?? [];
     this.#printMarkup = options.printMarkup ? "markup" : "document";
+    this.#pdfa = options.pdfa;
+    this.#pdfUa = options.pdfUa;
     this.#activeViewIndex = 0;
     this.#zoom = 1.0;
   }
@@ -879,11 +885,14 @@ export class DocenPrintPreview extends FASTElement {
 
     if (orderedShots.length === 0) return;
 
-    const pdfBytes = await pagesToPdf(orderedShots, {
+    const pdfBlob = await pagesToPdf(orderedShots, {
       metadata: { title: this.#documentFilename },
+      ...(this.#pdfa !== undefined ? { pdfa: this.#pdfa } : {}),
+      ...(this.#pdfUa !== undefined ? { pdfUa: this.#pdfUa } : {}),
     });
 
-    const blob = new Blob([pdfBytes], { type: "application/pdf" });
+    const blob =
+      pdfBlob instanceof Blob ? pdfBlob : new Blob([pdfBlob], { type: "application/pdf" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;

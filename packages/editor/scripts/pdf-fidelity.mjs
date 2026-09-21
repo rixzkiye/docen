@@ -34,6 +34,7 @@ const SHOTS = argOf("--shots", "/tmp/opencode");
 const HEADLESS = !args.includes("--headed");
 const MODE = argOf("--mode", "outlines");
 const CHROME = argOf("--chrome", process.env.CHROME_PATH || undefined);
+const PDFA = args.includes("--pdfa");
 
 const { chromium } = await import(process.env.PLAYWRIGHT_MODULE || "playwright");
 
@@ -169,6 +170,17 @@ const data = await page.evaluate(async () => {
   const timeRaster = performance.now() - t2;
   const bufRaster = await blobRaster.arrayBuffer();
 
+  // 4. PDF/A-2b + PDF/UA-1 mode
+  const t3 = performance.now();
+  const blobPdfA = await pagesToPdf(pages, {
+    textMode: "outlines",
+    pdfa: "2b",
+    pdfUa: true,
+    ...(embeddedFonts?.length ? { embeddedFonts } : {}),
+  });
+  const timePdfA = performance.now() - t3;
+  const bufPdfA = await blobPdfA.arrayBuffer();
+
   // Layout text runs
   const layoutTexts = [];
   d.editor.state.doc.descendants((node) => {
@@ -194,6 +206,11 @@ const data = await page.evaluate(async () => {
       size: bufEmbedded.byteLength,
       timeMs: Number(timeEmbedded.toFixed(1)),
     },
+    pdfa: {
+      bytes: Array.from(new Uint8Array(bufPdfA)),
+      size: bufPdfA.byteLength,
+      timeMs: Number(timePdfA.toFixed(1)),
+    },
     raster: {
       bytes: Array.from(new Uint8Array(bufRaster)),
       size: bufRaster.byteLength,
@@ -214,6 +231,7 @@ const data = await page.evaluate(async () => {
 // Save PDF artifacts
 const outlinesPdfPath = join(SHOTS, "p1-vector-outlines.pdf");
 const embeddedPdfPath = join(SHOTS, "p1-vector-embedded.pdf");
+const pdfaPdfPath = join(SHOTS, "p1-pdfa-2b.pdf");
 const rasterPdfPath = join(SHOTS, "p1-legacy-raster.pdf");
 // The real product export (File → Export as PDF, structure options included) —
 // the A1c structure gates run against these bytes, never a re-generation.
@@ -224,6 +242,7 @@ const comparePdfPath = MODE === "embedded" ? embeddedPdfPath : outlinesPdfPath;
 
 writeFileSync(outlinesPdfPath, Buffer.from(data.outlines.bytes));
 writeFileSync(embeddedPdfPath, Buffer.from(data.embedded.bytes));
+writeFileSync(pdfaPdfPath, Buffer.from(data.pdfa.bytes));
 writeFileSync(rasterPdfPath, Buffer.from(data.raster.bytes));
 writeFileSync(exportPdfPath, Buffer.from(data.export.bytes));
 
@@ -234,6 +253,7 @@ console.log(
 console.log(
   `Vector Embedded:  ${(data.embedded.size / 1024).toFixed(1)} KB | ${data.embedded.timeMs} ms`,
 );
+console.log(`PDF/A-2b + UA-1:  ${(data.pdfa.size / 1024).toFixed(1)} KB | ${data.pdfa.timeMs} ms`);
 console.log(
   `Legacy Raster:    ${(data.raster.size / 1024).toFixed(1)} KB | ${data.raster.timeMs} ms`,
 );
@@ -426,6 +446,7 @@ execSync(`pdftoppm -png -r 96 "${comparePdfPath}" "${ppmPrefix}"`);
 
 const pageDiffs = [];
 const psnrs = [];
+const ssims = [];
 for (let i = 0; i < data.pages.length; i++) {
   const ppmFile = `${ppmPrefix}-${i + 1}.png`;
   const ppmBuffer = readFileSync(ppmFile);
@@ -524,6 +545,68 @@ for (let i = 0; i < data.pages.length; i++) {
       }
       const psnr = best.mse > 0 ? 10 * Math.log10((255 * 255) / best.mse) : 99;
 
+      // SSIM (Structural Similarity Index) blockwise 8x8 with best subpixel alignment
+      const ssimAt = (dx, dy) => {
+        const C1 = 6.5025; // (0.01 * 255)^2
+        const C2 = 58.5225; // (0.03 * 255)^2
+        const blockSize = 8;
+        let totalSsim = 0;
+        let numBlocks = 0;
+
+        const yMin = Math.max(0, dy);
+        const yMax = Math.min(h, h + dy) - blockSize;
+        const xMin = Math.max(0, dx);
+        const xMax = Math.min(w, w + dx) - blockSize;
+
+        for (let by = yMin; by <= yMax; by += blockSize) {
+          for (let bx = xMin; bx <= xMax; bx += blockSize) {
+            let sum1 = 0;
+            let sum2 = 0;
+            for (let y = 0; y < blockSize; y++) {
+              for (let x = 0; x < blockSize; x++) {
+                const i1 = ((by + y) * w + (bx + x)) * 4;
+                const i2 = ((by + y - dy) * w + (bx + x - dx)) * 4;
+                const l1 = 0.299 * d1[i1] + 0.587 * d1[i1 + 1] + 0.114 * d1[i1 + 2];
+                const l2 = 0.299 * d2[i2] + 0.587 * d2[i2 + 1] + 0.114 * d2[i2 + 2];
+                sum1 += l1;
+                sum2 += l2;
+              }
+            }
+            const N = blockSize * blockSize;
+            const mean1 = sum1 / N;
+            const mean2 = sum2 / N;
+
+            let var1 = 0;
+            let var2 = 0;
+            let covar = 0;
+            for (let y = 0; y < blockSize; y++) {
+              for (let x = 0; x < blockSize; x++) {
+                const i1 = ((by + y) * w + (bx + x)) * 4;
+                const i2 = ((by + y - dy) * w + (bx + x - dx)) * 4;
+                const l1 = 0.299 * d1[i1] + 0.587 * d1[i1 + 1] + 0.114 * d1[i1 + 2];
+                const l2 = 0.299 * d2[i2] + 0.587 * d2[i2 + 1] + 0.114 * d2[i2 + 2];
+                const diff1 = l1 - mean1;
+                const diff2 = l2 - mean2;
+                var1 += diff1 * diff1;
+                var2 += diff2 * diff2;
+                covar += diff1 * diff2;
+              }
+            }
+            var1 /= N - 1;
+            var2 /= N - 1;
+            covar /= N - 1;
+
+            const num = (2 * mean1 * mean2 + C1) * (2 * covar + C2);
+            const den = (mean1 * mean1 + mean2 * mean2 + C1) * (var1 + var2 + C2);
+            totalSsim += num / den;
+            numBlocks++;
+          }
+        }
+        return numBlocks > 0 ? totalSsim / numBlocks : 1.0;
+      };
+
+      const ssim = ssimAt(best.dx, best.dy);
+
       // AA-aware metric: compare after a 2× box downsample so per-glyph-edge
       // antialiasing differences between rasterizers are averaged out while
       // layout/geometry errors survive.
@@ -544,6 +627,7 @@ for (let i = 0; i < data.pages.length; i++) {
         meanAbsDiff: fullResMean,
         downsampledMean: meanOf(h1, h2, dw, dh),
         psnr: Number(psnr.toFixed(2)),
+        ssim: Number(ssim.toFixed(4)),
         align: { dx: best.dx, dy: best.dy },
         canvasStats,
         pdfStats,
@@ -564,6 +648,14 @@ for (let i = 0; i < data.pages.length; i++) {
     dimensions: `${diff.w}x${diff.h}`,
   });
   psnrs.push(diff.psnr);
+
+  // R12 Q1 gate: SSIM blockwise 8x8 structural similarity floor >= 0.95
+  check(`Page ${i + 1} structural fidelity (SSIM >= 0.95, target >= 0.98)`, diff.ssim >= 0.95, {
+    ssim: diff.ssim,
+    psnr: diff.psnr,
+    align: diff.align,
+  });
+  ssims.push(diff.ssim);
 
   // Geometry parity: the non-white content box must match within 2px on every
   // edge and the ink density within 0.5% of the page — an AA-independent check
@@ -593,6 +685,12 @@ check("Overall document fidelity (average PSNR >= 22 dB)", overallPsnr >= 22, {
   averageMeanAbsDiff: Number(avgDiff.toFixed(3)),
 });
 
+const avgSsim = ssims.reduce((a, b) => a + b, 0) / ssims.length;
+check("Overall document structural similarity (average SSIM >= 0.95)", avgSsim >= 0.95, {
+  averageSsim: Number(avgSsim.toFixed(4)),
+  averagePsnr: Number(overallPsnr.toFixed(2)),
+});
+
 // ── A3 Verification: Text Extraction (pdftotext) ─────────────────────────────
 console.log(`\n── A3. Text Extraction Verification ──`);
 const pdfText = execSync(`pdftotext "${comparePdfPath}" -`).toString();
@@ -618,6 +716,56 @@ check("pdftotext extracts layout text (100.0% word match)", wordMatchRatio === 1
   totalWords,
   matchPercentage: `${(wordMatchRatio * 100).toFixed(1)}%`,
 });
+
+// ── A5 Verification: PDF/A & PDF/UA veraPDF Compliance ──────────────────────
+if (PDFA || args.includes("--verapdf")) {
+  console.log(`\n── A5. PDF/A & PDF/UA veraPDF Compliance ──`);
+  let verapdfPath = "verapdf";
+  let hasVerapdf = false;
+  try {
+    execSync("verapdf --version", { stdio: "ignore" });
+    hasVerapdf = true;
+  } catch {
+    if (existsSync("/home/rixzkiye/.local/bin/verapdf")) {
+      verapdfPath = "/home/rixzkiye/.local/bin/verapdf";
+      hasVerapdf = true;
+    }
+  }
+
+  if (hasVerapdf) {
+    try {
+      const out2b = execSync(`${verapdfPath} --format text --flavour 2b "${pdfaPdfPath}"`, {
+        encoding: "utf-8",
+      });
+      const compliant2b = out2b.includes('isCompliant="true"') || out2b.includes("PASS");
+      check("veraPDF PDF/A-2b compliance (0 violations)", compliant2b, {
+        flavour: "2b",
+        summary:
+          out2b
+            .split("\n")
+            .find((l) => l.includes("PASS") || l.includes("FAIL") || l.includes("compliant"))
+            ?.trim() ?? "OK",
+      });
+
+      const outUa = execSync(`${verapdfPath} --format text --flavour ua1 "${pdfaPdfPath}"`, {
+        encoding: "utf-8",
+      });
+      const compliantUa = outUa.includes('isCompliant="true"') || outUa.includes("PASS");
+      check("veraPDF PDF/UA-1 compliance (0 violations)", compliantUa, {
+        flavour: "ua1",
+        summary:
+          outUa
+            .split("\n")
+            .find((l) => l.includes("PASS") || l.includes("FAIL") || l.includes("compliant"))
+            ?.trim() ?? "OK",
+      });
+    } catch (e) {
+      check("veraPDF execution", false, { error: e.message });
+    }
+  } else {
+    console.log("veraPDF CLI not detected; skipping veraPDF validation.");
+  }
+}
 
 check("No unhandled page errors during fidelity run", pageErrors.length === 0, pageErrors);
 

@@ -6391,6 +6391,8 @@ class DocenDocument extends AddinHost<Editor> {
   async exportPdf(options?: {
     metadata?: PdfExportOptions["metadata"];
     textMode?: PdfExportOptions["textMode"];
+    pdfa?: PdfExportOptions["pdfa"];
+    pdfUa?: PdfExportOptions["pdfUa"];
   }): Promise<{
     data: Uint8Array;
     pages: readonly PdfPageShot[];
@@ -6836,6 +6838,25 @@ export type { QuickPartSeed, QuickPartValues } from "../ui/components/workspace/
  */
 @customElement({ name: "docen-editor", template: documentTemplate, styles: documentStyles })
 export class DocenEditor extends DocenDocument {}
+
+export {
+  pagesToPdf,
+  buildEmbeddedPdfFonts,
+  DEFAULT_EDITOR_TEXT_MODE,
+  DEFAULT_SERVER_TEXT_MODE,
+} from "./export-pdf";
+export type {
+  PdfExportOptions,
+  PdfPageShot,
+  PdfEmbeddedFont,
+  PdfEmbeddableFontSource,
+  PdfViewerPreferences,
+  PdfFormField,
+  PdfStructElement,
+  PdfOutlineItem,
+  PdfPageLabelRange,
+  PdfDestination,
+} from "./export-pdf";
 
 export { DocenDocument };
 export default DocenDocument;
