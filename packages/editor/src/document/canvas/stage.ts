@@ -249,6 +249,8 @@ export interface CanvasStageContext {
     sectionBreakEvenPage?: string;
     sectionBreakOddPage?: string;
   };
+  /** Optional supersampling override (forces 2× SSAA on 1× displays). */
+  supersample?: boolean;
 }
 
 /** Value equality for a member hit box's childPath — each paint re-allocates
@@ -425,16 +427,17 @@ export class CanvasStage {
    *  exhausting memory. */
   private static readonly BITMAP_CAP = 3600;
 
-  /** Render at a minimum of 2× pixel ratio even on standard 100% (1× DPR) monitors.
-   *  Canvas 2D text uses grayscale antialiasing; rendering at ≥2× and downsampling via
-   *  CSS produces razor-sharp typography matching native Word desktop ClearType. */
+  /** Render resolution: native devicePixelRatio by default (1× on standard displays,
+   *  ≥1.5× on Retina/HiDPI) to preserve sub-40ms/char typing performance and low memory.
+   *  Integer-snapped pageCss coordinates and contrast-optimized rendering maintain
+   *  crisp typography without requiring forced 4× pixel supersampling.
+   *  An explicit `supersample` option in stage context allows forced 2× SSAA if requested. */
   private renderPixelRatio(flow: ProjectedFlowBox): number {
     const w = flow.pageWidthPx * this.factor;
-    const dpr = Math.max(
-      typeof window !== "undefined" && window.devicePixelRatio ? window.devicePixelRatio : 1,
-      2,
-    );
-    return Math.min(dpr, CanvasStage.BITMAP_CAP / Math.max(w, 1));
+    const dpr =
+      typeof window !== "undefined" && window.devicePixelRatio ? window.devicePixelRatio : 1;
+    const targetDpr = this.ctx.supersample ? Math.max(dpr, 2) : dpr;
+    return Math.min(targetDpr, CanvasStage.BITMAP_CAP / Math.max(w, 1));
   }
 
   /** Zoom change → resize every slot to the scaled page and re-render its
