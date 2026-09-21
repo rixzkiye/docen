@@ -1606,22 +1606,124 @@ describe("P4 QA, determinism, and performance acceptance", () => {
       ],
     }));
 
-    const start = performance.now();
-    const blob = await pagesToPdf(shots, {
-      metadata: {
-        title: "300 Page Stress Test",
-        creationDate: new Date("2026-01-01T00:00:00Z"),
-      },
-      pageLabels: [{ startPageIndex: 0, style: "decimal" }],
+    // Synthetic N=5
+    const synthTimes: number[] = [];
+    let synthBlob: Blob | undefined;
+    for (let r = 0; r < 5; r++) {
+      const start = performance.now();
+      synthBlob = await pagesToPdf(shots, {
+        metadata: {
+          title: "300 Page Stress Test",
+          creationDate: new Date("2026-01-01T00:00:00Z"),
+        },
+        pageLabels: [{ startPageIndex: 0, style: "decimal" }],
+      });
+      synthTimes.push(performance.now() - start);
+    }
+    synthTimes.sort((a, b) => a - b);
+    const pdfBuf = Buffer.from(await synthBlob!.arrayBuffer());
+
+    // Realistic N=5 (paragraphs, headings, vector rules, ~400 words per page)
+    const paragraphs = [
+      "Docen is a next-generation Word-compatible document processing engine built for extreme performance.",
+      "Every paragraph maintains exact character advances, proportional font metrics, and word spacing parity.",
+      "Document layout computes pagination across multiple columns, margins, headers, and floating elements.",
+      "Vector content streams serialize directly from the display list without full-page rasterization overhead.",
+      "The table model handles cell row spanning, column spanning, explicit borders, padding, and alternating fills.",
+      "Footnotes, endnotes, and dynamic document fields resolve deterministically during pagination runs.",
+      "Tagged structure elements ensure PDF/UA compliance with proper Alt text attributes for all visual figures.",
+    ];
+    const realisticShots = Array.from({ length: count }, (_, pageIdx) => {
+      const textSpans: PdfTextSpan[] = [];
+      let y = 720;
+      textSpans.push({
+        text: `Section ${(pageIdx % 5) + 1} - Chapter ${Math.floor(pageIdx / 10) + 1} (Page ${pageIdx + 1})`,
+        x: 72,
+        y,
+        width: 350,
+        height: 18,
+        fontSize: 16,
+        bold: true,
+      });
+      y -= 28;
+      for (let p = 0; p < 5; p++) {
+        for (let l = 0; l < 5; l++) {
+          const lineText = paragraphs[(p + l) % paragraphs.length]!;
+          textSpans.push({ text: lineText, x: 72, y, width: 468, height: 12, fontSize: 10 });
+          y -= 15;
+        }
+        y -= 10;
+      }
+      textSpans.push({
+        text: `Confidential Document · Page ${pageIdx + 1} of ${count}`,
+        x: 200,
+        y: 40,
+        width: 212,
+        height: 10,
+        fontSize: 9,
+      });
+      return {
+        width: 612,
+        height: 792,
+        textSpans,
+        scene: {
+          width: 816,
+          height: 1056,
+          nodes: [
+            {
+              type: "shape" as const,
+              matrix: { a: 1, b: 0, c: 0, d: 1, e: 96, f: 100 },
+              path: "M0 0L624 0",
+              stroke: "#cccccc",
+              strokeWidth: 0.75,
+            },
+            {
+              type: "shape" as const,
+              matrix: { a: 1, b: 0, c: 0, d: 1, e: 96, f: 980 },
+              path: "M0 0L624 0",
+              stroke: "#cccccc",
+              strokeWidth: 0.75,
+            },
+          ],
+        },
+      };
     });
-    const elapsed = performance.now() - start;
-    const pdfBuf = Buffer.from(await blob.arrayBuffer());
+
+    const realTimes: number[] = [];
+    let realBlob: Blob | undefined;
+    for (let r = 0; r < 5; r++) {
+      const start = performance.now();
+      realBlob = await pagesToPdf(realisticShots, {
+        metadata: { title: "Realistic 300-Page Document", author: "Docen Benchmark" },
+        pageLabels: [{ startPageIndex: 0, style: "decimal" }],
+        outline: [
+          { title: "Introduction", dest: 0 },
+          { title: "Chapter 1", dest: 10 },
+          { title: "Chapter 2", dest: 50 },
+          { title: "Chapter 3", dest: 100 },
+          { title: "Appendix", dest: 250 },
+        ],
+      });
+      realTimes.push(performance.now() - start);
+    }
+    realTimes.sort((a, b) => a - b);
+    const realBuf = Buffer.from(await realBlob!.arrayBuffer());
+
+    console.log(`\n--- BENCHMARK RESULTS (N=5, 300 pages) ---`);
+    console.log(
+      `SYNTHETIC (min/med/max): ${synthTimes[0].toFixed(2)}ms / ${synthTimes[2].toFixed(2)}ms / ${synthTimes[4].toFixed(2)}ms | ${(count / (synthTimes[2] / 1000)).toFixed(0)} p/s | ${(pdfBuf.byteLength / 1024).toFixed(1)} KB`,
+    );
+    console.log(
+      `REALISTIC (min/med/max): ${realTimes[0].toFixed(2)}ms / ${realTimes[2].toFixed(2)}ms / ${realTimes[4].toFixed(2)}ms | ${(count / (realTimes[2] / 1000)).toFixed(0)} p/s | ${(realBuf.byteLength / 1024).toFixed(1)} KB`,
+    );
 
     // File generated with proper size
     expect(pdfBuf.byteLength).toBeGreaterThan(150 * 1024);
+    expect(realBuf.byteLength).toBeGreaterThan(500 * 1024);
 
     // Throughput assertion: 300 pages must take less than 5000ms (< 17ms per page)
-    expect(elapsed).toBeLessThan(5000);
+    expect(synthTimes[2]).toBeLessThan(5000);
+    expect(realTimes[2]).toBeLessThan(5000);
 
     // Validate with pdfinfo to ensure xref table and catalog for 300 pages are completely valid
     const tmpPdf = path.join(os.tmpdir(), `pdf-300p-${Date.now()}.pdf`);
