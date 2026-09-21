@@ -52,6 +52,32 @@ export function readFontUnitsPerEm(fontBytes: Uint8Array): number {
   return new DataView(fontBytes.buffer, fontBytes.byteOffset + head.offset, length).getUint16(18);
 }
 
+/** Read every glyph's horizontal advance from `hmtx`, scaled to 1000/em —
+ *  the widths a PDF CIDFont needs in its /W array (index = glyph ID). The
+ *  last long metric repeats for glyphs past `numberOfHMetrics`. */
+export function readGlyphAdvances(fontBytes: Uint8Array): number[] {
+  const head = findTable(fontBytes, "head");
+  const hhea = findTable(fontBytes, "hhea");
+  const maxp = findTable(fontBytes, "maxp");
+  const hmtx = findTable(fontBytes, "hmtx");
+  if (!head || !hhea || !maxp || !hmtx) return [];
+  const unitsPerEm = readFontUnitsPerEm(fontBytes) || 1000;
+  const rawView = new DataView(fontBytes.buffer, fontBytes.byteOffset, fontBytes.byteLength);
+  const numberOfHMetrics = rawView.getUint16(hhea.offset + 34);
+  const numGlyphs = rawView.getUint16(maxp.offset + 4);
+  if (numberOfHMetrics === 0 || numGlyphs === 0) return [];
+  const lastAdvanceOffset = hmtx.offset + (numberOfHMetrics - 1) * 4;
+  if (lastAdvanceOffset + 2 > fontBytes.byteLength) return [];
+  const scale = 1000 / unitsPerEm;
+  const advances: number[] = Array.from({ length: numGlyphs });
+  for (let gid = 0; gid < numGlyphs; gid++) {
+    const offset = gid < numberOfHMetrics ? hmtx.offset + gid * 4 : lastAdvanceOffset;
+    const advance = offset + 2 <= fontBytes.byteLength ? rawView.getUint16(offset) : 0;
+    advances[gid] = Math.round(advance * scale);
+  }
+  return advances;
+}
+
 /** Whether the font bytes may be embedded / subsetted per their OS/2.fsType. */
 export function fontLicenseAllows(fontBytes: Uint8Array): {
   embed: boolean;

@@ -33,7 +33,14 @@ import { EditorState } from "@tiptap/pm/state";
 import { t } from "../../ui";
 import type { EditBridge } from "../canvas/edit-bridge";
 import type { CanvasStage, CanvasStageSection } from "../canvas/stage";
-import { buildEmbeddedPdfFonts, extractPdfPageLayers, pagesToPdf } from "../export-pdf";
+import {
+  buildEmbeddedPdfFonts,
+  extractPdfPageLayers,
+  pagesToPdf,
+  sceneTextSpans,
+  type PdfEmbeddedFont,
+  type PdfPageShot,
+} from "../export-pdf";
 import { collectRevisions } from "../extensions/track-changes";
 import {
   OpenFormatError,
@@ -207,23 +214,39 @@ export class IODomain {
    *  non-print view re-projects into print shape for the snapshot, then falls
    *  back. The export never renames the document. */
   async saveAsPdf(): Promise<void> {
+    const { blob } = await this.buildPdf();
+    await this.saveBlob(blob, SAVE_FORMATS.pdf, false);
+  }
+
+  /** Build the PDF for the document's print layout without saving it — the
+   *  shared body of the menu action and the public export API. Every page's
+   *  leafer scene serializes to a vector content stream; the returned pages
+   *  carry both the scene and the preview PNG the caller can compare against.
+   *  A non-print view re-projects for the export and falls back afterwards. */
+  async buildPdf(): Promise<{
+    blob: Blob;
+    pages: readonly PdfPageShot[];
+    embeddedFonts: readonly PdfEmbeddedFont[];
+  }> {
     const mode = this.host.viewMode();
     if (mode !== "print") {
       this.host.stage()?.setViewMode("print");
       this.host.renderDoc(this.getJSON());
     }
-    const shots = (await this.host.stage()?.printSnapshots()) ?? [];
+    const shots = (await this.host.stage()?.sceneSnapshots()) ?? [];
     if (mode !== "print") {
       this.host.stage()?.setViewMode(mode);
       this.host.renderDoc(this.getJSON());
     }
-    if (shots.length === 0) return;
+    if (shots.length === 0) {
+      return { blob: new Blob([], { type: "application/pdf" }), pages: [], embeddedFonts: [] };
+    }
     const pageLayers = extractPdfPageLayers(
       this.host.pages(),
       this.host.lastRun()?.sections ?? [],
       this.host.sectionOfPage(),
     );
-    const shotsWithLayers = shots.map((shot, i) => ({
+    const shotsWithLayers: PdfPageShot[] = shots.map((shot, i) => ({
       ...shot,
       textSpans: pageLayers[i]?.textSpans,
       links: pageLayers[i]?.links,
@@ -232,7 +255,11 @@ export class IODomain {
     const embeddedFonts =
       fonts.size > 0
         ? await buildEmbeddedPdfFonts(
-            pageLayers.flatMap((layer) => layer.textSpans),
+            // Visible scene text too: its subset must cover the glyphs it draws.
+            [
+              ...pageLayers.flatMap((layer) => layer.textSpans),
+              ...shots.flatMap((shot) => (shot.scene ? sceneTextSpans(shot.scene) : [])),
+            ],
             [...fonts.values()].map((entry) => ({
               family: entry.family,
               fontData: entry.fontData,
@@ -245,7 +272,7 @@ export class IODomain {
       tagged: true,
       ...(embeddedFonts.length > 0 ? { embeddedFonts } : {}),
     });
-    await this.saveBlob(blob, SAVE_FORMATS.pdf, false);
+    return { blob, pages: shotsWithLayers, embeddedFonts };
   }
 
   /** Filename menu → Share: the Web Share sheet where the platform has one

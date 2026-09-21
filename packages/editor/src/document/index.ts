@@ -131,6 +131,7 @@ import {
   readDocumentDefaults,
   writeDocumentDefaults,
 } from "./defaults";
+import type { PdfEmbeddedFont, PdfPageShot } from "./export-pdf";
 import type { NewStyleDefinition } from "./extensions/commands";
 import type { ModifyStylePatch, ParagraphDialogPatch } from "./extensions/commands";
 import { stampStyleRunPatches } from "./extensions/commands";
@@ -140,9 +141,9 @@ import { ChromeDomain } from "./host/chrome";
 import { InsertDomain } from "./host/insert";
 import { IODomain } from "./host/io";
 import { RenderDomain } from "./host/render";
-import { StatusDomain } from "./host/status";
 // Side-effect import: registers the ribbon/header translation tables.
 import "./i18n";
+import { StatusDomain } from "./host/status";
 import { pageInsets, StoriesDomain } from "./host/stories";
 import { StylesDomain } from "./host/styles";
 import { mergeSectionProperties } from "./page-setup";
@@ -2421,7 +2422,7 @@ class DocenDocument extends AddinHost<Editor> {
         const customEvent = event as CustomEvent<{ markup: boolean }>;
         if (!this.#stage) return;
         void (async () => {
-          const shots = await this.#stage!.printSnapshots({ markup: customEvent.detail.markup });
+          const shots = await this.#stage!.sceneSnapshots({ markup: customEvent.detail.markup });
           const previewEl = this.shadowRoot?.querySelector("docen-print-preview") as
             | (HTMLElement & {
                 seed(options: unknown): void;
@@ -3412,6 +3413,8 @@ class DocenDocument extends AddinHost<Editor> {
       this.#syncReadChrome(p.viewMode === "read");
     }
     this.#syncEditable();
+    // TEMP-R10-P1: live-scene inspection hook for the PDF fidelity harness.
+    (globalThis as Record<string, unknown>)["__docenStage"] = this.#stage;
     return this.#stage;
   }
 
@@ -6349,7 +6352,7 @@ class DocenDocument extends AddinHost<Editor> {
     if (!previewEl || !this.#stage) return;
 
     const printMarkup = options?.markup ?? this.#printMarkup;
-    const shots = await this.#stage.printSnapshots({ markup: printMarkup });
+    const shots = await this.#stage.sceneSnapshots({ markup: printMarkup });
     const cursor = this.editor?.state.selection.from ?? 0;
     const page = (this.#bridge?.pageOf(cursor) ?? 0) + 1;
     previewEl.seed({
@@ -6369,6 +6372,23 @@ class DocenDocument extends AddinHost<Editor> {
       });
     }
     return this.#io.print();
+  }
+
+  /**
+   * Export the document as PDF (File → Export as PDF) and return its bytes
+   * instead of saving a file. `pages` carries the print-layout page snapshots
+   * the export was built from — CSS-px size, preview PNG and the vector scene
+   * — the fidelity harness's raster reference. The print-view round-trip
+   * matches {@link openPrintPreview}: a non-print view re-projects for the
+   * export, then falls back.
+   */
+  async exportPdf(): Promise<{
+    data: Uint8Array;
+    pages: readonly PdfPageShot[];
+    embeddedFonts?: readonly PdfEmbeddedFont[];
+  }> {
+    const { blob, pages, embeddedFonts } = await this.#io.buildPdf();
+    return { data: new Uint8Array(await blob.arrayBuffer()), pages, embeddedFonts };
   }
 
   async open(file: File): Promise<void> {

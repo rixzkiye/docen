@@ -19,10 +19,22 @@ import {
   isFontSubsettingAllowed,
   readFontFsType,
   readFontUnitsPerEm,
+  readGlyphAdvances,
 } from "@docen/shaping";
 import type { SubsetPlan } from "@docen/shaping/subsetter";
 
 import type { CanvasStageSection } from "./canvas/stage";
+import {
+  extGStateDict,
+  planSceneContent,
+  standardFontFor,
+  wrapSceneContent,
+  type PdfSceneImageData,
+  type PdfSceneNode,
+  type PdfScenePage,
+  type PdfSceneTextNode,
+  type PdfTextFontRef,
+} from "./pdf-scene";
 
 /** One text span placed in the PDF text layer with exact coordinates (in pt). */
 export interface PdfTextSpan {
@@ -40,6 +52,8 @@ export interface PdfTextSpan {
   fontFamily?: string;
   bold?: boolean;
   italic?: boolean;
+  /** Run color (OOXML hex without '#') — the visible text mode's paint. */
+  color?: string;
   /** Structure element tag (P, H1, H2, H3, Table). */
   tag?: string;
 }
@@ -61,6 +75,10 @@ export interface PdfPageShot {
   height: number;
   url?: string;
   jpeg?: Uint8Array<ArrayBuffer>;
+  /** The page's serialized vector scene (sceneSnapshots). When present the
+   *  page paints as a vector content stream; absent falls back to the legacy
+   *  JPEG page image. */
+  scene?: PdfScenePage;
   textSpans?: PdfTextSpan[];
   links?: PdfLinkAnnotation[];
 }
@@ -81,6 +99,10 @@ export interface PdfEmbeddedFont {
   readonly fontData: Uint8Array;
   /** CID (UTF-16 code unit) → glyph ID in the embedded subset. */
   readonly cidToGid?: ReadonlyMap<number, number>;
+  /** Per-glyph horizontal advances (1000/em, index = glyph ID in fontData) —
+   *  emitted as the CIDFont's /W array so visible embedded-font text lays out
+   *  at the face's true widths. */
+  readonly glyphAdvances?: readonly number[];
   readonly toUnicodeMap?: Map<number, number | string> | [number, number][];
   /** Font descriptor values (font units scaled to 1000/em by the writer). */
   readonly unitsPerEm?: number;
@@ -99,6 +121,68 @@ export interface PdfEmbeddableFontSource {
   readonly fsType?: number;
 }
 
+/** One outline item (bookmark) in the document outline tree. */
+export interface PdfOutlineItem {
+  title: string;
+  /** Destination: 0-based page index or target with optional top in pt. */
+  dest: number | { pageIndex: number; top?: number };
+  children?: readonly PdfOutlineItem[];
+}
+
+/** Page label range specification. */
+export interface PdfPageLabelRange {
+  startPageIndex: number;
+  style?: "decimal" | "romanUpper" | "romanLower" | "alphaUpper" | "alphaLower" | "none";
+  prefix?: string;
+  startNumber?: number;
+}
+
+/** Named destination target in PDF points. */
+export interface PdfDestination {
+  pageIndex: number;
+  x?: number;
+  y?: number;
+  zoom?: number;
+}
+
+/** Standard PDF viewer preferences. */
+export interface PdfViewerPreferences {
+  displayDocTitle?: boolean;
+  hideToolbar?: boolean;
+  hideMenubar?: boolean;
+  centerWindow?: boolean;
+  fitWindow?: boolean;
+}
+
+/** Interactive form field for AcroForm. */
+export interface PdfFormField {
+  name: string;
+  type: "text" | "checkbox";
+  pageIndex: number;
+  rect: [number, number, number, number]; // [left, bottom, right, top] in pt
+  value?: string | boolean;
+  readOnly?: boolean;
+}
+
+/** Accessibility structure element with semantic tag and alt text. */
+export interface PdfStructElement {
+  type:
+    | "Document"
+    | "Part"
+    | "Art"
+    | "Sect"
+    | "Div"
+    | "H1"
+    | "H2"
+    | "H3"
+    | "P"
+    | "Table"
+    | "Figure";
+  pageIndex: number;
+  altText?: string;
+  title?: string;
+}
+
 /** Options for PDF document generation. */
 export interface PdfExportOptions {
   metadata?: {
@@ -108,11 +192,32 @@ export interface PdfExportOptions {
     keywords?: string;
     creator?: string;
     producer?: string;
+    creationDate?: Date | string;
+    modDate?: Date | string;
   };
   /** Produce a Tagged PDF with /MarkInfo and /StructTreeRoot (default: true). */
   tagged?: boolean;
   /** Embedded subset TrueType/OpenType fonts for visual fidelity and text extraction. */
   embeddedFonts?: readonly PdfEmbeddedFont[];
+  /** How visible text paints in a vector scene page:
+   *  - "outlines" (default): glyph outlines are drawn as vector paths and the
+   *    text layer stays invisible (exact visual fidelity, font-independent).
+   *  - "embedded": glyph outlines are dropped and the text layer renders
+   *    visibly through the embedded/standard fonts (smaller files; used for
+   *    the size/fidelity measurement — see the R10-P1 report). */
+  textMode?: "outlines" | "embedded";
+  /** Document outline bookmarks hierarchy. */
+  outline?: readonly PdfOutlineItem[];
+  /** Page labels for section page numbering. */
+  pageLabels?: readonly PdfPageLabelRange[];
+  /** Named destination targets (#anchor or external reference). */
+  destinations?: Record<string, number | PdfDestination>;
+  /** Viewer preferences for window display. */
+  viewerPreferences?: PdfViewerPreferences;
+  /** Interactive form fields for AcroForm. */
+  formFields?: readonly PdfFormField[];
+  /** Semantic structure elements with alt text for figures and tables. */
+  structElements?: readonly PdfStructElement[];
 }
 
 /** Decode a snapshot PNG and flatten it onto white — the print canvases are
@@ -200,6 +305,14 @@ export function escapePdfString(str: string): string {
     .replace(/\n/g, "\\n");
 }
 
+/** Escape special characters for PDF name literals (/name). */
+export function escapePdfName(name: string): string {
+  return name.replace(
+    /[^a-zA-Z0-9_-]/g,
+    (c) => `#${c.charCodeAt(0).toString(16).padStart(2, "0")}`,
+  );
+}
+
 /** Encode a Unicode string as 2-byte hexadecimal CIDs for /Identity-H fonts. */
 export function encodeHexUtf16(str: string): string {
   let hex = "";
@@ -231,30 +344,10 @@ function fontForSpan(span: PdfTextSpan): { fontName: string; isUnicode: boolean 
   if (!isAsciiPrintable(span.text)) {
     return { fontName: "F_Uni", isUnicode: true };
   }
-  const fam = (span.fontFamily ?? "").toLowerCase();
-  const bold = !!span.bold;
-  const italic = !!span.italic;
-
-  if (
-    fam.includes("times") ||
-    fam.includes("serif") ||
-    fam.includes("georgia") ||
-    fam.includes("garamond")
-  ) {
-    if (bold && italic) return { fontName: "F8", isUnicode: false };
-    if (bold) return { fontName: "F6", isUnicode: false };
-    if (italic) return { fontName: "F7", isUnicode: false };
-    return { fontName: "F5", isUnicode: false };
-  }
-  if (fam.includes("courier") || fam.includes("mono") || fam.includes("consolas")) {
-    if (bold) return { fontName: "F10", isUnicode: false };
-    return { fontName: "F9", isUnicode: false };
-  }
-  // Default: Helvetica / Sans-serif
-  if (bold && italic) return { fontName: "F4", isUnicode: false };
-  if (bold) return { fontName: "F2", isUnicode: false };
-  if (italic) return { fontName: "F3", isUnicode: false };
-  return { fontName: "F1", isUnicode: false };
+  return {
+    fontName: standardFontFor(span.fontFamily, span.bold, span.italic),
+    isUnicode: false,
+  };
 }
 
 /** Build embedded PDF fonts from the host's registered font bytes.
@@ -344,6 +437,7 @@ export async function buildEmbeddedPdfFonts(
       fontFamily: source.family,
       fontData,
       cidToGid,
+      glyphAdvances: readGlyphAdvances(fontData),
       unitsPerEm: readFontUnitsPerEm(source.fontData),
       fsType,
     });
@@ -392,8 +486,12 @@ function identityToUnicodeCMap(): string {
 }
 
 /** Build the PDF blob from page snapshots, text layers, and link annotations.
- *  Pages keep their paper size (CSS px → pt at 72/96). The canvas image fills
- *  the page, with invisible text operators and link annotations overlaid.
+ *  Pages keep their paper size (CSS px → pt at 72/96). A page with a `scene`
+ *  paints as a vector content stream (paths/images/text); a page without one
+ *  falls back to the legacy JPEG page image. The invisible text layer, link
+ *  annotations and structure tags overlay either. Scene content streams are
+ *  Flate-encoded; the text layer stays uncompressed so extraction stays
+ *  debuggable.
  *
  *  Every object is allocated an ID up front and then written in ascending
  *  object-number order: the xref table is indexed by object number, so the
@@ -416,7 +514,6 @@ export async function pagesToPdf(
     objects.push({ id, parts });
   };
 
-  const jpegs = await Promise.all(shots.map((s) => jpegOf(s)));
   const pt = (px: number): number => (px * 72) / 96;
 
   // Object numbering allocator
@@ -471,29 +568,271 @@ export async function pagesToPdf(
 
   const infoId = allocId();
 
+  // Vector scene plans — pure analysis (resource names are page-local) done
+  // before any object is written, so every allocation below is final.
+  const textMode = options?.textMode ?? "outlines";
+  // The face for a family: an exact family match wins, then the longest
+  // substring match (so "Calibri" never resolves to "Calibri Light").
+  const embeddedFontForFamily = (family: string | undefined): EmbeddedFontPlan | undefined => {
+    const key = (family ?? "").trim().toLowerCase();
+    if (!key || embeddedFonts.length === 0) return undefined;
+    for (const emb of embeddedFonts) {
+      const target = (emb.font.fontFamily ?? emb.font.fontName).trim().toLowerCase();
+      if (target && target === key) return emb;
+    }
+    let best: { plan: EmbeddedFontPlan; length: number } | undefined;
+    for (const emb of embeddedFonts) {
+      const target = (emb.font.fontFamily ?? emb.font.fontName).trim().toLowerCase();
+      if (!target) continue;
+      if (!key.includes(target) && !target.includes(key)) continue;
+      if (!best || target.length > best.length) best = { plan: emb, length: target.length };
+    }
+    return best?.plan;
+  };
+  const sceneFontForText = (node: PdfSceneTextNode): PdfTextFontRef => {
+    const embedded = embeddedFontForFamily(node.fontFamily);
+    if (embedded) return { resource: embedded.resourceName, isUnicode: true };
+    return {
+      resource: standardFontFor(node.fontFamily, node.bold, node.italic),
+      isUnicode: false,
+    };
+  };
+  const scenePlans = shots.map((shot) =>
+    shot.scene
+      ? planSceneContent(shot.scene, {
+          fontForText: sceneFontForText,
+          includeGlyphs: textMode !== "embedded",
+        })
+      : null,
+  );
+  // In outlines mode the scene renders fallback Text visibly; a layout span
+  // for the same run must leave the invisible layer or extraction would return
+  // it twice (see consumeVisiblePlacement).
+  const pageTextSpans: PdfTextSpan[][] = shots.map((shot, index) => {
+    const spans = shot.textSpans ?? [];
+    if (!shot.scene || !scenePlans[index] || textMode === "embedded") return spans;
+    const placements = sceneTextPlacements(shot.scene);
+    if (placements.length === 0) return spans;
+    return spans.filter((span) => !consumeVisiblePlacement(placements, span, shot.scene!.height));
+  });
+
+  // Image XObjects dedupe globally by content key; an SMask is allocated only
+  // when the raw RGBA really carries alpha.
+  interface SceneImageAlloc {
+    id: number;
+    data: PdfSceneImageData;
+    smaskId?: number;
+  }
+  const imageAllocs = new Map<string, SceneImageAlloc>();
+  for (const plan of scenePlans) {
+    if (!plan) continue;
+    for (const image of plan.images) {
+      if (imageAllocs.has(image.key)) continue;
+      imageAllocs.set(image.key, {
+        id: allocId(),
+        data: image,
+        ...(image.rgba && image.hasAlpha ? { smaskId: allocId() } : {}),
+      });
+    }
+  }
+
   interface PageAlloc {
     pageId: number;
+    /** The legacy whole-page JPEG (pages without a scene only). */
+    imageId?: number;
+    /** The text (or legacy) content stream. */
     contentId: number;
-    imageId: number;
+    /** The vector scene content stream (scene pages only). */
+    sceneContentId?: number;
+    /** Per-page image resources, /Im0… in plan order. */
+    imageRefs: { name: string; id: number }[];
+    /** Per-page ExtGState object ids, /GS0… in plan order. */
+    stateIds: number[];
     annotIds: number[];
+    fieldAnnotIds: number[];
     structElemIds: number[];
   }
 
   const pageAllocs: PageAlloc[] = [];
-  for (const shot of shots) {
+  for (const [index, shot] of shots.entries()) {
+    const plan = scenePlans[index];
     const pageId = allocId();
     const contentId = allocId();
-    const imageId = allocId();
+    const sceneContentId = plan ? allocId() : undefined;
+    const imageId = plan ? undefined : allocId();
+    const imageRefs = (plan?.images ?? []).map((image, k) => ({
+      name: `Im${k}`,
+      id: imageAllocs.get(image.key)!.id,
+    }));
+    const stateIds = (plan?.extGStates ?? []).map(() => allocId());
     const annotIds = (shot.links ?? []).map(() => allocId());
-    const spans = shot.textSpans ?? [];
-    const structElemIds = isTagged && spans.length > 0 ? [allocId()] : [];
-    pageAllocs.push({ pageId, contentId, imageId, annotIds, structElemIds });
+    const pageFields = (options?.formFields ?? []).filter(
+      (f) => Math.max(0, Math.min(shots.length - 1, f.pageIndex)) === index,
+    );
+    const fieldAnnotIds = pageFields.map(() => allocId());
+    const structElemIds = isTagged && (pageTextSpans[index]?.length ?? 0) > 0 ? [allocId()] : [];
+    pageAllocs.push({
+      pageId,
+      contentId,
+      ...(sceneContentId !== undefined ? { sceneContentId } : {}),
+      ...(imageId !== undefined ? { imageId } : {}),
+      imageRefs,
+      stateIds,
+      annotIds,
+      fieldAnnotIds,
+      structElemIds,
+    });
   }
+
+  // Outline Tree (/Outlines)
+  let outlineRootId: number | undefined;
+  interface OutlineItemAlloc {
+    id: number;
+    item: PdfOutlineItem;
+    parentId: number;
+    prevId?: number;
+    nextId?: number;
+    firstChildId?: number;
+    lastChildId?: number;
+    count: number;
+  }
+  const outlineAllocs: OutlineItemAlloc[] = [];
+
+  if (options?.outline && options.outline.length > 0) {
+    outlineRootId = allocId();
+    const buildOutlineLevel = (
+      items: readonly PdfOutlineItem[],
+      parentId: number,
+    ): { firstId: number; lastId: number; totalCount: number } => {
+      const levelAllocs: OutlineItemAlloc[] = items.map((item) => ({
+        id: allocId(),
+        item,
+        parentId,
+        count: 0,
+      }));
+      for (let i = 0; i < levelAllocs.length; i++) {
+        if (i > 0) levelAllocs[i]!.prevId = levelAllocs[i - 1]!.id;
+        if (i < levelAllocs.length - 1) levelAllocs[i]!.nextId = levelAllocs[i + 1]!.id;
+      }
+      let totalCount = 0;
+      for (const node of levelAllocs) {
+        if (node.item.children && node.item.children.length > 0) {
+          const childLevel = buildOutlineLevel(node.item.children, node.id);
+          node.firstChildId = childLevel.firstId;
+          node.lastChildId = childLevel.lastId;
+          node.count = childLevel.totalCount;
+          totalCount += childLevel.totalCount;
+        }
+        totalCount += 1;
+        outlineAllocs.push(node);
+      }
+      return {
+        firstId: levelAllocs[0]!.id,
+        lastId: levelAllocs[levelAllocs.length - 1]!.id,
+        totalCount,
+      };
+    };
+
+    const rootLevel = buildOutlineLevel(options.outline, outlineRootId);
+    addObject(
+      outlineRootId,
+      `${outlineRootId} 0 obj\n<< /Type /Outlines /First ${rootLevel.firstId} 0 R /Last ${rootLevel.lastId} 0 R /Count ${rootLevel.totalCount} >>\nendobj\n`,
+    );
+
+    for (const node of outlineAllocs) {
+      const pIdx = typeof node.item.dest === "number" ? node.item.dest : node.item.dest.pageIndex;
+      const targetPageId = (pageAllocs[pIdx] ?? pageAllocs[0]!).pageId;
+      const top =
+        typeof node.item.dest === "object" && node.item.dest.top != null ? node.item.dest.top : 792;
+      let dict =
+        `<< /Title (${escapePdfString(node.item.title)}) /Parent ${node.parentId} 0 R ` +
+        `/Dest [ ${targetPageId} 0 R /XYZ 0 ${top.toFixed(2)} 0 ]`;
+      if (node.prevId) dict += ` /Prev ${node.prevId} 0 R`;
+      if (node.nextId) dict += ` /Next ${node.nextId} 0 R`;
+      if (node.firstChildId && node.lastChildId) {
+        dict += ` /First ${node.firstChildId} 0 R /Last ${node.lastChildId} 0 R /Count ${node.count}`;
+      }
+      dict += ` >>\nendobj\n`;
+      addObject(node.id, `${node.id} 0 obj\n${dict}`);
+    }
+  }
+
+  // Page Labels (/PageLabels)
+  let pageLabelsDict = "";
+  if (options?.pageLabels && options.pageLabels.length > 0) {
+    const sortedLabels = [...options.pageLabels].sort(
+      (a, b) => a.startPageIndex - b.startPageIndex,
+    );
+    const numsEntries: string[] = [];
+    for (const range of sortedLabels) {
+      let dict = "<<";
+      if (range.style && range.style !== "none") {
+        const styleCode =
+          {
+            decimal: "/D",
+            romanUpper: "/R",
+            romanLower: "/r",
+            alphaUpper: "/A",
+            alphaLower: "/a",
+          }[range.style] ?? "/D";
+        dict += ` /S ${styleCode}`;
+      }
+      if (range.prefix) dict += ` /P (${escapePdfString(range.prefix)})`;
+      if (range.startNumber != null) dict += ` /St ${range.startNumber}`;
+      dict += " >>";
+      numsEntries.push(`${range.startPageIndex} ${dict}`);
+    }
+    pageLabelsDict = ` /PageLabels << /Nums [ ${numsEntries.join(" ")} ] >>`;
+  }
+
+  // Named Destinations (/Dests)
+  let destsDict = "";
+  if (options?.destinations && Object.keys(options.destinations).length > 0) {
+    const destEntries: string[] = [];
+    for (const [name, target] of Object.entries(options.destinations)) {
+      const pIdx = typeof target === "number" ? target : target.pageIndex;
+      const targetPageId = (pageAllocs[pIdx] ?? pageAllocs[0]!).pageId;
+      const x = typeof target === "object" && target.x != null ? target.x : 0;
+      const y = typeof target === "object" && target.y != null ? target.y : 0;
+      const zoom = typeof target === "object" && target.zoom != null ? target.zoom : 0;
+      destEntries.push(
+        `/${escapePdfName(name)} [ ${targetPageId} 0 R /XYZ ${x.toFixed(2)} ${y.toFixed(2)} ${zoom} ]`,
+      );
+    }
+    if (destEntries.length > 0) {
+      destsDict = ` /Dests << ${destEntries.join(" ")} >>`;
+    }
+  }
+
+  // Viewer Preferences (/ViewerPreferences)
+  let viewerPrefsDict = "";
+  if (options?.viewerPreferences) {
+    const prefs: string[] = [];
+    const vp = options.viewerPreferences;
+    if (vp.displayDocTitle != null) prefs.push(`/DisplayDocTitle ${vp.displayDocTitle}`);
+    if (vp.hideToolbar != null) prefs.push(`/HideToolbar ${vp.hideToolbar}`);
+    if (vp.hideMenubar != null) prefs.push(`/HideMenubar ${vp.hideMenubar}`);
+    if (vp.centerWindow != null) prefs.push(`/CenterWindow ${vp.centerWindow}`);
+    if (vp.fitWindow != null) prefs.push(`/FitWindow ${vp.fitWindow}`);
+    if (prefs.length > 0) viewerPrefsDict = ` /ViewerPreferences << ${prefs.join(" ")} >>`;
+  }
+
+  // AcroForm object ID
+  const acroFormId = options?.formFields && options.formFields.length > 0 ? allocId() : undefined;
 
   // 1. Catalog Object
   let catDict = `<< /Type /Catalog /Pages ${pagesId} 0 R`;
   if (isTagged && structTreeRootId) {
     catDict += ` /MarkInfo << /Marked true >> /StructTreeRoot ${structTreeRootId} 0 R`;
+  }
+  if (outlineRootId !== undefined) {
+    catDict += ` /Outlines ${outlineRootId} 0 R`;
+  }
+  if (pageLabelsDict) catDict += pageLabelsDict;
+  if (destsDict) catDict += destsDict;
+  if (viewerPrefsDict) catDict += viewerPrefsDict;
+  if (acroFormId !== undefined) {
+    catDict += ` /AcroForm ${acroFormId} 0 R`;
   }
   catDict += ` >>\nendobj\n`;
   addObject(catalogId, `${catalogId} 0 obj\n${catDict}`);
@@ -505,14 +844,40 @@ export async function pagesToPdf(
     `${pagesId} 0 obj\n<< /Type /Pages /Kids [ ${kids} ] /Count ${shots.length} >>\nendobj\n`,
   );
 
+  // Custom accessibility struct elements
+  const customStructIds: number[] = [];
+  if (isTagged && structTreeRootId && options?.structElements) {
+    for (const elem of options.structElements) {
+      const id = allocId();
+      customStructIds.push(id);
+      const targetPageId = (pageAllocs[elem.pageIndex] ?? pageAllocs[0]!).pageId;
+      let dict = `${id} 0 obj\n<< /Type /StructElem /S /${elem.type} /P ${structTreeRootId} 0 R /Pg ${targetPageId} 0 R /K 0`;
+      if (elem.altText) dict += ` /Alt (${escapePdfString(elem.altText)})`;
+      if (elem.title) dict += ` /T (${escapePdfString(elem.title)})`;
+      dict += ` >>\nendobj\n`;
+      addObject(id, dict);
+    }
+  }
+
   // 3. StructTreeRoot Object (if tagged)
   if (isTagged && structTreeRootId) {
-    const allStructKids = pageAllocs
-      .flatMap((p) => p.structElemIds.map((id) => `${id} 0 R`))
-      .join(" ");
+    const allStructKids = [
+      ...pageAllocs.flatMap((p) => p.structElemIds.map((id) => `${id} 0 R`)),
+      ...customStructIds.map((id) => `${id} 0 R`),
+    ].join(" ");
     addObject(
       structTreeRootId,
-      `${structTreeRootId} 0 obj\n<< /Type /StructTreeRoot /RoleMap << /H1 /H /H2 /H /H3 /H /H4 /H /P /P /Table /Table >> /K [ ${allStructKids} ] >>\nendobj\n`,
+      `${structTreeRootId} 0 obj\n<< /Type /StructTreeRoot /RoleMap << /H1 /H /H2 /H /H3 /H /H4 /H /P /P /Table /Table /Figure /Figure >> /K [ ${allStructKids} ] >>\nendobj\n`,
+    );
+  }
+
+  // 3b. AcroForm Object
+  if (acroFormId !== undefined) {
+    const allFieldIds = pageAllocs.flatMap((p) => p.fieldAnnotIds);
+    const fieldsRef = allFieldIds.map((id) => `${id} 0 R`).join(" ");
+    addObject(
+      acroFormId,
+      `${acroFormId} 0 obj\n<< /Fields [ ${fieldsRef} ] /NeedAppearances true /DA (/F1 12 Tf 0 g) >>\nendobj\n`,
     );
   }
 
@@ -582,13 +947,43 @@ export async function pagesToPdf(
     const bbox = font.bbox ?? [-1000, -1000, 2000, 2000];
     const ascent = Math.round((font.ascent ?? 0.8 * unitsPerEm) * fontScale);
     const descent = Math.round((font.descent ?? -0.2 * unitsPerEm) * fontScale);
+    // /W widths: without them a CIDFontType2 viewer assumes the /DW default
+    // (1000/em) for every CID — visible embedded text would render one em per
+    // glyph. Group consecutive CIDs into `first [w…]` runs.
+    let widthsRef = "";
+    if (font.glyphAdvances && font.cidToGid && font.cidToGid.size > 0) {
+      const entries = [...font.cidToGid].sort((a, b) => a[0] - b[0]);
+      const segments: string[] = [];
+      let runStart = -1;
+      let runWidths: number[] = [];
+      const flush = (): void => {
+        if (runStart >= 0 && runWidths.length > 0) {
+          segments.push(`${runStart} [ ${runWidths.join(" ")} ]`);
+        }
+        runStart = -1;
+        runWidths = [];
+      };
+      for (const [cid, gid] of entries) {
+        if (cid > 0xffff) continue;
+        const width = font.glyphAdvances[gid];
+        if (width === undefined) continue;
+        if (runStart >= 0 && cid === runStart + runWidths.length) runWidths.push(width);
+        else {
+          flush();
+          runStart = cid;
+          runWidths = [width];
+        }
+      }
+      flush();
+      if (segments.length > 0) widthsRef = ` /W [ ${segments.join(" ")} ]`;
+    }
     addObject(
       emb.type0Id,
       `${emb.type0Id} 0 obj\n<< /Type /Font /Subtype /Type0 /BaseFont /${baseFontName} /Encoding /Identity-H /DescendantFonts [ ${emb.cidFontId} 0 R ] /ToUnicode ${emb.toUnicodeId} 0 R >>\nendobj\n`,
     );
     addObject(
       emb.cidFontId,
-      `${emb.cidFontId} 0 obj\n<< /Type /Font /Subtype /CIDFontType2 /BaseFont /${baseFontName} /CIDSystemInfo << /Registry (Adobe) /Ordering (Identity) /Supplement 0 >> /FontDescriptor ${emb.fontDescId} 0 R /DW 1000${cidToGidRef} >>\nendobj\n`,
+      `${emb.cidFontId} 0 obj\n<< /Type /Font /Subtype /CIDFontType2 /BaseFont /${baseFontName} /CIDSystemInfo << /Registry (Adobe) /Ordering (Identity) /Supplement 0 >> /FontDescriptor ${emb.fontDescId} 0 R /DW 1000${widthsRef}${cidToGidRef} >>\nendobj\n`,
     );
     addObject(
       emb.fontDescId,
@@ -604,7 +999,7 @@ export async function pagesToPdf(
 
   addObject(
     uniCidFontId,
-    `${uniCidFontId} 0 obj\n<< /Type /Font /Subtype /CIDFontType2 /BaseFont /Helvetica /CIDSystemInfo << /Registry (Adobe) /Ordering (Identity) /Supplement 0 >> /FontDescriptor ${uniFontDescId} 0 R /DW 1000 >>\nendobj\n`,
+    `${uniCidFontId} 0 obj\n<< /Type /Font /Subtype /CIDFontType2 /BaseFont /Helvetica /CIDSystemInfo << /Registry (Adobe) /Ordering (Identity) /Supplement 0 >> /FontDescriptor ${uniFontDescId} 0 R /DW 1000 /W [ 0 255 500 ] >>\nendobj\n`,
   );
 
   addObject(
@@ -623,12 +1018,29 @@ export async function pagesToPdf(
   const author = options?.metadata?.author ?? "Docen";
   const creator = options?.metadata?.creator ?? "Docen Word Processor";
   const producer = options?.metadata?.producer ?? "Docen PDF Engine";
-  const dateStr = formatPdfDate();
+  const creationDateStr = options?.metadata?.creationDate
+    ? options.metadata.creationDate instanceof Date
+      ? formatPdfDate(options.metadata.creationDate)
+      : options.metadata.creationDate
+    : formatPdfDate();
+  const modDateStr = options?.metadata?.modDate
+    ? options.metadata.modDate instanceof Date
+      ? formatPdfDate(options.metadata.modDate)
+      : options.metadata.modDate
+    : creationDateStr;
 
-  addObject(
-    infoId,
-    `${infoId} 0 obj\n<< /Title (${escapePdfString(title)}) /Author (${escapePdfString(author)}) /Creator (${escapePdfString(creator)}) /Producer (${escapePdfString(producer)}) /CreationDate (${dateStr}) >>\nendobj\n`,
-  );
+  let infoDict =
+    `<< /Title (${escapePdfString(title)}) /Author (${escapePdfString(author)}) ` +
+    `/Creator (${escapePdfString(creator)}) /Producer (${escapePdfString(producer)}) ` +
+    `/CreationDate (${creationDateStr}) /ModDate (${modDateStr})`;
+  if (options?.metadata?.subject) {
+    infoDict += ` /Subject (${escapePdfString(options.metadata.subject)})`;
+  }
+  if (options?.metadata?.keywords) {
+    infoDict += ` /Keywords (${escapePdfString(options.metadata.keywords)})`;
+  }
+  infoDict += ` >>\nendobj\n`;
+  addObject(infoId, `${infoId} 0 obj\n${infoDict}`);
 
   // 6. Per-Page Objects
   const fontEntries = [
@@ -638,31 +1050,40 @@ export async function pagesToPdf(
 
   const embeddedFontForSpan = (span: PdfTextSpan): EmbeddedFontPlan | undefined => {
     if (embeddedFonts.length === 0) return undefined;
-    const family = (span.fontFamily ?? "").trim().toLowerCase();
-    if (family) {
-      const match = embeddedFonts.find((emb) => {
-        const target = (emb.font.fontFamily ?? emb.font.fontName).trim().toLowerCase();
-        return target.length > 0 && (family.includes(target) || target.includes(family));
-      });
-      if (match) return match;
-    }
-    return embeddedFonts[0];
+    return embeddedFontForFamily(span.fontFamily) ?? embeddedFonts[0];
   };
 
-  for (const [i, page] of jpegs.entries()) {
-    const shot = shots[i]!;
+  for (const [i, shot] of shots.entries()) {
     const alloc = pageAllocs[i]!;
-    const w = pt(shot.width).toFixed(2);
-    const h = pt(shot.height).toFixed(2);
+    const plan = scenePlans[i];
+    const scene = shot.scene;
+    const widthPx = scene?.width ?? shot.width;
+    const heightPx = scene?.height ?? shot.height;
+    const w = pt(widthPx).toFixed(2);
+    const h = pt(heightPx).toFixed(2);
 
-    // Page object
+    // Page object — resources differ by path: vector pages list their images,
+    // ExtGStates and fonts; legacy pages carry the page JPEG.
+    let resources: string;
+    if (plan) {
+      const xobjects = alloc.imageRefs.map((ref) => `/${ref.name} ${ref.id} 0 R`).join(" ");
+      const states = alloc.stateIds.map((id, k) => `/GS${k} ${id} 0 R`).join(" ");
+      resources =
+        `/Resources << /ProcSet [ /PDF /Text /ImageB /ImageC /ImageI ]` +
+        ` /XObject << ${xobjects} >> /ExtGState << ${states} >> /Font << ${fontEntries} >> >>`;
+    } else {
+      resources = `/Resources << /XObject << /Im0 ${alloc.imageId} 0 R >> /Font << ${fontEntries} >> >>`;
+    }
+    const contents = plan
+      ? `[ ${alloc.sceneContentId} 0 R ${alloc.contentId} 0 R ]`
+      : `${alloc.contentId} 0 R`;
     let pageDict =
       `<< /Type /Page /Parent ${pagesId} 0 R /MediaBox [ 0 0 ${w} ${h} ] ` +
-      `/Resources << /XObject << /Im0 ${alloc.imageId} 0 R >> /Font << ${fontEntries} >> >> ` +
-      `/Contents ${alloc.contentId} 0 R`;
+      `${resources} /Contents ${contents}`;
 
-    if (alloc.annotIds.length > 0) {
-      const annots = alloc.annotIds.map((id) => `${id} 0 R`).join(" ");
+    const allAnnots = [...alloc.annotIds, ...alloc.fieldAnnotIds];
+    if (allAnnots.length > 0) {
+      const annots = allAnnots.map((id) => `${id} 0 R`).join(" ");
       pageDict += ` /Annots [ ${annots} ]`;
     }
     if (isTagged) {
@@ -672,14 +1093,31 @@ export async function pagesToPdf(
 
     addObject(alloc.pageId, `${alloc.pageId} 0 obj\n${pageDict}`);
 
-    // Contents Stream
-    let content = `q ${w} 0 0 ${h} 0 0 cm /Im0 Do Q\n`;
-    const spans = shot.textSpans ?? [];
+    // Scene content stream — Flate-encoded (glyph outlines are verbose); the
+    // pure planner already emitted page-px operators, wrap adds the page
+    // transform (px → pt, y flip) and the artifact marker.
+    if (plan && scene && alloc.sceneContentId !== undefined) {
+      const body = wrapSceneContent(plan.content, heightPx);
+      const stream = await flateEncode(new TextEncoder().encode(body));
+      addObject(
+        alloc.sceneContentId,
+        `${alloc.sceneContentId} 0 obj\n<< /Length ${stream.data.length}${stream.filter} >>\nstream\n`,
+        stream.data,
+        "\nendstream\nendobj\n",
+      );
+    }
+
+    // Text (or legacy image) content stream.
+    const spans = pageTextSpans[i] ?? [];
+    // Embedded font measurement mode renders the text layer visibly; the
+    // default outlines mode keeps it invisible (3 Tr) for search/selection.
+    const visibleText = plan !== null && textMode === "embedded";
+    let content = plan ? "" : `q ${w} 0 0 ${h} 0 0 cm /Im0 Do Q\n`;
     if (spans.length > 0) {
       if (isTagged && alloc.structElemIds.length > 0) {
         content += `/P << /MCID 0 >> BDC\n`;
       }
-      content += `BT\n3 Tr\n`;
+      content += visibleText ? `BT\n` : `BT\n3 Tr\n`;
       let currentFont = "";
       let currentSize = "";
       for (let sIdx = 0; sIdx < spans.length; sIdx++) {
@@ -696,11 +1134,29 @@ export async function pagesToPdf(
           currentFont = fontName;
           currentSize = sizeStr;
         }
+        if (visibleText) {
+          const hex = (span.color ?? "1b1b1b").replace(/^#/, "");
+          const r = parseInt(hex.slice(0, 2), 16) / 255;
+          const g = parseInt(hex.slice(2, 4), 16) / 255;
+          const b = parseInt(hex.slice(4, 6), 16) / 255;
+          content += `${r.toFixed(3)} ${g.toFixed(3)} ${b.toFixed(3)} rg\n`;
+        }
         content += `1 0 0 1 ${span.x.toFixed(2)} ${span.y.toFixed(2)} Tm\n`;
 
         // Horizontal scaling Tz to match rendered word bounding box
-        const estCharWidth = isUnicode ? span.fontSize : span.fontSize * 0.52;
-        const estWidth = estCharWidth * span.text.length;
+        let estWidth = 0;
+        if (embedded?.font.glyphAdvances && embedded.font.cidToGid) {
+          for (let i = 0; i < span.text.length; i++) {
+            const code = span.text.charCodeAt(i);
+            const gid = embedded.font.cidToGid.get(code) ?? 0;
+            const adv = embedded.font.glyphAdvances[gid] ?? 500;
+            estWidth += (adv / 1000) * span.fontSize;
+          }
+        } else {
+          const isCjk = /[\u3000-\u9fff\uac00-\ud7af]/.test(span.text);
+          const estCharWidth = isCjk ? span.fontSize : span.fontSize * 0.52;
+          estWidth = estCharWidth * span.text.length;
+        }
         if (estWidth > 0 && span.width > 0) {
           const scale = (span.width / estWidth) * 100;
           if (scale >= 30 && scale <= 400 && Math.abs(scale - 100) > 2) {
@@ -729,14 +1185,25 @@ export async function pagesToPdf(
       `${alloc.contentId} 0 obj\n<< /Length ${contentLength} >>\nstream\n${content}\nendstream\nendobj\n`,
     );
 
-    // Image XObject
-    addObject(
-      alloc.imageId,
-      `${alloc.imageId} 0 obj\n<< /Type /XObject /Subtype /Image /Width ${page.width} /Height ${page.height} ` +
-        `/ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${page.jpeg.length} >>\nstream\n`,
-      page.jpeg,
-      "\nendstream\nendobj\n",
-    );
+    // Legacy whole-page image XObject (never produced by the vector path).
+    if (!plan) {
+      const page = await jpegOf(shot);
+      addObject(
+        alloc.imageId!,
+        `${alloc.imageId} 0 obj\n<< /Type /XObject /Subtype /Image /Width ${page.width} /Height ${page.height} ` +
+          `/ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${page.jpeg.length} >>\nstream\n`,
+        page.jpeg,
+        "\nendstream\nendobj\n",
+      );
+    }
+
+    // ExtGStates (one per distinct alpha/blend combination on this page).
+    if (plan) {
+      for (let sIdx = 0; sIdx < plan.extGStates.length; sIdx++) {
+        const stateId = alloc.stateIds[sIdx]!;
+        addObject(stateId, `${stateId} 0 obj\n${extGStateDict(plan.extGStates[sIdx]!)}\nendobj\n`);
+      }
+    }
 
     // Link Annotations
     for (let lIdx = 0; lIdx < (shot.links ?? []).length; lIdx++) {
@@ -756,12 +1223,90 @@ export async function pagesToPdf(
       addObject(annotId, annotObj);
     }
 
+    // Form Field Annotations (AcroForm Widgets)
+    const pageFields = (options?.formFields ?? []).filter(
+      (f) => Math.max(0, Math.min(shots.length - 1, f.pageIndex)) === i,
+    );
+    for (let fIdx = 0; fIdx < pageFields.length; fIdx++) {
+      const field = pageFields[fIdx]!;
+      const fieldId = alloc.fieldAnnotIds[fIdx]!;
+      const [x1, y1, x2, y2] = field.rect;
+      let fieldDict =
+        `${fieldId} 0 obj\n<< /Type /Annot /Subtype /Widget ` +
+        `/P ${alloc.pageId} 0 R ` +
+        `/Rect [ ${x1.toFixed(2)} ${y1.toFixed(2)} ${x2.toFixed(2)} ${y2.toFixed(2)} ] ` +
+        `/T (${escapePdfString(field.name)}) /F 4`;
+
+      if (field.readOnly) {
+        fieldDict += ` /Ff 1`;
+      }
+
+      if (field.type === "text") {
+        const val = typeof field.value === "string" ? field.value : "";
+        fieldDict += ` /FT /Tx /V (${escapePdfString(val)}) /DA (/F1 12 Tf 0 g)`;
+      } else if (field.type === "checkbox") {
+        const isChecked = field.value === true;
+        const state = isChecked ? "/Yes" : "/Off";
+        fieldDict += ` /FT /Btn /V ${state} /AS ${state}`;
+      }
+      fieldDict += ` >>\nendobj\n`;
+      addObject(fieldId, fieldDict);
+    }
+
     // Structure Element (if tagged)
     if (isTagged && alloc.structElemIds.length > 0 && structTreeRootId) {
       const structElemId = alloc.structElemIds[0]!;
       addObject(
         structElemId,
         `${structElemId} 0 obj\n<< /Type /StructElem /S /P /P ${structTreeRootId} 0 R /Pg ${alloc.pageId} 0 R /K 0 >>\nendobj\n`,
+      );
+    }
+  }
+
+  // Scene image XObjects — shared across pages by content key. JPEGs pass
+  // through untouched (/DCTDecode); raw RGBA streams Flate-encode, with a
+  // /DeviceGray SMask for the alpha channel when the bitmap has one.
+  for (const imageAlloc of imageAllocs.values()) {
+    const data = imageAlloc.data;
+    if (data.jpeg) {
+      addObject(
+        imageAlloc.id,
+        `${imageAlloc.id} 0 obj\n<< /Type /XObject /Subtype /Image /Width ${data.width} /Height ${data.height} ` +
+          `/ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${data.jpeg.length} >>\nstream\n`,
+        data.jpeg,
+        "\nendstream\nendobj\n",
+      );
+      continue;
+    }
+    if (!data.rgba) continue;
+    let rgb = data.rgba;
+    if (imageAlloc.smaskId !== undefined || data.hasAlpha) {
+      rgb = new Uint8Array(data.width * data.height * 3);
+      for (let p = 0; p < data.width * data.height; p++) {
+        rgb[p * 3] = data.rgba[p * 4]!;
+        rgb[p * 3 + 1] = data.rgba[p * 4 + 1]!;
+        rgb[p * 3 + 2] = data.rgba[p * 4 + 2]!;
+      }
+    }
+    const stream = await flateEncode(rgb);
+    const smask = imageAlloc.smaskId !== undefined ? ` /SMask ${imageAlloc.smaskId} 0 R` : "";
+    addObject(
+      imageAlloc.id,
+      `${imageAlloc.id} 0 obj\n<< /Type /XObject /Subtype /Image /Width ${data.width} /Height ${data.height} ` +
+        `/ColorSpace /DeviceRGB /BitsPerComponent 8${stream.filter}${smask} /Length ${stream.data.length} >>\nstream\n`,
+      stream.data,
+      "\nendstream\nendobj\n",
+    );
+    if (imageAlloc.smaskId !== undefined) {
+      const alpha = new Uint8Array(data.width * data.height);
+      for (let p = 0; p < alpha.length; p++) alpha[p] = data.rgba[p * 4 + 3]!;
+      const alphaStream = await flateEncode(alpha);
+      addObject(
+        imageAlloc.smaskId,
+        `${imageAlloc.smaskId} 0 obj\n<< /Type /XObject /Subtype /Image /Width ${data.width} /Height ${data.height} ` +
+          `/ColorSpace /DeviceGray /BitsPerComponent 8${alphaStream.filter} /Length ${alphaStream.data.length} >>\nstream\n`,
+        alphaStream.data,
+        "\nendstream\nendobj\n",
       );
     }
   }
@@ -791,6 +1336,86 @@ export async function pagesToPdf(
   push(xref);
 
   return new Blob([bytes()], { type: "application/pdf" });
+}
+
+/** Concatenate the visible text a vector scene draws, one span per text node —
+ *  the font-embedding input so a visible node's subset covers its glyphs.
+ *  Coordinates are placeholders (the embedding pass reads text + style only). */
+export function sceneTextSpans(page: PdfScenePage): PdfTextSpan[] {
+  const spans: PdfTextSpan[] = [];
+  const walk = (node: PdfSceneNode): void => {
+    if (node.type === "group") {
+      for (const child of node.children) walk(child);
+      return;
+    }
+    if (node.type !== "text") return;
+    const text = node.rows.map((row) => row.text).join("\n");
+    if (!text) return;
+    spans.push({
+      text,
+      x: 0,
+      y: 0,
+      width: 0,
+      height: 0,
+      fontSize: node.fontSize,
+      ...(node.fontFamily ? { fontFamily: node.fontFamily } : {}),
+      ...(node.bold ? { bold: true } : {}),
+      ...(node.italic ? { italic: true } : {}),
+      ...(node.fill ? { color: node.fill.replace(/^#/, "") } : {}),
+    });
+  };
+  for (const node of page.nodes) walk(node);
+  return spans;
+}
+
+/** One visible scene text row with its baseline in page px (y down). */
+interface SceneTextPlacement {
+  text: string;
+  xPx: number;
+  yPx: number;
+}
+
+/** Visible text the scene draws (page px) — used to keep the invisible text
+ *  layer from re-extracting a run the scene already renders visibly. */
+function sceneTextPlacements(page: PdfScenePage): SceneTextPlacement[] {
+  const placements: SceneTextPlacement[] = [];
+  const walk = (node: PdfSceneNode): void => {
+    if (node.type === "group") {
+      for (const child of node.children) walk(child);
+      return;
+    }
+    if (node.type !== "text") return;
+    const m = node.matrix;
+    for (const row of node.rows) {
+      if (!row.text) continue;
+      placements.push({
+        text: row.text,
+        xPx: m.a * row.x + m.c * row.y + m.e,
+        yPx: m.b * row.x + m.d * row.y + m.f,
+      });
+    }
+  };
+  for (const node of page.nodes) walk(node);
+  return placements;
+}
+
+/** Match a text-layer span to a visible scene row and consume it (one-to-one),
+ *  so the same run is never drawn AND extracted twice. */
+function consumeVisiblePlacement(
+  placements: SceneTextPlacement[],
+  span: PdfTextSpan,
+  pageHeightPx: number,
+): boolean {
+  const xPx = span.x / 0.75;
+  const yPx = (pageHeightPx * 0.75 - span.y) / 0.75;
+  for (let i = 0; i < placements.length; i++) {
+    const placement = placements[i]!;
+    if (placement.text !== span.text) continue;
+    if (Math.abs(placement.xPx - xPx) > 24 || Math.abs(placement.yPx - yPx) > 4) continue;
+    placements.splice(i, 1);
+    return true;
+  }
+  return false;
 }
 
 /** Extract text spans and link annotations from laid-out document pages for PDF export. */
@@ -885,6 +1510,7 @@ export function extractPdfPageLayers(
                 fontFamily,
                 bold: style?.bold,
                 italic: style?.italic,
+                ...(typeof style?.color === "string" ? { color: style.color } : {}),
                 tag: "P",
               });
 
