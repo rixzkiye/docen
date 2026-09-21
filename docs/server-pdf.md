@@ -239,3 +239,10 @@ Notes for production:
 - **R11-S3** exposes `generatePDF(json, options)` / `renderPDFStream` from
   `packages/docen`, backend-configurable (`node | chromium`). The JSON-in,
   bytes-out contract documented above does not change.
+
+## Standards Conformance & Exclusions (R12-W2)
+
+See [`docs/pdf-spec.md`](./pdf-spec.md) for detailed mappings and decisions:
+
+- **Page Labels (`/PageLabels`)**: Section page numbering supports explicit prefixes and chapter style/separator mappings (`w:chapStyle`, `w:chapSep`) emitted as `/P`. Exotic OOXML `numFmt` tokens (e.g. `chineseCounting`, `ordinal`) fall back to decimal (`/D`) per ISO 32000-1 §12.4.2.
+- **Viewer Preferences (`/ViewerPreferences`)**: Evaluated against OOXML; WordprocessingML contains no source for PDF viewer window chrome controls (`HideToolbar`, `HideMenubar`, `FitWindow`, `CenterWindow`). Stated as an explicit written exclusion (not wired from DOCX). `DisplayDocTitle` is reserved for PDF/UA-1 conformance in Q1.

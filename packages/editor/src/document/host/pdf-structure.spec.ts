@@ -241,6 +241,22 @@ describe("buildPdfPageLabels", () => {
     );
     expect(labels.map((range) => range.style)).toEqual(["decimal", "none"]);
   });
+
+  it("carries prefix to PdfPageLabelRange when pageNumbering.prefix is present", () => {
+    const labels = buildPdfPageLabels(
+      [
+        { pageNumbering: { prefix: "Intro-", format: "lowerRoman" } },
+        { pageNumbering: { prefix: "Chapter 1-", start: 1, format: "decimal" } },
+        { pageNumbering: { prefix: "Appendix ", format: "upperLetter", start: 1 } },
+      ],
+      [0, 1, 2],
+    );
+    expect(labels).toEqual([
+      { startPageIndex: 0, style: "romanLower", prefix: "Intro-" },
+      { startPageIndex: 1, style: "decimal", prefix: "Chapter 1-" },
+      { startPageIndex: 2, style: "alphaUpper", prefix: "Appendix " },
+    ]);
+  });
 });
 
 describe("buildPdfDestinations", () => {
@@ -385,5 +401,32 @@ describe("buildPdfStructure + pagesToPdf (exported bytes)", () => {
       fs.rmSync(tmpPdf, { force: true });
     }
     editor.destroy();
+  });
+
+  it("emits /P (prefix) in /PageLabels when ranges carry prefixes", async () => {
+    const pageLabels = buildPdfPageLabels(
+      [
+        { pageNumbering: { prefix: "Pref-", format: "lowerRoman" } },
+        { pageNumbering: { prefix: "Sec-", format: "decimal", start: 1 } },
+      ],
+      [0, 1],
+    );
+    const scene = (width: number, height: number): PdfPageShot["scene"] => ({
+      width,
+      height,
+      nodes: [],
+    });
+    const shots: PdfPageShot[] = [0, 1].map(() => ({
+      width: 612,
+      height: 792,
+      scene: scene(612, 792),
+    }));
+
+    const blob = await pagesToPdf(shots, { pageLabels });
+    const pdf = Buffer.from(await blob.arrayBuffer()).toString("latin1");
+
+    expect(pdf).toContain(
+      "/PageLabels << /Nums [ 0 << /S /r /P (Pref-) >> 1 << /S /D /P (Sec-) >> ] >>",
+    );
   });
 });

@@ -15,6 +15,14 @@
  *   page labels and the printed footer numbers agree.
  * - `pages` is the laid flow (`host.pages()`): table struct elements attach
  *   to the page fragments the layout actually produced.
+ *
+ * Exclusions & Standards Decisions (R12-W2):
+ * - `viewerPreferences`: OOXML/Word DOCX has no document-level source for PDF
+ *   viewer window controls (HideToolbar, HideMenubar, FitWindow, CenterWindow).
+ *   Hence, they are not derived from DOCX models (written exclusion).
+ *   DisplayDocTitle is reserved for PDF/UA-1 accessibility conformance in Q1.
+ * - Exotic `numFmt`: ISO 32000-1 §12.4.2 only defines five numbering styles
+ *   (/D, /R, /r, /A, /a). Unsupported formats fall back to decimal (/D).
  */
 
 import { detectHeadingLevel, type StylesOptions } from "@docen/docx";
@@ -143,10 +151,28 @@ export function buildPdfOutline(doc: PMNode, view: PdfStructureView): PdfOutline
   return roots;
 }
 
-/** A w:numFmt token as the closest PDF page-label style. Unsupported formats
- *  (chineseCounting, ordinal, bullets, …) degrade to decimal — PDF has no
- *  glyph-run label styles. */
-function pageLabelStyle(format: string | undefined): NonNullable<PdfPageLabelRange["style"]> {
+/**
+ * Map a w:numFmt token to the closest PDF page-label style (/S).
+ *
+ * Per ISO 32000-1 §12.4.2 (Table 159 — Entries in a page label dictionary),
+ * the PDF standard specifies only five page label numbering styles:
+ *   - /D: Decimal arabic numerals (1, 2, 3...)
+ *   - /R: Uppercase roman numerals (I, II, III...)
+ *   - /r: Lowercase roman numerals (i, ii, iii...)
+ *   - /A: Uppercase letters (A, B, C...)
+ *   - /a: Lowercase letters (a, b, c...)
+ *
+ * Decision (R12-W2): OOXML supports numerous exotic numbering schemes (such
+ * as chineseCounting, chineseLegalSimplified, ordinal, cardinalText, aiueo,
+ * iroha, katakana, etc.). The PDF standard provides no glyph-run label
+ * numbering generator for exotic schemas inside /PageLabels; PDF readers
+ * natively support only the five ISO 32000-1 styles. Therefore, all exotic
+ * and unsupported formats gracefully fall back to "decimal" (/D), or "none"
+ * (unnumbered) when explicitly specified as "none".
+ */
+export function pageLabelStyle(
+  format: string | undefined,
+): NonNullable<PdfPageLabelRange["style"]> {
   switch (format) {
     case "lowerRoman":
       return "romanLower";
@@ -168,7 +194,8 @@ function pageLabelStyle(format: string | undefined): NonNullable<PdfPageLabelRan
  *  continuation offsets both resolve through computePageNumberOffsets — the
  *  same arithmetic the PAGE field paints). A continuous section that opens on
  *  the previous section's last page replaces that page's range, so every page
- *  index appears at most once. */
+ *  index appears at most once. Emits optional prefix string (w:chapStyle /
+ *  w:sep / explicit prefix) as /P in the page label dictionary. */
 export function buildPdfPageLabels(
   sections: PdfStructureView["sections"],
   sectionOfPage: readonly number[],
@@ -181,10 +208,12 @@ export function buildPdfPageLabels(
   }
   const ranges = new Map<number, PdfPageLabelRange>();
   for (const [section, firstPage] of [...firstPageOf].sort((a, b) => a[1] - b[1])) {
+    const pageNumbering = sections[section]?.pageNumbering;
     const startNumber = firstPage + 1 + (offsets[section] ?? 0);
     ranges.set(firstPage, {
       startPageIndex: firstPage,
-      style: pageLabelStyle(sections[section]?.pageNumbering?.format),
+      style: pageLabelStyle(pageNumbering?.format),
+      ...(pageNumbering?.prefix ? { prefix: pageNumbering.prefix } : {}),
       ...(startNumber !== 1 ? { startNumber } : {}),
     });
   }

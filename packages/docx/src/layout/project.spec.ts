@@ -12,6 +12,7 @@ import type {
 import { describe, expect, it } from "vitest";
 
 import { projectDocumentOptions, projectFlowBox } from "./project";
+import { projectPageNumbering } from "./project/page";
 
 // The adapter's contract mirrors the persistence model it consumes:
 // per-field cascade (direct pPr → style chain → docDefaults), unit
@@ -916,6 +917,127 @@ describe("projectDocumentOptions fields and furniture", () => {
         ],
       }).pageBorders,
     ).toBeUndefined();
+  });
+
+  it("projects w:pgNumType with prefix, chapterStyle, and mapped separator enum", () => {
+    // 1. Explicit prefix and format
+    expect(
+      projectPageNumbering({
+        pageNumberType: { prefix: "Appendix-", format: "upperLetter", start: 1 },
+      }),
+    ).toEqual({
+      prefix: "Appendix-",
+      format: "upperLetter",
+      start: 1,
+    });
+
+    // 2. OOXML chapSep enum mapping: hyphen -> "-", period -> ".", colon -> ":", emDash -> "—", enDash -> "–"
+    expect(
+      projectPageNumbering({
+        pageNumberType: { chapStyle: "0", chapSep: "hyphen" },
+      }),
+    ).toEqual({
+      chapterStyle: 0,
+      separator: "-",
+    });
+
+    expect(
+      projectPageNumbering({
+        pageNumberType: { chapterStyle: 1, separator: "period" },
+      }),
+    ).toEqual({
+      chapterStyle: 1,
+      separator: ".",
+    });
+
+    expect(
+      projectPageNumbering({
+        pageNumberType: { chapterStyle: 2, separator: "colon" },
+      }),
+    ).toEqual({
+      chapterStyle: 2,
+      separator: ":",
+    });
+
+    expect(
+      projectPageNumbering({
+        pageNumberType: { chapterStyle: 3, separator: "emDash" },
+      }),
+    ).toEqual({
+      chapterStyle: 3,
+      separator: "—",
+    });
+
+    expect(
+      projectPageNumbering({
+        pageNumberType: { chapterStyle: 4, separator: "enDash" },
+      }),
+    ).toEqual({
+      chapterStyle: 4,
+      separator: "–",
+    });
+
+    // 3. Verbatim character separator
+    expect(
+      projectPageNumbering({
+        pageNumberType: { chapterStyle: 1, separator: "/" },
+      }),
+    ).toEqual({
+      chapterStyle: 1,
+      separator: "/",
+    });
+
+    // 4. Prefix string + chapterStyle + separator
+    expect(
+      projectPageNumbering({
+        pageNumberType: {
+          prefix: "Part-",
+          chapterStyle: 0,
+          separator: "hyphen",
+          format: "decimal",
+        },
+      }),
+    ).toEqual({
+      prefix: "Part-",
+      chapterStyle: 0,
+      separator: "-",
+      format: "decimal",
+    });
+
+    // 5. Incomplete chapter properties (chapStyle without separator, or vice-versa) ignored
+    expect(
+      projectPageNumbering({
+        pageNumberType: { chapterStyle: 1 },
+      }),
+    ).toBeUndefined();
+
+    expect(
+      projectPageNumbering({
+        pageNumberType: { separator: "hyphen" },
+      }),
+    ).toBeUndefined();
+
+    // 6. Section projection carrying pageNumbering
+    const { pageNumbering } = oneSection({
+      styles,
+      sections: [
+        {
+          children: [],
+          properties: {
+            pageNumberType: {
+              prefix: "A-",
+              format: "decimal",
+              start: 1,
+            } as any,
+          },
+        },
+      ],
+    });
+    expect(pageNumbering).toEqual({
+      prefix: "A-",
+      format: "decimal",
+      start: 1,
+    });
   });
 });
 
