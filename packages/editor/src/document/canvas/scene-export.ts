@@ -255,6 +255,17 @@ function numberOr(value: unknown, fallback?: number): number | undefined {
   return typeof value === "number" && Number.isFinite(value) ? value : fallback;
 }
 
+function letterSpacingOf(value: unknown): number | undefined {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (value && typeof value === "object") {
+    const obj = value as { type?: string; value?: number };
+    if (typeof obj.value === "number" && Number.isFinite(obj.value)) {
+      return obj.value;
+    }
+  }
+  return undefined;
+}
+
 function strokeJoinOf(value: unknown): "miter" | "round" | "bevel" | undefined {
   return value === "round" || value === "bevel" || value === "miter" ? value : undefined;
 }
@@ -383,7 +394,7 @@ export async function serializePageScene(
         const weight = textEl.fontWeight;
         const bold =
           typeof weight === "number" ? weight >= 600 : weight === "bold" || weight === "600";
-        const letterSpacing = numberOr(textEl.letterSpacing);
+        const letterSpacing = letterSpacingOf(textEl.letterSpacing);
         const text: PdfSceneTextNode = {
           type: "text",
           ...base,

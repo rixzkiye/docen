@@ -38,6 +38,7 @@ import {
   extractPdfPageLayers,
   pagesToPdf,
   sceneTextSpans,
+  type PdfEmbeddedFont,
   type PdfPageShot,
 } from "../export-pdf";
 import { collectRevisions } from "../extensions/track-changes";
@@ -222,7 +223,11 @@ export class IODomain {
    *  leafer scene serializes to a vector content stream; the returned pages
    *  carry both the scene and the preview PNG the caller can compare against.
    *  A non-print view re-projects for the export and falls back afterwards. */
-  async buildPdf(): Promise<{ blob: Blob; pages: readonly PdfPageShot[] }> {
+  async buildPdf(): Promise<{
+    blob: Blob;
+    pages: readonly PdfPageShot[];
+    embeddedFonts: readonly PdfEmbeddedFont[];
+  }> {
     const mode = this.host.viewMode();
     if (mode !== "print") {
       this.host.stage()?.setViewMode("print");
@@ -234,7 +239,7 @@ export class IODomain {
       this.host.renderDoc(this.getJSON());
     }
     if (shots.length === 0) {
-      return { blob: new Blob([], { type: "application/pdf" }), pages: [] };
+      return { blob: new Blob([], { type: "application/pdf" }), pages: [], embeddedFonts: [] };
     }
     const pageLayers = extractPdfPageLayers(
       this.host.pages(),
@@ -267,7 +272,7 @@ export class IODomain {
       tagged: true,
       ...(embeddedFonts.length > 0 ? { embeddedFonts } : {}),
     });
-    return { blob, pages: shotsWithLayers };
+    return { blob, pages: shotsWithLayers, embeddedFonts };
   }
 
   /** Filename menu → Share: the Web Share sheet where the platform has one

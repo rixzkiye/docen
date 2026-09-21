@@ -131,7 +131,7 @@ import {
   readDocumentDefaults,
   writeDocumentDefaults,
 } from "./defaults";
-import type { PdfPageShot } from "./export-pdf";
+import type { PdfEmbeddedFont, PdfPageShot } from "./export-pdf";
 import type { NewStyleDefinition } from "./extensions/commands";
 import type { ModifyStylePatch, ParagraphDialogPatch } from "./extensions/commands";
 import { stampStyleRunPatches } from "./extensions/commands";
@@ -6091,9 +6091,13 @@ class DocenDocument extends AddinHost<Editor> {
    * matches {@link openPrintPreview}: a non-print view re-projects for the
    * export, then falls back.
    */
-  async exportPdf(): Promise<{ data: Uint8Array; pages: readonly PdfPageShot[] }> {
-    const { blob, pages } = await this.#io.buildPdf();
-    return { data: new Uint8Array(await blob.arrayBuffer()), pages };
+  async exportPdf(): Promise<{
+    data: Uint8Array;
+    pages: readonly PdfPageShot[];
+    embeddedFonts?: readonly PdfEmbeddedFont[];
+  }> {
+    const { blob, pages, embeddedFonts } = await this.#io.buildPdf();
+    return { data: new Uint8Array(await blob.arrayBuffer()), pages, embeddedFonts };
   }
 
   async open(file: File): Promise<void> {

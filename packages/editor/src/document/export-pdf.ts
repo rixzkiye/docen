@@ -1144,8 +1144,19 @@ export async function pagesToPdf(
         content += `1 0 0 1 ${span.x.toFixed(2)} ${span.y.toFixed(2)} Tm\n`;
 
         // Horizontal scaling Tz to match rendered word bounding box
-        const estCharWidth = isUnicode ? span.fontSize : span.fontSize * 0.52;
-        const estWidth = estCharWidth * span.text.length;
+        let estWidth = 0;
+        if (embedded?.font.glyphAdvances && embedded.font.cidToGid) {
+          for (let i = 0; i < span.text.length; i++) {
+            const code = span.text.charCodeAt(i);
+            const gid = embedded.font.cidToGid.get(code) ?? 0;
+            const adv = embedded.font.glyphAdvances[gid] ?? 500;
+            estWidth += (adv / 1000) * span.fontSize;
+          }
+        } else {
+          const isCjk = /[\u3000-\u9fff\uac00-\ud7af]/.test(span.text);
+          const estCharWidth = isCjk ? span.fontSize : span.fontSize * 0.52;
+          estWidth = estCharWidth * span.text.length;
+        }
         if (estWidth > 0 && span.width > 0) {
           const scale = (span.width / estWidth) * 100;
           if (scale >= 30 && scale <= 400 && Math.abs(scale - 100) > 2) {
