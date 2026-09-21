@@ -31,6 +31,7 @@ import type { IGroup } from "./kit";
 import { Box, Ellipse, Group, Line, Path, Rect, Text } from "./kit";
 import { strokePropsOf } from "./line";
 import { paintMath } from "./math";
+import { measureChromeText } from "./text-measure";
 
 /** OOXML ST_HighlightColor tokens → Word's highlight palette, #RRGGBB. */
 const HIGHLIGHT_COLOR: Record<string, string> = {
@@ -1426,7 +1427,8 @@ function paintSectionEndMark(
 ): void {
   const px = 11;
   const cx = (x1 + x2) / 2;
-  const gap = measureMarkText(label, px) / 2 + 8;
+  const textWidth = measureChromeText(label, px);
+  const gap = textWidth / 2 + 8;
   for (const dy of [-1.5, 1.5]) {
     tree.add(
       new Line({
@@ -1445,28 +1447,18 @@ function paintSectionEndMark(
   }
   tree.add(
     new Text({
-      x: cx - gap,
+      x: cx - textWidth / 2,
       y: midY - px * 0.72,
       width: gap * 2,
       height: px * 1.5,
       text: label,
       fill: MARK_COLOR,
       fontSize: px,
-      textAlign: "center",
+      textAlign: "left",
       lineHeight: px * 1.5,
       hittable: false,
     }),
   );
-}
-
-/** The painted width of a marks label (the break rows center their text) —
- *  the same hidden canvas the dot placement measures with. */
-function measureMarkText(text: string, px: number): number {
-  markCtx ??=
-    typeof document === "undefined" ? null : document.createElement("canvas").getContext("2d");
-  if (!markCtx) return text.length * px;
-  markCtx.font = `${px}px sans-serif`;
-  return markCtx.measureText(text).width;
 }
 
 /** Word's page-break row: a dotted rule across the column with the label
@@ -1484,7 +1476,8 @@ export function paintBreakRow(
   const px = 11;
   const midY = y + block.heightPx / 2;
   const cx = x + width / 2;
-  const gap = measureMarkText(label, px) / 2 + 8;
+  const textWidth = measureChromeText(label, px);
+  const gap = textWidth / 2 + 8;
   tree.add(
     new Line({
       points: [x, midY, cx - gap, midY],
@@ -1503,23 +1496,19 @@ export function paintBreakRow(
   );
   tree.add(
     new Text({
-      x: cx - gap,
+      x: cx - textWidth / 2,
       y: midY - px * 0.72,
       width: gap * 2,
       height: px * 1.5,
       text: label,
       fill: MARK_COLOR,
       fontSize: px,
-      textAlign: "center",
+      textAlign: "left",
       lineHeight: px * 1.5,
       hittable: false,
     }),
   );
 }
-
-/** A hidden 2d context for marks-label measurement — paint runs in the
- *  browser (Leafer), so the canvas is always available here. */
-let markCtx: CanvasRenderingContext2D | null | undefined;
 
 /** w:leader fill across a tab's interval: dots/hyphens/underscores drawn just
  *  above the text baseline (a hair below it for the underscore, Word's

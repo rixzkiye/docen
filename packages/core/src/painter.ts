@@ -1,8 +1,11 @@
 /**
  * Scene painter — walks a laid-out page (the @docen/layout result) and builds
  * the LeaferJS tree. The layout engine owns ALL geometry; painting positions
- * what it is given and never measures. Text elements carry explicit width AND
- * height — Leafer never paints an element whose height is still 0.
+ * what it is given and only measures painted "chrome" text (chart/marks
+ * labels) with the deterministic measureChromeText helper, so the browser
+ * canvas and the server PDF place it identically. Text elements carry
+ * explicit width AND height — Leafer never paints an element whose height is
+ * still 0.
  *
  * @module
  */
@@ -19,6 +22,7 @@ import { columnBoxesOf } from "@docen/layout";
 import type { PaintColumn, PaintContext } from "./paint/context";
 import { paintBreakRow, paintParagraph } from "./paint/paragraph";
 import { paintTable } from "./paint/table";
+import { measureChromeText } from "./paint/text-measure";
 
 export * from "./paint/context";
 export * from "./paint/kit";
@@ -193,8 +197,8 @@ export function paintColumnSeparators(tree: any, ctx: PaintContext): void {
  *  the OOXML default) keeps a small fixed gap from the text margin — about
  *  the midpoint of the stage's crop-mark leg, where the number reads as
  *  beside the text, not stranded mid-margin.
- *  The marks arrive pre-counted from the stage; painting never measures
- *  beyond the label box. */
+ *  The marks arrive pre-counted from the stage; each number is right-aligned
+ *  with the deterministic chrome measurement. */
 export function paintLineNumbers(tree: any, ctx: PaintContext): void {
   const ln = ctx.lineNumbers;
   if (!ln || ln.marks.length === 0) return;
@@ -207,16 +211,20 @@ export function paintLineNumbers(tree: any, ctx: PaintContext): void {
       ? ctx.flow.contentLeftPx - distancePx - boxWidth
       : Math.max(0, ctx.flow.contentLeftPx - 12 - boxWidth);
   for (const mark of ln.marks) {
+    const text = String(mark.num);
+    // Right-align explicitly (deterministic chrome width): Leafer would
+    // otherwise shift by the platform font it substitutes for the canvas.
+    const textWidth = measureChromeText(text, mark.sizePx);
     tree.add(
       kit.createText({
-        x: labelX,
+        x: labelX + boxWidth - textWidth,
         y: ctx.flow.contentTopPx + mark.yPx,
         width: boxWidth,
         height: mark.sizePx * 1.4,
-        text: String(mark.num),
+        text,
         fill: "#000000",
         fontSize: mark.sizePx,
-        textAlign: "right",
+        textAlign: "left",
       }),
     );
   }

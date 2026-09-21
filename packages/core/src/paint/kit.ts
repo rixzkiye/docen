@@ -270,17 +270,30 @@ export class NodeText extends NodeBaseElement {
   declare letterSpacing?: unknown;
   declare lineHeight?: number;
   declare textAlign?: string;
+  declare verticalAlign?: string;
   declare textWrap?: string;
   declare textDecoration?: string;
 
   get textDrawData(): { rows: Array<{ x: number; y: number; width: number; text: string }> } {
     const str = typeof this.text === "string" ? this.text : String(this.text ?? "");
     const size = this.fontSize ?? 14;
+    // Leafer's row baseline sits ((lineHeight + 0.7 × fontSize) / 2) below the
+    // element top; the painter always pins lineHeight to the font size, so
+    // that is 0.85 × size. Matching it keeps Node-painted text on the same
+    // baseline as the browser canvas (the scene serializers read row.y).
+    const lineHeight = this.lineHeight ?? size;
+    let y = (lineHeight + 0.7 * size) / 2;
+    // Leafer's autoSizeAlign defaults true, so a middle/bottom-aligned text
+    // with no explicit box height shifts the row by (height - lineHeight) / 2
+    // (or height - lineHeight): chart labels use verticalAlign "middle".
+    const height = this.height ?? 0;
+    if (this.verticalAlign === "middle") y += (height - lineHeight) / 2;
+    else if (this.verticalAlign === "bottom") y += height - lineHeight;
     return {
       rows: [
         {
           x: 0,
-          y: size * 0.8,
+          y,
           width: this.width ?? 0,
           text: str,
         },
