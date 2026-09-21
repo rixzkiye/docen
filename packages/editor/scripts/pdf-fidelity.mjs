@@ -32,6 +32,7 @@ const argOf = (name, fallback) => {
 const URL = argOf("--url", "http://localhost:5182/");
 const SHOTS = argOf("--shots", "/tmp/opencode");
 const HEADLESS = !args.includes("--headed");
+const MODE = argOf("--mode", "outlines");
 const CHROME = argOf("--chrome", process.env.CHROME_PATH || undefined);
 
 const { chromium } = await import(process.env.PLAYWRIGHT_MODULE || "playwright");
@@ -47,7 +48,7 @@ const check = (name, ok, detail) => {
 };
 
 console.log(`\n=== docen PDF Export Fidelity & Benchmark Suite ===`);
-console.log(`Connecting to: ${URL}\n`);
+console.log(`Connecting to: ${URL}  (mode: ${MODE})\n`);
 
 const browser = await chromium.launch({
   headless: HEADLESS,
@@ -154,6 +155,9 @@ const data = await page.evaluate(async () => {
 const outlinesPdfPath = join(SHOTS, "p1-vector-outlines.pdf");
 const embeddedPdfPath = join(SHOTS, "p1-vector-embedded.pdf");
 const rasterPdfPath = join(SHOTS, "p1-legacy-raster.pdf");
+// Which text mode the fidelity/structure/extraction gates verify (run the
+// harness once per mode to gate both): outlines (default) or embedded.
+const comparePdfPath = MODE === "embedded" ? embeddedPdfPath : outlinesPdfPath;
 
 writeFileSync(outlinesPdfPath, Buffer.from(data.outlines.bytes));
 writeFileSync(embeddedPdfPath, Buffer.from(data.embedded.bytes));
@@ -172,7 +176,7 @@ console.log(
 
 // ── A1 Verification: Vector Core ─────────────────────────────────────────────
 console.log(`\n── A1. Vector Structure Verification ──`);
-const pdfRaw = readFileSync(outlinesPdfPath).toString("latin1");
+const pdfRaw = readFileSync(comparePdfPath).toString("latin1");
 const pageMatches = [...pdfRaw.matchAll(/<<[^>]*\/Type\s*\/Page\b[^>]*>>/g)];
 check("PDF has expected page objects", pageMatches.length === data.pageCount, {
   count: pageMatches.length,
@@ -267,7 +271,7 @@ for (const [label, pdfPath] of [
 // ── A2 Verification: Visual Fidelity (pdftoppm -r 96 vs Canvas) ─────────────
 console.log(`\n── A2. Visual Fidelity Verification ──`);
 const ppmPrefix = join(SHOTS, "p1-ppm");
-execSync(`pdftoppm -png -r 96 "${outlinesPdfPath}" "${ppmPrefix}"`);
+execSync(`pdftoppm -png -r 96 "${comparePdfPath}" "${ppmPrefix}"`);
 
 const pageDiffs = [];
 const psnrs = [];
@@ -440,7 +444,7 @@ check("Overall document fidelity (average PSNR >= 22 dB)", overallPsnr >= 22, {
 
 // ── A3 Verification: Text Extraction (pdftotext) ─────────────────────────────
 console.log(`\n── A3. Text Extraction Verification ──`);
-const pdfText = execSync(`pdftotext "${outlinesPdfPath}" -`).toString();
+const pdfText = execSync(`pdftotext "${comparePdfPath}" -`).toString();
 const normalizedPdfText = pdfText.replace(/\s+/g, " ");
 
 let foundWords = 0;
