@@ -12,6 +12,8 @@ import { describe, expect, it } from "vitest";
 import type { CanvasStageSection } from "./canvas/stage";
 import {
   buildEmbeddedPdfFonts,
+  DEFAULT_EDITOR_TEXT_MODE,
+  DEFAULT_SERVER_TEXT_MODE,
   encodeHexUtf16,
   escapePdfString,
   extractPdfPageLayers,
@@ -1836,5 +1838,69 @@ describe("P4 QA, determinism, and performance acceptance", () => {
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
+  });
+
+  describe("PDF export textMode defaults and configuration (R12-E1)", () => {
+    const testScene: PdfScenePage = {
+      width: 612,
+      height: 792,
+      nodes: [
+        {
+          type: "shape",
+          matrix: { a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 },
+          path: "M 10 10 L 100 100",
+          stroke: "#000000",
+          strokeWidth: 1,
+          glyph: true,
+        },
+      ],
+    };
+
+    const testSpans: PdfTextSpan[] = [
+      {
+        text: "Default Mode Verification",
+        x: 72,
+        y: 700,
+        width: 150,
+        height: 14,
+        fontSize: 12,
+      },
+    ];
+
+    it("verifies DEFAULT_EDITOR_TEXT_MODE is outlines and DEFAULT_SERVER_TEXT_MODE is embedded", () => {
+      expect(DEFAULT_EDITOR_TEXT_MODE).toBe("outlines");
+      expect(DEFAULT_SERVER_TEXT_MODE).toBe("embedded");
+    });
+
+    it("defaults to outlines mode (invisible 3 Tr text layer + glyph outlines)", async () => {
+      const shot: PdfPageShot = {
+        width: 612,
+        height: 792,
+        scene: testScene,
+        textSpans: testSpans,
+      };
+
+      const blob = await pagesToPdf([shot]);
+      const pdfStr = Buffer.from(await blob.arrayBuffer()).toString("latin1");
+
+      // In outlines mode, invisible text layer (3 Tr) is generated
+      expect(pdfStr).toContain("3 Tr");
+    });
+
+    it("exports with embedded mode (visible text layer, drops scene glyph outlines)", async () => {
+      const shot: PdfPageShot = {
+        width: 612,
+        height: 792,
+        scene: testScene,
+        textSpans: testSpans,
+      };
+
+      const blob = await pagesToPdf([shot], { textMode: DEFAULT_SERVER_TEXT_MODE });
+      const pdfStr = Buffer.from(await blob.arrayBuffer()).toString("latin1");
+
+      // In embedded mode, visible text layer (BT without 3 Tr) is generated
+      expect(pdfStr).toContain("BT\n");
+      expect(pdfStr).not.toContain("3 Tr");
+    });
   });
 });

@@ -6388,7 +6388,10 @@ class DocenDocument extends AddinHost<Editor> {
    * defaults (e.g. a fixed `creationDate` for byte-deterministic server
    * renders — the default stamps the wall clock).
    */
-  async exportPdf(options?: { metadata?: PdfExportOptions["metadata"] }): Promise<{
+  async exportPdf(options?: {
+    metadata?: PdfExportOptions["metadata"];
+    textMode?: PdfExportOptions["textMode"];
+  }): Promise<{
     data: Uint8Array;
     pages: readonly PdfPageShot[];
     embeddedFonts?: readonly PdfEmbeddedFont[];

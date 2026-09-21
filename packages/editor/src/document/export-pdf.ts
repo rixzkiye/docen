@@ -52,6 +52,7 @@ export interface PdfTextSpan {
   fontFamily?: string;
   bold?: boolean;
   italic?: boolean;
+  letterSpacing?: number;
   /** Run color (OOXML hex without '#') — the visible text mode's paint. */
   color?: string;
   /** Structure element tag (P, H1, H2, H3, Table). */
@@ -219,6 +220,12 @@ export interface PdfExportOptions {
   /** Semantic structure elements with alt text for figures and tables. */
   structElements?: readonly PdfStructElement[];
 }
+
+/** Default textMode for client-side editor export (visual vector fidelity). */
+export const DEFAULT_EDITOR_TEXT_MODE = "outlines" as const;
+
+/** Default textMode for server-side headless export (compact stream, embedded fonts). */
+export const DEFAULT_SERVER_TEXT_MODE = "embedded" as const;
 
 /** Decode a snapshot PNG and flatten it onto white — the print canvases are
  *  transparent, JPEG has no alpha, and PDF viewers composite images on black,
@@ -570,7 +577,7 @@ export async function pagesToPdf(
 
   // Vector scene plans — pure analysis (resource names are page-local) done
   // before any object is written, so every allocation below is final.
-  const textMode = options?.textMode ?? "outlines";
+  const textMode = options?.textMode ?? DEFAULT_EDITOR_TEXT_MODE;
   // The face for a family: an exact family match wins, then the longest
   // substring match (so "Calibri" never resolves to "Calibri Light").
   const embeddedFontForFamily = (family: string | undefined): EmbeddedFontPlan | undefined => {
@@ -610,7 +617,7 @@ export async function pagesToPdf(
   // it twice (see consumeVisiblePlacement).
   const pageTextSpans: PdfTextSpan[][] = shots.map((shot, index) => {
     const spans = shot.textSpans ?? [];
-    if (!shot.scene || !scenePlans[index] || textMode === "embedded") return spans;
+    if (!shot.scene || !scenePlans[index]) return spans;
     const placements = sceneTextPlacements(shot.scene);
     if (placements.length === 0) return spans;
     return spans.filter((span) => !consumeVisiblePlacement(placements, span, shot.scene!.height));
@@ -1140,26 +1147,44 @@ export async function pagesToPdf(
           const g = parseInt(hex.slice(2, 4), 16) / 255;
           const b = parseInt(hex.slice(4, 6), 16) / 255;
           content += `${r.toFixed(3)} ${g.toFixed(3)} ${b.toFixed(3)} rg\n`;
+          if (span.bold) {
+            content += `${r.toFixed(3)} ${g.toFixed(3)} ${b.toFixed(3)} RG\n`;
+            const strokeWidth = (span.fontSize * 0.03).toFixed(3);
+            content += `${strokeWidth} w\n2 Tr\n`;
+          } else {
+            content += `0 Tr\n`;
+          }
         }
-        content += `1 0 0 1 ${span.x.toFixed(2)} ${span.y.toFixed(2)} Tm\n`;
+        if (span.letterSpacing) {
+          content += `${span.letterSpacing.toFixed(3)} Tc\n`;
+        } else {
+          content += `0 Tc\n`;
+        }
+        const skew = span.italic ? "0.2126" : "0";
+        // When rendering visible text in embedded mode, compensate for the subpixel
+        // FreeType rasterizer baseline alignment difference (~0.28 pt at 96 DPI) vs
+        // Canvas layout geometry.
+        const yCoord = visibleText ? span.y - 0.28 : span.y;
+        content += `1 0 ${skew} 1 ${span.x.toFixed(2)} ${yCoord.toFixed(2)} Tm\n`;
 
         // Horizontal scaling Tz to match rendered word bounding box
         let estWidth = 0;
+        const letterSpacing = span.letterSpacing ?? 0;
         if (embedded?.font.glyphAdvances && embedded.font.cidToGid) {
           for (let i = 0; i < span.text.length; i++) {
             const code = span.text.charCodeAt(i);
             const gid = embedded.font.cidToGid.get(code) ?? 0;
             const adv = embedded.font.glyphAdvances[gid] ?? 500;
-            estWidth += (adv / 1000) * span.fontSize;
+            estWidth += (adv / 1000) * span.fontSize + letterSpacing;
           }
         } else {
           const isCjk = /[\u3000-\u9fff\uac00-\ud7af]/.test(span.text);
           const estCharWidth = isCjk ? span.fontSize : span.fontSize * 0.52;
-          estWidth = estCharWidth * span.text.length;
+          estWidth = (estCharWidth + letterSpacing) * span.text.length;
         }
         if (estWidth > 0 && span.width > 0) {
           const scale = (span.width / estWidth) * 100;
-          if (scale >= 30 && scale <= 400 && Math.abs(scale - 100) > 2) {
+          if (scale >= 30 && scale <= 400 && Math.abs(scale - 100) > 0.05) {
             content += `${scale.toFixed(1)} Tz\n`;
           } else {
             content += `100 Tz\n`;
@@ -1500,6 +1525,10 @@ export function extractPdfPageLayers(
                   ? style.family
                   : (style?.family?.latin ?? style?.family?.eastAsia);
 
+              const letterSpacing = style?.letterSpacingPx
+                ? toPt(style.letterSpacingPx)
+                : undefined;
+
               textSpans.push({
                 text,
                 x: xPt,
@@ -1510,6 +1539,7 @@ export function extractPdfPageLayers(
                 fontFamily,
                 bold: style?.bold,
                 italic: style?.italic,
+                ...(letterSpacing !== undefined ? { letterSpacing } : {}),
                 ...(typeof style?.color === "string" ? { color: style.color } : {}),
                 tag: "P",
               });

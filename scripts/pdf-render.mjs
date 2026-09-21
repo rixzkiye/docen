@@ -247,7 +247,7 @@ class PdfCache {
         schema: CACHE_SCHEMA,
         build: buildId,
         json,
-        export: { tagged: true, textMode: "outlines", creationDate: exportDateISO },
+        export: { tagged: true, textMode: "embedded", creationDate: exportDateISO },
         date: exportDateISO,
       }),
     );
@@ -375,6 +375,7 @@ async function renderInPage({ json, iso, capture }) {
 
   const exportStart = performance.now();
   const result = await host.exportPdf({
+    textMode: "embedded",
     metadata: { creationDate: new Date(iso), modDate: new Date(iso) },
   });
   const exportMs = performance.now() - exportStart;
