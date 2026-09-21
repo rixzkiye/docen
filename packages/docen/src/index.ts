@@ -29,7 +29,8 @@ export type {
   PdfBackendAdapter,
   ChromiumBackendOptions,
 } from "./pdf-adapter";
-export type { RenderPdfOptions, PdfExportOptions } from "@docen/pdf";
+export type { RenderPdfOptions } from "@docen/pdf/node";
+export type { PdfExportOptions } from "@docen/pdf";
 
 // Plain text converters
 export { parseText, generateText } from "./text";

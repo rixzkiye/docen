@@ -4,7 +4,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 
 import type { DocumentOptions, JSONContent } from "@docen/docx";
-import { renderPdf, type RenderPdfOptions } from "@docen/pdf";
+import { renderPdf, type RenderPdfOptions } from "@docen/pdf/node";
 
 export type PdfBackendType = "node" | "chromium" | (string & {});
 
