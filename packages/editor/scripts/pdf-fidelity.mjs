@@ -373,6 +373,31 @@ check("Internal #anchor link resolves to its /Dests target", hasBookmarkDest && 
   linkAnnotation: hasLinkDest ? "/Dest (HarnessBookmark)" : null,
 });
 
+// The named destination must point at the page the bookmark actually renders
+// on: page objects appear in the /Kids array in page order, so the dest's page
+// ref resolves to a 1-based page number, and pdftotext must find the seeded
+// bookmark text there.
+const pagesKidsMatch = exportRaw.match(/\/Type \/Pages \/Kids \[ ([^\]]+) \] \/Count \d+ >>/);
+const pageRefs = pagesKidsMatch
+  ? [...pagesKidsMatch[1].matchAll(/(\d+) 0 R/g)].map((m) => m[1])
+  : [];
+const destPageRef = exportRaw.match(/\/Dests << \/HarnessBookmark \[ (\d+) 0 R/)?.[1];
+const destPageNumber = pageRefs.indexOf(destPageRef ?? "");
+const destPageText =
+  destPageNumber >= 0
+    ? execSync(`pdftotext -f ${destPageNumber + 1} -l ${destPageNumber + 1} "${exportPdfPath}" -`, {
+        encoding: "utf-8",
+      })
+    : "";
+check(
+  "Internal link target is the page the bookmark renders on",
+  destPageText.includes("Bookmark target"),
+  {
+    destPageRef: destPageRef ?? null,
+    destPageNumber: destPageNumber + 1,
+  },
+);
+
 const altCount = (exportRaw.match(/\/Alt \(/g) || []).length;
 check("Tagged figures carry /Alt for every document image", altCount === data.imageCount, {
   altCount,
