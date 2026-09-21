@@ -349,8 +349,9 @@ if (
   import("leafer-ui")
     .then((mod) => {
       if (!registeredLeafer && mod) {
-        const classes = mod.default && (mod.default as any).Line ? mod.default : mod;
-        registerLeafer(classes as any);
+        const modAny = mod as any;
+        const classes = modAny.default && modAny.default.Line ? modAny.default : modAny;
+        registerLeafer(classes as LeaferClasses);
       }
     })
     .catch(() => {});
