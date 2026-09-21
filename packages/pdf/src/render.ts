@@ -5,6 +5,7 @@ import {
   browserFontMetrics,
   createMeasurer,
   layoutFlowSections,
+  loadDefaultFonts,
   type FlowSection,
   type TextMeasurer,
 } from "@docen/layout";
@@ -33,6 +34,22 @@ export interface RenderPdfOptions extends PdfExportOptions {
   imageCache?: PdfImageCache;
   /** Whether to show paragraph marks / formatting markers. */
   showMarks?: boolean;
+}
+
+let cachedDefaultFontSources: readonly PdfEmbeddableFontSource[] | undefined;
+
+async function getDefaultFontSources(): Promise<readonly PdfEmbeddableFontSource[]> {
+  if (cachedDefaultFontSources) return cachedDefaultFontSources;
+  try {
+    const defaultFaces = await loadDefaultFonts();
+    cachedDefaultFontSources = defaultFaces.map((f) => ({
+      family: f.family,
+      fontData: f.bytes,
+    }));
+    return cachedDefaultFontSources;
+  } catch {
+    return [];
+  }
 }
 
 function ensureNodeCanvas(): void {
@@ -233,14 +250,25 @@ export async function renderPdf(
     });
   }
 
+  const textMode = options?.textMode ?? (options?.pdfa || options?.pdfUa ? "embedded" : undefined);
   let embeddedFonts = options?.embeddedFonts;
-  if (!embeddedFonts && options?.fontSources && options.fontSources.length > 0) {
+  let fontSources = options?.fontSources;
+  if (
+    !embeddedFonts &&
+    (!fontSources || fontSources.length === 0) &&
+    (options?.pdfa || options?.pdfUa || textMode === "embedded")
+  ) {
+    fontSources = await getDefaultFontSources();
+  }
+
+  if (!embeddedFonts && fontSources && fontSources.length > 0) {
     const allSpans = shots.flatMap((s) => s.textSpans ?? []);
-    embeddedFonts = await buildEmbeddedPdfFonts(allSpans, options.fontSources);
+    embeddedFonts = await buildEmbeddedPdfFonts(allSpans, fontSources);
   }
 
   const exportOpts: PdfExportOptions = {
     ...options,
+    ...(textMode ? { textMode } : {}),
     metadata: {
       ...options?.metadata,
       ...(options?.title ? { title: options.title } : {}),

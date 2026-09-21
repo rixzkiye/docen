@@ -164,7 +164,35 @@ describe("renderPdf headless entry point", () => {
     expect(text).toContain("/OutputIntent");
     expect(text).toContain("/StructTreeRoot");
     expect(text).toContain("/DisplayDocTitle true");
-  });
+
+    let verapdfPath: string | null = null;
+    try {
+      execFileSync("verapdf", ["--version"], { stdio: "ignore" });
+      verapdfPath = "verapdf";
+    } catch {
+      if (fs.existsSync("/home/rixzkiye/.local/bin/verapdf")) {
+        verapdfPath = "/home/rixzkiye/.local/bin/verapdf";
+      }
+    }
+
+    if (verapdfPath) {
+      const tmpPdf = path.join(os.tmpdir(), `headless-verapdf-${Date.now()}.pdf`);
+      fs.writeFileSync(tmpPdf, pdfBytes);
+      try {
+        const out2b = execFileSync(verapdfPath, ["--format", "text", "--flavour", "2b", tmpPdf], {
+          encoding: "utf-8",
+        });
+        expect(out2b).toContain("PASS");
+
+        const outUa = execFileSync(verapdfPath, ["--format", "text", "--flavour", "ua1", tmpPdf], {
+          encoding: "utf-8",
+        });
+        expect(outUa).toContain("PASS");
+      } finally {
+        if (fs.existsSync(tmpPdf)) fs.unlinkSync(tmpPdf);
+      }
+    }
+  }, 30000);
 
   it("verifies memory discipline: sustained loop of 50 documents stays flat", async () => {
     const doc = {
@@ -209,5 +237,5 @@ describe("renderPdf headless entry point", () => {
 
     // Memory should stay flat (less than 30 MB delta across 50 iterations)
     expect(rssDelta).toBeLessThan(30);
-  });
+  }, 30000);
 });
