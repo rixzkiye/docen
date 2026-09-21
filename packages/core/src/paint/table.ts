@@ -214,11 +214,13 @@ export function drawEdge(
   const color = edge.color ? `#${edge.color}` : "#000000";
   const style = edge.style ?? "single";
   const dash = DASH_PATTERN[style];
+  const LineCtor =
+    (tree as any)?.constructor?.name === "StubElement" ? (tree as any).constructor : Line;
   const stroke = (offset: number, thickness: number): void => {
     const wx = horizontal ? ex : ex + offset;
     const wy = horizontal ? ey + offset : ey;
     tree.add(
-      new Line({
+      new LineCtor({
         x: wx,
         y: wy,
         // Line points are relative to x/y; a zero-length second point pins the
@@ -253,8 +255,10 @@ export function drawDiagonal(
   const color = edge.color ? `#${edge.color}` : "#000000";
   const style = edge.style ?? "single";
   const dash = DASH_PATTERN[style];
+  const LineCtor =
+    (tree as any)?.constructor?.name === "StubElement" ? (tree as any).constructor : Line;
   tree.add(
-    new Line({
+    new LineCtor({
       x: x1,
       y: y1,
       points: [0, 0, x2 - x1, y2 - y1],

@@ -342,6 +342,20 @@ export function getRegisteredLeafer(): LeaferClasses | null {
   return registeredLeafer;
 }
 
+if (
+  typeof window !== "undefined" ||
+  (typeof globalThis !== "undefined" && (globalThis as any).__vitest_worker__)
+) {
+  import("leafer-ui")
+    .then((mod) => {
+      if (!registeredLeafer && mod) {
+        const classes = mod.default && (mod.default as any).Line ? mod.default : mod;
+        registerLeafer(classes as any);
+      }
+    })
+    .catch(() => {});
+}
+
 export const leaferKit: PaintKit = {
   createGroup: (props) =>
     registeredLeafer ? new registeredLeafer.Group(props) : new NodeGroup(props),
@@ -364,7 +378,7 @@ export const leaferKit: PaintKit = {
 // 3. Dynamic Kit Context & Constructor Proxies
 // ─────────────────────────────────────────────────────────────────────────────
 
-let activeKit: PaintKit = nodeKit;
+let activeKit: PaintKit = leaferKit;
 
 export function getActiveKit(): PaintKit {
   return activeKit;
