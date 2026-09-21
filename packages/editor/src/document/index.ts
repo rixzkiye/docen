@@ -3386,6 +3386,10 @@ class DocenDocument extends AddinHost<Editor> {
       sections: p.sections,
       sectionOfPage: [],
       background: p.background,
+      // `supersample` (host attribute, default off) forces 2× SSAA on 1×
+      // displays — sharper page bitmaps at 4× the canvas memory, read once at
+      // stage construction (the stage outlives re-arms).
+      ...(this.hasAttribute("supersample") ? { supersample: true } : {}),
     });
     // Viewport virtualization → overlay culling (the bridge paints squiggles,
     // selection and search only on pages the stage keeps painted).
