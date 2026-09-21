@@ -79,7 +79,61 @@ const data = await page.evaluate(async () => {
   const d = document.querySelector("docen-document");
   const { pagesToPdf } = await import("/src/document/export-pdf.ts");
 
-  // Prewarm / get initial export
+  // P3 wiring seed: the showcase carries no bookmarks, so inject one named
+  // bookmark plus an internal #anchor link into the live document before the
+  // real export — the /Dests target and the link resolution below then
+  // exercise the product path end to end. The transaction re-renders on the
+  // bridge's next frame; wait for the fresh page map before exporting.
+  const ed = d.editor;
+  {
+    const schema = ed.state.schema;
+    const end = ed.state.doc.content.size;
+    const target = schema.nodeFromJSON({
+      type: "paragraph",
+      content: [
+        {
+          type: "inlinePassthrough",
+          attrs: { data: JSON.stringify({ bookmarkStart: { id: 9001, name: "HarnessBookmark" } }) },
+        },
+        { type: "text", text: "Bookmark target" },
+        {
+          type: "inlinePassthrough",
+          attrs: { data: JSON.stringify({ bookmarkEnd: { id: 9001 } }) },
+        },
+      ],
+    });
+    const jump = schema.nodeFromJSON({
+      type: "paragraph",
+      content: [
+        {
+          type: "text",
+          text: "Jump to bookmark",
+          marks: [{ type: "link", attrs: { href: "#HarnessBookmark" } }],
+        },
+      ],
+    });
+    ed.view.dispatch(ed.state.tr.insert(end, target).insert(end + target.nodeSize, jump));
+    await new Promise((resolve) =>
+      requestAnimationFrame(() => requestAnimationFrame(() => resolve(null))),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 300));
+  }
+
+  let headingCount = 0;
+  let imageCount = 0;
+  ed.state.doc.descendants((node) => {
+    if (node.type.name === "image") imageCount++;
+    else if (node.type.name === "paragraph") {
+      const heading = node.attrs?.heading;
+      if ((heading === "Title" || /^Heading[1-9]$/.test(heading)) && node.textContent.length > 0) {
+        headingCount++;
+      }
+    }
+    return true;
+  });
+
+  // Prewarm / get initial export — the real product path (structure options
+  // included); the re-generations below isolate the text-mode measurements.
   const exportRes = await d.exportPdf();
   const pages = exportRes.pages;
   const embeddedFonts = exportRes.embeddedFonts;
@@ -124,6 +178,12 @@ const data = await page.evaluate(async () => {
   });
 
   return {
+    export: {
+      bytes: Array.from(exportRes.data),
+      size: exportRes.data.byteLength,
+    },
+    headingCount,
+    imageCount,
     outlines: {
       bytes: Array.from(new Uint8Array(bufOutlines)),
       size: bufOutlines.byteLength,
@@ -155,6 +215,9 @@ const data = await page.evaluate(async () => {
 const outlinesPdfPath = join(SHOTS, "p1-vector-outlines.pdf");
 const embeddedPdfPath = join(SHOTS, "p1-vector-embedded.pdf");
 const rasterPdfPath = join(SHOTS, "p1-legacy-raster.pdf");
+// The real product export (File → Export as PDF, structure options included) —
+// the A1c structure gates run against these bytes, never a re-generation.
+const exportPdfPath = join(SHOTS, "p1-export.pdf");
 // Which text mode the fidelity/structure/extraction gates verify (run the
 // harness once per mode to gate both): outlines (default) or embedded.
 const comparePdfPath = MODE === "embedded" ? embeddedPdfPath : outlinesPdfPath;
@@ -162,6 +225,7 @@ const comparePdfPath = MODE === "embedded" ? embeddedPdfPath : outlinesPdfPath;
 writeFileSync(outlinesPdfPath, Buffer.from(data.outlines.bytes));
 writeFileSync(embeddedPdfPath, Buffer.from(data.embedded.bytes));
 writeFileSync(rasterPdfPath, Buffer.from(data.raster.bytes));
+writeFileSync(exportPdfPath, Buffer.from(data.export.bytes));
 
 console.log(`\n── A4/A6 Benchmark Measurements (${data.pageCount} pages) ──`);
 console.log(
@@ -267,6 +331,81 @@ for (const [label, pdfPath] of [
     notEmbedded: notEmbedded.map((line) => line.trim().split(/\s+/)[0]),
   });
 }
+
+// ── A1c. Structure & Navigation Wiring (real export, R10-P3) ─────────────────
+// gates the product path: buildPdf derives bookmarks/labels/destinations/
+// figures+tables from the live print run and the writer serializes them.
+// Asserted on the real File → Export as PDF bytes (p1-export.pdf).
+console.log(`\n── A1c. Structure & Navigation (real export) ──`);
+const exportRaw = readFileSync(exportPdfPath).toString("latin1");
+
+const outlineRootMatch = exportRaw.match(
+  /\/Type \/Outlines \/First \d+ 0 R \/Last \d+ 0 R \/Count (\d+) >>/,
+);
+const outlineItemTitles = [...exportRaw.matchAll(/<< \/Title \(([^)]*)\) \/Parent \d+ 0 R/g)];
+check("Real export carries /Outlines (heading bookmarks)", outlineRootMatch !== null, {
+  outlineCount: outlineRootMatch?.[1] ?? null,
+  titles: outlineItemTitles.length,
+});
+check(
+  "Outline item count matches the document headings",
+  outlineItemTitles.length === data.headingCount &&
+    Number(outlineRootMatch?.[1] ?? -1) === data.headingCount,
+  { outlineItems: outlineItemTitles.length, headings: data.headingCount },
+);
+check(
+  "Outline keeps the heading hierarchy (a nested H2 under H1)",
+  outlineItemTitles.some((m) => m[1] === "Character Formatting") &&
+    outlineItemTitles.some((m) => m[1] === "Lists"),
+  { firstTitles: outlineItemTitles.slice(0, 6).map((m) => m[1]) },
+);
+
+check(
+  "Real export carries section /PageLabels ranges",
+  /\/PageLabels << \/Nums \[ [^\]]+ \] >>/.test(exportRaw),
+  { pageLabels: exportRaw.match(/\/PageLabels << \/Nums \[ [^\]]+ \] >>/)?.[0] ?? null },
+);
+
+const hasBookmarkDest = /\/Dests << [^>]*\/HarnessBookmark \[/.test(exportRaw);
+const hasLinkDest = exportRaw.includes("/Dest (HarnessBookmark)");
+check("Internal #anchor link resolves to its /Dests target", hasBookmarkDest && hasLinkDest, {
+  destsEntry: exportRaw.match(/\/Dests << (.*?) >>/)?.[1] ?? null,
+  linkAnnotation: hasLinkDest ? "/Dest (HarnessBookmark)" : null,
+});
+
+// The named destination must point at the page the bookmark actually renders
+// on: page objects appear in the /Kids array in page order, so the dest's page
+// ref resolves to a 1-based page number, and pdftotext must find the seeded
+// bookmark text there.
+const pagesKidsMatch = exportRaw.match(/\/Type \/Pages \/Kids \[ ([^\]]+) \] \/Count \d+ >>/);
+const pageRefs = pagesKidsMatch
+  ? [...pagesKidsMatch[1].matchAll(/(\d+) 0 R/g)].map((m) => m[1])
+  : [];
+const destPageRef = exportRaw.match(/\/Dests << \/HarnessBookmark \[ (\d+) 0 R/)?.[1];
+const destPageNumber = pageRefs.indexOf(destPageRef ?? "");
+const destPageText =
+  destPageNumber >= 0
+    ? execSync(`pdftotext -f ${destPageNumber + 1} -l ${destPageNumber + 1} "${exportPdfPath}" -`, {
+        encoding: "utf-8",
+      })
+    : "";
+check(
+  "Internal link target is the page the bookmark renders on",
+  destPageText.includes("Bookmark target"),
+  {
+    destPageRef: destPageRef ?? null,
+    destPageNumber: destPageNumber + 1,
+  },
+);
+
+const altCount = (exportRaw.match(/\/Alt \(/g) || []).length;
+check("Tagged figures carry /Alt for every document image", altCount === data.imageCount, {
+  altCount,
+  images: data.imageCount,
+});
+check("Laid tables carry /S /Table structure", exportRaw.includes("/S /Table"), {
+  tableElements: (exportRaw.match(/\/S \/Table\b/g) || []).length,
+});
 
 // ── A2 Verification: Visual Fidelity (pdftoppm -r 96 vs Canvas) ─────────────
 console.log(`\n── A2. Visual Fidelity Verification ──`);

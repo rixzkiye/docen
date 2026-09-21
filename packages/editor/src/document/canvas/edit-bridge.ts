@@ -369,6 +369,11 @@ export interface EditBridge {
   scrollIntoView(pos: number): void;
   /** The page index a doc position renders on (null when unmappable). */
   pageOf(pos: number): number | null;
+  /** The page-local box (unzoomed page px, y from the page top) a doc
+   *  position renders at — the PDF export's outline/destination tops, so a
+   *  bookmark jump lands on the heading rather than the page edge (null when
+   *  unmappable). */
+  caretBox(pos: number): { page: number; yPx: number; heightPx: number } | null;
   /** The first doc position rendered on a page (null when unmappable). */
   firstPosOfPage(page: number): number | null;
   /** The first doc position rendered on a line (null when unmappable). */
@@ -4887,6 +4892,11 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
     /** The page index a doc position renders on (null when unmappable). */
     pageOf(pos): number | null {
       return main.map?.valid ? (main.map.caretRect(pos)?.page ?? null) : null;
+    },
+    /** The page-local caret box for a doc position (null when unmappable). */
+    caretBox(pos): { page: number; yPx: number; heightPx: number } | null {
+      const rect = main.map?.valid ? main.map.caretRect(pos) : null;
+      return rect ? { page: rect.page, yPx: rect.yPx, heightPx: rect.heightPx } : null;
     },
     /** The first doc position rendered on a page (null when unmappable). */
     firstPosOfPage(page: number): number | null {

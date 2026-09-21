@@ -72,27 +72,28 @@ Configuration attributes split by reactivity:
   `theme`.
 - **Once** — read only on connect (initial value); runtime control goes through
   methods: `content`, `navigation-pane`, `properties-pane`,
-  `zoom`, `show-marks`.
+  `zoom`, `show-marks`, `supersample`.
 
 The chrome (title bar, ribbon, status bar, panes) is always shown — extend it
 via add-ins rather than toggling attributes.
 
-| Attribute            | Default    | Description                                                            |
-| -------------------- | ---------- | ---------------------------------------------------------------------- |
-| `user`               | —          | Display name shown in the header                                       |
-| `avatar`             | —          | Avatar image URL (omitted → initial-letter avatar)                     |
-| `filename`           | "Document" | Document name shown in the header and save dialog default              |
-| `content`            | —          | Initial document as Tiptap JSON (once on connect)                      |
-| `editable`           | `true`     | `false` makes the surface read-only (reactive)                         |
-| `section-properties` | —          | JSON section page setup (size, margins, orientation); reactive         |
-| `styles`             | —          | JSON named styles; reactive                                            |
-| `addins`             | —          | JSON array of external add-ins (ribbon/task-pane data); see Add-ins    |
-| `theme`              | `light`    | `"light" \| "dark"`; drives the Fluent theme                           |
-| `navigation-pane`    | —          | `true` opens the navigation (left) pane on connect (once)              |
-| `properties-pane`    | —          | `true` opens the properties (right) pane on connect (once)             |
-| `zoom`               | `100`      | Initial zoom percent (once); runtime via `setZoom`                     |
-| `show-marks`         | `false`    | `true` shows page/section-break markers (once); runtime `setShowMarks` |
-| `lang`               | —          | BCP-47 UI locale (`"zh-CN"` / `"en"` / …); per-instance, reactive      |
+| Attribute            | Default    | Description                                                                    |
+| -------------------- | ---------- | ------------------------------------------------------------------------------ |
+| `user`               | —          | Display name shown in the header                                               |
+| `avatar`             | —          | Avatar image URL (omitted → initial-letter avatar)                             |
+| `filename`           | "Document" | Document name shown in the header and save dialog default                      |
+| `content`            | —          | Initial document as Tiptap JSON (once on connect)                              |
+| `editable`           | `true`     | `false` makes the surface read-only (reactive)                                 |
+| `section-properties` | —          | JSON section page setup (size, margins, orientation); reactive                 |
+| `styles`             | —          | JSON named styles; reactive                                                    |
+| `addins`             | —          | JSON array of external add-ins (ribbon/task-pane data); see Add-ins            |
+| `theme`              | `light`    | `"light" \| "dark"`; drives the Fluent theme                                   |
+| `navigation-pane`    | —          | `true` opens the navigation (left) pane on connect (once)                      |
+| `properties-pane`    | —          | `true` opens the properties (right) pane on connect (once)                     |
+| `zoom`               | `100`      | Initial zoom percent (once); runtime via `setZoom`                             |
+| `show-marks`         | `false`    | `true` shows page/section-break markers (once); runtime `setShowMarks`         |
+| `supersample`        | `false`    | `true` renders page canvases at 2× on 1× displays (sharper, more memory; once) |
+| `lang`               | —          | BCP-47 UI locale (`"zh-CN"` / `"en"` / …); per-instance, reactive              |
 
 Unwired ribbon commands (skeleton buttons) render visually but are greyed out
 (`disabled`) — the ribbon keeps its full Office shape without dead clicks.
