@@ -315,6 +315,32 @@ for (let i = 0; i < data.pages.length; i++) {
       };
       const fullResMean = meanOf(d1, d2, w, h);
 
+      // Geometry-level oracle: non-white content bounding box + ink density
+      // parity per page. Catches dropped/shifted/duplicated content without
+      // being sensitive to per-pixel antialiasing.
+      const inkStats = (data, width, height) => {
+        let minX = width;
+        let minY = height;
+        let maxX = -1;
+        let maxY = -1;
+        let ink = 0;
+        for (let y = 0; y < height; y++) {
+          for (let x = 0; x < width; x++) {
+            const i = (y * width + x) * 4;
+            if (data[i] < 245 || data[i + 1] < 245 || data[i + 2] < 245) {
+              ink++;
+              if (x < minX) minX = x;
+              if (x > maxX) maxX = x;
+              if (y < minY) minY = y;
+              if (y > maxY) maxY = y;
+            }
+          }
+        }
+        return { minX, minY, maxX, maxY, ratio: ink / (width * height) };
+      };
+      const canvasStats = inkStats(d1, w, h);
+      const pdfStats = inkStats(d2, w, h);
+
       // Sub-pixel alignment search: a fractional-pixel offset between the two
       // rasterizations shows up as a uniform edge halo. Report the best
       // alignment and its PSNR (industry-standard quality metric).
@@ -364,6 +390,8 @@ for (let i = 0; i < data.pages.length; i++) {
         downsampledMean: meanOf(h1, h2, dw, dh),
         psnr: Number(psnr.toFixed(2)),
         align: { dx: best.dx, dy: best.dy },
+        canvasStats,
+        pdfStats,
       };
     },
     { ppmUrl: ppmDataUrl, canvasUrl: canvasDataUrl },
@@ -381,6 +409,25 @@ for (let i = 0; i < data.pages.length; i++) {
     dimensions: `${diff.w}x${diff.h}`,
   });
   psnrs.push(diff.psnr);
+
+  // Geometry parity: the non-white content box must match within 2px on every
+  // edge and the ink density within 0.5% of the page — an AA-independent check
+  // that the PDF drew the same content in the same place.
+  const bboxTol = 2;
+  const a = diff.canvasStats;
+  const b = diff.pdfStats;
+  const bboxOk =
+    Math.abs(a.minX - b.minX) <= bboxTol &&
+    Math.abs(a.minY - b.minY) <= bboxTol &&
+    Math.abs(a.maxX - b.maxX) <= bboxTol &&
+    Math.abs(a.maxY - b.maxY) <= bboxTol;
+  const inkOk = Math.abs(a.ratio - b.ratio) <= 0.005;
+  check(`Page ${i + 1} content geometry parity (bbox ±2px, ink ±0.5%)`, bboxOk && inkOk, {
+    canvasBBox: [a.minX, a.minY, a.maxX, a.maxY],
+    pdfBBox: [b.minX, b.minY, b.maxX, b.maxY],
+    canvasInk: Number((a.ratio * 100).toFixed(3)),
+    pdfInk: Number((b.ratio * 100).toFixed(3)),
+  });
 }
 
 const avgDiff = pageDiffs.reduce((a, b) => a + b, 0) / pageDiffs.length;
