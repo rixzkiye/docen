@@ -1,5 +1,7 @@
 import type { LaidOutMathItem, LayoutMathElement, LayoutTextStyle } from "@docen/layout";
-import { Group, Line, Path, Rect, Text, type IGroup } from "leafer-ui";
+
+import type { IGroup } from "./kit";
+import { Group, Line, Path, Rect, Text } from "./kit";
 
 /**
  * Paint a mathematical formula onto the Leafer canvas scene graph.

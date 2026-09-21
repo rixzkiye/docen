@@ -75,6 +75,7 @@
     "@docen/deduplicate": "workspace:*",
     "@docen/docx": "workspace:*",
     "@docen/layout": "workspace:*",
+    "@docen/pdf": "workspace:*",
     "@docen/pptx": "workspace:*",
     "@docen/pretext": "workspace:*",
     "@docen/shaping": "workspace:*",

@@ -1,5 +1,7 @@
 import type { LayoutDrawingMember } from "@docen/layout";
-import { Group, Path as LeaferPath, Rect, Text, type IGroup } from "leafer-ui";
+
+import type { IGroup } from "./kit";
+import { Group, Path as LeaferPath, Rect, Text } from "./kit";
 
 /**
  * Lane W6.6: Ink & 3D Model Scene Painter.

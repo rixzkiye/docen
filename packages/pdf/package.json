@@ -1,0 +1,51 @@
+{
+  "name": "@docen/pdf",
+  "version": "0.7.0",
+  "description": "Headless PDF generation and PDF/A-2b / PDF/UA-1 export engine for docen",
+  "keywords": [
+    "docen",
+    "export",
+    "headless",
+    "pdf",
+    "pdfa",
+    "pdfua"
+  ],
+  "homepage": "https://github.com/DemoMacro/docen#readme",
+  "bugs": {
+    "url": "https://github.com/DemoMacro/docen/issues"
+  },
+  "license": "MIT",
+  "author": {
+    "name": "Demo Macro",
+    "email": "abc@imst.xyz",
+    "url": "https://www.demomacro.com/"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/DemoMacro/docen.git"
+  },
+  "files": [
+    "dist"
+  ],
+  "type": "module",
+  "main": "dist/index.mjs",
+  "types": "dist/index.d.mts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.mts",
+      "import": "./dist/index.mjs"
+    }
+  },
+  "scripts": {
+    "dev": "basis build --stub",
+    "build": "vp pack",
+    "prepack": "pnpm build"
+  },
+  "dependencies": {
+    "@docen/core": "workspace:*",
+    "@docen/docx": "workspace:*",
+    "@docen/layout": "workspace:*",
+    "@docen/shaping": "workspace:*",
+    "@tiptap/pm": "3.31.3"
+  }
+}

@@ -22,12 +22,13 @@ import {
   type LayoutParagraphBorderEdge,
   type LayoutTextStyle,
 } from "@docen/layout";
-import { Box, Ellipse, Group, Line, Path, Rect, Text, type IGroup } from "leafer-ui";
 
 import type { PaintColumn, PaintContext } from "./context";
 import { paintDrawing, paintMembers, recordDrawingHit } from "./drawing";
 import { paintGlyphRun } from "./glyph-painter";
 import { addCroppedImage, addDecodedImage } from "./image";
+import type { IGroup } from "./kit";
+import { Box, Ellipse, Group, Line, Path, Rect, Text } from "./kit";
 import { strokePropsOf } from "./line";
 import { paintMath } from "./math";
 

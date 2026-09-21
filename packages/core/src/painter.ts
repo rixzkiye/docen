@@ -15,70 +15,74 @@ import type {
   LaidOutStackItem,
 } from "@docen/layout";
 import { columnBoxesOf } from "@docen/layout";
-import { Box, Group, Line, Rect, Text, type IGroup } from "leafer-ui";
 
 import type { PaintColumn, PaintContext } from "./paint/context";
 import { paintBreakRow, paintParagraph } from "./paint/paragraph";
 import { paintTable } from "./paint/table";
 
 export * from "./paint/context";
+export * from "./paint/kit";
 export * from "./paint/image";
 export * from "./paint/drawing";
 export * from "./paint/table";
 export * from "./paint/paragraph";
 export * from "./paint/glyph-painter";
 
-export function paintScene(tree: IGroup, items: readonly FlowItem[], ctx: PaintContext): void {
+import { leaferKit, withKit } from "./paint/kit";
+
+export function paintScene(tree: any, items: readonly FlowItem[], ctx: PaintContext): void {
   // One content-positioned group holds the item leaves (origin = the content
   // box origin) — per-item repaint hangs the same walk on per-item groups at
   // their flow positions instead (see paintItem). Deferred floats still land
   // page-local in the caller's tree, so the target rides the context.
-  const content = new Group({ x: ctx.flow.contentLeftPx, y: ctx.flow.contentTopPx });
-  tree.add(content);
-  const ictx: PaintContext = {
-    ...ctx,
-    origin: { x: ctx.flow.contentLeftPx, y: ctx.flow.contentTopPx },
-    floatsTarget: { behind: tree, body: tree },
-  };
-  for (const item of items) paintItem(content, item, ictx);
+  const kit = ctx.kit ?? leaferKit;
+  withKit(kit, () => {
+    const content = kit.createGroup({ x: ctx.flow.contentLeftPx, y: ctx.flow.contentTopPx });
+    tree.add(content);
+    const ictx: PaintContext = {
+      ...ctx,
+      origin: { x: ctx.flow.contentLeftPx, y: ctx.flow.contentTopPx },
+      floatsTarget: { behind: tree, body: tree },
+    };
+    for (const item of items) paintItem(content, item, ictx);
+  });
 }
 
 /** Paint one flow item relative to the group content hangs from (ctx.origin —
  *  paintScene pins it at the content box, per-item repaint at the item's flow
  *  position): leaves land group-local, so an unchanged item repaints by a
  *  group translation alone. */
-export function paintItem(tree: IGroup, item: FlowItem, ctx: PaintContext): void {
-  const x = ctx.flow.contentLeftPx + (item.xPx ?? 0) - (ctx.origin?.x ?? 0);
-  const y = ctx.flow.contentTopPx + item.yPx - (ctx.origin?.y ?? 0);
-  const cols = columnBoxesOf(ctx.flow.contentWidthPx, ctx.columns);
-  paintBlock(
-    tree,
-    item.block,
-    x,
-    y,
-    ctx,
-    // A multi-column item paints within its column box: shading fills,
-    // paragraph borders and the break rows' rules span the column, not the
-    // whole content width (the table walk threads its cell width the same
-    // way). The interval match survives float drift between the flow's
-    // stamped x and the boxes recomputed here.
-    item.xPx != null
-      ? {
-          width:
-            cols.find((c) => item.xPx! >= c.xPx - 0.01 && item.xPx! < c.xPx + c.widthPx)?.widthPx ??
-            cols[0]!.widthPx,
-          inCell: false,
-        }
-      : undefined,
-  );
+export function paintItem(tree: any, item: FlowItem, ctx: PaintContext): void {
+  const kit = ctx.kit ?? leaferKit;
+  withKit(kit, () => {
+    const x = ctx.flow.contentLeftPx + (item.xPx ?? 0) - (ctx.origin?.x ?? 0);
+    const y = ctx.flow.contentTopPx + item.yPx - (ctx.origin?.y ?? 0);
+    const cols = columnBoxesOf(ctx.flow.contentWidthPx, ctx.columns);
+    paintBlock(
+      tree,
+      item.block,
+      x,
+      y,
+      ctx,
+      item.xPx != null
+        ? {
+            width:
+              cols.find((c) => item.xPx! >= c.xPx - 0.01 && item.xPx! < c.xPx + c.widthPx)
+                ?.widthPx ?? cols[0]!.widthPx,
+            inCell: false,
+          }
+        : undefined,
+    );
+  });
 }
 
 /** Paint the document grid (Word's View → Gridlines): one horizontal rule
  *  every `linePitchPx` across the content box — the pitch the docGrid snaps
  *  body lines to, so the overlay shows why lines sit where they sit. */
-export function paintGridlines(tree: IGroup, ctx: PaintContext): void {
+export function paintGridlines(tree: any, ctx: PaintContext): void {
   const pitch = ctx.flow.linePitchPx;
   if (!ctx.showGridlines || !pitch || pitch <= 0) return;
+  const kit = ctx.kit ?? leaferKit;
   const left = ctx.flow.contentLeftPx;
   const right = left + ctx.flow.contentWidthPx;
   for (
@@ -87,7 +91,7 @@ export function paintGridlines(tree: IGroup, ctx: PaintContext): void {
     y += pitch
   ) {
     tree.add(
-      new Line({
+      kit.createLine({
         points: [left, y, right, y],
         stroke: "#c5d3ee",
         strokeWidth: 1,
@@ -101,16 +105,17 @@ export function paintGridlines(tree: IGroup, ctx: PaintContext): void {
  *  the separator line (Word default: 2 inches = 192 px, 1px stroke) followed
  *  by each laid footnote note. */
 export function paintFootnotes(
-  tree: IGroup,
+  tree: any,
   footnotes: LaidOutFootnoteArea | undefined,
   ctx: PaintContext,
 ): void {
   if (!footnotes || footnotes.items.length === 0) return;
+  const kit = ctx.kit ?? leaferKit;
   // Footnote separator line: 10px below the top of the footnote area
   const sepY = ctx.flow.contentTopPx + footnotes.yPx + 10;
   const sepX = ctx.flow.contentLeftPx;
   tree.add(
-    new Line({
+    kit.createLine({
       points: [sepX, sepY, sepX + footnotes.separatorWidthPx, sepY],
       stroke: "#000000",
       strokeWidth: 1,
@@ -132,16 +137,17 @@ export function paintFootnotes(
  *  the separator line (Word default: 2 inches = 192 px, 1px stroke) followed
  *  by each laid endnote note. */
 export function paintEndnotes(
-  tree: IGroup,
+  tree: any,
   endnotes: LaidOutEndnoteArea | undefined,
   ctx: PaintContext,
 ): void {
   if (!endnotes || endnotes.items.length === 0) return;
+  const kit = ctx.kit ?? leaferKit;
   // Endnote separator line: 10px below the top of the endnote area
   const sepY = ctx.flow.contentTopPx + endnotes.yPx + 10;
   const sepX = ctx.flow.contentLeftPx;
   tree.add(
-    new Line({
+    kit.createLine({
       points: [sepX, sepY, sepX + endnotes.separatorWidthPx, sepY],
       stroke: "#000000",
       strokeWidth: 1,
@@ -162,14 +168,15 @@ export function paintEndnotes(
 /** Paint the section's column separator lines (w:cols/@w:sep) — one vertical
  *  line centered in each gap between neighboring columns, spanning the
  *  content box. */
-export function paintColumnSeparators(tree: IGroup, ctx: PaintContext): void {
+export function paintColumnSeparators(tree: any, ctx: PaintContext): void {
   const cols = ctx.columns;
   if (!cols?.separate || cols.count < 2) return;
+  const kit = ctx.kit ?? leaferKit;
   const boxes = columnBoxesOf(ctx.flow.contentWidthPx, cols);
   for (let i = 0; i < boxes.length - 1; i++) {
     const x = ctx.flow.contentLeftPx + boxes[i]!.xPx + boxes[i]!.widthPx + cols.spacePx / 2;
     tree.add(
-      new Line({
+      kit.createLine({
         points: [x, ctx.flow.contentTopPx, x, ctx.flow.contentTopPx + ctx.flow.contentHeightPx],
         stroke: "#000000",
         strokeWidth: 1,
@@ -188,9 +195,10 @@ export function paintColumnSeparators(tree: IGroup, ctx: PaintContext): void {
  *  beside the text, not stranded mid-margin.
  *  The marks arrive pre-counted from the stage; painting never measures
  *  beyond the label box. */
-export function paintLineNumbers(tree: IGroup, ctx: PaintContext): void {
+export function paintLineNumbers(tree: any, ctx: PaintContext): void {
   const ln = ctx.lineNumbers;
   if (!ln || ln.marks.length === 0) return;
+  const kit = ctx.kit ?? leaferKit;
   const widest = Math.max(...ln.marks.map((m) => m.sizePx));
   const boxWidth = String(ln.marks[ln.marks.length - 1]!.num).length * widest * 0.62;
   const { distancePx } = ln.config;
@@ -200,7 +208,7 @@ export function paintLineNumbers(tree: IGroup, ctx: PaintContext): void {
       : Math.max(0, ctx.flow.contentLeftPx - 12 - boxWidth);
   for (const mark of ln.marks) {
     tree.add(
-      new Text({
+      kit.createText({
         x: labelX,
         y: ctx.flow.contentTopPx + mark.yPx,
         width: boxWidth,
@@ -216,7 +224,7 @@ export function paintLineNumbers(tree: IGroup, ctx: PaintContext): void {
 
 /** Paint a pre-laid header/footer stack at its page position. */
 export function paintFurnitureStack(
-  tree: IGroup,
+  tree: any,
   stack: readonly LaidOutStackItem[],
   x: number,
   y: number,
@@ -228,46 +236,51 @@ export function paintFurnitureStack(
 }
 
 export function paintBlock(
-  tree: IGroup,
+  tree: any,
   block: LaidOutBlock,
   x: number,
   y: number,
   ctx: PaintContext,
   col?: PaintColumn,
 ): void {
-  switch (block.kind) {
-    case "paragraph":
-      paintParagraph(tree, block, x, y, ctx, col);
-      return;
-    // Only paragraphs can carry drawings; the behind pass therefore skips
-    // every other block so nothing paints twice.
-    case "table":
-    case "placeholder":
-    case "pageBreak":
-      if (ctx.layer === "behind") return;
-      if (block.kind === "table") paintTable(tree, block, x, y, ctx);
-      else if (block.kind === "placeholder") paintPlaceholder(tree, block, x, y);
-      else if (ctx.showMarks)
-        paintBreakRow(tree, block, x, y, col?.width ?? ctx.flow.contentWidthPx, ctx);
-      return;
-    case "group":
-      for (const child of block.children) {
-        paintBlock(tree, child.block, x, y + child.yPx, ctx, col);
-      }
-      return;
-  }
+  const kit = ctx.kit ?? leaferKit;
+  withKit(kit, () => {
+    switch (block.kind) {
+      case "paragraph":
+        paintParagraph(tree, block, x, y, ctx, col);
+        return;
+      // Only paragraphs can carry drawings; the behind pass therefore skips
+      // every other block so nothing paints twice.
+      case "table":
+      case "placeholder":
+      case "pageBreak":
+        if (ctx.layer === "behind") return;
+        if (block.kind === "table") paintTable(tree, block, x, y, ctx);
+        else if (block.kind === "placeholder") paintPlaceholder(tree, block, x, y, ctx);
+        else if (ctx.showMarks)
+          paintBreakRow(tree, block, x, y, col?.width ?? ctx.flow.contentWidthPx, ctx);
+        return;
+      case "group":
+        for (const child of block.children) {
+          paintBlock(tree, child.block, x, y + child.yPx, ctx, col);
+        }
+        return;
+    }
+  });
 }
 
 function paintPlaceholder(
-  tree: IGroup,
+  tree: any,
   block: { heightPx: number; label?: string },
   x: number,
   y: number,
+  ctx?: PaintContext,
 ): void {
+  const kit = ctx?.kit ?? leaferKit;
   const width = 240;
   const height = Math.max(20, block.heightPx);
   tree.add(
-    new Rect({
+    kit.createRect({
       x,
       y,
       width,
@@ -280,7 +293,7 @@ function paintPlaceholder(
   );
   if (block.label) {
     tree.add(
-      new Text({
+      kit.createText({
         x: x + 8,
         y: y + 4,
         text: `${block.label} (not rendered yet)`,
@@ -309,7 +322,7 @@ export interface BalloonHitBox {
  *  group (keyed `kind:id` — the stage toggles the group's opacity on hover). */
 export interface BalloonPaint {
   boxes: BalloonHitBox[];
-  groups: Map<string, IGroup>;
+  groups: Map<string, any>;
 }
 
 /** Balloon card metrics — must match the flow's packing constants (the flow
@@ -340,12 +353,13 @@ export function balloonAt(
  *  measured. Cards paint into per-card groups so a hover can tone one without
  *  a repaint. */
 export function paintBalloons(
-  tree: IGroup,
+  tree: any,
   balloons: readonly LaidOutBalloon[] | undefined,
   ctx: PaintContext,
 ): BalloonPaint {
+  const kit = ctx.kit ?? leaferKit;
   const boxes: BalloonHitBox[] = [];
-  const groups = new Map<string, IGroup>();
+  const groups = new Map<string, any>();
   if (!balloons || balloons.length === 0) return { boxes, groups };
   for (const balloon of balloons) {
     const x = ctx.flow.contentLeftPx + balloon.xPx;
@@ -354,7 +368,7 @@ export function paintBalloons(
     // The connector: card's left edge (at its vertical center) back to the
     // anchored line on the content box's right edge.
     tree.add(
-      new Line({
+      kit.createLine({
         points: [
           ctx.flow.contentLeftPx + balloon.anchorXPx,
           ctx.flow.contentTopPx + balloon.anchorYPx,
@@ -366,10 +380,10 @@ export function paintBalloons(
         hittable: false,
       }),
     );
-    const group = new Group({ x, y });
+    const group = kit.createGroup({ x, y });
     tree.add(group);
     group.add(
-      new Box({
+      kit.createBox({
         width: balloon.widthPx,
         height: balloon.heightPx,
         fill: "#ffffff",
@@ -381,7 +395,7 @@ export function paintBalloons(
     );
     // Accent rail down the card's left edge (Word's colored markup bar).
     group.add(
-      new Box({
+      kit.createBox({
         width: 3,
         height: Math.max(1, balloon.heightPx - 2),
         y: 1,
@@ -393,7 +407,7 @@ export function paintBalloons(
     let cursor = BALLOON_PAD;
     if (balloon.label) {
       group.add(
-        new Text({
+        kit.createText({
           x: BALLOON_PAD,
           y: cursor - 2,
           width: Math.max(1, balloon.widthPx - BALLOON_PAD * 2),
@@ -411,7 +425,7 @@ export function paintBalloons(
     }
     for (const line of balloon.lines) {
       group.add(
-        new Text({
+        kit.createText({
           x: BALLOON_PAD,
           y: cursor - 2,
           width: Math.max(1, balloon.widthPx - BALLOON_PAD * 2),

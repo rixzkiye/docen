@@ -117,6 +117,9 @@ importers:
       '@docen/layout':
         specifier: workspace:*
         version: link:../layout
+      '@docen/pdf':
+        specifier: workspace:*
+        version: link:../pdf
       '@docen/pptx':
         specifier: workspace:*
         version: link:../pptx
@@ -179,6 +182,24 @@ importers:
       marked:
         specifier: 17.0.6
         version: 17.0.6
+
+  packages/pdf:
+    dependencies:
+      '@docen/core':
+        specifier: workspace:*
+        version: link:../core
+      '@docen/docx':
+        specifier: workspace:*
+        version: link:../docx
+      '@docen/layout':
+        specifier: workspace:*
+        version: link:../layout
+      '@docen/shaping':
+        specifier: workspace:*
+        version: link:../shaping
+      '@tiptap/pm':
+        specifier: 3.31.3
+        version: 3.31.3
 
   packages/pptx:
     dependencies:

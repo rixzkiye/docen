@@ -1,8 +1,9 @@
 import { tableGridOf, type LaidOutTable, type LayoutBorderEdge } from "@docen/layout";
-import { Group, Line, Rect, type IGroup } from "leafer-ui";
 
 import { paintBlock } from "../painter";
 import type { PaintContext } from "./context";
+import type { IGroup } from "./kit";
+import { Group, Line, Rect } from "./kit";
 
 export function paintTable(
   tree: IGroup,
