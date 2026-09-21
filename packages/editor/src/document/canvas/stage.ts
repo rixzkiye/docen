@@ -48,11 +48,6 @@ import type { FlowPage, FontMetrics, LaidOutParagraph, LaidOutStackItem } from "
 import { createMeasurer, stackBlocks } from "@docen/layout";
 import { App, Debug, Group, Line, Rect, Text, type IGroup } from "leafer-ui";
 
-import {
-  RULER_TICK_LEN,
-  rulerTicks,
-  type RulerUnit,
-} from "../../ui/components/workspace/ruler-ticks";
 import { getArtBorderSvgDataUri } from "./art-borders";
 import { collectPageParas } from "./caret-map";
 import { diffFlowItems } from "./item-diff";
@@ -254,6 +249,8 @@ export interface CanvasStageContext {
     sectionBreakEvenPage?: string;
     sectionBreakOddPage?: string;
   };
+  /** Optional supersampling override (forces 2× SSAA on 1× displays). */
+  supersample?: boolean;
 }
 
 /** Value equality for a member hit box's childPath — each paint re-allocates
@@ -298,6 +295,13 @@ export class CanvasStage {
       };
     }
     return sect;
+  }
+
+  /** The flow box a page's section lays out with — the fixed vertical ruler
+   *  reads it for the page at the pane top (available from the first slice,
+   *  before the run's `sectionOfPage` map is published). */
+  sectionFlowAt(page: number): ProjectedFlowBox {
+    return this.sectionAt(page).flow;
   }
 
   constructor(
@@ -412,8 +416,10 @@ export class CanvasStage {
    *  (css × pixelRatio) covers whole device pixels — the canvas then composites
    *  1:1 with no resampling, which is what keeps text sharp at EVERY zoom
    *  level (fractional scales like 110% otherwise resample and blur). */
+  /** A page's on-screen CSS size at the current zoom, snapped to whole integer pixels
+   *  so that frames and canvas elements never land on fractional coordinates. */
   private pageCss(px: number): number {
-    return Math.round(px * this.factor * devicePixelRatio) / devicePixelRatio;
+    return Math.round(px * this.factor);
   }
 
   /** Bitmap-width cap: A4 at 500% on a 2× screen would be a ~360MB bitmap per
@@ -421,9 +427,17 @@ export class CanvasStage {
    *  exhausting memory. */
   private static readonly BITMAP_CAP = 3600;
 
+  /** Render resolution: native devicePixelRatio by default (1× on standard displays,
+   *  ≥1.5× on Retina/HiDPI) to preserve sub-40ms/char typing performance and low memory.
+   *  Integer-snapped pageCss coordinates and contrast-optimized rendering maintain
+   *  crisp typography without requiring forced 4× pixel supersampling.
+   *  An explicit `supersample` option in stage context allows forced 2× SSAA if requested. */
   private renderPixelRatio(flow: ProjectedFlowBox): number {
     const w = flow.pageWidthPx * this.factor;
-    return Math.min(devicePixelRatio, CanvasStage.BITMAP_CAP / Math.max(w, 1));
+    const dpr =
+      typeof window !== "undefined" && window.devicePixelRatio ? window.devicePixelRatio : 1;
+    const targetDpr = this.ctx.supersample ? Math.max(dpr, 2) : dpr;
+    return Math.min(targetDpr, CanvasStage.BITMAP_CAP / Math.max(w, 1));
   }
 
   /** Zoom change → resize every slot to the scaled page and re-render its
@@ -560,23 +574,6 @@ export class CanvasStage {
     Debug.showRepaint = mode === "repaint";
   }
 
-  /** Ruler visibility (Word's View → Ruler). The rulers are frame-level DOM
-   *  overlays (see {@link applyRulers}), so this just mounts/unmounts them. */
-  #showRuler = false;
-
-  get showRuler(): boolean {
-    return this.#showRuler;
-  }
-
-  setShowRuler(on: boolean): void {
-    if (on === this.#showRuler) return;
-    this.#showRuler = on;
-    for (const [index, slot] of this.slots.entries()) {
-      const frame = slot.el.parentElement;
-      if (frame) this.applyRulers(frame, index);
-    }
-  }
-
   /** The break rows' labels (locale change): repainting is deferred to the
    *  next marks-visible repaint when marks are off, immediate when on. */
   setMarksLabels(labels: {
@@ -629,7 +626,6 @@ export class CanvasStage {
       this.applyBackground(frame);
       this.applyBorders(frame, page);
       this.applyCropMarks(frame, page);
-      this.applyRulers(frame, page);
     }
     slot.el.style.width = `${w}px`;
     slot.el.style.height = `${h}px`;
@@ -889,68 +885,6 @@ export class CanvasStage {
       `${pad(flow.contentLeftPx)}`;
   }
 
-  /** Vertical ruler (Word's View → Ruler): a 20px strip hugging the left edge
-   *  of each page, drawn from the same four-level tick hierarchy as the
-   *  interactive horizontal `<docen-ruler>` the host mounts above the pages
-   *  (which owns the draggable markers, tab stops, and unit toggle). 0 sits on
-   *  the content-box edge (Word's margin-line origin — the margin shows
-   *  negative ticks). Inch ticks on en locales, centimetres otherwise. The
-   *  geometry key keeps a sync from rebuilding the SVG of every page on every
-   *  keystroke. */
-  private applyRulers(frame: HTMLElement, page: number): void {
-    const existing = frame.querySelector<HTMLElement>(":scope > .v-ruler");
-    if (!this.#showRuler) {
-      existing?.remove();
-      return;
-    }
-    const flow = this.sectionAt(page).flow;
-    const THICKNESS = 20;
-    const UNIT: RulerUnit = /^en/i.test(navigator.language || "") ? "in" : "cm";
-    const heightPx = this.pageCss(flow.pageHeightPx);
-    const zeroPx = flow.contentTopPx * this.factor;
-    const key = `${heightPx}|${zeroPx}|${this.factor}|${UNIT}`;
-    if (existing?.dataset.geom === key) return;
-    existing?.remove();
-
-    let out = "";
-    for (const tick of rulerTicks({
-      lengthPx: heightPx,
-      zeroPx,
-      unit: UNIT,
-      scale: this.factor,
-    })) {
-      const y = Math.round(tick.pos) + 0.5;
-      const len = RULER_TICK_LEN[tick.level];
-      out += `<line x1="${THICKNESS}" y1="${y}" x2="${THICKNESS - len}" y2="${y}"/>`;
-      if (tick.label !== undefined) {
-        const tx = THICKNESS - RULER_TICK_LEN[0] - 4;
-        out += `<text x="${tx}" y="${y}" text-anchor="middle" transform="rotate(-90 ${tx} ${y})">${tick.label}</text>`;
-      }
-    }
-
-    const div = document.createElement("div");
-    div.className = "v-ruler";
-    // border-box so the 1px hairline never spills over the page edge.
-    Object.assign(div.style, {
-      position: "absolute",
-      pointerEvents: "none",
-      zIndex: "2",
-      boxSizing: "border-box",
-      background: "#f3f3f3",
-      border: "1px solid #c8c8c8",
-      left: `-${THICKNESS}px`,
-      top: "0",
-      width: `${THICKNESS}px`,
-      height: `${heightPx}px`,
-    } satisfies Partial<CSSStyleDeclaration>);
-    div.innerHTML =
-      `<svg xmlns="http://www.w3.org/2000/svg" width="100%" height="100%"` +
-      ` shape-rendering="crispEdges">` +
-      `<g stroke="#8f8f8f" stroke-width="1" fill="#555555" font-size="7">${out}</g></svg>`;
-    div.dataset.geom = key;
-    frame.append(div);
-  }
-
   /** Lay out page slots for a flow result and repaint visible pages. The
    *  stage is built once and lives across documents — every sync must
    *  refresh the context (an opened file's headers/footers arrive here).
@@ -1059,12 +993,6 @@ export class CanvasStage {
         // painter's item list often IS the previous generation — nothing to
         // re-point then, and the paragraph walk can be skipped whole.
         if (!this.#pageItemsUnchanged(slot, index)) this.#relinkHitParas(slot.app, index);
-      }
-    }
-    if (this.#showRuler) {
-      for (const [index, slot] of this.slots.entries()) {
-        const frame = slot.el.parentElement;
-        if (frame) this.applyRulers(frame, index);
       }
     }
   }

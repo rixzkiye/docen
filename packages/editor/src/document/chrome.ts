@@ -116,6 +116,119 @@ export const documentStyles = css`
     padding: 32px 0;
     cursor: text;
   }
+  .docen-canvas canvas {
+    display: block;
+    image-rendering: -webkit-optimize-contrast;
+  }
+  /* Word-parity workspace grid: corner tab-selector + horizontal ruler on top,
+     vertical ruler in the left window gutter, document scrollport in the center. */
+  .docen-workspace-grid {
+    display: grid;
+    grid-template-columns: 20px 1fr;
+    grid-template-rows: 20px 1fr;
+    flex: 1 1 auto;
+    width: 100%;
+    min-width: 0;
+    min-height: 0;
+    height: 100%;
+    position: relative;
+    background: var(--docen-color-canvas, #f3f3f3);
+    overflow: hidden;
+    box-sizing: border-box;
+    padding-top: 6px;
+  }
+  .docen-ruler-corner {
+    grid-column: 1;
+    grid-row: 1;
+    width: 20px;
+    height: 20px;
+    box-sizing: border-box;
+    background: var(--docen-ruler-bg, #f3f3f3);
+    overflow: hidden;
+    z-index: 12;
+  }
+  .docen-ruler-corner docen-tab-selector {
+    display: block;
+    width: 100%;
+    height: 100%;
+  }
+  .docen-ruler-h-slot {
+    grid-column: 2;
+    grid-row: 1;
+    height: 20px;
+    overflow: hidden;
+    position: relative;
+    background: var(--docen-color-canvas, #f3f3f3);
+    box-sizing: border-box;
+    z-index: 9;
+  }
+  .docen-ruler-h-slot docen-ruler {
+    display: block;
+    position: absolute;
+    top: 0;
+    height: 20px;
+  }
+  .docen-ruler-v-slot {
+    grid-column: 1;
+    grid-row: 2;
+    width: 20px;
+    height: 100%;
+    overflow: hidden;
+    position: relative;
+    background: var(--docen-color-canvas, #f3f3f3);
+    box-sizing: border-box;
+    z-index: 10;
+  }
+  .docen-ruler-v-slot docen-vertical-ruler {
+    display: block;
+    width: 20px;
+    height: 100%;
+  }
+  .docen-workspace-grid docen-document-area {
+    grid-column: 2;
+    grid-row: 2;
+    width: 100%;
+    height: 100%;
+    min-width: 0;
+    min-height: 0;
+    overflow: auto;
+    padding: 0;
+    box-sizing: border-box;
+  }
+  /* Gating visibility states */
+  .docen-workspace-grid[data-show-v-ruler="false"] {
+    grid-template-columns: 0 1fr;
+  }
+  .docen-workspace-grid[data-show-v-ruler="false"] .docen-ruler-corner,
+  .docen-workspace-grid[data-show-v-ruler="false"] .docen-ruler-v-slot {
+    display: none !important;
+  }
+  .docen-workspace-grid[data-show-h-ruler="false"] {
+    grid-template-rows: 0 1fr;
+    padding-top: 0;
+  }
+  .docen-workspace-grid[data-show-h-ruler="false"] .docen-ruler-corner,
+  .docen-workspace-grid[data-show-h-ruler="false"] .docen-ruler-h-slot {
+    display: none !important;
+  }
+  docen-context-menu {
+    padding: var(--docen-page-gap, 24px);
+  }
+  @media print {
+    .docen-ruler-corner,
+    .docen-ruler-h-slot,
+    .docen-ruler-v-slot {
+      display: none !important;
+    }
+    .docen-workspace-grid {
+      display: block;
+      height: auto;
+      background: #fff;
+    }
+    docen-context-menu {
+      padding: 0;
+    }
+  }
   /* Open-progress veil over the canvas (Word centers its opening spinner in
        the document area too): label + Fluent progress bar, centered on a
        translucent white wash so the not-yet-laid-out document doesn't flash
@@ -130,9 +243,8 @@ export const documentStyles = css`
   .load-veil {
     position: sticky;
     top: 0;
-    /* 100% = the area's content box (its 24px paddings stay uncovered — under
-       the translucent wash the not-yet-replaced document shows as a hairline
-       edge, invisible against a blank first load). */
+    /* 100% = the area's box (the pane's 24px page gap now lives on the
+       slotted wrapper, under the translucent wash). */
     height: 100%;
     display: flex;
     flex-direction: column;
@@ -246,20 +358,36 @@ export const documentTemplate = html`
         <div class="search-results" slot="results" part="search-results"></div>
       </docen-navigation-pane>
     </docen-task-pane>
-    <docen-document-area>
-      <div class="load-veil" part="load-veil" hidden>
-        <fluent-progress-bar></fluent-progress-bar>
-        <span class="load-label"></span>
+    <div
+      class="docen-workspace-grid"
+      part="workspace-grid"
+      data-show-h-ruler="false"
+      data-show-v-ruler="false"
+    >
+      <div class="docen-ruler-corner" part="ruler-corner">
+        <docen-tab-selector part="tab-selector"></docen-tab-selector>
       </div>
-      <div class="content-warning" part="content-warning" role="status" hidden>
-        <span class="content-warning-icon" aria-hidden="true">⚠️</span>
-        <span class="content-warning-text"></span>
-        <button class="content-warning-close" type="button">✕</button>
+      <div class="docen-ruler-h-slot" part="ruler-h-slot">
+        <docen-ruler part="horizontal-ruler"></docen-ruler>
       </div>
-      <docen-context-menu part="context-menu">
-        <div class="docen-canvas" part="page"></div>
-      </docen-context-menu>
-    </docen-document-area>
+      <div class="docen-ruler-v-slot" part="ruler-v-slot">
+        <docen-vertical-ruler part="vertical-ruler"></docen-vertical-ruler>
+      </div>
+      <docen-document-area part="document-area">
+        <div class="load-veil" part="load-veil" hidden>
+          <fluent-progress-bar></fluent-progress-bar>
+          <span class="load-label"></span>
+        </div>
+        <div class="content-warning" part="content-warning" role="status" hidden>
+          <span class="content-warning-icon" aria-hidden="true">⚠️</span>
+          <span class="content-warning-text"></span>
+          <button class="content-warning-close" type="button">✕</button>
+        </div>
+        <docen-context-menu part="context-menu">
+          <div class="docen-canvas" part="page"></div>
+        </docen-context-menu>
+      </docen-document-area>
+    </div>
     <docen-task-pane slot="task-pane-end" position="end" part="props-pane">
       <slot name="properties">
         <docen-format-pane></docen-format-pane>

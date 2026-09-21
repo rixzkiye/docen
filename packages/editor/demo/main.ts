@@ -292,10 +292,10 @@ const demoDocument = (): JSONContent => ({
               series: [{ name: "Share", values: [45, 30, 25] }],
               showLegend: true,
               legendPosition: "right",
-              transformation: { width: 3657600, height: 2743200 },
+              transformation: { width: 3000000, height: 1350000 },
               floating: {
                 horizontalPosition: { relative: "margin", offset: 1828800 },
-                verticalPosition: { relative: "paragraph", offset: 95250 },
+                verticalPosition: { relative: "paragraph", offset: 50000 },
                 wrap: { type: "none" },
               },
             },
@@ -409,6 +409,20 @@ const demoDocument = (): JSONContent => ({
     sectionProperties: {
       columns: { count: 2, space: 360, separate: true },
       grid: { linePitch: 312, type: "lines" },
+    },
+    sectionFooters: {
+      default: [
+        {
+          type: "paragraph",
+          attrs: { alignment: "center" },
+          content: [
+            {
+              type: "inlinePassthrough",
+              attrs: { data: JSON.stringify({ simpleField: { instruction: "PAGE" } }) },
+            },
+          ],
+        },
+      ],
     },
     documentExtras: {
       footnotes: [

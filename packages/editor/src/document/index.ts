@@ -265,6 +265,8 @@ export type VisibilityMode = "taskpane" | "hidden";
 /** The interactive horizontal ruler element (View → Ruler): the
  *  `<docen-ruler>` component surface the host drives. */
 interface InteractiveRulerElement extends HTMLElement {
+  unit: "in" | "cm";
+  activeTabType?: string;
   bindEditor(editor: Editor): void;
   setParagraphAttrs(
     indent?: { left?: number; right?: number; firstLine?: number; hanging?: number },
@@ -274,8 +276,27 @@ interface InteractiveRulerElement extends HTMLElement {
       marginLeftPx?: number;
       marginRightPx?: number;
       scale?: number;
+      pageLeftPx?: number;
     },
   ): void;
+}
+
+/** The fixed vertical ruler element (Print Layout only): the
+ *  `<docen-vertical-ruler>` component surface the host drives. All px values
+ *  are zoom-scaled; `scale` stays the twips↔px conversion factor. */
+interface VerticalRulerElement extends HTMLElement {
+  unit: "in" | "cm";
+  originY: number;
+  pageHeightPx: number;
+  contentTopPx: number;
+  contentHeightPx: number;
+  scale: number;
+  hostHeight?: number;
+  renderTicks(): void;
+}
+
+interface TabSelectorElement extends HTMLElement {
+  activeType: string;
 }
 
 @customElement({ name: "docen-document", template: documentTemplate, styles: documentStyles })
@@ -466,6 +487,7 @@ class DocenDocument extends AddinHost<Editor> {
     stage: () => this.#stage,
     pages: () => this.#pages,
     sectionOfPage: () => this.#sectionOfPage,
+    activePage: () => this.#activePage(),
     flow: () => this.#flow,
     viewMode: () => this.#viewMode(),
     caretLanguage: () => this.#caretLanguage(),
@@ -650,6 +672,10 @@ class DocenDocument extends AddinHost<Editor> {
     sectionOfPage: () => this.#sectionOfPage,
     setSectionOfPage: (sectionOfPage) => {
       this.#sectionOfPage = sectionOfPage;
+      // The fixed vertical ruler reads this map for the page at the pane top;
+      // the incremental open path publishes it after the walk, with no other
+      // sync in between.
+      this.#syncRuler();
     },
     flow: () => this.#flow,
     setFlow: (flow) => {
@@ -698,11 +724,22 @@ class DocenDocument extends AddinHost<Editor> {
     isPageField: (child) => DocenDocument.isPageField(child),
   });
   #stageHost?: HTMLElement;
-  /** The interactive horizontal ruler (View → Ruler). Mounted above the
-   *  pages; the vertical strip stays on the stage. */
+  /** The interactive horizontal ruler (View → Ruler). Mounted as the first
+   *  child of the scroll container and pinned to its true top; the fixed
+   *  vertical ruler (Print Layout) rides beside it. */
   #ruler?: InteractiveRulerElement;
+  #vRuler?: VerticalRulerElement;
   #rulerGeometry = "";
   #rulerEditor?: Editor;
+  /** The section the fixed vertical ruler currently reflects (the page nearest
+   *  the pane top). */
+  #vRulerSection = 0;
+  /** The section a live vertical-ruler margin drag targets — frozen at drag
+   *  start so a reflow cannot retarget the drag. */
+  #vRulerDragSection: number | null = null;
+  #vRulerFrame = 0;
+  #clickedPage?: number;
+  #rulerResizeObserver?: ResizeObserver;
   readonly #a11yMirror = new A11yMirror();
   #a11yTimer?: number;
   #versionSnapshots: Array<{
@@ -1635,6 +1672,12 @@ class DocenDocument extends AddinHost<Editor> {
     // The ruler's direction follows the caret's paragraph (Word mirrors the
     // scale for RTL runs even in an LTR shell).
     this.#syncRulerDirection();
+    if (this.#ruler && this.#ruler.style.display !== "none") {
+      this.#syncRulerBand(this.#ruler);
+    }
+    if (this.#vRuler && this.#vRuler.style.display !== "none") {
+      this.#syncVerticalRuler();
+    }
     if (this.#uiSelectionDirty) {
       this.#uiSelectionDirty = false;
       // The status-bar language mirrors the caret's proofing language (Word).
@@ -2179,8 +2222,8 @@ class DocenDocument extends AddinHost<Editor> {
 
     // command = ribbon buttons; change = menu items + auto-save switch. Listen
     // on the shadow root so non-composed Fluent events (menu-item "change")
-    // reach us, not just composed ones (ribbon "command").
     this.shadowRoot!.addEventListener("command", this.#onCommand as EventListener);
+    this.addEventListener("command", this.#onHostCommand as EventListener);
     // Ribbon gallery right-click (Word's gallery context entry) — only the
     // Styles gallery routes it today: Modify the right-clicked style.
     this.shadowRoot!.addEventListener("item-context", this.#onItemContext as EventListener);
@@ -3031,26 +3074,60 @@ class DocenDocument extends AddinHost<Editor> {
     if (bar) bar.hidden = true;
   }
 
-  /** Mount the interactive horizontal ruler above the pages (idempotent).
-   *  The stage keeps only the vertical strip; this strip owns the draggable
-   *  indent markers, tab stops and the unit toggle. */
+  /** Mount or discover the interactive rulers and tab selector. The horizontal
+   *  ruler sits in the top chrome row; the fixed vertical ruler sits in the
+   *  left window gutter (Word's Print Layout); the corner tab selector sits at
+   *  their intersection (0, 0). */
   #mountRuler(): void {
     if (this.#ruler || !this.#stageHost) return;
-    const area = this.#stageHost.closest("docen-document-area");
+    const sr = this.shadowRoot;
+    if (!sr) return;
+    const area = this.#stageHost.closest("docen-document-area") as HTMLElement | null;
     if (!area) return;
-    const ruler = document.createElement("docen-ruler") as InteractiveRulerElement;
-    Object.assign(ruler.style, {
-      position: "sticky",
-      top: "0",
-      zIndex: "6",
-      margin: "0 auto",
-      display: "none",
-    } satisfies Partial<CSSStyleDeclaration>);
+
+    // Discover the static elements in the shadow DOM template, or create as fallback
+    let ruler = sr.querySelector<InteractiveRulerElement>("docen-ruler");
+    let vRuler = sr.querySelector<VerticalRulerElement>("docen-vertical-ruler");
+    const tabSelector = sr.querySelector<TabSelectorElement>("docen-tab-selector");
+
+    if (!ruler) {
+      ruler = document.createElement("docen-ruler") as InteractiveRulerElement;
+      area.parentElement?.insertBefore(ruler, area);
+    }
+    if (!vRuler) {
+      vRuler = document.createElement("docen-vertical-ruler") as VerticalRulerElement;
+      area.parentElement?.insertBefore(vRuler, area);
+    }
+
     ruler.addEventListener("ruler:open-tabs", () => this.#insert.openTabsDialog());
-    // Direct child of the scroll container (NOT the flex canvas wrapper, where
-    // a second flex item would break the page centering).
-    area.insertBefore(ruler, area.firstChild);
+    ruler.addEventListener("ruler:unit-change", ((event: CustomEvent<{ unit?: "in" | "cm" }>) => {
+      const unit = event.detail?.unit;
+      if (unit && this.#vRuler) this.#vRuler.unit = unit;
+    }) as EventListener);
+
+    if (tabSelector) {
+      tabSelector.addEventListener("tab-selector:change", ((
+        event: CustomEvent<{ type?: string }>,
+      ) => {
+        if (event.detail?.type && this.#ruler) {
+          this.#ruler.activeTabType = event.detail.type;
+        }
+      }) as EventListener);
+      ruler.activeTabType = tabSelector.activeType;
+    }
+
+    vRuler.addEventListener("v-ruler:margin-start", this.#onVRulerMarginStart as EventListener);
+    vRuler.addEventListener("v-ruler:margin-input", this.#onVRulerMargin as EventListener);
+    vRuler.addEventListener("v-ruler:margin-commit", this.#onVRulerMargin as EventListener);
+
     this.#ruler = ruler;
+    this.#vRuler = vRuler;
+
+    // The vertical and horizontal strips slide with the scrolled document
+    area.addEventListener("scroll", this.#onRulerScroll, { passive: true });
+    area.addEventListener("pointerdown", this.#onAreaPointerDown, { passive: true });
+    this.#rulerResizeObserver = new ResizeObserver(() => this.#syncRuler());
+    this.#rulerResizeObserver.observe(area);
   }
 
   /** Mirror the interactive ruler for RTL paragraphs (Word flips the scale at
@@ -3075,35 +3152,226 @@ class DocenDocument extends AddinHost<Editor> {
     if (ruler.getAttribute("dir") !== dir) ruler.setAttribute("dir", dir);
   }
 
-  /** Show/hide and re-geometry the interactive ruler from the current flow
-   *  box + zoom. Cheap when nothing changed (signature-guarded). */
+  /** Show/hide and re-geometry both rulers. Word's visibility matrix: the
+   *  horizontal ruler shows in Print Layout, Web Layout and Draft when View →
+   *  Ruler is on (hidden in Read Mode and Outline); the vertical ruler only in
+   *  Print Layout, gated by its own option. */
   #syncRuler(): void {
     const ruler = this.#ruler;
     if (!ruler) return;
     this.#syncRulerDirection();
-    const on = this.getShowRuler();
-    ruler.style.display = on ? "block" : "none";
-    if (!on) return;
-    const editor = this.#bridge?.activeEditor() ?? this.editor;
-    if (editor && editor !== this.#rulerEditor) {
-      this.#rulerEditor = editor;
-      ruler.bindEditor(editor);
+    const mode = this.#viewMode();
+    const on = this.getShowRuler() && mode !== "read" && mode !== "outline";
+    const grid = this.shadowRoot?.querySelector<HTMLElement>(".docen-workspace-grid");
+    if (grid) {
+      grid.dataset.showHRuler = on ? "true" : "false";
     }
-    const flow = this.#flow;
+    ruler.style.display = on ? "block" : "none";
+    if (on) {
+      const editor = this.#bridge?.activeEditor() ?? this.editor;
+      if (editor && editor !== this.#rulerEditor) {
+        this.#rulerEditor = editor;
+        ruler.bindEditor(editor);
+      }
+      this.#syncRulerBand(ruler);
+    }
+    this.#syncVerticalRuler();
+  }
+
+  /** The active page for ruler alignment (Word tracks the caret's page when
+   *  its page is in view, falling back to clicked page, then viewport top). */
+  #getActivePage(frames: HTMLElement[]): number {
+    if (frames.length <= 1) return 0;
+    const area = this.#stageHost?.closest("docen-document-area") as HTMLElement | null;
+    const areaRect = area?.getBoundingClientRect();
+    const areaTop = areaRect ? areaRect.top : 0;
+    const areaBottom = areaRect ? areaRect.bottom : window.innerHeight;
+
+    // 1. Explicitly clicked page if still in view
+    if (this.#clickedPage != null && this.#clickedPage >= 0 && this.#clickedPage < frames.length) {
+      const clickedRect = frames[this.#clickedPage]?.getBoundingClientRect();
+      if (clickedRect && clickedRect.bottom > areaTop && clickedRect.top < areaBottom) {
+        return this.#clickedPage;
+      }
+    }
+
+    // 2. Caret / selection's page, if that page is in view
+    const editor = this.#bridge?.activeEditor() ?? this.editor;
+    const cursor = editor?.state?.selection?.from;
+    if (cursor != null && this.#bridge) {
+      try {
+        const page = this.#bridge.pageOf(cursor);
+        if (typeof page === "number" && page >= 0 && page < frames.length) {
+          const pageRect = frames[page]?.getBoundingClientRect();
+          if (pageRect && pageRect.bottom > areaTop && pageRect.top < areaBottom) {
+            return page;
+          }
+        }
+      } catch {
+        // bridge pageOf can fail if unmounted or outside
+      }
+    }
+
+    // 3. Viewport top fallback: first page whose bottom edge is below areaTop
+    let page = 0;
+    for (let i = 0; i < frames.length; i++) {
+      if (frames[i]!.getBoundingClientRect().bottom > areaTop) {
+        page = i;
+        break;
+      }
+    }
+    return Math.min(page, frames.length - 1);
+  }
+
+  /** The current active page index (0-based) across caret, click, and viewport scrolling. */
+  #activePage(): number {
+    const shell = this.#stageHost?.querySelector<HTMLElement>(".canvas-pages");
+    const frames = shell ? ([...shell.children] as HTMLElement[]) : [];
+    return this.#getActivePage(frames);
+  }
+
+  /** Size the horizontal ruler to the active page width and position it directly
+   *  above the page column in the horizontal ruler slot. */
+  #syncRulerBand(ruler: InteractiveRulerElement): void {
+    const area = this.#stageHost?.closest("docen-document-area") as HTMLElement | null;
+    const shell = this.#stageHost?.querySelector<HTMLElement>(".canvas-pages");
+    const frames = shell ? ([...shell.children] as HTMLElement[]) : [];
+    const activePage = this.#getActivePage(frames);
+    const frame =
+      frames[activePage] ??
+      frames[0] ??
+      this.#stageHost?.querySelector<HTMLElement>(".canvas-pages > div");
+    const section = this.#sectionOfPage[activePage] ?? 0;
+    const flow =
+      this.#stage?.sectionFlowAt(activePage) ??
+      this.#lastRun?.sections[section]?.flow ??
+      this.#flow;
     if (!flow) return;
     const zoom = this.#stage ? this.#stage.zoom / 100 : 1;
+    const hSlot = this.shadowRoot?.querySelector<HTMLElement>(".docen-ruler-h-slot");
+
+    let leftPx = 0;
+    if (area && frame && hSlot) {
+      const hSlotRect = hSlot.getBoundingClientRect();
+      const frameRect = frame.getBoundingClientRect();
+      leftPx = frameRect.left - hSlotRect.left;
+    }
+    const widthPx = Math.round(flow.pageWidthPx * zoom);
+    ruler.style.position = "absolute";
+    ruler.style.left = `${Math.round(leftPx)}px`;
+    ruler.style.width = `${widthPx}px`;
+
     const geometry = {
       pageWidthPx: flow.pageWidthPx,
       marginLeftPx: flow.contentLeftPx,
       marginRightPx: flow.pageWidthPx - flow.contentLeftPx - flow.contentWidthPx,
       scale: zoom,
+      pageLeftPx: 0,
     };
-    const key = `${geometry.pageWidthPx}|${geometry.marginLeftPx}|${geometry.marginRightPx}|${zoom}`;
+    const key = `${geometry.pageWidthPx}|${geometry.marginLeftPx}|${geometry.marginRightPx}|${zoom}|${Math.round(leftPx)}|${widthPx}`;
     if (key === this.#rulerGeometry) return;
     this.#rulerGeometry = key;
-    ruler.style.width = `${geometry.pageWidthPx * zoom}px`;
     ruler.setParagraphAttrs(undefined, undefined, geometry);
   }
+
+  /** Position the fixed vertical ruler in the left window gutter: Word anchors
+   *  it at x=0 below the corner tab selector, scaled and bounded to the active
+   *  page height, shifting as the active page changes. */
+  #syncVerticalRuler(): void {
+    const vr = this.#vRuler;
+    const area = this.#stageHost?.closest("docen-document-area") as HTMLElement | null;
+    const grid = this.shadowRoot?.querySelector<HTMLElement>(".docen-workspace-grid");
+    if (!vr || !area) return;
+    const on = this.getShowRuler() && this.getShowVerticalRuler() && this.#viewMode() === "print";
+    const shell = this.#stageHost?.querySelector<HTMLElement>(".canvas-pages");
+    const frames = shell ? ([...shell.children] as HTMLElement[]) : [];
+    if (grid) {
+      grid.dataset.showVRuler = on && frames.length > 0 ? "true" : "false";
+    }
+    if (!on || frames.length === 0) {
+      vr.style.display = "none";
+      return;
+    }
+    const areaRect = area.getBoundingClientRect();
+    const top = areaRect.top;
+    const height = areaRect.height;
+    if (height <= 0) {
+      vr.style.display = "none";
+      if (grid) grid.dataset.showVRuler = "false";
+      return;
+    }
+    const page = this.#getActivePage(frames);
+    const section = this.#sectionOfPage[page] ?? 0;
+    const flow =
+      this.#stage?.sectionFlowAt(page) ?? this.#lastRun?.sections[section]?.flow ?? this.#flow;
+    if (!flow) {
+      vr.style.display = "none";
+      if (grid) grid.dataset.showVRuler = "false";
+      return;
+    }
+    this.#vRulerSection = section;
+    const zoom = this.#stage ? this.#stage.zoom / 100 : 1;
+    const frameRect = frames[page]!.getBoundingClientRect();
+
+    vr.style.display = "block";
+    vr.unit = this.#ruler?.unit ?? vr.unit;
+    vr.scale = zoom;
+    vr.pageHeightPx = flow.pageHeightPx * zoom;
+    vr.contentTopPx = flow.contentTopPx * zoom;
+    vr.contentHeightPx = flow.contentHeightPx * zoom;
+    vr.originY = frameRect.top - top;
+    vr.hostHeight = height;
+    vr.renderTicks();
+  }
+
+  readonly #onAreaPointerDown = (e: Event): void => {
+    const target = e.target as HTMLElement | null;
+    const pageEl = target?.closest(".canvas-pages > div") as HTMLElement | null;
+    if (pageEl && pageEl.parentElement) {
+      const idx = Array.prototype.indexOf.call(pageEl.parentElement.children, pageEl);
+      if (idx >= 0 && idx !== this.#clickedPage) {
+        this.#clickedPage = idx;
+        this.#syncRuler();
+      }
+    }
+  };
+
+  /** The scroll that moves the fixed vertical ruler's scale (vertical) or the
+   *  horizontal ruler's scale (horizontal) — one geometry sync per frame. */
+  readonly #onRulerScroll = (): void => {
+    if (this.#vRulerFrame) return;
+    this.#vRulerFrame = requestAnimationFrame(() => {
+      this.#vRulerFrame = 0;
+      if (this.#ruler && this.#ruler.style.display !== "none") {
+        this.#syncRulerBand(this.#ruler);
+      }
+      if (this.#vRuler && this.#vRuler.style.display !== "none") {
+        this.#syncVerticalRuler();
+      }
+      this.#status.updateStatus();
+    });
+  };
+
+  /** The vertical ruler's margin drag opens on the section it reflects. */
+  readonly #onVRulerMarginStart = (): void => {
+    this.#vRulerDragSection = this.#vRulerSection;
+  };
+
+  /** A live or committed margin drag — Word reflows the section during the
+   *  drag and commits on release. Protected/read-only documents keep their
+   *  page geometry. */
+  readonly #onVRulerMargin = (event: Event): void => {
+    const detail = (event as CustomEvent<{ side?: "top" | "bottom"; twips?: number }>).detail;
+    if (!detail || typeof detail.twips !== "number") return;
+    if (detail.side !== "top" && detail.side !== "bottom") return;
+    const section = this.#vRulerDragSection ?? this.#vRulerSection;
+    if (this.editable === "false" || this.#docProtected || this.#viewMode() === "read") return;
+    this.#sections.setSectionMargin(section, detail.side, detail.twips);
+    if (event.type === "v-ruler:margin-commit") {
+      this.#vRulerDragSection = null;
+      this.#syncVerticalRuler();
+    }
+  };
 
   /** Create the stage on first use and refresh its per-render context —
    *  idempotent setters both render paths call before their first sync. */
@@ -3138,8 +3406,6 @@ class DocenDocument extends AddinHost<Editor> {
     // setters; the read-only + chrome trimming rides #applyView's gate).
     if (this.#stage.zoom !== this.#status.getZoom()) this.#stage.setZoom(this.#status.getZoom());
     if (this.hasAttribute("show-marks")) this.#stage.setShowMarks(true);
-    if (this.hasAttribute("show-ruler") || this.hasAttribute("ruler"))
-      this.#stage.setShowRuler(true);
     this.#syncRuler();
     if (this.#stage.viewMode !== p.viewMode) {
       this.#stage.setViewMode(p.viewMode);
@@ -3168,7 +3434,15 @@ class DocenDocument extends AddinHost<Editor> {
     this.#langObserver?.disconnect();
     this.#unobserveLang?.();
     this.#unobserveLang = undefined;
+    const rulerArea = this.#stageHost?.closest("docen-document-area");
+    rulerArea?.removeEventListener("scroll", this.#onRulerScroll);
+    rulerArea?.removeEventListener("pointerdown", this.#onAreaPointerDown);
+    this.#rulerResizeObserver?.disconnect();
+    this.#rulerResizeObserver = undefined;
+    if (this.#vRulerFrame) cancelAnimationFrame(this.#vRulerFrame);
+    this.#vRulerFrame = 0;
     this.shadowRoot?.removeEventListener("command", this.#onCommand as EventListener);
+    this.removeEventListener("command", this.#onHostCommand as EventListener);
     this.shadowRoot?.removeEventListener("item-context", this.#onItemContext as EventListener);
     this.shadowRoot?.removeEventListener("item-preview", this.#onItemPreview as EventListener);
     this.shadowRoot?.removeEventListener(
@@ -4948,6 +5222,10 @@ class DocenDocument extends AddinHost<Editor> {
       this.#openTranslate(selected);
       return;
     }
+    if (name === "options") {
+      this.#openOptionsDialog();
+      return;
+    }
     if (name === "theme" || name === "theme-color" || name === "theme-font") {
       this.#applyDocumentTheme(name, value);
       return;
@@ -5150,39 +5428,44 @@ class DocenDocument extends AddinHost<Editor> {
       case "new-from-template":
         this.#openTemplateDialog();
         break;
-      case "options": {
-        // Filename menu → open the Options dialog (UI language + theme +
-        // spell-as-you-type + Markdown input + the document settings).
-        const optionsEl = this.shadowRoot?.querySelector("docen-options-dialog");
-        if (optionsEl) {
-          optionsEl.setAttribute("locale", this.lang || document.documentElement.lang || "zh-CN");
-          optionsEl.setAttribute("theme", this.theme ?? "light");
-          optionsEl.setAttribute("proofing", String(this.#spelling.enabled()));
-          optionsEl.setAttribute("markdown", String(this.#markdown));
-          // The Document section seeds from the settings.xml slice; the tab
-          // stop converts twips → cm (round-trip of convertMillimetersToTwip).
-          const s = this.#documentSettings();
-          (optionsEl as unknown as { document?: unknown }).document = {
-            defaultTabStop:
-              typeof s.defaultTabStop === "number"
-                ? Math.round((s.defaultTabStop / (1440 / 2.54)) * 100) / 100
-                : undefined,
-            updateFields: s.updateFields === true,
-            updateFieldsBeforePrint: this.#updateFieldsBeforePrint,
-            fieldShading: this.#fieldShading,
-            protection: (s.documentProtection as { edit?: string } | undefined)?.edit ?? "none",
-            compatVersion: (s.compatibility as { version?: number } | undefined)?.version ?? 15,
-          };
-          // General/User section — the store is the source of truth (the
-          // `user` attribute only overrides the rendered header).
-          (optionsEl as unknown as { identity?: IdentitySettings }).identity =
-            getSettings().identity;
-          (optionsEl as unknown as { show?: () => void }).show?.();
-        }
+      case "options":
+        this.#openOptionsDialog();
         break;
-      }
     }
   };
+
+  /** Filename menu / command → open the Options dialog (UI language + theme +
+   *  spell-as-you-type + Markdown input + the document settings). */
+  #openOptionsDialog(): void {
+    const optionsEl = this.shadowRoot?.querySelector("docen-options-dialog");
+    if (optionsEl) {
+      optionsEl.setAttribute("locale", this.lang || document.documentElement.lang || "zh-CN");
+      optionsEl.setAttribute("theme", this.theme ?? "light");
+      optionsEl.setAttribute("proofing", String(this.#spelling.enabled()));
+      optionsEl.setAttribute("markdown", String(this.#markdown));
+      // The Document section seeds from the settings.xml slice; the tab
+      // stop converts twips → cm (round-trip of convertMillimetersToTwip).
+      const s = this.#documentSettings();
+      (optionsEl as unknown as { document?: unknown }).document = {
+        defaultTabStop:
+          typeof s.defaultTabStop === "number"
+            ? Math.round((s.defaultTabStop / (1440 / 2.54)) * 100) / 100
+            : undefined,
+        updateFields: s.updateFields === true,
+        updateFieldsBeforePrint: this.#updateFieldsBeforePrint,
+        fieldShading: this.#fieldShading,
+        protection: (s.documentProtection as { edit?: string } | undefined)?.edit ?? "none",
+        compatVersion: (s.compatibility as { version?: number } | undefined)?.version ?? 15,
+      };
+      // General/User section — the store is the source of truth (the
+      // `user` attribute only overrides the rendered header).
+      (optionsEl as unknown as { identity?: IdentitySettings }).identity = getSettings().identity;
+      // View section — Word's "Show vertical ruler in Print Layout view".
+      (optionsEl as unknown as { showVerticalRuler?: boolean }).showVerticalRuler =
+        this.getShowVerticalRuler();
+      (optionsEl as unknown as { show?: () => void }).show?.();
+    }
+  }
 
   /** Forward this host's `lang` attribute to the internal <docen-workspace>
    *  and notify locale observers. Called on connect and whenever `lang`
@@ -5320,6 +5603,11 @@ class DocenDocument extends AddinHost<Editor> {
     }
   };
 
+  readonly #onHostCommand = (event: Event): void => {
+    if (this.shadowRoot && event.composedPath().includes(this.shadowRoot)) return;
+    this.#onCommand(event as CustomEvent<{ event?: string; value?: string }>);
+  };
+
   readonly #onDocenTranslate = (event: Event): void => {
     const detail = (event as CustomEvent<{ text?: string }>).detail;
     this.#openTranslate(detail?.text);
@@ -5338,6 +5626,7 @@ class DocenDocument extends AddinHost<Editor> {
       spellcheck,
       markdown,
       identity,
+      showVerticalRuler,
       document: docSettings,
     } = (
       event as CustomEvent<{
@@ -5346,6 +5635,7 @@ class DocenDocument extends AddinHost<Editor> {
         spellcheck?: boolean;
         markdown?: boolean;
         identity?: { name?: string; initials?: string };
+        showVerticalRuler?: boolean;
         document?: {
           defaultTabStop?: number;
           updateFields?: boolean;
@@ -5371,6 +5661,7 @@ class DocenDocument extends AddinHost<Editor> {
       this.#syncFormatButtons();
     }
     if (identity) updateSettings({ identity });
+    if (typeof showVerticalRuler === "boolean") this.setShowVerticalRuler(showVerticalRuler);
     if (docSettings) this.#applyDocumentSettings(docSettings);
   };
 
@@ -6399,7 +6690,6 @@ class DocenDocument extends AddinHost<Editor> {
   setShowRuler(on: boolean): void {
     if (this.getShowRuler() === on) return;
     this.toggleAttribute("show-ruler", on);
-    this.#stage?.setShowRuler(on);
     this.#syncRuler();
     this.dispatchEvent(
       new CustomEvent("docen:ruler-change", {
@@ -6412,11 +6702,30 @@ class DocenDocument extends AddinHost<Editor> {
 
   /** Whether ruler is currently shown. */
   getShowRuler(): boolean {
-    return (
-      this.hasAttribute("show-ruler") ||
-      this.hasAttribute("ruler") ||
-      (this.#stage?.showRuler ?? false)
+    return this.hasAttribute("show-ruler") || this.hasAttribute("ruler");
+  }
+
+  // ── Vertical ruler (Word's Options → Advanced → Display setting) ───────────
+
+  /** Whether the vertical ruler is enabled in Print Layout (Word's "Show
+   *  vertical ruler in Print Layout view"). Default on; the `show-vertical-
+   *  ruler` attribute carries "false" to disable. Idempotent. */
+  setShowVerticalRuler(on: boolean): void {
+    if (this.getShowVerticalRuler() === on) return;
+    this.setAttribute("show-vertical-ruler", on ? "true" : "false");
+    this.#syncVerticalRuler();
+    this.dispatchEvent(
+      new CustomEvent("docen:vertical-ruler-change", {
+        bubbles: true,
+        composed: true,
+        detail: { showVerticalRuler: on },
+      }),
     );
+  }
+
+  /** Whether the vertical ruler option is on (default: on). */
+  getShowVerticalRuler(): boolean {
+    return this.getAttribute("show-vertical-ruler") !== "false";
   }
 
   // ── Persisted settings (identity + writing toggles) ────────────────────────

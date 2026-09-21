@@ -548,4 +548,49 @@ describe("CaretMap empty paragraph alignment", () => {
     expect(rightRects).toHaveLength(1);
     expect(rightRects[0]?.xPx).toBe(200);
   });
+
+  describe("vertical clamping parity (Word/Docs behavior)", () => {
+    it("snaps to end of text when clicking below the last line with clamp=true", () => {
+      const { doc } = buildDoc(["Hello", "World"]);
+      const map = new CaretMap(
+        pageOf([
+          fakePara([{ text: "Hello", xPx: 0, yPx: 0, maxWidthPx: 50 }]),
+          fakePara([{ text: "World", xPx: 0, yPx: 30, maxWidthPx: 50 }]),
+        ]) as never,
+        doc,
+        () => ({ contentLeftPx: 0, contentTopPx: 0 }),
+      );
+
+      // Paragraph 1: innerPos=1, text="Hello" (end at pos 6)
+      // Paragraph 2: innerPos=8, text="World" (end at pos 13)
+      // Max bottom Y = 50px (30 + 20).
+      // Clicking at y=200 is well below the last line.
+      // Anywhere below the last line (x=0, x=25, x=100) must snap to the end of the text (pos 13).
+      expect(map.posAtPoint(0, 0, 200, true)).toBe(13);
+      expect(map.posAtPoint(0, 25, 200, true)).toBe(13);
+      expect(map.posAtPoint(0, 100, 200, true)).toBe(13);
+
+      // With clamp=false, distance > 40px returns null (useful for hover tooltips)
+      expect(map.posAtPoint(0, 25, 200, false)).toBeNull();
+    });
+
+    it("snaps to start of text when clicking above the first line with clamp=true", () => {
+      const { doc } = buildDoc(["Hello", "World"]);
+      const map = new CaretMap(
+        pageOf([
+          fakePara([{ text: "Hello", xPx: 0, yPx: 10, maxWidthPx: 50 }]),
+          fakePara([{ text: "World", xPx: 0, yPx: 40, maxWidthPx: 50 }]),
+        ]) as never,
+        doc,
+        () => ({ contentLeftPx: 0, contentTopPx: 0 }),
+      );
+
+      // Min top Y = 10px.
+      // Clicking at y=-30 is above the first line.
+      // Anywhere above the first line must snap to the start of the text (pos 1).
+      expect(map.posAtPoint(0, 0, -30, true)).toBe(1);
+      expect(map.posAtPoint(0, 25, -30, true)).toBe(1);
+      expect(map.posAtPoint(0, 100, -30, true)).toBe(1);
+    });
+  });
 });

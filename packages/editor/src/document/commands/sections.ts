@@ -108,6 +108,60 @@ export class SectionCommands {
     editor.view.dispatch(tr);
   }
 
+  /** The doc position carrying section `index`'s sectPr — the Nth
+   *  section-carrying paragraph in document order (0-based; each closes its
+   *  section in OOXML), or null for the final section (body-level sectPr). */
+  sectionSectPrPosAt(index: number): number | null {
+    const editor = this.host.editor();
+    if (!editor) return null;
+    const positions: number[] = [];
+    editor.state.doc.descendants((node, pos) => {
+      if (
+        node.type.name === "paragraph" &&
+        (node.attrs as { sectionProperties?: unknown }).sectionProperties != null
+      ) {
+        positions.push(pos);
+      }
+      return true;
+    });
+    return positions[index] ?? null;
+  }
+
+  /** Rewrite a specific section's sectPr (not the caret's) and dispatch — the
+   *  vertical ruler's margin drags target the section at the top of the
+   *  pane. */
+  mutateSectionAt(
+    index: number,
+    mutate: (cur: SectionPropertiesOptions | undefined) => SectionPropertiesOptions,
+  ): void {
+    const editor = this.host.editor();
+    if (!editor) return;
+    const { doc, tr } = editor.state;
+    const pos = this.sectionSectPrPosAt(index);
+    if (pos != null) {
+      const node = doc.nodeAt(pos);
+      if (!node) return;
+      const cur = (node.attrs as { sectionProperties?: SectionPropertiesOptions })
+        .sectionProperties;
+      tr.setNodeMarkup(pos, undefined, { ...node.attrs, sectionProperties: mutate(cur) });
+    } else {
+      const cur = (doc.attrs as { sectionProperties?: SectionPropertiesOptions }).sectionProperties;
+      tr.setDocAttribute("sectionProperties", mutate(cur));
+    }
+    editor.view.dispatch(tr);
+  }
+
+  /** The fixed vertical ruler's margin drag: write one side of section
+   *  `index`'s pageMargin in twips (Word's ruler is anchored to the page at
+   *  the top of the pane — never the caret's section). The transaction
+   *  re-lays-out the section live. */
+  setSectionMargin(index: number, side: "top" | "bottom", twips: number): void {
+    const value = Math.max(0, Math.round(twips));
+    this.mutateSectionAt(index, (cur) =>
+      mergeSectionProperties(cur, { pageMargin: { [side]: value } } as SectionPropertiesOptions),
+    );
+  }
+
   /** Deep-merge a sectionProperties patch into the CURRENT section's sectPr and
    *  dispatch it — Word's "this section" semantics. The dispatched transaction
    *  re-renders every page of the canvas. */

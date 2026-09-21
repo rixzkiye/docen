@@ -199,6 +199,13 @@ const template = html<DocenOptionsDialog>`
         </label>
       </div>
       <div class="opt-field">
+        <div class="opt-heading" ${ref("viewHeadingEl")}></div>
+        <label class="check-field">
+          <fluent-checkbox ${ref("verticalRulerBox")}></fluent-checkbox>
+          <span ${ref("verticalRulerLabelEl")}></span>
+        </label>
+      </div>
+      <div class="opt-field">
         <div class="opt-heading" ${ref("docHeadingEl")}></div>
         <div class="opt-row">
           <label ${ref("tabLabelEl")}></label>
@@ -292,9 +299,9 @@ type ComboboxLike = {
  * the modal shell (backdrop / Esc / show).
  *
  * The host seeds the current values via `locale` / `theme` / `proofing` /
- * `markdown` / `identity` / `document`, calls `show()`, and listens for
- * `options:ok { lang, theme, spellcheck, markdown, identity, document }` (确定).
- * Cancel / Esc just close.
+ * `markdown` / `identity` / `document` / `showVerticalRuler`, calls `show()`,
+ * and listens for `options:ok { lang, theme, spellcheck, markdown, identity,
+ * showVerticalRuler, document }` (确定). Cancel / Esc just close.
  * State commits atomically on OK (Office behavior — not live).
  *
  * Both pickers are `<fluent-dropdown type="combobox">` — typeable, so a long
@@ -312,6 +319,9 @@ class DocenOptionsDialog extends FASTElement {
   /** Whether the Markdown input mode is on ("true"/"false") — the Markdown
    *  section's checkbox pre-fills from it. Absent = on. */
   @attr markdown?: string;
+  /** Whether Word's "Show vertical ruler in Print Layout view" option is on.
+   *  Seeded as a property (it is not a markup attribute) — absent = on. */
+  @observable showVerticalRuler?: boolean;
 
   @observable dialogEl?: HTMLElement & { heading?: string; show(): void; hide(): void };
   @observable userHeadingEl?: HTMLElement;
@@ -334,6 +344,9 @@ class DocenOptionsDialog extends FASTElement {
   @observable markdownHeadingEl?: HTMLElement;
   @observable markdownBox?: HTMLElement & { checked?: boolean };
   @observable markdownLabelEl?: HTMLElement;
+  @observable viewHeadingEl?: HTMLElement;
+  @observable verticalRulerBox?: HTMLElement & { checked?: boolean };
+  @observable verticalRulerLabelEl?: HTMLElement;
   /** The document settings seed — the host assigns it before show(). */
   @observable document?: DocumentSettings;
   /** The General/User seed — the host assigns it before show(). */
@@ -404,6 +417,7 @@ class DocenOptionsDialog extends FASTElement {
     // never renders (the prefill/read-back rule).
     if (this.spellBox) this.spellBox.checked = this.proofing !== "false";
     if (this.markdownBox) this.markdownBox.checked = this.markdown !== "false";
+    if (this.verticalRulerBox) this.verticalRulerBox.checked = this.showVerticalRuler !== false;
     if (this.userNameInput) this.userNameInput.value = this.identity?.name ?? "";
     if (this.initialsInput) this.initialsInput.value = this.identity?.initials ?? "";
     const d = this.document;
@@ -444,9 +458,10 @@ class DocenOptionsDialog extends FASTElement {
           theme: this.#themeLocal,
           spellcheck: this.spellBox?.checked !== false,
           markdown: this.markdownBox?.checked !== false,
+          showVerticalRuler: this.verticalRulerBox?.checked !== false,
           identity: {
-            name: this.userNameInput?.value.trim() ?? "",
-            initials: this.initialsInput?.value.trim() ?? "",
+            name: this.userNameInput?.value?.trim() ?? "",
+            initials: this.initialsInput?.value?.trim() ?? "",
           } satisfies UserIdentity,
           document: {
             defaultTabStop: Number.isFinite(tab) ? tab : undefined,
@@ -498,6 +513,9 @@ class DocenOptionsDialog extends FASTElement {
       this.autocorrectBtn.textContent = t("options.autocorrectOptions", this);
     if (this.markdownHeadingEl) this.markdownHeadingEl.textContent = t("options.markdown", this);
     if (this.markdownLabelEl) this.markdownLabelEl.textContent = t("options.markdownInput", this);
+    if (this.viewHeadingEl) this.viewHeadingEl.textContent = t("options.view", this);
+    if (this.verticalRulerLabelEl)
+      this.verticalRulerLabelEl.textContent = t("options.showVerticalRuler", this);
     if (this.docHeadingEl) this.docHeadingEl.textContent = t("options.document", this);
     if (this.tabLabelEl) this.tabLabelEl.textContent = t("options.defaultTabStop", this);
     if (this.updateFieldsLabelEl)

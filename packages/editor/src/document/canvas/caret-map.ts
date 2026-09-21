@@ -718,17 +718,20 @@ export class CaretMap {
     // line it left, matching the fallback below).
     const boxes = this.columnBoxes(page);
     const box = boxes.length ? (boxes.findLast((b) => b.left <= x) ?? boxes[0]!) : undefined;
-    // Lines at the best (smallest) vertical distance — one band per click.
     let bestDist = Infinity;
+    let maxBottomY = -Infinity;
+    let minTopY = Infinity;
     const band: LineEntry[] = [];
     for (const entry of this.lines) {
       if (entry.page !== page) continue;
       if (box && !(entry.xPx < box.right && entry.xPx + (entry.line.maxWidthPx ?? 0) > box.left))
         continue;
-      const within = y >= entry.yPx && y <= entry.yPx + entry.line.heightPx;
-      const dist = within
-        ? 0
-        : Math.min(Math.abs(y - entry.yPx), Math.abs(y - (entry.yPx + entry.line.heightPx)));
+      const bottomY = entry.yPx + (entry.line.heightPx || 0);
+      if (bottomY > maxBottomY) maxBottomY = bottomY;
+      if (entry.yPx < minTopY) minTopY = entry.yPx;
+
+      const within = y >= entry.yPx && y <= bottomY;
+      const dist = within ? 0 : Math.min(Math.abs(y - entry.yPx), Math.abs(y - bottomY));
       if (dist > 40 && !clamp) continue;
       if (dist < bestDist) {
         bestDist = dist;
@@ -737,6 +740,29 @@ export class CaretMap {
       if (dist === bestDist) band.push(entry);
     }
     if (!band.length) return null;
+
+    // Word / Docs parity: clicking strictly below all laid lines in this
+    // column on the page lands after all text — snap to the end of the last
+    // line (or cell) instead of resolving to a mid-line character boundary.
+    if (y >= maxBottomY) {
+      const target =
+        band.find((entry) => {
+          const right = entry.xPx + (entry.line.maxWidthPx ?? 0);
+          return x >= entry.xPx && x <= right;
+        }) ?? band[band.length - 1]!;
+      return this.posOfChar(target.owner, target.endChar);
+    }
+    // Clicking strictly above all laid lines in this column on the page lands
+    // before all text — snap to the start of the first line (or cell).
+    if (y <= minTopY) {
+      const target =
+        band.find((entry) => {
+          const right = entry.xPx + (entry.line.maxWidthPx ?? 0);
+          return x >= entry.xPx && x <= right;
+        }) ?? band[0]!;
+      return this.posOfChar(target.owner, target.startChar);
+    }
+
     // The line the x falls inside. A point in the gutter BETWEEN two lines
     // (column gap, cell spacing) belongs to the line it just LEFT — columns
     // share one y band, and x proximity would fling a drag overshooting a

@@ -383,7 +383,7 @@ export interface EditBridge {
   /** A viewport point → the active story's doc position (null off-page or
    *  when the map is stale) — the context menu moves the caret to where it
    *  was right-clicked, like Word. */
-  posAtClient(clientX: number, clientY: number): number | null;
+  posAtClient(clientX: number, clientY: number, clamp?: boolean): number | null;
   /** Right-click on a drawing: select the drawing under the viewport point
    *  (Word selects a picture before its context menu shows). True when a
    *  drawing was hit and selected. */
@@ -2579,7 +2579,7 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
           view.dispatch(tr);
         }
       } else {
-        const clickPos = posAtClient(event.clientX, event.clientY);
+        const clickPos = posAtClient(event.clientX, event.clientY, true);
         if (clickPos != null) setSel(clickPos);
       }
       placeCaret();
@@ -2889,11 +2889,11 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
         // page, the body, the other story's band) closes the story — Word's
         // "double-click the body" exit, single-clicked.
         if (own && hit.page === story.anchorPage) {
-          const pos = posAtClient(event.clientX, event.clientY);
+          const pos = posAtClient(event.clientX, event.clientY, true);
           if (pos != null) clickSelection(pos, event, clicks);
         } else {
           leaveStory();
-          const pos = posAtClient(event.clientX, event.clientY);
+          const pos = posAtClient(event.clientX, event.clientY, true);
           if (pos != null) clickSelection(pos, event, clicks);
         }
         ta.focus();
@@ -3199,7 +3199,7 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
       ta.value = "";
       return;
     }
-    const pos = posAtClient(event.clientX, event.clientY);
+    const pos = posAtClient(event.clientX, event.clientY, true);
     if (pos != null) {
       // Word's Ctrl+Click follows the link instead of dropping a caret; a
       // plain click keeps its editing meaning, and in viewing mode (read-only)
@@ -4906,8 +4906,8 @@ export function mountEditBridge(opts: EditBridgeOptions): EditBridge {
         ? main.map.posOfPara(para as import("@docen/layout").LaidOutParagraph)
         : null;
     },
-    posAtClient(clientX, clientY): number | null {
-      return posAtClient(clientX, clientY);
+    posAtClient(clientX, clientY, clamp = false): number | null {
+      return posAtClient(clientX, clientY, clamp);
     },
     selectDrawingAtClient(clientX, clientY) {
       const hit = hitPage(clientX, clientY);

@@ -734,7 +734,12 @@ export function paintParagraph(
         }
 
         let paintedGlyphs = false;
-        if (item.glyphRun && item.glyphRun.glyphs.length > 0 && !inline.style.rotation3d) {
+        if (
+          label === display &&
+          item.glyphRun &&
+          item.glyphRun.glyphs.length > 0 &&
+          !inline.style.rotation3d
+        ) {
           // Target painted width (justified interval or the squeezed item
           // width) vs the run's natural scaled advance — the glyph positions
           // and x scale stretch by the ratio, matching how the Text path
