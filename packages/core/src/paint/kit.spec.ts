@@ -79,7 +79,7 @@ describe("PaintKit abstraction", () => {
   });
 
   it("supports dynamic withKit context switching", () => {
-    expect(getActiveKit()).toBe(nodeKit);
+    expect(getActiveKit()).toBe(leaferKit);
 
     const dummyLeaferKit = {
       createGroup: (p: any) => ({ tag: "CustomGroup", ...p }),
@@ -98,6 +98,6 @@ describe("PaintKit abstraction", () => {
       expect((r as any).tag).toBe("CustomRect");
     });
 
-    expect(getActiveKit()).toBe(nodeKit);
+    expect(getActiveKit()).toBe(leaferKit);
   });
 });
