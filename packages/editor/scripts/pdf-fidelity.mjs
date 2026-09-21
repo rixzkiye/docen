@@ -407,6 +407,18 @@ check("Laid tables carry /S /Table structure", exportRaw.includes("/S /Table"), 
   tableElements: (exportRaw.match(/\/S \/Table\b/g) || []).length,
 });
 
+// ── A1d. Form Field Annotations & AcroForm Verification ──────────────────────
+const hasFormFields = exportRaw.includes("/AcroForm") || exportRaw.includes("/Subtype /Widget");
+if (hasFormFields) {
+  console.log(`\n── A1d. Form Field & AcroForm Verification ──`);
+  check("Catalog carries /AcroForm reference", /\/AcroForm\s+\d+\s+0\s+R/.test(exportRaw));
+  check(
+    "AcroForm dictionary carries /Fields and /NeedAppearances",
+    /\/Fields\s*\[[^\]]+\]/.test(exportRaw) && exportRaw.includes("/NeedAppearances true"),
+  );
+  check("Pages carry /Subtype /Widget annotations", exportRaw.includes("/Subtype /Widget"));
+}
+
 // ── A2 Verification: Visual Fidelity (pdftoppm -r 96 vs Canvas) ─────────────
 console.log(`\n── A2. Visual Fidelity Verification ──`);
 const ppmPrefix = join(SHOTS, "p1-ppm");

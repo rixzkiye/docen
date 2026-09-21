@@ -82,6 +82,7 @@ export interface PdfPageShot {
   scene?: PdfScenePage;
   textSpans?: PdfTextSpan[];
   links?: PdfLinkAnnotation[];
+  formFields?: readonly PdfFormField[];
 }
 
 /** One embedded subset font with its raw bytes and optional mappings.
@@ -158,11 +159,12 @@ export interface PdfViewerPreferences {
 /** Interactive form field for AcroForm. */
 export interface PdfFormField {
   name: string;
-  type: "text" | "checkbox";
+  type: "text" | "checkbox" | "dropdown";
   pageIndex: number;
   rect: [number, number, number, number]; // [left, bottom, right, top] in pt
   value?: string | boolean;
   readOnly?: boolean;
+  options?: readonly string[];
 }
 
 /** Accessibility structure element with semantic tag and alt text. */
@@ -523,6 +525,11 @@ export async function pagesToPdf(
 
   const pt = (px: number): number => (px * 72) / 96;
 
+  const formFields =
+    options?.formFields && options.formFields.length > 0
+      ? options.formFields
+      : shots.flatMap((s) => s.formFields ?? []);
+
   // Object numbering allocator
   let nextId = 1;
   const allocId = () => nextId++;
@@ -673,7 +680,7 @@ export async function pagesToPdf(
     }));
     const stateIds = (plan?.extGStates ?? []).map(() => allocId());
     const annotIds = (shot.links ?? []).map(() => allocId());
-    const pageFields = (options?.formFields ?? []).filter(
+    const pageFields = formFields.filter(
       (f) => Math.max(0, Math.min(shots.length - 1, f.pageIndex)) === index,
     );
     const fieldAnnotIds = pageFields.map(() => allocId());
@@ -825,7 +832,7 @@ export async function pagesToPdf(
   }
 
   // AcroForm object ID
-  const acroFormId = options?.formFields && options.formFields.length > 0 ? allocId() : undefined;
+  const acroFormId = formFields.length > 0 ? allocId() : undefined;
 
   // 1. Catalog Object
   let catDict = `<< /Type /Catalog /Pages ${pagesId} 0 R`;
@@ -1249,7 +1256,7 @@ export async function pagesToPdf(
     }
 
     // Form Field Annotations (AcroForm Widgets)
-    const pageFields = (options?.formFields ?? []).filter(
+    const pageFields = formFields.filter(
       (f) => Math.max(0, Math.min(shots.length - 1, f.pageIndex)) === i,
     );
     for (let fIdx = 0; fIdx < pageFields.length; fIdx++) {
@@ -1273,6 +1280,9 @@ export async function pagesToPdf(
         const isChecked = field.value === true;
         const state = isChecked ? "/Yes" : "/Off";
         fieldDict += ` /FT /Btn /V ${state} /AS ${state}`;
+      } else if (field.type === "dropdown") {
+        const opts = field.options?.map((o) => `(${escapePdfString(o)})`).join(" ") ?? "";
+        fieldDict += ` /FT /Ch /Opt [ ${opts} ] /V (${escapePdfString(String(field.value ?? ""))}) /DA (/F1 12 Tf 0 g)`;
       }
       fieldDict += ` >>\nendobj\n`;
       addObject(fieldId, fieldDict);
@@ -1443,12 +1453,12 @@ function consumeVisiblePlacement(
   return false;
 }
 
-/** Extract text spans and link annotations from laid-out document pages for PDF export. */
+/** Extract text spans, link annotations, and form fields from laid-out document pages for PDF export. */
 export function extractPdfPageLayers(
   pages: readonly FlowPage[],
   sections: readonly CanvasStageSection[],
   sectionOfPage: readonly number[],
-): { textSpans: PdfTextSpan[]; links: PdfLinkAnnotation[] }[] {
+): { textSpans: PdfTextSpan[]; links: PdfLinkAnnotation[]; formFields: PdfFormField[] }[] {
   const toPt = (px: number): number => (px * 72) / 96;
 
   return pages.map((page, pageIndex) => {
@@ -1467,6 +1477,7 @@ export function extractPdfPageLayers(
 
     const textSpans: PdfTextSpan[] = [];
     const links: PdfLinkAnnotation[] = [];
+    const formFields: PdfFormField[] = [];
 
     const pageCtx = {
       pageIndex,
@@ -1543,6 +1554,19 @@ export function extractPdfPageLayers(
                 ...(typeof style?.color === "string" ? { color: style.color } : {}),
                 tag: "P",
               });
+
+              // Form fields
+              if (inline && "formField" in inline && inline.formField) {
+                formFields.push({
+                  name: inline.formField.name,
+                  type: inline.formField.type,
+                  pageIndex,
+                  rect: [xPt, toPdfY(lineY + line.heightPx), xPt + widthPt, toPdfY(lineY)],
+                  value: inline.formField.value,
+                  readOnly: inline.formField.readOnly,
+                  options: inline.formField.options,
+                });
+              }
 
               // Hyperlinks
               const link =
@@ -1631,6 +1655,6 @@ export function extractPdfPageLayers(
       }
     }
 
-    return { textSpans, links };
+    return { textSpans, links, formFields };
   });
 }

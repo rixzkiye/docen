@@ -2604,3 +2604,72 @@ describe("projectDocumentOptions bidi direction", () => {
     expect(runs[1] && runs[1].kind === "text" ? runs[1].style.direction : undefined).toBe("ltr");
   });
 });
+
+describe("projectDocumentOptions form fields", () => {
+  it("projects checkbox, dropdown, and text input form fields to LayoutInline", () => {
+    const { blocks } = oneSection(
+      doc([
+        {
+          paragraph: {
+            children: [
+              {
+                formField: {
+                  name: "cb_field",
+                  checkBox: { checked: true },
+                  readOnly: true,
+                },
+              } as unknown as ParagraphChild,
+              {
+                formField: {
+                  name: "dd_field",
+                  dropDownList: {
+                    entries: ["Choice 1", "Choice 2"],
+                    result: 1,
+                  },
+                },
+              } as unknown as ParagraphChild,
+              {
+                formField: {
+                  name: "txt_field",
+                  textInput: { value: "Hello Field" },
+                },
+              } as unknown as ParagraphChild,
+            ],
+          },
+        },
+      ]),
+    );
+
+    const para = blocks[0];
+    expect(para?.kind).toBe("paragraph");
+    if (para?.kind !== "paragraph") return;
+
+    const runs = para.inline.filter((i) => i.kind === "text");
+    expect(runs).toHaveLength(3);
+
+    expect(runs[0] && runs[0].kind === "text" ? runs[0].formField : undefined).toEqual({
+      name: "cb_field",
+      type: "checkbox",
+      value: true,
+      readOnly: true,
+    });
+    expect(runs[0] && runs[0].kind === "text" ? runs[0].text : undefined).toBe("☒");
+
+    expect(runs[1] && runs[1].kind === "text" ? runs[1].formField : undefined).toEqual({
+      name: "dd_field",
+      type: "dropdown",
+      options: ["Choice 1", "Choice 2"],
+      value: "Choice 2",
+      readOnly: false,
+    });
+    expect(runs[1] && runs[1].kind === "text" ? runs[1].text : undefined).toBe("Choice 2");
+
+    expect(runs[2] && runs[2].kind === "text" ? runs[2].formField : undefined).toEqual({
+      name: "txt_field",
+      type: "text",
+      value: "Hello Field",
+      readOnly: false,
+    });
+    expect(runs[2] && runs[2].kind === "text" ? runs[2].text : undefined).toBe("Hello Field");
+  });
+});

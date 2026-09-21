@@ -166,6 +166,14 @@ export interface LayoutInlineNoteRef {
   ordinal: number;
 }
 
+export interface LayoutInlineFormField {
+  name: string;
+  type: "text" | "checkbox" | "dropdown";
+  value?: string | boolean;
+  readOnly?: boolean;
+  options?: string[];
+}
+
 export type LayoutInline =
   /** A `field` marker makes the text a dynamic page-number atom (w:fldSimple /
    *  complexField PAGE / NUMPAGES): the value only exists after pagination, so
@@ -223,6 +231,8 @@ export type LayoutInline =
       formatChange?: { color: string };
       /** Hyperlink destination (external URL or internal #bookmark anchor). */
       link?: { url?: string; anchor?: string; tooltip?: string };
+      /** Form field metadata (Word legacy form fields: textInput, checkBox, dropDownList). */
+      formField?: LayoutInlineFormField;
     }
   | { kind: "break" }
   | { kind: "tab"; toPx?: number }
@@ -290,3 +300,5 @@ export function fieldLabelOf(
         : measured)
   );
 }
+
+export type LaidOutInlineText = Extract<LayoutInline, { kind: "text" }>;
