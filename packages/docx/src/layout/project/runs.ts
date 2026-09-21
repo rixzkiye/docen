@@ -12,6 +12,7 @@ import {
   type LayoutBalloonAnchor,
   type LayoutCombine,
   type LayoutInline,
+  type LayoutInlineFormField,
   type LayoutTextStyle,
 } from "@docen/layout";
 
@@ -399,7 +400,7 @@ export function projectRuns(
         : {}),
     };
   };
-  const pushText = (text: string, rPr: Rec): void => {
+  const pushText = (text: string, rPr: Rec, formField?: LayoutInlineFormField): void => {
     if (!text) return;
     const runLang = str(rPr.language) || "en";
     const runText =
@@ -437,6 +438,7 @@ export function projectRuns(
       commentIds,
       ...(combine ? { combine } : {}),
       ...(link ? { link } : {}),
+      ...(formField ? { formField } : {}),
       ...indicator,
     });
     const inlineIndex = out.length - 1;
@@ -711,8 +713,24 @@ export function projectRuns(
       if (isRecord(child.formField)) {
         const ff = child.formField as Record<string, unknown>;
         let ffText = "";
+        const name =
+          typeof ff.name === "string"
+            ? ff.name
+            : typeof ff.name === "number"
+              ? String(ff.name)
+              : "field";
+        const readOnly = Boolean(ff.readOnly);
+        let formField: LayoutInlineFormField | undefined;
         if (isRecord(ff.checkBox)) {
-          ffText = ff.checkBox.checked ? "☒" : "☐";
+          const cb = ff.checkBox as Record<string, unknown>;
+          const checked = Boolean(cb.checked);
+          ffText = checked ? "☒" : "☐";
+          formField = {
+            name,
+            type: "checkbox",
+            value: checked,
+            readOnly,
+          };
         } else if (isRecord(ff.dropDownList)) {
           const ddl = ff.dropDownList as {
             entries?: string[];
@@ -721,11 +739,25 @@ export function projectRuns(
           };
           const idx = ddl.result ?? ddl.default ?? 0;
           ffText = Array.isArray(ddl.entries) && ddl.entries[idx] ? ddl.entries[idx]! : "";
+          formField = {
+            name,
+            type: "dropdown",
+            options: Array.isArray(ddl.entries) ? ddl.entries : [],
+            value: ffText,
+            readOnly,
+          };
         } else if (isRecord(ff.textInput)) {
           const ti = ff.textInput as { value?: string; default?: string };
           ffText = ti.value ?? ti.default ?? "";
+          formField = {
+            name,
+            type: "text",
+            value: ffText,
+            readOnly,
+          };
         }
-        if (ffText) pushText(ffText, rPr);
+        const textToPush = ffText || (formField ? " " : "");
+        if (textToPush) pushText(textToPush, rPr, formField);
       }
       if (child.tab != null) out.push({ kind: "tab" });
       if (isRecord(child.math)) {

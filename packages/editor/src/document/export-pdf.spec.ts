@@ -353,6 +353,108 @@ describe("extractPdfPageLayers", () => {
     expect(links).toHaveLength(1);
     expect(links[0]!.url).toBe("https://word.com");
   });
+
+  it("extracts form fields from laid-out paragraphs", () => {
+    const mockParagraph: LaidOutParagraph = {
+      kind: "paragraph",
+      heightPx: 40,
+      beforePx: 0,
+      afterPx: 0,
+      lines: [
+        {
+          yPx: 0,
+          heightPx: 20,
+          naturalPx: 16,
+          endInlineIndex: 2,
+          items: [
+            {
+              kind: "text",
+              inlineIndex: 0,
+              text: "John Doe",
+              xPx: 0,
+              widthPx: 80,
+            },
+            {
+              kind: "text",
+              inlineIndex: 1,
+              text: "☒",
+              xPx: 90,
+              widthPx: 20,
+            },
+            {
+              kind: "text",
+              inlineIndex: 2,
+              text: "Option A",
+              xPx: 120,
+              widthPx: 60,
+            },
+          ],
+        },
+      ],
+      inline: [
+        {
+          kind: "text",
+          text: "John Doe",
+          style: { family: "Calibri", sizePx: 16 },
+          formField: {
+            name: "field_name",
+            type: "text",
+            value: "John Doe",
+            readOnly: false,
+          },
+        },
+        {
+          kind: "text",
+          text: "☒",
+          style: { family: "Calibri", sizePx: 16 },
+          formField: {
+            name: "field_check",
+            type: "checkbox",
+            value: true,
+          },
+        },
+        {
+          kind: "text",
+          text: "Option A",
+          style: { family: "Calibri", sizePx: 16 },
+          formField: {
+            name: "field_drop",
+            type: "dropdown",
+            value: "Option A",
+            options: ["Option A", "Option B"],
+          },
+        },
+      ],
+    };
+
+    const mockPage: FlowPage = {
+      items: [{ yPx: 0, block: mockParagraph }],
+    };
+    const mockSection: CanvasStageSection = {
+      flow: {
+        pageWidthPx: 816,
+        pageHeightPx: 1056,
+        contentLeftPx: 96,
+        contentTopPx: 96,
+        contentWidthPx: 624,
+        contentHeightPx: 864,
+      },
+    };
+
+    const layers = extractPdfPageLayers([mockPage], [mockSection], [0]);
+    expect(layers).toHaveLength(1);
+    const { formFields } = layers[0]!;
+    expect(formFields).toHaveLength(3);
+    expect(formFields[0]!.name).toBe("field_name");
+    expect(formFields[0]!.type).toBe("text");
+    expect(formFields[0]!.value).toBe("John Doe");
+    expect(formFields[1]!.name).toBe("field_check");
+    expect(formFields[1]!.type).toBe("checkbox");
+    expect(formFields[1]!.value).toBe(true);
+    expect(formFields[2]!.name).toBe("field_drop");
+    expect(formFields[2]!.type).toBe("dropdown");
+    expect(formFields[2]!.options).toEqual(["Option A", "Option B"]);
+  });
 });
 
 describe("pdftotext and pdfinfo integration verification", () => {
@@ -1485,6 +1587,61 @@ describe("P3 structure and navigation acceptance", () => {
     expect(pageAnnotsMatch).not.toBeNull();
     const annotRefs = pageAnnotsMatch![1]!.trim().split(/\s+/);
     expect(annotRefs.length).toBe(9); // 3 annots * 3 tokens ("id 0 R") = 9 tokens
+  });
+
+  it("P3 AcroForm form fields: generates text, checkbox, and dropdown with options and widget annotations", async () => {
+    const shots: PdfPageShot[] = [
+      {
+        ...blankShot(0),
+        formFields: [
+          {
+            name: "customer_name",
+            type: "text",
+            pageIndex: 0,
+            rect: [100, 600, 300, 620],
+            value: "Jane Smith",
+            readOnly: true,
+          },
+          {
+            name: "subscribe_newsletter",
+            type: "checkbox",
+            pageIndex: 0,
+            rect: [100, 550, 120, 570],
+            value: true,
+          },
+          {
+            name: "favorite_color",
+            type: "dropdown",
+            pageIndex: 0,
+            rect: [100, 500, 250, 520],
+            value: "Blue",
+            options: ["Red", "Green", "Blue"],
+            readOnly: false,
+          },
+        ],
+      },
+    ];
+
+    const blob = await pagesToPdf(shots);
+    const pdfBuf = Buffer.from(await blob.arrayBuffer());
+    const pdfStr = pdfBuf.toString("latin1");
+
+    // All required tokens asserted
+    expect(pdfStr).toContain("/AcroForm");
+    expect(pdfStr).toContain("/Annots");
+    expect(pdfStr).toContain("/FT /Tx");
+    expect(pdfStr).toContain("/FT /Btn");
+    expect(pdfStr).toContain("/FT /Ch");
+    expect(pdfStr).toContain("/T");
+    expect(pdfStr).toContain("/V");
+    expect(pdfStr).toContain("/Opt");
+    expect(pdfStr).toContain("/DA");
+
+    // Dropdown specifics
+    expect(pdfStr).toContain("/T (favorite_color)");
+    expect(pdfStr).toContain("/V (Blue)");
+    expect(pdfStr).toContain("/Opt [ (Red) (Green) (Blue) ]");
+    expect(pdfStr).toContain("/DA (/F1 12 Tf 0 g)");
   });
 
   it("P3 tagged PDF accessibility: emits StructElem with Alt text for figure / table", async () => {

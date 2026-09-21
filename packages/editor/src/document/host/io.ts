@@ -278,7 +278,9 @@ export class IODomain {
       ...shot,
       textSpans: pageLayers[i]?.textSpans,
       links: pageLayers[i]?.links,
+      formFields: pageLayers[i]?.formFields,
     }));
+    const formFields = shotsWithLayers.flatMap((shot) => shot.formFields ?? []);
     const fonts = this.host.fonts();
     const embeddedFonts =
       fonts.size > 0
@@ -306,6 +308,7 @@ export class IODomain {
         ? { destinations: structure.destinations }
         : {}),
       ...(structure.structElements.length > 0 ? { structElements: structure.structElements } : {}),
+      ...(formFields.length > 0 ? { formFields } : {}),
     });
     return { blob, pages: shotsWithLayers, embeddedFonts };
   }
