@@ -1,7 +1,7 @@
 {
   "name": "docen",
   "version": "0.7.0",
-  "description": "The full docen canvas web-component editor plus headless Markdown/DOCX conversion in one package. Re-exports @docen/docx (converters + engine) and @docen/editor (<docen-document>).",
+  "description": "The full docen canvas web-component editor plus headless Markdown/DOCX/PDF conversion in one package. Re-exports @docen/docx, @docen/pdf, and @docen/editor (<docen-document>).",
   "keywords": [
     "canvas",
     "components",
@@ -61,6 +61,10 @@
     "./editor": {
       "types": "./dist/editor.d.mts",
       "import": "./dist/editor.mjs"
+    },
+    "./pdf": {
+      "types": "./dist/pdf.d.mts",
+      "import": "./dist/pdf.mjs"
     }
   },
   "scripts": {
@@ -70,6 +74,7 @@
   },
   "dependencies": {
     "@docen/docx": "workspace:*",
-    "@docen/editor": "workspace:*"
+    "@docen/editor": "workspace:*",
+    "@docen/pdf": "workspace:*"
   }
 }

@@ -59,6 +59,9 @@ importers:
       '@docen/editor':
         specifier: workspace:*
         version: link:../editor
+      '@docen/pdf':
+        specifier: workspace:*
+        version: link:../pdf
 
   packages/docx:
     dependencies:
