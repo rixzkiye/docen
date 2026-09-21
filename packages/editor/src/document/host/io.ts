@@ -39,6 +39,7 @@ import {
   pagesToPdf,
   sceneTextSpans,
   type PdfEmbeddedFont,
+  type PdfExportOptions,
   type PdfPageShot,
 } from "../export-pdf";
 import { collectRevisions } from "../extensions/track-changes";
@@ -225,12 +226,16 @@ export class IODomain {
    *  carry both the scene and the preview PNG the caller can compare against.
    *  A non-print view re-projects for the export and falls back afterwards.
    *
+   *  `options.metadata` overrides the Info-dict defaults — a fixed
+   *  `creationDate`/`modDate` makes the export byte-deterministic for
+   *  server-side rendering and caching.
+   *
    *  The document's structure options (heading outline, section page labels,
    *  bookmark destinations, figure/table struct elements) derive from the
    *  live print run — the caret map's page boxes and the section projection —
    *  before a non-print view restores, so the navigation matches the pages
    *  the export rasterizes. */
-  async buildPdf(): Promise<{
+  async buildPdf(options?: { metadata?: PdfExportOptions["metadata"] }): Promise<{
     blob: Blob;
     pages: readonly PdfPageShot[];
     embeddedFonts: readonly PdfEmbeddedFont[];
@@ -288,7 +293,7 @@ export class IODomain {
         : [];
     const title = this.host.getAttribute("filename") ?? t("header.doc-name", this.host.element());
     const blob = await pagesToPdf(shotsWithLayers, {
-      metadata: { title, author: "Docen" },
+      metadata: { title, author: "Docen", ...options?.metadata },
       tagged: true,
       ...(embeddedFonts.length > 0 ? { embeddedFonts } : {}),
       ...(structure.outline.length > 0 ? { outline: structure.outline } : {}),
