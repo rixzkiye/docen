@@ -111,6 +111,12 @@ export interface ProjectedPageNumbering {
   /** The w:numFmt token the number renders in (1,2,3 / i,ii,iii / ①,②,③…);
    *  absent = decimal. */
   format?: string;
+  /** Explicit prefix for page labels, or resolved chapter-prefix string. */
+  prefix?: string;
+  /** Chapter separator character (mapped from w:chapSep or verbatim character). */
+  separator?: string;
+  /** Chapter heading level style (w:chapStyle, 0 = Heading 1, etc.). */
+  chapterStyle?: number;
 }
 
 /** Section columns projected for the flow (w:cols): the page's content box

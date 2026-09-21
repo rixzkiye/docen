@@ -442,9 +442,28 @@ export function projectLineNumbers(properties: unknown): ProjectedLineNumbers | 
   };
 }
 
-/** Project a section's w:pgNumType for the PAGE field: the restart number and
- *  the w:numFmt token the numbers render in. Absent or empty projects to
- *  undefined (decimal numbers continuing the previous section). */
+const PAGE_NUMBER_SEPARATORS: Record<string, string> = {
+  hyphen: "-",
+  period: ".",
+  colon: ":",
+  emDash: "—",
+  enDash: "–",
+};
+
+/** Parse chapterStyle as a valid number if passed as number or numeric string. */
+function parseChapterStyle(val: unknown): number | undefined {
+  const n = num(val);
+  if (n != null) return n;
+  if (typeof val === "string" && /^\d+$/.test(val.trim())) {
+    return parseInt(val.trim(), 10);
+  }
+  return undefined;
+}
+
+/** Project a section's w:pgNumType for the PAGE field: the restart number,
+ *  the w:numFmt token the numbers render in, explicit prefix, and chapter
+ *  style/separator. Absent or empty projects to undefined (decimal numbers
+ *  continuing the previous section). */
 export function projectPageNumbering(properties: unknown): ProjectedPageNumbering | undefined {
   const raw =
     isRecord(properties) && isRecord(properties.pageNumberType)
@@ -453,10 +472,17 @@ export function projectPageNumbering(properties: unknown): ProjectedPageNumberin
   if (!raw) return undefined;
   const start = num(raw.start);
   const format = str(raw.format);
-  if (start == null && !format) return undefined;
+  const rawSep = str(raw.separator ?? raw.chapSep);
+  const separator = rawSep ? (PAGE_NUMBER_SEPARATORS[rawSep] ?? rawSep) : undefined;
+  const chapterStyle = parseChapterStyle(raw.chapterStyle ?? raw.chapStyle);
+  const prefix = str(raw.prefix);
+  const hasChapter = chapterStyle != null && separator != null;
+  if (start == null && !format && !prefix && !hasChapter) return undefined;
   return {
     ...(start != null ? { start } : {}),
     ...(format ? { format } : {}),
+    ...(prefix ? { prefix } : {}),
+    ...(hasChapter ? { chapterStyle, separator } : {}),
   };
 }
 
