@@ -1,0 +1,201 @@
+{
+  "type": "doc",
+  "content": [
+    {
+      "type": "paragraph",
+      "attrs": { "heading": "Title", "alignment": "center" },
+      "content": [{ "type": "text", "text": "Server PDF Render Fixture" }]
+    },
+    {
+      "type": "paragraph",
+      "attrs": { "alignment": "center" },
+      "content": [
+        {
+          "type": "text",
+          "text": "Deterministic headless export · R11-S1",
+          "marks": [{ "type": "textStyle", "attrs": { "color": "595959" } }]
+        }
+      ]
+    },
+    {
+      "type": "paragraph",
+      "attrs": { "heading": "Heading1" },
+      "content": [{ "type": "text", "text": "Character formatting" }]
+    },
+    {
+      "type": "paragraph",
+      "content": [
+        { "type": "text", "text": "This paragraph exercises " },
+        { "type": "text", "text": "bold", "marks": [{ "type": "bold" }] },
+        { "type": "text", "text": ", " },
+        { "type": "text", "text": "italic", "marks": [{ "type": "italic" }] },
+        { "type": "text", "text": ", " },
+        { "type": "text", "text": "underline", "marks": [{ "type": "underline" }] },
+        { "type": "text", "text": ", " },
+        { "type": "text", "text": "strikethrough", "marks": [{ "type": "strike" }] },
+        { "type": "text", "text": ", and " },
+        {
+          "type": "text",
+          "text": "colored text",
+          "marks": [{ "type": "textStyle", "attrs": { "color": "C00000" } }]
+        },
+        { "type": "text", "text": " so pdftotext can prove the text layer survives the export." }
+      ]
+    },
+    {
+      "type": "paragraph",
+      "attrs": { "heading": "Heading1" },
+      "content": [{ "type": "text", "text": "Lists" }]
+    },
+    {
+      "type": "paragraph",
+      "attrs": { "bullet": { "level": 0 } },
+      "content": [{ "type": "text", "text": "A first-level bullet item" }]
+    },
+    {
+      "type": "paragraph",
+      "attrs": { "bullet": { "level": 0 } },
+      "content": [{ "type": "text", "text": "A second bullet with a page-count check behind it" }]
+    },
+    {
+      "type": "paragraph",
+      "attrs": { "bullet": { "level": 1 } },
+      "content": [{ "type": "text", "text": "A nested bullet item" }]
+    },
+    {
+      "type": "paragraph",
+      "attrs": { "heading": "Heading1" },
+      "content": [{ "type": "text", "text": "Table" }]
+    },
+    {
+      "type": "table",
+      "attrs": {
+        "columnWidths": [3000, 6000],
+        "borders": {
+          "top": { "style": "single", "size": 4, "color": "000000" },
+          "bottom": { "style": "single", "size": 4, "color": "000000" },
+          "left": { "style": "single", "size": 4, "color": "000000" },
+          "right": { "style": "single", "size": 4, "color": "000000" },
+          "insideHorizontal": { "style": "single", "size": 4, "color": "000000" },
+          "insideVertical": { "style": "single", "size": 4, "color": "000000" }
+        }
+      },
+      "content": [
+        {
+          "type": "tableRow",
+          "attrs": { "tableHeader": true },
+          "content": [
+            {
+              "type": "tableCell",
+              "attrs": { "shading": { "fill": "DEEAF6" } },
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [{ "type": "text", "text": "Property", "marks": [{ "type": "bold" }] }]
+                }
+              ]
+            },
+            {
+              "type": "tableCell",
+              "attrs": { "shading": { "fill": "DEEAF6" } },
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [{ "type": "text", "text": "Value", "marks": [{ "type": "bold" }] }]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "tableRow",
+          "content": [
+            {
+              "type": "tableCell",
+              "content": [
+                { "type": "paragraph", "content": [{ "type": "text", "text": "engine" }] }
+              ]
+            },
+            {
+              "type": "tableCell",
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [{ "type": "text", "text": "leafer scene → vector PDF" }]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "tableRow",
+          "content": [
+            {
+              "type": "tableCell",
+              "content": [{ "type": "paragraph", "content": [{ "type": "text", "text": "date" }] }]
+            },
+            {
+              "type": "tableCell",
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [{ "type": "text", "text": "fixed via --date for byte determinism" }]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "paragraph",
+      "attrs": { "heading": "Heading1" },
+      "content": [{ "type": "text", "text": "Body copy" }]
+    },
+    {
+      "type": "paragraph",
+      "content": [
+        {
+          "type": "text",
+          "text": "The renderer launches one headless Chromium, loads the editor page once per pool slot, injects this JSON through the host's public setJSON method, forces a synchronous repagination, and exports through exportPdf. The PDF bytes travel back to Node as base64 and are written to disk or stdout."
+        }
+      ]
+    },
+    {
+      "type": "paragraph",
+      "content": [
+        {
+          "type": "text",
+          "text": "With a fixed --date the whole pipeline is deterministic: the Info dictionary is the only wall-clock input in the exporter, so the same document renders to identical SHA-256 bytes on every run. That property is what makes the content-hash cache safe: a cache hit returns the exact bytes a fresh render would have produced."
+        }
+      ]
+    },
+    {
+      "type": "paragraph",
+      "content": [
+        {
+          "type": "text",
+          "text": "The second page exists to prove the page count reported by pdfinfo matches the paginated canvas: this fixture is intentionally long enough to cross a page boundary, which also exercises the page-slot settle loop before the export snapshots the scenes."
+        }
+      ]
+    },
+    {
+      "type": "paragraph",
+      "content": [
+        {
+          "type": "text",
+          "text": "Paragraphs like this one push the flow past the first page boundary. The paginator places them on page two while the text layer keeps every word extractable for pdftotext checks. No images or external assets are referenced, so the fixture renders without network access beyond the editor URL itself."
+        }
+      ]
+    },
+    {
+      "type": "paragraph",
+      "content": [
+        {
+          "type": "text",
+          "text": "Final paragraph: cache key input, cache miss, deterministic bytes, page count, and extracted text all line up for the verification evidence in the R11-S1 report."
+        }
+      ]
+    }
+  ]
+}
