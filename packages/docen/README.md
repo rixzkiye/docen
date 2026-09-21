@@ -56,17 +56,44 @@ const doc = parseDOCX(buffer);
 const docxBuffer = await generateDOCX(doc); // defaults to a Node.js Buffer
 ```
 
+### PDF Generation
+
+Generate vector PDFs server-side in pure Node.js without browser or DOM:
+
+```typescript
+import { generatePDF } from "docen";
+
+// Generate PDF from TipTap JSON
+const pdfBytes = await generatePDF(doc, {
+  title: "My Document",
+  pdfa: "2b", // ISO 19005-2 PDF/A-2b compliance
+  pdfUa: true, // ISO 14289-1 PDF/UA-1 accessibility
+  backend: "node", // "node" (default) or "chromium"
+});
+```
+
 ### Cross-Format Conversion
 
 Convert between formats by using TipTap JSON as the intermediate format:
 
 ```typescript
-import { parseMarkdown, generateDOCX } from "docen";
+import { parseMarkdown, generateDOCX, generatePDF } from "docen";
 
 // Markdown → DOCX
 const md = "# Title\n\nContent...";
 const doc = parseMarkdown(md);
 const docx = await generateDOCX(doc, { packer: { type: "blob" } });
+
+// Markdown → PDF
+const pdf = await generatePDF(doc, { title: "Title" });
+```
+
+### Headless PDF Engine (via `docen/pdf`)
+
+Import from `docen/pdf` to access low-level PDF primitives, scene serialization, and vector PDF compilation:
+
+```typescript
+import { renderPdf, pagesToPdf, serializeNodeScene } from "docen/pdf";
 ```
 
 ### Full Editor (via `docen/editor`)

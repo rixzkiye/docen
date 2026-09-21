@@ -15,6 +15,22 @@ export type { DocxGenerateOptions, DocxPatchContent, DocxPatchOptions } from "@d
 // Markdown converters
 export { parseMarkdown, generateMarkdown } from "@docen/docx";
 
+// PDF converters
+export {
+  generatePDF,
+  nodeBackendAdapter,
+  chromiumBackendAdapter,
+  registerPdfBackend,
+  getPdfBackend,
+} from "./pdf-adapter";
+export type {
+  GeneratePdfOptions,
+  PdfBackendType,
+  PdfBackendAdapter,
+  ChromiumBackendOptions,
+} from "./pdf-adapter";
+export type { RenderPdfOptions, PdfExportOptions } from "@docen/pdf";
+
 // Plain text converters
 export { parseText, generateText } from "./text";
 
