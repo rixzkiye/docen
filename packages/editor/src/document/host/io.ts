@@ -241,6 +241,9 @@ export class IODomain {
       this.host.renderDoc(this.getJSON());
     }
     const shots = (await this.host.stage()?.sceneSnapshots()) ?? [];
+    // Text/link layers and structure must come from the same print run the
+    // shots were rasterized from — a non-print view's restore below re-lays
+    // the document, so both derive before it.
     const structure = buildPdfStructure({
       doc: this.host.editor()?.state.doc,
       sections: this.host.lastRun()?.sections ?? [],
@@ -248,6 +251,14 @@ export class IODomain {
       pages: this.host.pages(),
       boxOf: (pos) => this.host.bridge()?.caretBox(pos) ?? null,
     });
+    const pageLayers =
+      shots.length > 0
+        ? extractPdfPageLayers(
+            this.host.pages(),
+            this.host.lastRun()?.sections ?? [],
+            this.host.sectionOfPage(),
+          )
+        : [];
     if (mode !== "print") {
       this.host.stage()?.setViewMode(mode);
       this.host.renderDoc(this.getJSON());
@@ -255,11 +266,6 @@ export class IODomain {
     if (shots.length === 0) {
       return { blob: new Blob([], { type: "application/pdf" }), pages: [], embeddedFonts: [] };
     }
-    const pageLayers = extractPdfPageLayers(
-      this.host.pages(),
-      this.host.lastRun()?.sections ?? [],
-      this.host.sectionOfPage(),
-    );
     const shotsWithLayers: PdfPageShot[] = shots.map((shot, i) => ({
       ...shot,
       textSpans: pageLayers[i]?.textSpans,
