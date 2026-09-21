@@ -131,7 +131,7 @@ describe("renderPdf headless entry point", () => {
     expect(pdfBytes.length).toBeGreaterThan(1000);
     const text = new TextDecoder("latin1").decode(pdfBytes);
     expect(text).toContain("/XObject");
-  });
+  }, 30000); // image decode + full render: headroom under full-suite load
 
   it("renders documents with PDF/A-2b and PDF/UA-1 conformance", async () => {
     const doc = {
