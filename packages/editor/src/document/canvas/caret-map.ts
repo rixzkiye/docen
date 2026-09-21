@@ -731,9 +731,7 @@ export class CaretMap {
       if (entry.yPx < minTopY) minTopY = entry.yPx;
 
       const within = y >= entry.yPx && y <= bottomY;
-      const dist = within
-        ? 0
-        : Math.min(Math.abs(y - entry.yPx), Math.abs(y - bottomY));
+      const dist = within ? 0 : Math.min(Math.abs(y - entry.yPx), Math.abs(y - bottomY));
       if (dist > 40 && !clamp) continue;
       if (dist < bestDist) {
         bestDist = dist;

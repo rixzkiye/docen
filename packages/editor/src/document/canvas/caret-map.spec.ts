@@ -594,4 +594,3 @@ describe("CaretMap empty paragraph alignment", () => {
     });
   });
 });
-
