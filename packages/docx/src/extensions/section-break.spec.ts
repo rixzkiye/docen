@@ -93,7 +93,7 @@ describe("setSectionBreak command w:type placement", () => {
     expect(editor.getJSON().attrs?.sectionProperties ?? null).toBeNull();
   });
 
-  it("clears an existing type for nextPage (the OOXML default), keeping sibling properties", () => {
+  it("clears an existing type for nextPage (the OOXML default) while both sections keep their geometry", () => {
     const pageSize = { width: 11906, height: 16838 };
     const editor = editorWith([para("A"), para("B")], {
       sectionProperties: { type: "oddPage", pageSize },
@@ -101,7 +101,9 @@ describe("setSectionBreak command w:type placement", () => {
     editor.commands.setSectionBreak();
 
     const json = editor.getJSON();
-    expect(json.content?.[0]?.attrs?.sectionProperties).toEqual({});
+    // The closed section keeps a copy of its own sectPr — the split must not
+    // wipe the section's page setup (it keeps its original start type too).
+    expect(json.content?.[0]?.attrs?.sectionProperties).toEqual({ type: "oddPage", pageSize });
     const body = json.attrs?.sectionProperties as Record<string, unknown>;
     expect("type" in body).toBe(false);
     // The rest of the following section's sectPr survives the clear.
@@ -115,6 +117,56 @@ describe("setSectionBreak command w:type placement", () => {
     const json = editor.getJSON();
     expect(json.content?.[0]?.attrs?.sectionProperties).toEqual({});
     expect(json.attrs?.sectionProperties ?? null).toBeNull();
+  });
+});
+
+describe("split geometry preservation", () => {
+  it("copies the final section's page geometry onto the closing paragraph", () => {
+    const pageSize = { width: 12240, height: 15840 };
+    const pageMargin = { left: 1800, right: 1800 };
+    const editor = editorWith([para("A"), para("B")], {
+      sectionProperties: { pageSize, pageMargin },
+    });
+    editor.commands.setSectionBreak({ type: "oddPage" });
+
+    const json = editor.getJSON();
+    // The first section keeps its own geometry after the split…
+    expect(json.content?.[0]?.attrs?.sectionProperties).toEqual({ pageSize, pageMargin });
+    // …and the new final section keeps the geometry plus the new type.
+    expect(json.attrs?.sectionProperties).toEqual({ pageSize, pageMargin, type: "oddPage" });
+
+    const { sections } = compileDocument(json);
+    const propsOf = (i: number) => {
+      const props = sections[i]?.properties;
+      const size =
+        typeof props?.pageSize === "object" && props.pageSize ? props.pageSize : undefined;
+      const margin =
+        typeof props?.pageMargin === "object" && props.pageMargin ? props.pageMargin : undefined;
+      return { size, margin, type: props?.type };
+    };
+    expect(propsOf(0).size?.width).toBe(12240);
+    expect(propsOf(0).margin?.left).toBe(1800);
+    expect(propsOf(1).size?.width).toBe(12240);
+    expect(propsOf(1).type).toBe("oddPage");
+  });
+
+  it("copies a later boundary's sectPr in the mid-document case", () => {
+    const pageSize = { width: 12240, height: 15840 };
+    const pageMargin = { left: 1800 };
+    const editor = editorWith([
+      para("A"),
+      para("B", { sectionProperties: { pageSize, pageMargin } }),
+      para("C"),
+    ]);
+    editor.commands.setSectionBreak({ type: "continuous" });
+
+    const content = editor.getJSON().content ?? [];
+    expect(content[0]?.attrs?.sectionProperties).toEqual({ pageSize, pageMargin });
+    expect(content[2]?.attrs?.sectionProperties).toEqual({
+      pageSize,
+      pageMargin,
+      type: "continuous",
+    });
   });
 });
 

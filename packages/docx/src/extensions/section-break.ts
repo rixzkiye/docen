@@ -38,12 +38,13 @@ function withSectionBreakType(
  * last. Stamping A's own sectPr would make A itself start on that parity, the
  * classic off-by-one that loses Word's blank interleave.
  *
- * Break semantics: `setSectionBreak` stamps the current paragraph's
- * sectionProperties EMPTY (it stays the current section's last paragraph, the
- * boundary marker) AND inserts a fresh empty paragraph after it (the next
- * section's first paragraph), then types the following sectPr and moves the
- * selection into the new paragraph. The page-plugin's `forcesPageBreakAfter`
- * treats a sectionProperties-bearing paragraph as a page break, so repaginate
+ * Break semantics: `setSectionBreak` stamps the current paragraph with the
+ * current section's own properties (copied from the following boundary's
+ * sectPr, or the body-level final sectPr — so page geometry survives the
+ * split) AND inserts a fresh empty paragraph after it (the next section's
+ * first paragraph), then types the following sectPr and moves the selection
+ * into the new paragraph. The page-plugin's `forcesPageBreakAfter` treats a
+ * sectionProperties-bearing paragraph as a page break, so repaginate
  * pushes the new paragraph onto the next page — and the caret follows. This
  * mirrors Word's "Section Break (Next Page)".
  *
@@ -65,18 +66,18 @@ export const SectionBreak = Extension.create({
   addCommands() {
     return {
       // Section break: stamp the current paragraph as its section's last
-      // paragraph (an empty sectPr — just the boundary), insert a fresh empty
-      // paragraph as the next section's first paragraph, write the requested
-      // w:type on the FOLLOWING section's sectPr, and move the caret into the
-      // new paragraph. A new paragraph is inserted rather than split from the
-      // current one so it does NOT inherit the boundary marker (which would
-      // make it a section boundary too and break forever). The w:type belongs
-      // to the following section (ECMA-376 §17.6.22 — it declares how that
-      // section starts): the next section-boundary paragraph after the
-      // inserted one, or the body-level doc attrs when the new section is the
-      // document's last. "nextPage" (the OOXML default) reflows the next
-      // section onto a fresh page; "continuous" keeps it flowing on the same
-      // page.
+      // paragraph (copying the current section's properties — the section
+      // keeps its page geometry), insert a fresh empty paragraph as the next
+      // section's first paragraph, write the requested w:type on the
+      // FOLLOWING section's sectPr, and move the caret into the new paragraph.
+      // A new paragraph is inserted rather than split from the current one so
+      // it does NOT inherit the boundary marker (which would make it a section
+      // boundary too and break forever). The w:type belongs to the following
+      // section (ECMA-376 §17.6.22 — it declares how that section starts):
+      // the next section-boundary paragraph after the inserted one, or the
+      // body-level doc attrs when the new section is the document's last.
+      // "nextPage" (the OOXML default) reflows the next section onto a fresh
+      // page; "continuous" keeps it flowing on the same page.
       setSectionBreak:
         (options?: { type?: "nextPage" | "continuous" | "evenPage" | "oddPage" }) =>
         ({ tr, state, dispatch }) => {
@@ -87,18 +88,14 @@ export const SectionBreak = Extension.create({
           // heading too (e.g. a chapter title that ends its section).
           if (para.type.name !== "paragraph" && para.type.name !== "heading") return false;
           const paraPos = $from.before($from.depth);
-          // 1. The current paragraph becomes its section's last paragraph:
-          //    empty sectionProperties keeps the boundary (compile closes a
-          //    section only for a non-null marker) without claiming a type.
-          tr.setNodeMarkup(paraPos, undefined, { ...para.attrs, sectionProperties: {} });
-          // 2. Insert a fresh empty paragraph (new section's first paragraph)
+          // 1. Insert a fresh empty paragraph (new section's first paragraph)
           //    and move the caret into it; repaginate pushes it to the next
           //    page (nextPage) or flows it on (continuous).
           const paraEnd = paraPos + para.nodeSize;
           tr.insert(paraEnd, state.schema.nodes.paragraph.create());
-          // 3. Type the following section's sectPr. The next boundary
-          //    paragraph after the inserted one closes that section; none
-          //    means the new section is final and its sectPr is body-level.
+          // 2. Locate the following section's boundary — the first paragraph
+          //    after the inserted one carrying a sectPr. None means the new
+          //    section is final and its sectPr is body-level.
           const type = options?.type ?? "nextPage";
           const following: Array<{ pos: number; attrs: Record<string, unknown> }> = [];
           tr.doc.content.forEach((node, offset) => {
@@ -111,6 +108,20 @@ export const SectionBreak = Extension.create({
             following.push({ pos: offset, attrs: node.attrs as Record<string, unknown> });
           });
           const target = following[0];
+          // 3. The current paragraph closes its section, carrying a copy of
+          //    the section's CURRENT properties (the following boundary's
+          //    sectPr, or the body-level final sectPr) so the split preserves
+          //    page geometry. A paragraph that already carries a sectPr is
+          //    already a boundary — leave it untouched.
+          if (para.attrs.sectionProperties == null) {
+            const carried = target
+              ? target.attrs.sectionProperties
+              : (state.doc.attrs as { sectionProperties?: unknown }).sectionProperties;
+            tr.setNodeMarkup(paraPos, undefined, {
+              ...para.attrs,
+              sectionProperties: carried ?? {},
+            });
+          }
           if (target) {
             tr.setNodeMarkup(target.pos, undefined, {
               ...target.attrs,
