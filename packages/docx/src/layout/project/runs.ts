@@ -31,7 +31,7 @@ import {
   excelPreviewSvgDataUri,
   metafileMembers,
   objectPreviewSvgDataUri,
-  pictureSrc,
+  projectedPictureSrc,
 } from "./media";
 import { formatNumber } from "./numbering";
 import { fontAttr, normalizeScalePct, toFamily, runStyleOf } from "./styles";
@@ -572,7 +572,7 @@ export function projectRuns(
         kind: "picture",
         widthPx,
         heightPx,
-        src: members ? undefined : pictureSrc(pic),
+        src: members ? undefined : projectedPictureSrc(pic, ctx.rasterFallbackImages),
         crop: members ? undefined : cropOf(pic),
         members,
         // a:xfrm @rot (degrees) — Word tilts inline pictures about the

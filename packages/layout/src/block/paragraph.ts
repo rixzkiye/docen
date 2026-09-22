@@ -490,6 +490,7 @@ function layoutParagraphUncached(
     suppressLineNumbers: para.suppressLineNumbers,
     keepNext: para.keepNext,
     widowControl: para.widowControl,
+    headingLevel: para.headingLevel,
     borders: para.borders,
     shadingFill: para.shadingFill,
     indent: para.indent,

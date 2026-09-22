@@ -95,6 +95,23 @@ export function pictureSrc(pic: { type?: unknown; data?: unknown }): string | un
   return undefined;
 }
 
+/** The renderer src under the projection's raster-fallback policy: a headless
+ *  renderer (Node canvas / PDF) has no SVG rasterizer, so an SVG picture
+ *  paints its raster fallback part instead of the vector source — the same
+ *  degradation Word applies when no vector renderer is available. Non-SVG
+ *  pictures, SVGs without fallback bytes, and fallback bytes that do not
+ *  decode keep their primary source (absence over a broken substitute). */
+export function projectedPictureSrc(
+  pic: { type?: unknown; data?: unknown; fallback?: unknown },
+  rasterFallbackImages?: boolean,
+): string | undefined {
+  if (rasterFallbackImages && pic.type === "svg" && pic.fallback) {
+    const fallbackSrc = pictureSrc(pic.fallback as { type?: unknown; data?: unknown });
+    if (fallbackSrc) return fallbackSrc;
+  }
+  return pictureSrc(pic);
+}
+
 /** Metafile caches: project reruns on every editor transaction, and
  *  re-scanning megabyte WMFs each pass is pure waste. Direct-API callers
  *  handing out the same bytes object every pass hit WeakMaps keyed by those

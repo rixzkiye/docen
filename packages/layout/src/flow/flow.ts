@@ -67,6 +67,15 @@ export interface FlowPage {
    *  anchors or the flow is unbounded) — packed after the page's items
    *  sealed, so body geometry is untouched. */
   balloons?: LaidOutBalloon[];
+  /** The page's effective content-box left in page-absolute px when the
+   *  section mirrors margins (w:mirrorMargins): on even (left-hand) pages the
+   *  inside/outside margins swap and the box moves to
+   *  `pageWidth - contentLeft - contentWidth`. Absent when the section does
+   *  not mirror (the flow box's `contentLeftPx` applies), on unbounded flows,
+   *  or when the page box is unknown — hosts paint the page origin from this
+   *  field so body, tabs, inline positions, furniture and text layers all
+   *  shift together. */
+  contentLeftPx?: number;
   /** Unbounded flows only: the y where the content ends (footnote area
    *  included) — the host sizes the continuous page from it. Absent on
    *  paginated pages (their height is the section's paper). */
@@ -196,6 +205,31 @@ export function columnBoxesOf(
     xPx: (width + cols.spacePx) * i,
     widthPx: width,
   }));
+}
+
+/** The content box's page-absolute left edge for one GLOBAL page index, with
+ *  Word's w:mirrorMargins rule applied: on even (left-hand) pages the
+ *  inside/outside margins swap, so the box moves to
+ *  `pageWidth - contentLeft - contentWidth` (the section's left margin becomes
+ *  the right one). One rule, read by the flow's wrap/balloon geometry, the
+ *  page seal, and every host painter (canvas stage, caret origin, PDF scene
+ *  and text layer) so the page origin never diverges. Undefined when the
+ *  content left or (for a mirrored page) the page box is unknown. */
+export function effectiveContentLeftPx(
+  flow: {
+    pageWidthPx?: number;
+    contentLeftPx?: number;
+    contentWidthPx?: number;
+    mirrorMargins?: boolean;
+  },
+  globalPageIndex: number,
+): number | undefined {
+  const { pageWidthPx, contentLeftPx, contentWidthPx, mirrorMargins } = flow;
+  if (contentLeftPx == null) return undefined;
+  if (mirrorMargins && globalPageIndex % 2 === 1 && pageWidthPx != null && contentWidthPx != null) {
+    return pageWidthPx - contentLeftPx - contentWidthPx;
+  }
+  return contentLeftPx;
 }
 
 /** One section of a multi-section document: its block flow plus the flow
@@ -345,6 +379,19 @@ function wrapBalloonLines(text: string, widthPx: number, measurer: TextMeasurer)
   return lines;
 }
 
+/** The blank interleave page an evenPage/oddPage section break inserts: it
+ *  carries the PRECEDING run's page geometry (Word keeps the previous
+ *  section's margins and furniture on the blank page), including the
+ *  mirror-resolved content-left its global page index lands on. */
+function interleavePage(opts: FlowOptions | undefined, globalIndex: number): FlowPage {
+  const page: FlowPage = { items: [] };
+  if (opts?.mirrorMargins) {
+    const left = effectiveContentLeftPx(opts, globalIndex);
+    if (left != null) page.contentLeftPx = left;
+  }
+  return page;
+}
+
 /** Lay a multi-section document one page seal at a time. The walk is strictly
  *  forward over the blocks (keepNext pulls back within the live Flow state,
  *  never looks ahead), so the generator is exact — draining it equals
@@ -368,13 +415,19 @@ export function* layoutSectionsIncremental(
     if (run.type === "evenPage") {
       const nextPgNum = laid + 1;
       if (nextPgNum % 2 !== 0) {
-        yield { page: { items: [] }, section: Math.max(0, i - 1) };
+        yield {
+          page: interleavePage(runs[Math.max(0, i - 1)]?.opts, laid),
+          section: Math.max(0, i - 1),
+        };
         laid++;
       }
     } else if (run.type === "oddPage") {
       const nextPgNum = laid + 1;
       if (nextPgNum % 2 === 0) {
-        yield { page: { items: [] }, section: Math.max(0, i - 1) };
+        yield {
+          page: interleavePage(runs[Math.max(0, i - 1)]?.opts, laid),
+          section: Math.max(0, i - 1),
+        };
         laid++;
       }
     }
@@ -593,12 +646,9 @@ class Flow {
    *  when the projection carried it. Paragraph self-zones re-derive with
    *  their own −startY translation (paragraph-local Y). */
   private get wrapPage(): WrapPageGeometry | undefined {
-    const { pageWidthPx, pageHeightPx, contentLeftPx, contentTopPx, mirrorMargins } = this.opts;
+    const { pageWidthPx, pageHeightPx, contentTopPx } = this.opts;
     const globalIndex = this.pageIndex + (this.opts.pageOffset ?? 0);
-    const effContentLeftPx =
-      mirrorMargins && globalIndex % 2 === 1 && pageWidthPx != null && contentLeftPx != null
-        ? pageWidthPx - contentLeftPx - this.opts.contentWidthPx
-        : contentLeftPx;
+    const effContentLeftPx = effectiveContentLeftPx(this.opts, globalIndex);
     return pageWidthPx != null &&
       pageHeightPx != null &&
       effContentLeftPx != null &&
@@ -812,6 +862,7 @@ class Flow {
       // anchor Ys must read the final page positions.
       const balloons = this.packBalloons(page.items);
       if (balloons) page.balloons = balloons;
+      this.stampMirrorContentLeft(page);
       this.pages.push(page);
     }
     this.pageIndex = this.pages.length;
@@ -1109,7 +1160,7 @@ class Flow {
    *  or no page geometry. */
   private packBalloons(items: readonly FlowItem[]): LaidOutBalloon[] | undefined {
     if (this.opts.unbounded || items.length === 0) return undefined;
-    const { pageWidthPx, contentLeftPx, contentWidthPx, mirrorMargins } = this.opts;
+    const { pageWidthPx, contentLeftPx, contentWidthPx } = this.opts;
     if (pageWidthPx == null || contentLeftPx == null || contentWidthPx == null) return undefined;
     const anchors: { yPx: number; anchor: LayoutBalloonAnchor }[] = [];
     for (const item of items) {
@@ -1121,10 +1172,7 @@ class Flow {
     }
     if (anchors.length === 0) return undefined;
     const globalIndex = this.pageIndex + (this.opts.pageOffset ?? 0);
-    const effContentLeftPx =
-      mirrorMargins && globalIndex % 2 === 1
-        ? pageWidthPx - contentLeftPx - contentWidthPx
-        : contentLeftPx;
+    const effContentLeftPx = effectiveContentLeftPx(this.opts, globalIndex) ?? contentLeftPx;
     const available =
       pageWidthPx - effContentLeftPx - contentWidthPx - BALLOON_CONNECTOR_PX - BALLOON_EDGE_PX;
     const widthPx = Math.max(BALLOON_MIN_WIDTH_PX, Math.min(BALLOON_MAX_WIDTH_PX, available));
@@ -1154,6 +1202,17 @@ class Flow {
       cursor = yPx + heightPx + BALLOON_GAP_PX;
     }
     return balloons;
+  }
+
+  /** Stamp a sealed page's mirror-resolved content-left (see
+   *  {@link effectiveContentLeftPx}) — the page being sealed still carries the
+   *  current `pageIndex`, so the even-page test reads the right global index.
+   *  Only mirror sections stamp; every other page reads the section flow
+   *  box's own left. */
+  private stampMirrorContentLeft(page: FlowPage): void {
+    if (!this.opts.mirrorMargins) return;
+    const left = effectiveContentLeftPx(this.opts, this.pageIndex + (this.opts.pageOffset ?? 0));
+    if (left != null) page.contentLeftPx = left;
   }
 
   /** Turn the anchor paragraph's wrapped drawings into flow effects: a

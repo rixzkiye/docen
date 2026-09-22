@@ -200,6 +200,9 @@ export interface LaidOutParagraph {
   keepLines?: boolean;
   keepNext?: boolean;
   widowControl?: boolean;
+  /** Heading level (1-9) mirrored from the input — the headless PDF structure
+   *  pass derives the outline from the laid tree. */
+  headingLevel?: number;
   /** Borders mirrored from the input (w:pBdr) — the painter draws them. */
   borders?: Partial<Record<"top" | "right" | "bottom" | "left", LayoutParagraphBorderEdge>>;
   /** Paragraph shading (w:shd @w:fill), hex RRGGBB, mirrored for the painter. */

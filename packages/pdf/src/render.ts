@@ -212,7 +212,19 @@ export async function renderPdf(
       ? compileDocument(normalizeJsonContent(input as JSONContent))
       : (input as DocumentOptions);
 
-  const { sections } = projectDocumentOptions(docOptions);
+  const { sections } = projectDocumentOptions(
+    docOptions,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    // Headless renderers have no SVG rasterizer: SVG pictures paint their
+    // raster fallback part instead of the vector source (see the image
+    // extension's fallbackSrc contract).
+    true,
+  );
   const stageSections: PdfStageSection[] = sections.map((sec: ProjectedSection) => ({
     flow: sec.flow,
     blocks: sec.blocks,
@@ -268,6 +280,13 @@ export async function renderPdf(
     const secIdx = sectionOfPage[i] ?? 0;
     const sec = stageSections[secIdx] ?? stageSections[0]!;
     const flow = sec.flow;
+    // Mirror margins (w:mirrorMargins) move the content box on even pages —
+    // the flow seals each page's effective left (blank interleaves included),
+    // and body, furniture, tabs and the text layer all paint from it.
+    const pageFlow =
+      page.contentLeftPx != null && page.contentLeftPx !== flow.contentLeftPx
+        ? { ...flow, contentLeftPx: page.contentLeftPx }
+        : flow;
 
     let slot = 0;
     if (sec.furniture?.titlePage && i === 0) slot = 1;
@@ -275,7 +294,7 @@ export async function renderPdf(
 
     const root = kit.createGroup();
     const ctx: PaintContext = {
-      flow,
+      flow: pageFlow,
       columns: sec.columns,
       pageIndex: i,
       pageCount: pages.length,
@@ -299,14 +318,20 @@ export async function renderPdf(
         paintFurnitureStack(
           body,
           header.stack,
-          flow.contentLeftPx,
+          pageFlow.contentLeftPx,
           sec.furniture?.headerDistancePx ?? 48,
           ctx,
         );
       }
       if (footer) {
-        const bottom = flow.pageHeightPx - (sec.furniture?.footerDistancePx ?? 48);
-        paintFurnitureStack(body, footer.stack, flow.contentLeftPx, bottom - footer.heightPx, ctx);
+        const bottom = pageFlow.pageHeightPx - (sec.furniture?.footerDistancePx ?? 48);
+        paintFurnitureStack(
+          body,
+          footer.stack,
+          pageFlow.contentLeftPx,
+          bottom - footer.heightPx,
+          ctx,
+        );
       }
 
       paintScene(body, page.items, ctx);

@@ -1799,6 +1799,10 @@ export function extractPdfPageLayers(
     };
     const pageH = flow.pageHeightPx;
     const toPdfY = (pxY: number): number => ((pageH - pxY) * 72) / 96;
+    // Mirror margins: the page's effective content-left (the flow seals it per
+    // page, blank interleaves included) — body, note and furniture spans must
+    // land where the scene paints them.
+    const contentLeftPx = page.contentLeftPx ?? flow.contentLeftPx;
 
     const textSpans: PdfTextSpan[] = [];
     const links: PdfLinkAnnotation[] = [];
@@ -1942,20 +1946,20 @@ export function extractPdfPageLayers(
 
     // 1. Page items
     for (const item of page.items) {
-      walkBlock(item.block, flow.contentLeftPx + (item.xPx ?? 0), flow.contentTopPx + item.yPx);
+      walkBlock(item.block, contentLeftPx + (item.xPx ?? 0), flow.contentTopPx + item.yPx);
     }
 
     // 2. Footnotes & Endnotes
     if (page.footnotes) {
       const footY = flow.contentTopPx + page.footnotes.yPx;
       for (const item of page.footnotes.items) {
-        walkBlock(item.block, flow.contentLeftPx, footY + item.yPx);
+        walkBlock(item.block, contentLeftPx, footY + item.yPx);
       }
     }
     if (page.endnotes) {
       const endY = flow.contentTopPx + page.endnotes.yPx;
       for (const item of page.endnotes.items) {
-        walkBlock(item.block, flow.contentLeftPx, endY + item.yPx);
+        walkBlock(item.block, contentLeftPx, endY + item.yPx);
       }
     }
 
@@ -1968,14 +1972,14 @@ export function extractPdfPageLayers(
       if (header) {
         const headTop = section.furniture?.headerDistancePx ?? 48;
         for (const item of header.stack) {
-          walkBlock(item.block, flow.contentLeftPx, headTop + item.yPx);
+          walkBlock(item.block, contentLeftPx, headTop + item.yPx);
         }
       }
       const footer = laid.footer[slotIndex];
       if (footer) {
         const footBottom = flow.pageHeightPx - (section.furniture?.footerDistancePx ?? 48);
         for (const item of footer.stack) {
-          walkBlock(item.block, flow.contentLeftPx, footBottom - footer.heightPx + item.yPx);
+          walkBlock(item.block, contentLeftPx, footBottom - footer.heightPx + item.yPx);
         }
       }
     }

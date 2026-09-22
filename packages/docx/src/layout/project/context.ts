@@ -83,6 +83,11 @@ export interface ProjectContext {
    *  suppresses them — no advance, no ink, the source characters kept on the
    *  atom for the caret lattice. */
   showHiddenText?: boolean;
+  /** Headless renderers (Node canvas / PDF) cannot rasterize SVG: an SVG
+   *  picture projects its raster fallback part as the renderer src instead of
+   *  the vector source (see `projectedPictureSrc`). Off (the default) keeps
+   *  the vector source for renderers that can draw it. */
+  rasterFallbackImages?: boolean;
   /** Document auto-hyphenation settings (w:autoHyphenation, w:doNotHyphenateCaps, etc.) */
   autoHyphenation?: boolean;
   doNotHyphenateCaps?: boolean;

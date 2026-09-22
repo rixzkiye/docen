@@ -20,6 +20,7 @@ import {
 import { registerLeafer } from "@docen/core";
 import {
   computePageNumberOffsets,
+  effectiveContentLeftPx,
   type FlowItem,
   type LayoutBlock,
   type ProjectedColumns,
@@ -311,13 +312,17 @@ export class CanvasStage {
   private sectionAt(page: number): CanvasStageSection {
     const i = this.ctx.sectionOfPage[page] ?? 0;
     const sect = this.ctx.sections[i] ?? this.ctx.sections[0]!;
-    if (sect.flow.mirrorMargins && page % 2 === 1) {
-      const left = sect.flow.pageWidthPx - sect.flow.contentLeftPx - sect.flow.contentWidthPx;
+    // Mirror margins: the page's effective content-left comes from the laid
+    // page when present (the flow owns the rule — even/odd pages and blank
+    // interleaves included), else from the shared helper for a page not yet
+    // synced.
+    const pageLeft = this.pages[page]?.contentLeftPx ?? effectiveContentLeftPx(sect.flow, page);
+    if (pageLeft != null && pageLeft !== sect.flow.contentLeftPx) {
       return {
         ...sect,
         flow: {
           ...sect.flow,
-          contentLeftPx: left,
+          contentLeftPx: pageLeft,
         },
       };
     }

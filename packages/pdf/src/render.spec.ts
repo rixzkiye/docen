@@ -178,6 +178,40 @@ describe("renderPdf headless entry point", () => {
     expect(text).toContain("/XObject");
   }, 30000); // image decode + full render: headroom under full-suite load
 
+  it("renders an SVG image through its raster fallbackSrc", async () => {
+    const svg =
+      '<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10">' +
+      '<rect width="10" height="10" fill="#ff0000"/></svg>';
+    const svgSrc = `data:image/svg+xml;base64,${Buffer.from(svg, "utf8").toString("base64")}`;
+    const doc = {
+      type: "doc",
+      content: [
+        {
+          type: "paragraph",
+          content: [{ type: "text", text: "Document with an SVG image and its raster fallback:" }],
+        },
+        {
+          type: "image",
+          attrs: {
+            src: svgSrc,
+            fallbackSrc: DUMMY_PNG_1X1,
+            width: 100,
+            height: 100,
+          },
+        },
+      ],
+    };
+
+    const pdfBytes = await renderPdf(doc, { title: "SVG Fallback" });
+
+    // The headless renderer has no SVG rasterizer: the fallback PNG decodes
+    // into an embedded image XObject (the SVG primary would paint the empty
+    // placeholder frame instead).
+    const text = new TextDecoder("latin1").decode(pdfBytes);
+    expect(text).toContain("/Subtype /Image");
+    expect(text).toContain("/ColorSpace /DeviceRGB");
+  }, 30000);
+
   it("renders documents with PDF/A-2b and PDF/UA-1 conformance", async () => {
     const doc = {
       type: "doc",
@@ -363,4 +397,41 @@ describe("section break semantics reach the headless flow", () => {
     const odd = await renderPdf(commandDoc("oddPage"), { title: "Command Odd Page" });
     expect(pageCount(odd)).toBe(3);
   }, 60000);
+});
+
+describe("headless PDF structure (outline + page labels)", () => {
+  it("derives /Outlines and /PageLabels from the projected document", async () => {
+    const doc = {
+      type: "doc",
+      attrs: {
+        sectionProperties: { pageNumberType: { start: 1, format: "lowerRoman" } },
+      },
+      content: [
+        {
+          type: "heading",
+          attrs: { level: 1 },
+          content: [{ type: "text", text: "Chapter One" }],
+        },
+        { type: "paragraph", content: [{ type: "text", text: "Body text." }] },
+        {
+          type: "heading",
+          attrs: { level: 2 },
+          content: [{ type: "text", text: "Section 1.1" }],
+        },
+        { type: "paragraph", content: [{ type: "text", text: "More text." }] },
+      ],
+    };
+
+    const pdfBytes = await renderPdf(doc, { title: "Structure" });
+    const text = new TextDecoder("latin1").decode(pdfBytes);
+
+    // The outline root + first heading entry come from the laid blocks (the
+    // server view has no PM document).
+    expect(text).toMatch(/\/Type \/Outlines \/First \d+ 0 R/);
+    expect(text).toContain("(Chapter One)");
+    expect(text).toContain("(Section 1.1)");
+    // The section's w:pgNumType maps to the roman page-label style.
+    expect(text).toContain("/PageLabels");
+    expect(text).toContain("/S /r");
+  }, 30000);
 });

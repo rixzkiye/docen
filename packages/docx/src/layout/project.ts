@@ -219,7 +219,9 @@ function commentTextOf(children: readonly unknown[]): string {
  *  Review state to the tracked-changes projection (omitted = all marks show);
  *  `showFieldCodes` projects every field as its instruction text (Alt+F9);
  *  `showHiddenText` displays hidden runs (w:vanish) instead of suppressing
- *  them (Word's Options → Display toggle). */
+ *  them (Word's Options → Display toggle); `rasterFallbackImages` makes SVG
+ *  pictures project their raster fallback part for renderers without an SVG
+ *  rasterizer (the headless PDF/Node path). */
 export function projectDocumentOptions(
   doc: DocumentOptions,
   markup?: MarkupDisplay,
@@ -228,6 +230,7 @@ export function projectDocumentOptions(
   hyphenation?: { auto?: boolean; doNotHyphenateCaps?: boolean; zoneTw?: number; limit?: number },
   themeFonts?: { majorFont?: string; minorFont?: string },
   cache?: ProjectionCache,
+  rasterFallbackImages?: boolean,
 ): {
   sections: ProjectedSection[];
   background?: ProjectedPageBackground;
@@ -240,6 +243,7 @@ export function projectDocumentOptions(
     (markup?.authors ?? []).join("\u0001"),
     showFieldCodes ? "f" : "",
     showHiddenText ? "h" : "",
+    rasterFallbackImages ? "r" : "",
     hyphenation
       ? `${hyphenation.auto ?? ""}\u0001${hyphenation.doNotHyphenateCaps ?? ""}\u0001${
           hyphenation.zoneTw ?? ""
@@ -318,6 +322,7 @@ export function projectDocumentOptions(
     ...(markup ? { markup } : {}),
     ...(showFieldCodes ? { showFieldCodes: true } : {}),
     ...(showHiddenText ? { showHiddenText: true } : {}),
+    ...(rasterFallbackImages ? { rasterFallbackImages: true } : {}),
     // The document-wide tab grid (w:defaultTabStop, twips); Word's 720 default
     // applies when settings omit it (the engine carries that fallback).
     defaultTabStopPx:

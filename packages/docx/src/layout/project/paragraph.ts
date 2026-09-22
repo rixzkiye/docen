@@ -15,6 +15,7 @@ import {
   type LayoutTextStyle,
 } from "@docen/layout";
 
+import { detectHeadingLevel } from "../../heading-level";
 import type { ProjectContext } from "./context";
 import { markStateful } from "./context";
 import { projectDrawings } from "./drawing";
@@ -57,6 +58,18 @@ export function projectParagraph(p: BodyParagraph, ctx: ProjectContext): LayoutP
   const chain = styleChainOf(ctx.styles, styleId);
   const chainPPr: Rec = chain.paragraph;
   const chainRPr: Rec = chain.run;
+  // Outline signal: the same resolution the editor outline and the PDF
+  // structure pass use — a lifted heading attr, an explicit outline level
+  // (direct or style chain), then the style name/basedOn chain.
+  const outlineLevel = num(pPr.outlineLevel) ?? num(chainPPr.outlineLevel);
+  const headingLevel = detectHeadingLevel(
+    {
+      ...(str(pPr.heading) ? { heading: str(pPr.heading)! } : {}),
+      ...(styleId ? { style: styleId } : {}),
+      ...(outlineLevel != null ? { outlineLevel } : {}),
+    },
+    ctx.styles,
+  );
   const docDefaults = docDefaultsOf(ctx.styles);
   const docPPr: Rec = isRecord(docDefaults.paragraph) ? docDefaults.paragraph : {};
   const docRPr: Rec = isRecord(docDefaults.run) ? docDefaults.run : {};
@@ -390,6 +403,7 @@ export function projectParagraph(p: BodyParagraph, ctx: ProjectContext): LayoutP
     keepNext: pPr.keepNext === true || chainPPr.keepNext === true,
     widowControl: pick([pPr, chainPPr], "widowControl") !== false,
     pageBreakBefore: pPr.pageBreakBefore === true || chainPPr.pageBreakBefore === true,
+    ...(headingLevel != null ? { headingLevel } : {}),
     suppressLineNumbers: pPr.suppressLineNumbers === true || chainPPr.suppressLineNumbers === true,
     bidi: bidi || undefined,
     textDirection,

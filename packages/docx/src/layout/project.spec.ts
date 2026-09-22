@@ -262,6 +262,82 @@ describe("projectDocumentOptions style cascade", () => {
     });
   });
 
+  it("projects an SVG picture's raster fallback for renderers without SVG", () => {
+    const svgBytes = new TextEncoder().encode('<svg xmlns="http://www.w3.org/2000/svg"/>');
+    const model = doc([
+      {
+        paragraph: {
+          children: [
+            {
+              picture: {
+                type: "svg",
+                data: svgBytes,
+                fallback: { type: "png", data: "eA" },
+                transformation: { width: 609600, height: 457200 },
+              },
+            },
+          ],
+        },
+      },
+      {
+        paragraph: {
+          children: [
+            {
+              picture: {
+                type: "svg",
+                data: svgBytes,
+                fallback: { type: "png", data: "eA" },
+                floating: {
+                  horizontalPosition: { relative: "column" },
+                  verticalPosition: { relative: "paragraph" },
+                },
+                transformation: { width: 609600, height: 457200 },
+              },
+            },
+          ],
+        },
+      },
+    ]);
+
+    // Default projection keeps the vector source (browser renderers draw it).
+    const vector = projectDocumentOptions(model).sections[0]!.blocks;
+    const vectorInline = vector[0];
+    if (vectorInline?.kind !== "paragraph") throw new Error("expected paragraph");
+    expect(
+      vectorInline.inline[0]!.kind === "picture" ? vectorInline.inline[0]!.src : undefined,
+    ).toMatch(/^data:image\/svg\+xml/);
+    const vectorFloating = vector[1];
+    if (vectorFloating?.kind !== "paragraph") throw new Error("expected paragraph");
+    const vectorMember = vectorFloating.drawings?.[0]?.members[0];
+    expect(vectorMember?.kind).toBe("picture");
+    expect(vectorMember?.kind === "picture" ? vectorMember.src : undefined).toMatch(
+      /^data:image\/svg\+xml/,
+    );
+
+    // The headless flag swaps in the raster fallback on both paths.
+    const raster = projectDocumentOptions(
+      model,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      true,
+    ).sections[0]!.blocks;
+    const rasterInline = raster[0];
+    if (rasterInline?.kind !== "paragraph") throw new Error("expected paragraph");
+    expect(
+      rasterInline.inline[0]!.kind === "picture" ? rasterInline.inline[0]!.src : undefined,
+    ).toBe("data:image/png;base64,eA");
+    const rasterFloating = raster[1];
+    if (rasterFloating?.kind !== "paragraph") throw new Error("expected paragraph");
+    expect(rasterFloating.drawings?.[0]?.members[0]).toMatchObject({
+      kind: "picture",
+      src: "data:image/png;base64,eA",
+    });
+  });
+
   it("carries a picture's a:xfrm flips into the inline and anchored projections", () => {
     // positionH has no "paragraph" token (ST_RelFromH) — column is the
     // horizontal base Word's own conversion writes.

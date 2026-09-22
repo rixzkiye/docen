@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { fakeFontMetrics, installFakeCanvas } from "../../test/fake-canvas";
 import type { LayoutBlock, LayoutParagraph, LayoutTable, LayoutTableCell } from "../layout-doc";
 import { TextMeasurer } from "../text/measure";
+import { twipToPx } from "../units";
 import { layoutFlow, layoutFlowSections } from "./flow";
 
 installFakeCanvas();
@@ -936,6 +937,39 @@ describe("layoutFlow float wraps", () => {
   const PAGE = { pageWidthPx: 400, pageHeightPx: 600, contentLeftPx: 50, contentTopPx: 60 };
   const flowPaged = (blocks: LayoutBlock[], contentHeightPx: number) =>
     layoutFlow(blocks, { contentWidthPx: 300, contentHeightPx, ...PAGE }, measurer);
+
+  it("mirrors the content origin on even pages (w:mirrorMargins)", () => {
+    // A4 with inside/outside margins of 2268/1701 twips: page 1 (odd) keeps
+    // the section's left edge; page 2 (even, a left-hand page) swaps the
+    // margins, so the content box starts at pageWidth - left - contentWidth.
+    const pageWidthPx = twipToPx(11906);
+    const left = twipToPx(2268);
+    const right = twipToPx(1701);
+    const contentWidthPx = pageWidthPx - left - right;
+    const page = {
+      pageWidthPx,
+      pageHeightPx: twipToPx(16838),
+      contentLeftPx: left,
+      contentTopPx: twipToPx(1440),
+    };
+    const pages = layoutFlow(
+      [para(2), para(2)],
+      { contentWidthPx, contentHeightPx: 40, ...page, mirrorMargins: true },
+      measurer,
+    );
+    expect(pages).toHaveLength(2);
+    expect(pages[0]!.contentLeftPx).toBeCloseTo(left, 5);
+    expect(pages[1]!.contentLeftPx).toBeCloseTo(pageWidthPx - left - contentWidthPx, 5);
+
+    // Control: without the flag no page carries a mirrored origin (hosts read
+    // the section's own contentLeftPx).
+    const plain = layoutFlow(
+      [para(2), para(2)],
+      { contentWidthPx, contentHeightPx: 40, ...page },
+      measurer,
+    );
+    expect(plain[1]!.contentLeftPx).toBeUndefined();
+  });
 
   it("wraps beside a page-anchored square (offsets from the page box)", () => {
     // Page offsets (50, 80) land at column x 0 and flow y 20 → the zone

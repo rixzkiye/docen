@@ -14,6 +14,7 @@ import type {
   ProjectedSection,
 } from "@docen/docx/layout";
 import type { FlowPage, FlowPageInsets } from "@docen/layout";
+import { effectiveContentLeftPx } from "@docen/layout";
 
 import { t } from "../../ui";
 import type { EditBridge, StoryKind, StorySlot } from "../canvas/edit-bridge";
@@ -140,13 +141,12 @@ function pageOriginOf(
   return (page) => {
     const flow = sections[sectionOfPage[page] ?? 0]?.flow;
     if (!flow) return { contentLeftPx: 0, contentTopPx: 0 };
-    if (flow.mirrorMargins && page % 2 === 1) {
-      return {
-        contentLeftPx: flow.pageWidthPx - flow.contentLeftPx - flow.contentWidthPx,
-        contentTopPx: flow.contentTopPx,
-      };
-    }
-    return flow;
+    // Mirror margins move the box on even pages — the shared layout rule
+    // (the flow's own page seal reads the same helper).
+    return {
+      contentLeftPx: effectiveContentLeftPx(flow, page) ?? flow.contentLeftPx,
+      contentTopPx: flow.contentTopPx,
+    };
   };
 }
 

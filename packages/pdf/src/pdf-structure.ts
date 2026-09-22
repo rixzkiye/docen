@@ -16,6 +16,16 @@
  * - `pages` is the laid flow (`host.pages()`): table struct elements attach
  *   to the page fragments the layout actually produced.
  *
+ * The headless server path (`renderPdf`) has no PM document: it passes the
+ * same view with `doc: undefined` and the outline comes from the LAID model —
+ * the projection resolves each paragraph's heading level (style cascade +
+ * outline level), `locateBlocks` maps every laid block to its page and
+ * page-local top, and the nesting is shared with the PM walk. Bookmark
+ * destinations stay editor-only: the projection drops the zero-height
+ * bookmark markers, so there is no position to resolve an internal anchor
+ * against. Tagged figures need the PM alt-text model; the server path still
+ * tags laid tables.
+ *
  * Exclusions & Standards Decisions (R12-W2):
  * - `viewerPreferences`: OOXML/Word DOCX has no document-level source for PDF
  *   viewer window controls (HideToolbar, HideMenubar, FitWindow, CenterWindow).
@@ -30,6 +40,7 @@ import {
   computePageNumberOffsets,
   type FlowPage,
   type LaidOutBlock,
+  type LaidOutParagraph,
   type ProjectedPageNumbering,
 } from "@docen/layout";
 import type { Node as PMNode } from "@tiptap/pm/model";
@@ -135,6 +146,14 @@ export function buildPdfOutline(doc: PMNode, view: PdfStructureView): PdfOutline
     return true;
   });
 
+  return nestOutline(headings);
+}
+
+/** Nest document-order headings into Word's "Create bookmarks using:
+ *  Headings" shape: single lines of paragraph text nested by level (a level
+ *  jump parents to the nearest shallower heading). Shared by the PM walk and
+ *  the laid-model server path so both outlines nest identically. */
+function nestOutline(headings: readonly HeadingEntry[]): PdfOutlineItem[] {
   const roots: OutlineNode[] = [];
   const stack: { level: number; node: OutlineNode }[] = [];
   for (const heading of headings) {
@@ -149,6 +168,70 @@ export function buildPdfOutline(doc: PMNode, view: PdfStructureView): PdfOutline
     stack.push({ level: heading.level, node });
   }
   return roots;
+}
+
+/** The document-order text of a projected paragraph — the title the outline
+ *  paints. Synthesized paint content (a numbering bullet's glyph) has no
+ *  document-model characters behind it and is skipped, matching the PM walk's
+ *  textContent. */
+function projectedParagraphText(block: LaidOutParagraph): string {
+  let text = "";
+  for (const inline of block.inline) {
+    if (inline.kind !== "text") continue;
+    if (inline.synthetic || inline.suppressed) continue;
+    text += inline.text;
+  }
+  return text.trim();
+}
+
+/** Every laid block on the print run with its page-local box top: page items
+ *  first, nested table/group children composed onto their container's origin
+ *  (the same offsets the PDF text layer walks). The first occurrence wins. */
+function locateBlocks(view: PdfStructureView): Map<LaidOutBlock, { page: number; yPx: number }> {
+  const located = new Map<LaidOutBlock, { page: number; yPx: number }>();
+  const locate = (block: LaidOutBlock, page: number, yPx: number): void => {
+    if (!located.has(block)) located.set(block, { page, yPx });
+    if (block.kind === "table") {
+      let rowY = yPx;
+      for (const row of block.rows) {
+        for (const cell of row.cells) {
+          const top = rowY + (cell.insets.top ?? 0) + (cell.contentOffsetYPx ?? 0);
+          for (const item of cell.stack) locate(item.block, page, top + item.yPx);
+        }
+        rowY += row.heightPx;
+      }
+      return;
+    }
+    if (block.kind === "group") {
+      for (const child of block.children) locate(child.block, page, yPx + child.yPx);
+    }
+  };
+  view.pages.forEach((page, pageIndex) => {
+    for (const item of page.items) locate(item.block, pageIndex, item.yPx);
+  });
+  return located;
+}
+
+/** The document's heading bookmarks from the LAID model — the server path's
+ *  outline when the view has no PM document (renderPdf's projection-only
+ *  pass). Every laid paragraph carrying a resolved heading level (the
+ *  projection resolved the style cascade) becomes an entry in page/document
+ *  order, nested exactly like the PM walk; a heading whose page geometry is
+ *  unknown still points at its page without a /XYZ top. */
+export function buildPdfOutlineFromPages(view: PdfStructureView): PdfOutlineItem[] {
+  const headings: HeadingEntry[] = [];
+  for (const [block, at] of locateBlocks(view)) {
+    if (block.kind !== "paragraph" || block.headingLevel == null) continue;
+    const title = projectedParagraphText(block);
+    if (!title) continue;
+    const top = pdfTopOf(view, at);
+    headings.push({
+      level: block.headingLevel,
+      title,
+      dest: { pageIndex: at.page, ...(top !== undefined ? { top } : {}) },
+    });
+  }
+  return nestOutline(headings);
 }
 
 /**
@@ -302,6 +385,21 @@ export function buildPdfStructElements(doc: PMNode, view: PdfStructureView): Pdf
     return true;
   });
 
+  collectTableStructElements(view, elements);
+  return elements;
+}
+
+/** Table fragments (nested included) the laid pages contribute, each as a
+ *  Table on the page it landed — the doc-less server path's tagged-structure
+ *  contribution. Figures need the PM alt-text model, which the projection
+ *  does not carry, so they stay with the editor path. */
+export function buildPdfTableStructElements(view: PdfStructureView): PdfStructElement[] {
+  const elements: PdfStructElement[] = [];
+  collectTableStructElements(view, elements);
+  return elements;
+}
+
+function collectTableStructElements(view: PdfStructureView, elements: PdfStructElement[]): void {
   const addTables = (block: LaidOutBlock, pageIndex: number): void => {
     if (block.kind === "table") {
       elements.push({ type: "Table", pageIndex });
@@ -319,19 +417,20 @@ export function buildPdfStructElements(doc: PMNode, view: PdfStructureView): Pdf
   view.pages.forEach((page, pageIndex) => {
     for (const item of page.items) addTables(item.block, pageIndex);
   });
-  return elements;
 }
 
-/** Derive every structure option the PDF writer accepts from the print run. */
+/** Derive every structure option the PDF writer accepts from the print run.
+ *  The editor path supplies the PM document (outline from live headings,
+ *  bookmark destinations, alt-text figures); the server path passes none and
+ *  derives the outline from the laid model instead — bookmarks are dropped by
+ *  the projection (zero-height passthrough atoms), so internal destinations
+ *  stay editor-only, and tagged figures keep their PM alt text. */
 export function buildPdfStructure(view: PdfStructureView): PdfStructure {
   const doc = view.doc;
-  if (!doc) {
-    return { outline: [], pageLabels: [], destinations: {}, structElements: [] };
-  }
   return {
-    outline: buildPdfOutline(doc, view),
+    outline: doc ? buildPdfOutline(doc, view) : buildPdfOutlineFromPages(view),
     pageLabels: buildPdfPageLabels(view.sections, view.sectionOfPage),
-    destinations: buildPdfDestinations(doc, view),
-    structElements: buildPdfStructElements(doc, view),
+    destinations: doc ? buildPdfDestinations(doc, view) : {},
+    structElements: doc ? buildPdfStructElements(doc, view) : buildPdfTableStructElements(view),
   };
 }

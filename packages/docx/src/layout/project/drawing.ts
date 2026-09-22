@@ -36,7 +36,7 @@ import {
 } from "../../extensions/drawing-3d-ink";
 import type { ProjectContext } from "./context";
 import { isRecord, measureEmu, num, str, type BodyParagraph, type Rec } from "./guards";
-import { metafileMembers, pictureSrc } from "./media";
+import { metafileMembers, projectedPictureSrc } from "./media";
 import { projectParagraph } from "./paragraph";
 
 // ── floating drawings (wpg group runs) ──
@@ -565,7 +565,7 @@ function walkGroup(
           width,
           height,
           childPath,
-          src: pictureSrc(child),
+          src: projectedPictureSrc(child, ctx.rasterFallbackImages),
           flipH: t.flipHorizontal === true || undefined,
           flipV: t.flipVertical === true || undefined,
           crop: cropOf(child),
@@ -738,7 +738,7 @@ function drawingAnchorOf(
 
 /** A standalone floating picture run (wp:anchor pic:pic, PictureOptions):
  *  one drawing whose single member is the image filling its own box. */
-function projectFloatingPicture(pic: Rec): LayoutDrawing | undefined {
+function projectFloatingPicture(pic: Rec, ctx: ProjectContext): LayoutDrawing | undefined {
   const tr = isRecord(pic.transformation) ? pic.transformation : {};
   const w = measureEmu(tr.width);
   const h = measureEmu(tr.height);
@@ -779,7 +779,10 @@ function projectFloatingPicture(pic: Rec): LayoutDrawing | undefined {
         y: 0,
         width,
         height,
-        src: pictureSrc(pic as { type?: unknown; data?: unknown }),
+        src: projectedPictureSrc(
+          pic as { type?: unknown; data?: unknown },
+          ctx.rasterFallbackImages,
+        ),
         crop,
         ...(adjust?.filter ? { filter: adjust.filter } : {}),
         ...(adjust?.opacity != null ? { opacity: adjust.opacity } : {}),
@@ -974,7 +977,7 @@ export function projectDrawings(runs: readonly unknown[], ctx: ProjectContext): 
       if (d) out.push(d);
     }
     if (isRecord(run.picture) && isRecord(run.picture.floating)) {
-      const d = projectFloatingPicture(run.picture);
+      const d = projectFloatingPicture(run.picture, ctx);
       if (d) out.push(d);
     }
   };

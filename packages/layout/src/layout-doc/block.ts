@@ -116,6 +116,12 @@ export interface LayoutParagraph {
   keepNext?: boolean;
   widowControl?: boolean;
   pageBreakBefore?: boolean;
+  /** Resolved heading level (1-9) when the paragraph's style cascade marks it
+   *  a heading (a Heading1-9 pStyle, a localized heading style name, or an
+   *  explicit w:outlineLvl) — the projection's outline signal for consumers
+   *  that only have the laid model (the headless PDF structure pass). The
+   *  layout engine itself never reads it. Absent = not a heading. */
+  headingLevel?: number;
   /** w:bidi — right-to-left paragraph direction. */
   bidi?: boolean;
   /** w:textDirection — text flow direction (horizontal vs vertical). */
