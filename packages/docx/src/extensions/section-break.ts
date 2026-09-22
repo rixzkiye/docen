@@ -2,6 +2,20 @@ import { TextSelection } from "@tiptap/pm/state";
 
 import { Extension } from "../core";
 
+/** A copy of a sectPr with the break type applied. `nextPage` is w:type's
+ *  OOXML default, so it deletes the attribute (Word omits it) instead of
+ *  writing it. The copy matters: compile's section memo is reference-keyed, so
+ *  a mutated-in-place value would keep the stale compiled section. */
+function withSectionBreakType(
+  properties: unknown,
+  type: "nextPage" | "continuous" | "evenPage" | "oddPage",
+): Record<string, unknown> {
+  const next = { ...(properties as Record<string, unknown> | null | undefined) };
+  if (type === "nextPage") delete next.type;
+  else next.type = type;
+  return next;
+}
+
 /**
  * SectionBreak — command extension that marks a paragraph as a section boundary.
  *
@@ -16,10 +30,19 @@ import { Extension } from "../core";
  * <w:body>'s end in OOXML). Single-section documents have no section-carrying
  * paragraph at all.
  *
- * Next Page semantics: `setSectionBreak` stamps sectionProperties on the current
- * paragraph (making it the section's last paragraph) AND inserts a fresh empty
- * paragraph after it (the next section's first paragraph), then moves the
- * selection into that new paragraph. The page-plugin's `forcesPageBreakAfter`
+ * w:type placement: the type belongs to the section WHOSE sectPr carries it and
+ * declares how that section starts relative to the previous one (ECMA-376
+ * §17.6.22). A break inserted after section A therefore types the FOLLOWING
+ * section's sectPr — the next section-boundary paragraph (which closes that
+ * section), or the body-level doc attrs when the new section is the document's
+ * last. Stamping A's own sectPr would make A itself start on that parity, the
+ * classic off-by-one that loses Word's blank interleave.
+ *
+ * Break semantics: `setSectionBreak` stamps the current paragraph's
+ * sectionProperties EMPTY (it stays the current section's last paragraph, the
+ * boundary marker) AND inserts a fresh empty paragraph after it (the next
+ * section's first paragraph), then types the following sectPr and moves the
+ * selection into the new paragraph. The page-plugin's `forcesPageBreakAfter`
  * treats a sectionProperties-bearing paragraph as a page break, so repaginate
  * pushes the new paragraph onto the next page — and the caret follows. This
  * mirrors Word's "Section Break (Next Page)".
@@ -42,13 +65,18 @@ export const SectionBreak = Extension.create({
   addCommands() {
     return {
       // Section break: stamp the current paragraph as its section's last
-      // paragraph (with the requested sectPr @w:type), insert a fresh empty
-      // paragraph as the next section's first paragraph, and move the caret
-      // into it. A new paragraph is inserted rather than split from the
-      // current one so it does NOT inherit the just-stamped sectionProperties
-      // (which would make it a section boundary too and break forever).
-      // "nextPage" (the OOXML default) reflows the next section onto a fresh
-      // page; "continuous" keeps it flowing on the same page.
+      // paragraph (an empty sectPr — just the boundary), insert a fresh empty
+      // paragraph as the next section's first paragraph, write the requested
+      // w:type on the FOLLOWING section's sectPr, and move the caret into the
+      // new paragraph. A new paragraph is inserted rather than split from the
+      // current one so it does NOT inherit the boundary marker (which would
+      // make it a section boundary too and break forever). The w:type belongs
+      // to the following section (ECMA-376 §17.6.22 — it declares how that
+      // section starts): the next section-boundary paragraph after the
+      // inserted one, or the body-level doc attrs when the new section is the
+      // document's last. "nextPage" (the OOXML default) reflows the next
+      // section onto a fresh page; "continuous" keeps it flowing on the same
+      // page.
       setSectionBreak:
         (options?: { type?: "nextPage" | "continuous" | "evenPage" | "oddPage" }) =>
         ({ tr, state, dispatch }) => {
@@ -59,19 +87,45 @@ export const SectionBreak = Extension.create({
           // heading too (e.g. a chapter title that ends its section).
           if (para.type.name !== "paragraph" && para.type.name !== "heading") return false;
           const paraPos = $from.before($from.depth);
-          // 1. Current paragraph becomes its section's last paragraph. The
-          //    type omits on nextPage (the OOXML default) so round-trips of
-          //    plain Next Page breaks stay byte-stable.
-          tr.setNodeMarkup(paraPos, undefined, {
-            ...para.attrs,
-            sectionProperties:
-              options?.type && options.type !== "nextPage" ? { type: options.type } : {},
-          });
+          // 1. The current paragraph becomes its section's last paragraph:
+          //    empty sectionProperties keeps the boundary (compile closes a
+          //    section only for a non-null marker) without claiming a type.
+          tr.setNodeMarkup(paraPos, undefined, { ...para.attrs, sectionProperties: {} });
           // 2. Insert a fresh empty paragraph (new section's first paragraph)
           //    and move the caret into it; repaginate pushes it to the next
           //    page (nextPage) or flows it on (continuous).
           const paraEnd = paraPos + para.nodeSize;
           tr.insert(paraEnd, state.schema.nodes.paragraph.create());
+          // 3. Type the following section's sectPr. The next boundary
+          //    paragraph after the inserted one closes that section; none
+          //    means the new section is final and its sectPr is body-level.
+          const type = options?.type ?? "nextPage";
+          const following: Array<{ pos: number; attrs: Record<string, unknown> }> = [];
+          tr.doc.content.forEach((node, offset) => {
+            if (following.length > 0 || offset <= paraEnd) return;
+            // Only a top-level paragraph is a section boundary — the same
+            // walk compileDocument's section split uses.
+            if (node.type.name !== "paragraph") return;
+            const props = (node.attrs as { sectionProperties?: unknown }).sectionProperties;
+            if (props == null) return;
+            following.push({ pos: offset, attrs: node.attrs as Record<string, unknown> });
+          });
+          const target = following[0];
+          if (target) {
+            tr.setNodeMarkup(target.pos, undefined, {
+              ...target.attrs,
+              sectionProperties: withSectionBreakType(target.attrs.sectionProperties, type),
+            });
+          } else {
+            const docProps = (tr.doc.attrs as { sectionProperties?: unknown }).sectionProperties;
+            // An absent body sectPr has no type to clear for the default
+            // nextPage — leave it absent rather than materializing an empty
+            // one (compile then keeps docen's explicit page defaults).
+            const hasType = typeof docProps === "object" && docProps != null && "type" in docProps;
+            if (type !== "nextPage" || hasType) {
+              tr.setDocAttribute("sectionProperties", withSectionBreakType(docProps, type));
+            }
+          }
           tr.setSelection(TextSelection.near(tr.doc.resolve(paraEnd + 1)));
           tr.scrollIntoView();
           return true;
@@ -107,8 +161,9 @@ export const SectionBreak = Extension.create({
 declare module "@tiptap/core" {
   interface Commands<ReturnType> {
     sectionBreak: {
-      /** Insert a section break at the current paragraph (Next Page by
-       *  default; `type` stamps sectPr @w:type, e.g. Continuous). */
+      /** Insert a section break after the current paragraph (Next Page by
+       *  default). `type` is written on the FOLLOWING section's sectPr
+       *  @w:type (ECMA-376 §17.6.22) — the new section's start mode. */
       setSectionBreak: (options?: {
         type?: "nextPage" | "continuous" | "evenPage" | "oddPage";
       }) => ReturnType;

@@ -396,9 +396,11 @@ export function projectDocumentOptions(
     // unchanged section keeps its exact block objects across renders.
     const last = blocks[blocks.length - 1];
     if (sIdx < docSections.length - 1 && last?.kind === "paragraph") {
-      // The mark row names the break type (Word: "分节符(连续)") — nextPage
+      // The mark row names the break AFTER this paragraph — the FOLLOWING
+      // section's type: w:type belongs to the section whose sectPr carries it
+      // and describes how that section starts (ECMA-376 §17.6.22). nextPage
       // collapses to true, the painter's default label.
-      const type = section.properties?.type;
+      const type = docSections[sIdx + 1]?.properties?.type;
       const marked: LayoutBlock = {
         ...last,
         sectionEnd:
