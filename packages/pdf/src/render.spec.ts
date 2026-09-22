@@ -4,6 +4,8 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 
+import { Document, Paragraph, SectionBreak } from "@docen/docx";
+import { Editor, Node as TextNode } from "@docen/docx/core";
 import {
   browserFontMetrics,
   clearMissingFontWarnings,
@@ -330,4 +332,35 @@ describe("section break semantics reach the headless flow", () => {
     const bytes = await renderPdf(twoSections("oddPage"), { title: "Odd Page" });
     expect(pageCount(bytes)).toBe(3);
   }, 30000);
+
+  it("paginates the UI command's output the same way", async () => {
+    const Text = TextNode.create({ name: "text", group: "inline" });
+    const commandDoc = (type?: "continuous" | "oddPage") => {
+      const editor = new Editor({
+        element: null,
+        extensions: [Document, Paragraph, Text, SectionBreak],
+        content: {
+          type: "doc",
+          content: [
+            { type: "paragraph", content: [{ type: "text", text: "Section A" }] },
+            { type: "paragraph", content: [{ type: "text", text: "Section B" }] },
+          ],
+        },
+      });
+      // element:null skips mount() and with it plugin installation.
+      for (const plugin of editor.extensionManager.plugins) editor.registerPlugin(plugin);
+      editor.commands.setSectionBreak(type ? { type } : undefined);
+      return editor.getJSON();
+    };
+
+    const continuous = await renderPdf(commandDoc("continuous"), {
+      title: "Command Continuous",
+    });
+    expect(pageCount(continuous)).toBe(1);
+
+    // Before the type moved to the FOLLOWING section this rendered 2 pages:
+    // section A claimed the oddPage start instead of the inserted section.
+    const odd = await renderPdf(commandDoc("oddPage"), { title: "Command Odd Page" });
+    expect(pageCount(odd)).toBe(3);
+  }, 60000);
 });
