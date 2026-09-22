@@ -34,6 +34,13 @@ export interface PrepareImagesPolicy {
    * custom `fetch` transport is trusted with the allowlisted URL.
    */
   allow: readonly string[];
+  /**
+   * Optional origin used to resolve site-relative image URLs (`/media/logo.png`)
+   * before the allowlist check. Relative URLs stay untouched when absent — a
+   * server render must name the origin it trusts, never infer one from the
+   * request.
+   */
+  origin?: string;
   /** Maximum accepted image size in bytes (default {@link DEFAULT_IMAGE_MAX_BYTES}). */
   maxBytes?: number;
   /** Maximum redirects followed by the default transport (default {@link DEFAULT_IMAGE_MAX_REDIRECTS}). */
@@ -99,7 +106,7 @@ export function prepareImages(policy?: PrepareImagesPolicy): PrepareStep {
   };
 
   return async (json: JSONContent) => {
-    await walkImages(json, handler);
+    await walkImages(json, handler, policy.origin);
   };
 }
 
@@ -340,15 +347,58 @@ async function toDataUrl(src: string, handler: ImageFetchHandler): Promise<strin
   return `data:${mime};base64,${encodeBase64(data)}`;
 }
 
-async function walkImages(node: JSONContent, handler: ImageFetchHandler): Promise<void> {
+async function walkImages(
+  node: JSONContent,
+  handler: ImageFetchHandler,
+  origin?: string,
+): Promise<void> {
   if (node.type === "image" && node.attrs) {
-    const src = node.attrs.src as string | undefined;
-    if (src && (src.startsWith("http://") || src.startsWith("https://"))) {
+    const attrs = node.attrs as Record<string, unknown>;
+    // Only absolute http(s) URLs (or site-relative ones once a policy origin is
+    // named) reach the handler — `assertAllowedUrl` still runs the host check.
+    const fetchable = (url: unknown): string | undefined => {
+      if (typeof url !== "string" || url.length === 0) return undefined;
+      if (url.startsWith("http://") || url.startsWith("https://")) return url;
+      if (url.startsWith("/") && origin) return new URL(url, origin).toString();
+      return undefined;
+    };
+    const src = attrs.src as string | undefined;
+    const primary = fetchable(src);
+    const fallbackUrl = fetchable(attrs.fallbackSrc);
+    let embeddedFallback = false;
+    if (primary) {
       try {
-        node.attrs.src = await toDataUrl(src, handler);
+        attrs.src = await toDataUrl(primary, handler);
+        if (typeof attrs.originalSrc !== "string") attrs.originalSrc = src;
       } catch (error) {
         console.warn(
           `Failed to fetch image: ${src}`,
+          error instanceof Error ? error.message : error,
+        );
+        // A raster fallback can stand in for the primary source (a cover logo
+        // that moved behind an auth wall, an SVG host that went away).
+        if (fallbackUrl && fallbackUrl !== primary) {
+          try {
+            attrs.src = await toDataUrl(fallbackUrl, handler);
+            attrs.originalSrc = attrs.fallbackSrc;
+            embeddedFallback = true;
+          } catch (fallbackError) {
+            console.warn(
+              `Failed to fetch fallback image: ${String(attrs.fallbackSrc)}`,
+              fallbackError instanceof Error ? fallbackError.message : fallbackError,
+            );
+          }
+        }
+      }
+    }
+    // Embed the raster fallback even when the primary fetch succeeded: the
+    // DOCX SVG picture path needs fallback bytes at compile time.
+    if (fallbackUrl && !embeddedFallback) {
+      try {
+        attrs.fallbackSrc = await toDataUrl(fallbackUrl, handler);
+      } catch (error) {
+        console.warn(
+          `Failed to fetch fallback image: ${String(attrs.fallbackSrc)}`,
           error instanceof Error ? error.message : error,
         );
       }

@@ -106,6 +106,14 @@ export const InlinePassthrough = Node.create({
         parseHTML: (element: HTMLElement) =>
           element.getAttribute("data-inline-passthrough") ?? "{}",
       },
+      // Citation identity for academic documents: the passthrough atom carries
+      // the bibliography key beside its OOXML payload so a citation mark
+      // survives DOCX round-trips (the payload alone has no key field).
+      citationKey: {
+        default: null,
+        rendered: false,
+        parseHTML: (element: HTMLElement) => element.getAttribute("data-citation-key"),
+      },
     };
   },
 

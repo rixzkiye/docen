@@ -152,6 +152,27 @@ export class SpellingCommands {
   run(): void {
     const editor = this.host.editor();
     if (!editor) return;
+    // The bundled lexicons are English-only: an Indonesian (or otherwise
+    // non-English) document would squiggle on nearly every word. Skip when the
+    // host opts out via spellcheck="false" or a non-English lang.
+    const hostEl = this.host.element();
+    const lang = hostEl.getAttribute?.("lang") ?? "";
+    if (
+      hostEl.getAttribute?.("spellcheck") === "false" ||
+      hostEl.spellcheck === false ||
+      (lang !== "" && !lang.toLowerCase().startsWith("en"))
+    ) {
+      this.#issues = [];
+      this.#grammarIssues = [];
+      this.host.bridge()?.setSpellingIssues([]);
+      this.host.bridge()?.setGrammarIssues?.([]);
+      this.#buildUnifiedEntries();
+      this.#active = -1;
+      const bar = hostEl.shadowRoot?.querySelector("docen-status-bar");
+      bar?.setAttribute("proofing", "ok");
+      this.#syncPane();
+      return;
+    }
     this.#issues = checkSpelling(editor.state.doc);
     const rawGrammar = checkGrammar(editor.state.doc);
     this.#grammarIssues = rawGrammar.filter(
@@ -164,7 +185,7 @@ export class SpellingCommands {
     this.#buildUnifiedEntries();
     this.#active = this.#unifiedEntries.length ? 0 : -1;
 
-    const bar = this.host.element().shadowRoot?.querySelector("docen-status-bar");
+    const bar = hostEl.shadowRoot?.querySelector("docen-status-bar");
     bar?.setAttribute(
       "proofing",
       this.#issues.length || this.#grammarIssues.length ? "issues" : "ok",

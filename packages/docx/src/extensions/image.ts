@@ -99,7 +99,12 @@ export function mediaOfSrc(src: string | undefined):
     const match = src.match(/^data:image\/([\w.+-]+);base64,/);
     if (match) {
       const bytes = decodedBytesOf(src);
-      if (bytes) return { type: match[1] === "jpeg" ? "jpg" : match[1], bytes };
+      // OOXML media types are extension tokens ("svg", "jpg"), not MIME
+      // subtypes — "svg+xml" would name the part `imageN.svg+xml`, which no
+      // [Content_Types].xml Default covers and office-open's SVG branch never
+      // recognizes. Normalize before the bytes reach the compiler.
+      const type = match[1] === "jpeg" ? "jpg" : match[1] === "svg+xml" ? "svg" : match[1];
+      if (bytes) return { type, bytes };
     }
   }
   return undefined;
@@ -129,6 +134,20 @@ export function renderDocx(node: JSONContent): Record<string, unknown> | null {
 
   // Cannot generate an image run without embedded data (external URLs need pre-fetching)
   if (!imageOpts.data) return null;
+
+  // OOXML SVG pictures are vector-primary with a raster fallback: office-open
+  // registers the fallback part, targets the blip at it, and points
+  // `asvg:svgBlip` at the vector part. Without fallback bytes its compiler
+  // dereferences `opts.fallback.data` — the authoring editor persists
+  // `attrs.fallbackSrc` (a raster data URL) alongside every SVG src.
+  if (imageOpts.type === "svg") {
+    const fallback = mediaOfSrc(attrs.fallbackSrc as string | undefined);
+    if (!fallback || fallback.type === "svg") {
+      console.warn("SVG image without a raster fallbackSrc was skipped on DOCX export");
+      return null;
+    }
+    imageOpts.fallback = { type: fallback.type, data: fallback.bytes };
+  }
 
   // transformation: width/height are required by OOXML MediaTransformation —
   // default when absent (editor/prepare step normally supplies real dimensions).
@@ -244,20 +263,38 @@ export function parseDocx(picture: PictureOptions): Record<string, unknown> {
 function resolveImage(picture: PictureOptions, ctx: ResolveContext): JSONContent {
   const attrs = ctx.parseNodeAttrs("image", picture);
   const { data, type } = picture;
-  const mime = type ?? "png";
-  if (typeof data === "string" && data.length > 0) {
-    attrs.src = data.startsWith("data:") ? data : `data:image/${mime};base64,${data}`;
-  } else {
-    const bytes =
-      data instanceof Uint8Array ? data : data instanceof ArrayBuffer ? new Uint8Array(data) : null;
-    if (bytes && bytes.byteLength > 0) {
-      attrs.src =
-        bytes.byteLength > MEDIA_INLINE_LIMIT
-          ? registerMediaBlob(bytes, mime)
-          : `data:image/${mime};base64,${encodeBase64(bytes)}`;
-    }
+  const src = pictureSrcOf(data, type ?? "png");
+  if (src) attrs.src = src;
+  // SVG pictures carry the raster fallback as a sibling part — keep it in the
+  // model so DOCX → JSON → DOCX keeps emitting asvg:svgBlip + the raster blip.
+  const fallback = picture.type === "svg" ? picture.fallback : undefined;
+  if (fallback) {
+    const fallbackSrc = pictureSrcOf(fallback.data, fallback.type ?? "png");
+    if (fallbackSrc) attrs.fallbackSrc = fallbackSrc;
   }
   return { type: "image", attrs };
+}
+
+/** Raw picture payload → the model's src data URL (or a registered blob URL
+ *  for oversized bytes). `data` may be a data URL, a base64 string, or bytes
+ *  — office-open's writer accepts all three. */
+function pictureSrcOf(data: unknown, type: string): string | undefined {
+  if (typeof data === "string" && data.length > 0) {
+    return data.startsWith("data:") ? data : `data:image/${mimeOfPictureType(type)};base64,${data}`;
+  }
+  const bytes =
+    data instanceof Uint8Array ? data : data instanceof ArrayBuffer ? new Uint8Array(data) : null;
+  if (!bytes || bytes.byteLength === 0) return undefined;
+  const mime = mimeOfPictureType(type);
+  return bytes.byteLength > MEDIA_INLINE_LIMIT
+    ? registerMediaBlob(bytes, mime)
+    : `data:image/${mime};base64,${encodeBase64(bytes)}`;
+}
+
+/** OOXML media type token → the data-URL MIME subtype. "svg" is the one
+ *  mismatch (the part extension vs `image/svg+xml`); the rest are identity. */
+function mimeOfPictureType(type: string): string {
+  return type === "svg" ? "svg+xml" : type;
 }
 
 // DOCX image run → office-open ParagraphChild `{ picture: PictureOptions }`.

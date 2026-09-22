@@ -183,7 +183,12 @@ export function projectParagraph(p: BodyParagraph, ctx: ProjectContext): LayoutP
     (level?.leftTw != null ? twipToPx(level.leftTw) : undefined) ??
     charsPx(pick([sInd, docInd], "leftChars") ?? pick([sInd, docInd], "startChars")) ??
     twPx(pick([sInd, docInd], "left") ?? pick([sInd, docInd], "start"));
+  const align = alignOf(pick([pPr, chainPPr, cellPPr, docPPr], "alignment"));
   const firstLinePx = (() => {
+    // Word never applies a first-line indent to centered or right-aligned
+    // paragraphs — suppress any inherited docDefaults/Normal firstLine so a
+    // heading or cover line does not shift off its axis.
+    if (align === "center" || align === "right") return undefined;
     const directHanging = charsPx(dInd.hangingChars) ?? twPx(dInd.hanging);
     if (directHanging != null) return -directHanging;
     const directTw = twPx(dInd.firstLine);
@@ -380,7 +385,7 @@ export function projectParagraph(p: BodyParagraph, ctx: ProjectContext): LayoutP
     markSizePx: markSize != null ? ptToPx(markSize) : undefined,
     defaultTextStyle,
     snapToGrid: typeof pPr.snapToGrid === "boolean" ? pPr.snapToGrid : null,
-    align: alignOf(pick([pPr, chainPPr, cellPPr, docPPr], "alignment")),
+    align,
     keepLines: pPr.keepLines === true || chainPPr.keepLines === true,
     keepNext: pPr.keepNext === true || chainPPr.keepNext === true,
     widowControl: pick([pPr, chainPPr], "widowControl") !== false,

@@ -39,6 +39,7 @@ const ALIGN_TO_LAYOUT = {
   end: "right",
   center: "center",
   both: "both",
+  justify: "both",
   distribute: "distribute",
 } as const;
 

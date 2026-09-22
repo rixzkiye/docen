@@ -199,7 +199,13 @@ function tableWidthOf(table: LayoutTable, containerWidth: number): number {
 function tableColumnWidths(table: LayoutTable, tableWidth: number): number[] {
   const grid = rawGridOf(table);
   if (grid.length === 0) return [];
-  const total = grid.reduce((a, b) => a + b, 0) || 1;
+  const total = grid.reduce((a, b) => a + b, 0);
+  // A zero/absent grid must not collapse every column to zero width (the
+  // table would paint as a sliver); split the width equally instead.
+  if (total <= 0) {
+    const equalWidth = tableWidth / grid.length;
+    return grid.map(() => equalWidth);
+  }
   return grid.map((w) => (w / total) * tableWidth);
 }
 
@@ -276,7 +282,10 @@ function autofitColumns(
   // column (a 0/absent grid entry starts from the content itself).
   const target = grid.map((w, c) => Math.max(w > 0 ? w : content[c]!, content[c]!));
   const total = target.reduce((a, b) => a + b, 0);
-  if (total <= 0) return { columnWidths: grid, tableWidth: containerWidth };
+  if (total <= 0) {
+    const equalWidth = containerWidth / (grid.length || 1);
+    return { columnWidths: grid.map(() => equalWidth), tableWidth: containerWidth };
+  }
   const width =
     table.width?.type === "percent"
       ? (containerWidth * table.width.percent) / 100

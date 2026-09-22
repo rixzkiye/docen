@@ -526,6 +526,15 @@ export class DocxManager {
     } else if (sourceNumbering) {
       numbering = sourceNumbering;
     }
+    // Note bodies: the document extension carries them as first-class attrs
+    // (footnotes/endnotes); documentExtras stays a fallback for documents
+    // compiled before the attrs existed.
+    const footnotes = (docAttrs.footnotes ??
+      (documentExtras as Record<string, unknown> | undefined)?.footnotes ??
+      undefined) as DocumentOptions["footnotes"] | undefined;
+    const endnotes = (docAttrs.endnotes ??
+      (documentExtras as Record<string, unknown> | undefined)?.endnotes ??
+      undefined) as DocumentOptions["endnotes"] | undefined;
     return {
       sections,
       ...(styles ? { styles } : {}),
@@ -533,6 +542,8 @@ export class DocxManager {
       ...(background ? { background } : {}),
       ...(bibliography ? { bibliography } : {}),
       ...extras,
+      ...(footnotes ? { footnotes } : {}),
+      ...(endnotes ? { endnotes } : {}),
       ...(numbering ? { numbering } : {}),
     };
   }

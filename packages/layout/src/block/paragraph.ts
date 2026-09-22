@@ -371,10 +371,14 @@ function layoutParagraphUncached(
     });
   }
 
+  // Word never applies a first-line indent to centered or right-aligned
+  // paragraphs: suppress a dirty firstLinePx at the layout level too, so a
+  // caller-built LayoutParagraph cannot skew the axis the projection fixed.
+  const isCenteredOrRight = para.align === "center" || para.align === "right";
   const packed = packLines(inline, {
     measurer,
     width: usable,
-    firstLineIndentPx: para.indent?.firstLinePx,
+    firstLineIndentPx: isCenteredOrRight ? undefined : para.indent?.firstLinePx,
     tabStops: para.tabStops,
     defaultTabStopPx: para.defaultTabStopPx,
     strutPx,
@@ -459,7 +463,7 @@ function layoutParagraphUncached(
       spacingRule: spec?.rule,
       pictureFloored: line.pictureFloored,
       advanceScale: line.advanceScale,
-      firstLineIndentPx: i === 0 ? para.indent?.firstLinePx : undefined,
+      firstLineIndentPx: i === 0 && !isCenteredOrRight ? para.indent?.firstLinePx : undefined,
       endInlineIndex: line.endInlineIndex,
       final: line.final,
       items: line.items,

@@ -52,6 +52,55 @@ function imageOf(json: JSONContent, slot: "sectionHeaders" | "sectionFooters"): 
   return paragraph.content?.[1] as JSONContent;
 }
 
+describe("SVG pictures (vector primary + raster fallback)", () => {
+  const SVG = `data:image/svg+xml;base64,${Buffer.from(
+    '<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><rect width="10" height="10" fill="#336699"/></svg>',
+  ).toString("base64")}`;
+
+  const docWithSvg = (fallbackSrc?: string): JSONContent =>
+    ({
+      type: "doc",
+      content: [
+        {
+          type: "paragraph",
+          content: [
+            {
+              type: "image",
+              attrs: { src: SVG, width: 10, height: 10, ...(fallbackSrc ? { fallbackSrc } : {}) },
+            },
+          ],
+        },
+      ],
+    }) as unknown as JSONContent;
+
+  it("names the parts .svg/.png, declares both content types, and emits asvg:svgBlip", () => {
+    const zip = unzipSync(generateDOCXSync(docWithSvg(PNG), { prepare: false }));
+    const names = Object.keys(zip);
+    expect(names.some((name) => /^word\/media\/image\d+\.svg$/.test(name))).toBe(true);
+    expect(names.some((name) => /^word\/media\/image\d+\.png$/.test(name))).toBe(true);
+    const contentTypes = new TextDecoder().decode(zip["[Content_Types].xml"]);
+    expect(contentTypes).toContain('Extension="svg"');
+    expect(contentTypes).toContain('Extension="png"');
+    const xml = new TextDecoder().decode(zip["word/document.xml"]);
+    expect(xml).toContain("asvg:svgBlip");
+    expect(xml).toContain("<a:blip");
+  });
+
+  it("round-trips the raster fallback through parseDOCXSync", () => {
+    const parsed = parseDOCXSync(generateDOCXSync(docWithSvg(PNG), { prepare: false }));
+    const image = parsed.content?.[0]?.content?.[0] as JSONContent;
+    expect(image.type).toBe("image");
+    expect(image.attrs?.src).toBe(SVG);
+    expect(image.attrs?.fallbackSrc).toBe(PNG);
+  });
+
+  it("skips an SVG without a raster fallback instead of corrupting the package", () => {
+    const zip = unzipSync(generateDOCXSync(docWithSvg(), { prepare: false }));
+    const xml = new TextDecoder().decode(zip["word/document.xml"]);
+    expect(xml).not.toContain("<w:drawing>");
+  });
+});
+
 describe("DocumentOptions pictures", () => {
   it("resolves string picture data to an image src (body, header, footer)", () => {
     const json = resolveDocument(docWithHeaderLogo());
