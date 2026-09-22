@@ -505,6 +505,7 @@ function layoutParagraphUncached(
     textDirection: para.textDirection,
     formatChange: para.formatChange,
     balloons: para.balloons,
+    bookmarks: para.bookmarks,
   };
 }
 

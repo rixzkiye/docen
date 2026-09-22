@@ -6,6 +6,7 @@
 
 import type {
   LayoutBalloonAnchor,
+  LayoutBookmarkAnchor,
   LayoutBorderEdge,
   LayoutCellInsets,
   LayoutCombine,
@@ -245,6 +246,9 @@ export interface LaidOutParagraph {
   /** Margin-balloon anchors mirrored for the flow's per-page packing (they
    *  carry no geometry of their own). */
   balloons?: LayoutBalloonAnchor[];
+  /** w:bookmarkStart markers mirrored from the input (name + inline slot) —
+   *  the PDF structure pass resolves them to named destinations. */
+  bookmarks?: LayoutBookmarkAnchor[];
 }
 
 /** One stacked block with its content-box offset inside the stack (collapsed

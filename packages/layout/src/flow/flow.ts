@@ -1485,8 +1485,19 @@ function splitLaid(laid: LaidOutBlock, k: number, midDepth?: number): [LaidOutBl
     case "paragraph": {
       const headLines = laid.lines.slice(0, k);
       const tailLines = rebaseLines(laid.lines.slice(k));
+      // A bookmark belongs to the slice whose lines cover its inline slot: the
+      // head keeps the markers at or before its last inline, the tail takes
+      // the rest — a marker must never point at the wrong page.
+      const headEnd = headLines[headLines.length - 1]?.endInlineIndex ?? -1;
+      const headBookmarks = laid.bookmarks?.filter((b) => b.inlineIndex <= headEnd);
+      const tailBookmarks = laid.bookmarks?.filter((b) => b.inlineIndex > headEnd);
       return [
-        { ...laid, lines: headLines, heightPx: sumLines(headLines) },
+        {
+          ...laid,
+          lines: headLines,
+          heightPx: sumLines(headLines),
+          ...(laid.bookmarks ? { bookmarks: headBookmarks } : {}),
+        },
         // The tail drops the drawings: a float paints and registers its zone
         // on the page of its anchor paragraph (the head), never twice.
         {
@@ -1495,6 +1506,7 @@ function splitLaid(laid: LaidOutBlock, k: number, midDepth?: number): [LaidOutBl
           heightPx: sumLines(tailLines),
           beforePx: 0,
           drawings: undefined,
+          ...(laid.bookmarks ? { bookmarks: tailBookmarks } : {}),
         },
       ];
     }

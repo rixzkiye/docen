@@ -20,6 +20,7 @@ import { DOCEN_DEFAULT_PAGE_MARGIN } from "../../converters/section-defaults";
 import { resolvePageSize } from "../../extensions/utils";
 import { indexCharacterStyles } from "../../style-cascade";
 import type { ProjectContext } from "./context";
+import { markStateful } from "./context";
 import {
   PLACEHOLDER_PX,
   childRunsOf,
@@ -49,7 +50,20 @@ export function projectChild(
   if ("toc" in child) return projectToc(child.toc, ctx);
   if ("sdt" in child) return projectSdt(child.sdt, ctx);
   if ("textbox" in child) return projectTextbox(child.textbox, ctx);
-  if ("bookmarkStart" in child || "bookmarkEnd" in child) return null;
+  // A block-level bookmark start buffers until the next projected paragraph
+  // anchors it (the paragraph projection drains the list); the end marker is
+  // pure metadata. Both are zero-height — neither reserves a box.
+  if ("bookmarkStart" in child) {
+    const start = (child as { bookmarkStart?: unknown }).bookmarkStart;
+    const name = isRecord(start) ? str(start.name) : undefined;
+    if (name) {
+      const pending = (ctx.pendingBookmarkNames ??= []);
+      if (!pending.includes(name)) pending.push(name);
+      markStateful(ctx);
+    }
+    return null;
+  }
+  if ("bookmarkEnd" in child) return null;
   // altChunk, customXml, rawXml → a labeled box.
   const label = Object.keys(child)[0];
   return { kind: "placeholder", heightPx: PLACEHOLDER_PX, label };

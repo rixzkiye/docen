@@ -74,6 +74,11 @@ export interface ProjectContext {
    *  compile pass spreads into DocumentOptions). Missing ids still anchor —
    *  the card just carries no author/text. */
   commentMeta?: Map<number, { author: string; initials: string; text: string }>;
+  /** w:bookmarkStart names seen at BLOCK level (between paragraphs), waiting
+   *  for the next projected paragraph to anchor them. OOXML keeps bookmarks
+   *  inside paragraphs, so this is the defensive branch of the model; the
+   *  paragraph projection drains it into `LayoutParagraph.bookmarks`. */
+  pendingBookmarkNames?: string[];
   /** Word's field-code display (Alt+F9): every field projects its instruction
    *  verbatim instead of its cached result — no dynamic page atoms, no
    *  re-hydrated result runs. */

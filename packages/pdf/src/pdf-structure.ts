@@ -17,14 +17,14 @@
  *   to the page fragments the layout actually produced.
  *
  * The headless server path (`renderPdf`) has no PM document: it passes the
- * same view with `doc: undefined` and the outline comes from the LAID model —
+ * same view with `doc: undefined` and every derivation reads the LAID model —
  * the projection resolves each paragraph's heading level (style cascade +
- * outline level), `locateBlocks` maps every laid block to its page and
- * page-local top, and the nesting is shared with the PM walk. Bookmark
- * destinations stay editor-only: the projection drops the zero-height
- * bookmark markers, so there is no position to resolve an internal anchor
- * against. Tagged figures need the PM alt-text model; the server path still
- * tags laid tables.
+ * outline level), carries each w:bookmarkStart as paragraph metadata (name +
+ * inline slot) and each picture's docPr alt text/name onto the laid atoms and
+ * drawings; `locateBlocks` maps every laid block to its page and page-local
+ * top, and outline nesting, bookmark destinations and tagged figures/tables
+ * all resolve from there with the same first-occurrence/page rules as the PM
+ * walk.
  *
  * Exclusions & Standards Decisions (R12-W2):
  * - `viewerPreferences`: OOXML/Word DOCX has no document-level source for PDF
@@ -41,6 +41,7 @@ import {
   type FlowPage,
   type LaidOutBlock,
   type LaidOutParagraph,
+  type LayoutDrawingMember,
   type ProjectedPageNumbering,
 } from "@docen/layout";
 import type { Node as PMNode } from "@tiptap/pm/model";
@@ -333,6 +334,48 @@ export function buildPdfDestinations(
   return destinations;
 }
 
+/** The paragraph-local top of the line covering an inline slot — the line the
+ *  bookmark's zero-width marker anchors to. Falls back to the paragraph top
+ *  when no line owns the slot (an empty paragraph, or a marker past the
+ *  content). */
+function bookmarkLineY(block: LaidOutParagraph, inlineIndex: number): number {
+  const lines = block.lines;
+  if (lines.length === 0) return 0;
+  for (const line of lines) {
+    if (line.items.some((item) => item.inlineIndex === inlineIndex)) return line.yPx;
+  }
+  const line =
+    lines.find((candidate) => inlineIndex <= candidate.endInlineIndex) ?? lines[lines.length - 1]!;
+  return line.yPx;
+}
+
+/** Bookmark names → page destinations from the LAID model — the server
+ *  path's named destinations. The projection carries every w:bookmarkStart as
+ *  paragraph metadata (name + inline slot), the laid line covering that slot
+ *  supplies the /XYZ top, and the first occurrence wins exactly like the PM
+ *  walk. Names are the document's own bookmark names — never guessed from
+ *  heading text. */
+export function buildPdfDestinationsFromPages(
+  view: PdfStructureView,
+): Record<string, PdfDestination> {
+  const destinations: Record<string, PdfDestination> = {};
+  for (const [block, at] of locateBlocks(view)) {
+    if (block.kind !== "paragraph" || !block.bookmarks) continue;
+    for (const bookmark of block.bookmarks) {
+      if (destinations[bookmark.name]) continue;
+      const top = pdfTopOf(view, {
+        page: at.page,
+        yPx: at.yPx + bookmarkLineY(block, bookmark.inlineIndex),
+      });
+      destinations[bookmark.name] = {
+        pageIndex: at.page,
+        ...(top !== undefined ? { y: top } : {}),
+      };
+    }
+  }
+  return destinations;
+}
+
 /** The alt text + name a drawing node carries in the editor model. The image
  *  node's `title` is the docPr description (Word's alt text) and `alt` the
  *  docPr name/title; the shape payloads carry `descr` (description) and
@@ -389,12 +432,64 @@ export function buildPdfStructElements(doc: PMNode, view: PdfStructureView): Pdf
   return elements;
 }
 
-/** Table fragments (nested included) the laid pages contribute, each as a
- *  Table on the page it landed — the doc-less server path's tagged-structure
- *  contribution. Figures need the PM alt-text model, which the projection
- *  does not carry, so they stay with the editor path. */
-export function buildPdfTableStructElements(view: PdfStructureView): PdfStructElement[] {
+/** The alt text a drawing member carries (picture docPr name/description,
+ *  3D/ink payloads) — undefined for members with no accessibility metadata. */
+function memberAltTextOf(
+  member: LayoutDrawingMember,
+): { altText?: string; title?: string } | undefined {
+  if (member.kind !== "picture" && member.kind !== "model3d" && member.kind !== "ink") {
+    return undefined;
+  }
+  if (!member.altText && !member.title) return undefined;
+  return {
+    ...(member.altText ? { altText: member.altText } : {}),
+    ...(member.title ? { title: member.title } : {}),
+  };
+}
+
+function pushFigure(
+  elements: PdfStructElement[],
+  pageIndex: number,
+  info: { altText?: string; title?: string } | undefined,
+): void {
+  if (!info?.altText && !info?.title) return;
+  elements.push({
+    type: "Figure",
+    pageIndex,
+    ...(info.altText ? { altText: info.altText } : {}),
+    ...(info.title ? { title: info.title } : {}),
+  });
+}
+
+/** Figures + tables the laid model contributes — the doc-less server path's
+ *  tagged structure. Every inline picture atom and drawing member carrying
+ *  docPr alt text/name becomes a Figure on its laid page (a drawing's own alt
+ *  wins over its members', matching the editor path's one-figure-per-node
+ *  walk); every laid table fragment becomes a Table. */
+export function buildPdfLaidStructElements(view: PdfStructureView): PdfStructElement[] {
   const elements: PdfStructElement[] = [];
+  for (const [block, at] of locateBlocks(view)) {
+    if (block.kind !== "paragraph") continue;
+    for (const inline of block.inline) {
+      if (inline.kind !== "picture") continue;
+      if (inline.altText || inline.title) {
+        pushFigure(elements, at.page, { altText: inline.altText, title: inline.title });
+        continue;
+      }
+      for (const member of inline.members ?? []) {
+        pushFigure(elements, at.page, memberAltTextOf(member));
+      }
+    }
+    for (const drawing of block.drawings ?? []) {
+      if (drawing.altText || drawing.title) {
+        pushFigure(elements, at.page, { altText: drawing.altText, title: drawing.title });
+        continue;
+      }
+      for (const member of drawing.members) {
+        pushFigure(elements, at.page, memberAltTextOf(member));
+      }
+    }
+  }
   collectTableStructElements(view, elements);
   return elements;
 }
@@ -422,15 +517,15 @@ function collectTableStructElements(view: PdfStructureView, elements: PdfStructE
 /** Derive every structure option the PDF writer accepts from the print run.
  *  The editor path supplies the PM document (outline from live headings,
  *  bookmark destinations, alt-text figures); the server path passes none and
- *  derives the outline from the laid model instead — bookmarks are dropped by
- *  the projection (zero-height passthrough atoms), so internal destinations
- *  stay editor-only, and tagged figures keep their PM alt text. */
+ *  derives all three from the laid model instead — the projection carries
+ *  heading levels, w:bookmarkStart markers and picture docPr alt text onto
+ *  the laid blocks, so the same derivation runs without a PM node. */
 export function buildPdfStructure(view: PdfStructureView): PdfStructure {
   const doc = view.doc;
   return {
     outline: doc ? buildPdfOutline(doc, view) : buildPdfOutlineFromPages(view),
     pageLabels: buildPdfPageLabels(view.sections, view.sectionOfPage),
-    destinations: doc ? buildPdfDestinations(doc, view) : {},
-    structElements: doc ? buildPdfStructElements(doc, view) : buildPdfTableStructElements(view),
+    destinations: doc ? buildPdfDestinations(doc, view) : buildPdfDestinationsFromPages(view),
+    structElements: doc ? buildPdfStructElements(doc, view) : buildPdfLaidStructElements(view),
   };
 }

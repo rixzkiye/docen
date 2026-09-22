@@ -6,6 +6,7 @@ import {
   ptToPx,
   twipToPx,
   type LayoutBalloonAnchor,
+  type LayoutBookmarkAnchor,
   type LayoutInline,
   type LayoutLineHeight,
   type LayoutParagraph,
@@ -322,6 +323,17 @@ export function projectParagraph(p: BodyParagraph, ctx: ProjectContext): LayoutP
 
   const runs: readonly unknown[] = childRunsOf(p);
   const drawings = projectDrawings(runs, ctx);
+  // Block-level bookmark starts buffered by the child dispatch anchor at this
+  // paragraph's start (the first projected paragraph after the marker owns
+  // them); inline markers are collected by the run walk below.
+  const bookmarks: LayoutBookmarkAnchor[] = [];
+  const pendingBookmarks = ctx.pendingBookmarkNames;
+  if (pendingBookmarks && pendingBookmarks.length > 0) {
+    for (const name of pendingBookmarks.splice(0)) {
+      if (!bookmarks.some((b) => b.name === name)) bookmarks.push({ name, inlineIndex: 0 });
+    }
+    markStateful(ctx);
+  }
   // Margin-balloon anchors: run-level ones come from the inline walk,
   // paragraph-level ones from a pPrChange on this node.
   const anchors: LayoutBalloonAnchor[] = [];
@@ -329,7 +341,7 @@ export function projectParagraph(p: BodyParagraph, ctx: ProjectContext): LayoutP
     pPr.suppressAutoHyphens === true || chainPPr.suppressAutoHyphens === true;
   const runCtx: ProjectContext =
     suppressAutoHyphens !== ctx.suppressAutoHyphens ? { ...ctx, suppressAutoHyphens } : ctx;
-  const inline = projectRuns(runs, chainRPr, docRPr, defaultTextStyle, runCtx, anchors);
+  const inline = projectRuns(runs, chainRPr, docRPr, defaultTextStyle, runCtx, anchors, bookmarks);
   // A tracked pPr change (w:pPrChange) marks the paragraph for the painter's
   // change bar — author-colored, or neutral in "By change type" mode.
   const revision = isRecord(pPr.revision) ? pPr.revision : undefined;
@@ -419,5 +431,6 @@ export function projectParagraph(p: BodyParagraph, ctx: ProjectContext): LayoutP
     textAlignment,
     ...indicator,
     ...(anchors.length > 0 ? { balloons: anchors } : {}),
+    ...(bookmarks.length > 0 ? { bookmarks } : {}),
   };
 }

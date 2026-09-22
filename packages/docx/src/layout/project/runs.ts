@@ -10,6 +10,7 @@ import {
   ptToPx,
   twipToPx,
   type LayoutBalloonAnchor,
+  type LayoutBookmarkAnchor,
   type LayoutCombine,
   type LayoutInline,
   type LayoutInlineFormField,
@@ -25,7 +26,7 @@ import {
 import { mergeStyleChain } from "../../style-cascade";
 import type { MarkupDisplay, ProjectContext } from "./context";
 import { markStateful } from "./context";
-import { cropOf, outlineOf, pictureAdjustOf } from "./drawing";
+import { cropOf, outlineOf, pictureAdjustOf, pictureAltTextOf } from "./drawing";
 import { isRecord, measureEmu, num, str, unescapeXml, type Rec } from "./guards";
 import {
   excelPreviewSvgDataUri,
@@ -252,6 +253,7 @@ export function projectRuns(
   defRun: LayoutTextStyle,
   ctx: ProjectContext,
   anchors?: LayoutBalloonAnchor[],
+  bookmarks?: LayoutBookmarkAnchor[],
 ): LayoutInline[] {
   const { openComments } = ctx;
   const out: LayoutInline[] = [];
@@ -575,6 +577,7 @@ export function projectRuns(
         src: members ? undefined : projectedPictureSrc(pic, ctx.rasterFallbackImages),
         crop: members ? undefined : cropOf(pic),
         members,
+        ...pictureAltTextOf(pic),
         // a:xfrm @rot (degrees) — Word tilts inline pictures about the
         // extent's center just like floating ones.
         ...(typeof tr.rotation === "number" && tr.rotation !== 0 ? { rotation: tr.rotation } : {}),
@@ -619,6 +622,16 @@ export function projectRuns(
       if (isRecord(child.commentRangeEnd) && num(child.commentRangeEnd.id) != null) {
         if (openComments) markStateful(ctx);
         openComments.delete(num(child.commentRangeEnd.id)!);
+      }
+      // A bookmark start is zero-width metadata: record its name + the inline
+      // slot it sits at (the next atom's index) for the PDF structure pass's
+      // named destinations. The end marker carries nothing.
+      if (isRecord(child.bookmarkStart)) {
+        const name = str(child.bookmarkStart.name);
+        if (name && bookmarks && !bookmarks.some((b) => b.name === name)) {
+          bookmarks.push({ name, inlineIndex: out.length });
+        }
+        continue;
       }
       const rPr: Rec = { ...preset, ...child };
       if (child.movedFrom || child.moveFrom) {

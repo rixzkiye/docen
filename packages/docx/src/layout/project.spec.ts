@@ -810,6 +810,88 @@ describe("projectDocumentOptions blocks", () => {
     expect(blocks[2]).toMatchObject({ kind: "paragraph" });
   });
 
+  it("projects bookmark markers as paragraph metadata (inline and block level)", () => {
+    const { blocks } = oneSection(
+      doc([
+        {
+          paragraph: {
+            children: [
+              { bookmarkStart: { id: 1, name: "_Toc100" } },
+              { text: "Hello " },
+              { bookmarkStart: { id: 2, name: "_Toc200" } },
+              { text: "world" },
+            ],
+          },
+        },
+        { bookmarkStart: { id: 3, name: "BlockTarget" } },
+        { paragraph: { children: ["After"] } },
+      ]),
+    );
+    const first = blocks[0];
+    if (first?.kind !== "paragraph") throw new Error("expected paragraph");
+    // Inline markers record the slot the next atom lands at; the block-level
+    // marker buffers onto the next projected paragraph's start.
+    expect(first.bookmarks).toEqual([
+      { name: "_Toc100", inlineIndex: 0 },
+      { name: "_Toc200", inlineIndex: 1 },
+    ]);
+    const second = blocks[1];
+    if (second?.kind !== "paragraph") throw new Error("expected paragraph");
+    expect(second.bookmarks).toEqual([{ name: "BlockTarget", inlineIndex: 0 }]);
+  });
+
+  it("threads a picture's docPr alt text into the inline atom and floating drawing", () => {
+    const { blocks } = oneSection(
+      doc([
+        {
+          paragraph: {
+            children: [
+              {
+                picture: {
+                  type: "png",
+                  data: "eA",
+                  altText: { name: "Logo", description: "Company logo" },
+                  transformation: { width: 609600, height: 457200 },
+                },
+              },
+            ],
+          },
+        },
+        {
+          paragraph: {
+            children: [
+              {
+                picture: {
+                  type: "png",
+                  data: "eA",
+                  altText: { name: "Float", description: "Floating logo" },
+                  floating: {
+                    horizontalPosition: { relative: "column" },
+                    verticalPosition: { relative: "paragraph" },
+                  },
+                  transformation: { width: 609600, height: 457200 },
+                },
+              },
+            ],
+          },
+        },
+      ]),
+    );
+    const inline = blocks[0];
+    if (inline?.kind !== "paragraph") throw new Error("expected paragraph");
+    expect(inline.inline[0]).toMatchObject({
+      kind: "picture",
+      altText: "Company logo",
+      title: "Logo",
+    });
+    const floating = blocks[1];
+    if (floating?.kind !== "paragraph") throw new Error("expected paragraph");
+    expect(floating.drawings?.[0]).toMatchObject({
+      altText: "Floating logo",
+      title: "Float",
+    });
+  });
+
   it("projects rendered TOC entries as real paragraphs", () => {
     const { blocks } = oneSection(
       doc([

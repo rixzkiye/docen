@@ -73,6 +73,16 @@ export interface LayoutParagraphBorderEdge extends LayoutBorderEdge {
   spacePx?: number;
 }
 
+/** One w:bookmarkStart anchored in a paragraph: the name internal `#anchor`
+ *  links and PAGEREF fields resolve against, plus the inline slot the
+ *  zero-width marker sits at (an insertion index into the paragraph's
+ *  `inline` array — markers own no atom). The PDF structure pass resolves it
+ *  to a page destination. */
+export interface LayoutBookmarkAnchor {
+  name: string;
+  inlineIndex: number;
+}
+
 export interface LayoutParagraph {
   kind: "paragraph";
   inline: LayoutInline[];
@@ -152,6 +162,10 @@ export interface LayoutParagraph {
    *  deletions). The flow resolves each to its line and packs the balloon
    *  stack — measurement and wrapping ignore them. */
   balloons?: LayoutBalloonAnchor[];
+  /** w:bookmarkStart markers anchored in this paragraph (Word's cross-
+   *  reference/TOC targets). Zero-width: the engine only carries them for the
+   *  PDF structure pass's named destinations. */
+  bookmarks?: LayoutBookmarkAnchor[];
   /** Floating drawings anchored to this paragraph: wrap-none boxes paint at
    *  their offset; a `wrap` on the drawing also shrinks the anchor
    *  paragraph's own lines around the box and registers a float zone the

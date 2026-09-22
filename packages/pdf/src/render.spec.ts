@@ -435,3 +435,88 @@ describe("headless PDF structure (outline + page labels)", () => {
     expect(text).toContain("/S /r");
   }, 30000);
 });
+
+describe("headless PDF structure (destinations + tagged figures)", () => {
+  const bookmark = (name: string, id: number): Record<string, unknown> => ({
+    type: "inlinePassthrough",
+    attrs: { data: JSON.stringify({ bookmarkStart: { id, name } }) },
+  });
+
+  it("emits named destinations pointing at the bookmark's page", async () => {
+    const doc = {
+      type: "doc",
+      content: [
+        {
+          type: "paragraph",
+          attrs: { heading: "Heading1" },
+          content: [bookmark("_Toc100", 1), { type: "text", text: "Chapter One" }],
+        },
+        {
+          type: "paragraph",
+          attrs: { pageBreakBefore: true },
+          content: [
+            bookmark("_Toc200", 2),
+            { type: "text", text: "Chapter Two " },
+            {
+              type: "text",
+              text: "back to one",
+              marks: [{ type: "link", attrs: { href: "#_Toc100" } }],
+            },
+          ],
+        },
+      ],
+    };
+
+    const pdfBytes = await renderPdf(doc, { title: "Destinations" });
+    const text = new TextDecoder("latin1").decode(pdfBytes);
+
+    // Both bookmarks contributed named destinations; the internal link
+    // annotation resolves against the first bookmark's name.
+    expect(text).toContain("/Dests <<");
+    expect(text).toContain("/_Toc100 [");
+    expect(text).toContain("/_Toc200 [");
+    expect(text).toContain("/Dest (_Toc100)");
+
+    // Each destination must point at its own page: read the page object ids
+    // in /Kids order and compare against the destination targets.
+    const kids = /\/Type \/Pages \/Kids \[ ([^\]]+)\]/.exec(text)?.[1] ?? "";
+    const pageIds = [...kids.matchAll(/(\d+) 0 R/g)].map((match) => match[1]);
+    expect(pageIds).toHaveLength(2);
+    const destPageId = (name: string): string | undefined =>
+      new RegExp(`/${name} \\[ (\\d+) 0 R`).exec(text)?.[1];
+    expect(destPageId("_Toc100")).toBe(pageIds[0]);
+    expect(destPageId("_Toc200")).toBe(pageIds[1]);
+  }, 30000);
+
+  it("tags an image as /Figure with its docPr alt text and name", async () => {
+    const doc = {
+      type: "doc",
+      content: [
+        {
+          type: "paragraph",
+          content: [
+            {
+              type: "image",
+              attrs: {
+                src: DUMMY_PNG_1X1,
+                alt: "Logo",
+                title: "Company logo",
+                width: 100,
+                height: 100,
+              },
+            },
+          ],
+        },
+      ],
+    };
+
+    const pdfBytes = await renderPdf(doc, { title: "Figures" });
+    const text = new TextDecoder("latin1").decode(pdfBytes);
+
+    // The projection threads the docPr name/description onto the laid picture
+    // and the server path tags it like the editor's PM walk.
+    expect(text).toContain("/S /Figure");
+    expect(text).toContain("/Alt (Company logo)");
+    expect(text).toContain("/T (Logo)");
+  }, 30000);
+});

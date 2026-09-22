@@ -16,12 +16,14 @@ import {
   TableRow,
 } from "@docen/docx";
 import { Editor, Node as TextNode, type Editor as EditorType } from "@docen/docx/core";
-import type { FlowPage, LaidOutTable } from "@docen/layout";
+import type { FlowPage, LaidOutParagraph, LaidOutTable, LayoutInline } from "@docen/layout";
 import { describe, expect, it } from "vitest";
 
 import { pagesToPdf, type PdfPageShot } from "./export-pdf";
 import {
   buildPdfDestinations,
+  buildPdfDestinationsFromPages,
+  buildPdfLaidStructElements,
   buildPdfOutline,
   buildPdfPageLabels,
   buildPdfStructure,
@@ -267,6 +269,182 @@ describe("buildPdfDestinations", () => {
     // The bookmark rides top-level block 2 (page 1, yPx 70).
     expect(destinations).toEqual({ Target: { pageIndex: 1, y: (1056 - 70) * 0.75 } });
     editor.destroy();
+  });
+});
+
+// ── the laid (server) path: no PM document, structure from the laid model ──
+
+const textAtom = (text: string): LayoutInline => ({
+  kind: "text",
+  text,
+  style: { family: "serif", sizePx: 16 },
+});
+
+/** A minimal laid paragraph: one text line at y 0 carrying `inline` plus the
+ *  optional bookmark metadata the projection threads through. */
+const laidParagraph = (
+  inline: LayoutInline[],
+  bookmarks?: LaidOutParagraph["bookmarks"],
+): LaidOutParagraph => ({
+  kind: "paragraph",
+  heightPx: 20,
+  beforePx: 0,
+  afterPx: 0,
+  inline,
+  lines: [
+    {
+      yPx: 0,
+      heightPx: 20,
+      naturalPx: 16,
+      endInlineIndex: Math.max(0, inline.length - 1),
+      items: inline.flatMap((atom, inlineIndex) =>
+        atom.kind === "text"
+          ? [{ kind: "text" as const, inlineIndex, text: atom.text, xPx: 0, widthPx: 10 }]
+          : [],
+      ),
+    },
+  ],
+  ...(bookmarks ? { bookmarks } : {}),
+});
+
+describe("buildPdfDestinationsFromPages", () => {
+  it("maps laid bookmark markers to their page and anchor line", () => {
+    const first = laidParagraph([textAtom("One")], [{ name: "_Toc100", inlineIndex: 0 }]);
+    // The second marker sits on the paragraph's second line (inline slot 1):
+    // its destination top must read that line, not the paragraph top.
+    const second = laidParagraph(
+      [textAtom("Two "), textAtom("continues")],
+      [{ name: "_Toc200", inlineIndex: 1 }],
+    );
+    second.lines = [
+      {
+        yPx: 0,
+        heightPx: 20,
+        naturalPx: 16,
+        endInlineIndex: 0,
+        items: [{ kind: "text", inlineIndex: 0, text: "Two ", xPx: 0, widthPx: 10 }],
+      },
+      {
+        yPx: 20,
+        heightPx: 20,
+        naturalPx: 16,
+        endInlineIndex: 1,
+        items: [{ kind: "text", inlineIndex: 1, text: "continues", xPx: 0, widthPx: 10 }],
+      },
+    ];
+    const view: PdfStructureView = {
+      doc: undefined,
+      sections: [{ flow: { pageHeightPx: 1056 } }],
+      sectionOfPage: [0, 0],
+      pages: [{ items: [{ yPx: 100, block: first }] }, { items: [{ yPx: 50, block: second }] }],
+      boxOf: () => null,
+    };
+    expect(buildPdfDestinationsFromPages(view)).toEqual({
+      _Toc100: { pageIndex: 0, y: (1056 - 100) * 0.75 },
+      _Toc200: { pageIndex: 1, y: (1056 - (50 + 20)) * 0.75 },
+    });
+  });
+
+  it("keeps the first occurrence and never invents names without a marker", () => {
+    const marked = laidParagraph(
+      [textAtom("A")],
+      [
+        { name: "_Toc1", inlineIndex: 0 },
+        { name: "_Toc1", inlineIndex: 0 },
+      ],
+    );
+    const plain = laidParagraph([textAtom("B")]);
+    const view: PdfStructureView = {
+      doc: undefined,
+      sections: [{ flow: { pageHeightPx: 1056 } }],
+      sectionOfPage: [0, 1],
+      pages: [{ items: [{ yPx: 0, block: marked }] }, { items: [{ yPx: 0, block: plain }] }],
+      boxOf: () => null,
+    };
+    expect(buildPdfDestinationsFromPages(view)).toEqual({
+      _Toc1: { pageIndex: 0, y: 1056 * 0.75 },
+    });
+  });
+});
+
+describe("buildPdfLaidStructElements", () => {
+  it("emits /Figure alt text from laid picture atoms and drawings", () => {
+    const inlinePic = laidParagraph([
+      {
+        kind: "picture",
+        widthPx: 10,
+        heightPx: 10,
+        src: "data:image/png;base64,x",
+        altText: "Inline art",
+        title: "Pic1",
+      },
+    ]);
+    const drawingPic = laidParagraph([textAtom("x")]);
+    drawingPic.drawings = [
+      {
+        anchor: { horizontal: { relative: "column" }, vertical: { relative: "paragraph" } },
+        width: 10,
+        height: 10,
+        members: [],
+        altText: "Floating art",
+        title: "Pic2",
+      },
+    ];
+    const view: PdfStructureView = {
+      doc: undefined,
+      sections: [{ flow: { pageHeightPx: 1056 } }],
+      sectionOfPage: [0, 1],
+      pages: [
+        { items: [{ yPx: 0, block: inlinePic }] },
+        { items: [{ yPx: 0, block: drawingPic }] },
+      ],
+      boxOf: () => null,
+    };
+    expect(buildPdfLaidStructElements(view)).toEqual([
+      { type: "Figure", pageIndex: 0, altText: "Inline art", title: "Pic1" },
+      { type: "Figure", pageIndex: 1, altText: "Floating art", title: "Pic2" },
+    ]);
+  });
+
+  it("falls back to a drawing member's alt text and still tags laid tables", () => {
+    const grouped = laidParagraph([textAtom("x")]);
+    grouped.drawings = [
+      {
+        anchor: { horizontal: { relative: "column" }, vertical: { relative: "paragraph" } },
+        width: 10,
+        height: 10,
+        members: [
+          {
+            kind: "picture",
+            x: 0,
+            y: 0,
+            width: 10,
+            height: 10,
+            src: "data:image/png;base64,x",
+            altText: "Grouped art",
+            title: "Member",
+          },
+        ],
+      },
+    ];
+    const view: PdfStructureView = {
+      doc: undefined,
+      sections: [{ flow: { pageHeightPx: 1056 } }],
+      sectionOfPage: [0, 0],
+      pages: [
+        {
+          items: [
+            { yPx: 0, block: grouped },
+            { yPx: 20, block: TABLE_BLOCK },
+          ],
+        },
+      ],
+      boxOf: () => null,
+    };
+    expect(buildPdfLaidStructElements(view)).toEqual([
+      { type: "Figure", pageIndex: 0, altText: "Grouped art", title: "Member" },
+      { type: "Table", pageIndex: 0 },
+    ]);
   });
 });
 

@@ -290,4 +290,36 @@ describe("incremental projection (compile + projection cache)", () => {
     expect(after.sections[1]).toBe(before.sections[1]);
     expect(after.sections[1]!.flow).toBe(before.sections[1]!.flow);
   });
+
+  it("re-projects the paragraph a newly inserted block bookmark anchors to", () => {
+    // The paragraph object keeps its identity across both projections; only
+    // the block-level bookmark child is new. The cached non-stateful paragraph
+    // must not be reused while the bookmark buffer is non-empty, or the marker
+    // would leak past its paragraph.
+    const paragraph = { paragraph: { children: ["after"] } };
+    const cache = createProjectionCache();
+    const before = projectDocumentOptions(
+      { sections: [{ children: [paragraph] }] },
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      cache,
+    );
+    expect(before.sections[0]!.blocks[0]).toMatchObject({ kind: "paragraph" });
+
+    const after = projectDocumentOptions(
+      { sections: [{ children: [{ bookmarkStart: { id: 7, name: "Bm" } }, paragraph] }] },
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      cache,
+    );
+    const block = after.sections[0]!.blocks[0];
+    if (block?.kind !== "paragraph") throw new Error("expected paragraph");
+    expect(block.bookmarks).toEqual([{ name: "Bm", inlineIndex: 0 }]);
+  });
 });

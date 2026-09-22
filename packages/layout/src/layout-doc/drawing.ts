@@ -68,6 +68,10 @@ export type LayoutDrawingMember =
       shadow?: LayoutDrawingShadow;
       /** The picture's outline stroke (pic:spPr a:ln) — Word's picture border. */
       line?: LayoutDrawingLine;
+      /** The docPr name (Word's shape name) — the tagged PDF's /T. */
+      title?: string;
+      /** The docPr description (Word's alt text) — the tagged PDF's /Alt. */
+      altText?: string;
     }
   | {
       kind: "shape";
@@ -295,6 +299,10 @@ export interface LayoutDrawing {
    *  mirrored group; the box itself stays put, like rotation. */
   flipH?: boolean;
   flipV?: boolean;
+  /** The docPr name (Word's shape name) — the tagged PDF's /T. */
+  title?: string;
+  /** The docPr description (Word's alt text) — the tagged PDF's /Alt. */
+  altText?: string;
   /** The box the flow pinned at the drawing's first resolution — page-space
    *  px. The two-pass wrap resolves a float's position once (W3C CSS
    *  Exclusions): when the page replay moves the anchor paragraph, the box

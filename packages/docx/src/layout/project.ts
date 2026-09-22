@@ -156,6 +156,9 @@ function stateSnapshot(ctx: ProjectContext): string {
     parts.push(`C${[...ctx.openComments].sort((a, b) => a - b).join(".")}`);
   }
   for (const [author, slot] of ctx.revisionAuthorColors) parts.push(`A${author}=${slot}`);
+  if (ctx.pendingBookmarkNames && ctx.pendingBookmarkNames.length > 0) {
+    parts.push(`B${ctx.pendingBookmarkNames.join(".")}`);
+  }
   return parts.join("|");
 }
 
@@ -368,8 +371,12 @@ export function projectDocumentOptions(
       const key = child as object;
       const cached = record.children.get(key);
       // A non-stateful projection depends only on its own child identity —
-      // reusable whatever the order state did.
-      if (cached && !cached.stateful) {
+      // reusable whatever the order state did. The one exception: a block
+      // bookmarkStart buffered by an earlier child only reaches its paragraph
+      // through a fresh projection, so nothing may be reused while the buffer
+      // is non-empty.
+      const pendingBookmark = (ctx.pendingBookmarkNames?.length ?? 0) > 0;
+      if (cached && !cached.stateful && !pendingBookmark) {
         blocks.push(...cached.blocks);
         lastChild = key;
         if (cache) cache.stats.reuses++;

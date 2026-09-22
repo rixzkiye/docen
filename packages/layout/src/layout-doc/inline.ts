@@ -274,6 +274,10 @@ export type LayoutInline =
       shadow?: LayoutDrawingShadow;
       /** The picture's outline stroke (pic:spPr a:ln) — Word's picture border. */
       line?: LayoutDrawingLine;
+      /** The docPr name (Word's shape name) — the tagged PDF's /T. */
+      title?: string;
+      /** The docPr description (Word's alt text) — the tagged PDF's /Alt. */
+      altText?: string;
     };
 
 /** A text atom's painted label — the shared field-display contract the

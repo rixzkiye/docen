@@ -569,6 +569,7 @@ function walkGroup(
           flipH: t.flipHorizontal === true || undefined,
           flipV: t.flipVertical === true || undefined,
           crop: cropOf(child),
+          ...pictureAltTextOf(child as unknown as Rec),
         });
       }
     }
@@ -625,6 +626,7 @@ function projectDrawing(group: GroupOptions, ctx: ProjectContext): LayoutDrawing
     width: emuToPx(extW),
     height: emuToPx(extH),
     members,
+    ...pictureAltTextOf(group as unknown as Rec),
     wrap,
     wrapSide,
     ...(contour ? { contour } : {}),
@@ -736,6 +738,21 @@ function drawingAnchorOf(
   };
 }
 
+/** The docPr alt text + name a picture/drawing payload carries (office-open
+ *  DocPropertiesOptions): `description` is Word's alt text (the editor image's
+ *  `title` attr), `name` the docPr name/title. Shared by the inline picture
+ *  atom, the floating drawing and the group members so a tagged PDF's /Figure
+ *  /Alt derivation matches the editor path's PM walk. */
+export function pictureAltTextOf(pic: Rec): { altText?: string; title?: string } {
+  const alt = isRecord(pic.altText) ? pic.altText : {};
+  const name = str(alt.name);
+  const altText = str(alt.description) ?? name;
+  return {
+    ...(altText ? { altText } : {}),
+    ...(name ? { title: name } : {}),
+  };
+}
+
 /** A standalone floating picture run (wp:anchor pic:pic, PictureOptions):
  *  one drawing whose single member is the image filling its own box. */
 function projectFloatingPicture(pic: Rec, ctx: ProjectContext): LayoutDrawing | undefined {
@@ -790,6 +807,7 @@ function projectFloatingPicture(pic: Rec, ctx: ProjectContext): LayoutDrawing | 
         ...(line ? { line } : {}),
       },
     ],
+    ...pictureAltTextOf(pic),
   };
 }
 
@@ -813,6 +831,7 @@ function projectWpsShapeRun(wps: Rec, ctx: ProjectContext): LayoutDrawing | unde
     width: emuToPx(w),
     height: emuToPx(h),
     members,
+    ...pictureAltTextOf(wps),
     wrap,
     wrapSide,
     ...(contour ? { contour } : {}),
