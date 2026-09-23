@@ -213,8 +213,24 @@ describe("renderPdf headless entry point", () => {
   }, 30000);
 
   it("renders documents with PDF/A-2b and PDF/UA-1 conformance", async () => {
+    // Two faces + an unmatched-family placeholder: the subsetter routes the
+    // TOC placeholder's "Inter, sans-serif" glyphs to the fallback face, so
+    // the writer must draw them with that same face (see the fallback
+    // regression test below) or veraPDF fails 19005-2 6.2.11.5 / 14289-1 7.21.5.
     const doc = {
       type: "doc",
+      attrs: {
+        styles: {
+          default: {
+            document: {
+              run: {
+                font: { ascii: "Times New Roman", hAnsi: "Times New Roman", cs: "Times New Roman" },
+                size: 12,
+              },
+            },
+          },
+        },
+      },
       content: [
         {
           type: "heading",
@@ -224,6 +240,11 @@ describe("renderPdf headless entry point", () => {
         {
           type: "paragraph",
           content: [{ type: "text", text: "Compliant with ISO 19005-2 and ISO 14289-1." }],
+        },
+        {
+          type: "tocField",
+          attrs: { options: { hyperlink: true, headingStyleRange: "1-3" } },
+          content: [{ type: "paragraph" }],
         },
       ],
     };
@@ -286,6 +307,54 @@ describe("renderPdf headless entry point", () => {
       }
     }
   }, 30000);
+
+  it("routes unmatched-family spans to the writer's fallback face with consistent widths", async () => {
+    // Regression: the subsetter routes unmatched families (the TOC placeholder
+    // asks for the UI font "Inter, sans-serif") to the first configured face,
+    // while the writer used to draw them with the largest subset. The drawn
+    // face then lacked those glyphs: CIDToGIDMap 0 + /DW 1000 disagreed with
+    // the embedded program's .notdef width and veraPDF failed clause 6.2.11.5
+    // (PDF/A-2b) and 7.21.5 (PDF/UA-1).
+    const { buildEmbeddedPdfFonts } = await import("./export-pdf");
+    const { loadDefaultFonts } = await import("@docen/layout");
+    const faces = (await loadDefaultFonts()).filter((face) => !face.bold && !face.italic);
+    const fonts = await buildEmbeddedPdfFonts(
+      [
+        {
+          text: "Body paragraph in Times New Roman.",
+          x: 0,
+          y: 0,
+          width: 0,
+          height: 0,
+          fontSize: 12,
+          fontFamily: "Times New Roman",
+        },
+        {
+          text: "toc (not rendered yet)",
+          x: 0,
+          y: 0,
+          width: 0,
+          height: 0,
+          fontSize: 11,
+          fontFamily: "Inter, sans-serif",
+        },
+      ],
+      faces.map((face) => ({ family: face.family, fontData: face.bytes })),
+    );
+    const fallback = fonts.find((font) => font.fallback === true);
+    // The unmatched-family glyphs belong to the marked fallback face.
+    expect(fallback?.fontFamily).toBe("Calibri");
+    for (const char of ["c", "(", ")"]) {
+      expect(fallback?.cidToGid?.has(char.charCodeAt(0))).toBe(true);
+    }
+    // Every CID in every subset resolves to a defined program advance, so the
+    // /W array and CIDToGIDMap can never disagree with the embedded program.
+    for (const font of fonts) {
+      for (const gid of font.cidToGid?.values() ?? []) {
+        expect(typeof font.glyphAdvances?.[gid]).toBe("number");
+      }
+    }
+  }, 60000);
 
   it("verifies memory discipline: sustained loop of 50 documents stays flat", async () => {
     const doc = {

@@ -100,6 +100,13 @@ export interface PdfEmbeddedFont {
   /** CSS family used to route text spans to this face (substring match,
    *  case-insensitive); defaults to `fontName`. */
   readonly fontFamily?: string;
+  /**
+   * True for the face that receives spans whose family has no matching source
+   * (`buildEmbeddedPdfFonts` falls back to the first configured face). The
+   * writer must draw unmatched-family text with this same face or the glyphs
+   * and the widths land in different subsets.
+   */
+  readonly fallback?: boolean;
   readonly fontData: Uint8Array;
   /** CID (UTF-16 code unit) → glyph ID in the embedded subset. */
   readonly cidToGid?: ReadonlyMap<number, number>;
@@ -434,7 +441,7 @@ export async function buildEmbeddedPdfFonts(
   const { readCmap, subsetFontWithPlan } = await import("@docen/shaping/subsetter");
 
   const used = new Map<string, { source: PdfEmbeddableFontSource; codeUnits: Set<number> }>();
-  const primarySource = byFamily.values().next().value;
+  const fallbackSource = byFamily.values().next().value;
   for (const span of spans) {
     const rawFamily = span.fontFamily?.trim().toLowerCase();
     const family = rawFamily ? rawFamily.split(",")[0]?.trim().toLowerCase() : undefined;
@@ -447,7 +454,7 @@ export async function buildEmbeddedPdfFonts(
         }
       }
     }
-    source = source ?? primarySource;
+    source = source ?? fallbackSource;
     if (!source) continue;
     const entry = used.get(source.family) ?? { source, codeUnits: new Set<number>() };
     for (let i = 0; i < span.text.length; i++) entry.codeUnits.add(span.text.charCodeAt(i));
@@ -485,14 +492,18 @@ export async function buildEmbeddedPdfFonts(
         for (const cu of codeUnits) {
           const gid = cmap.get(cu);
           const newGid = gid === undefined ? undefined : plan.glyphMap.get(gid);
-          if (newGid !== undefined) cidToGid.set(cu, newGid);
+          // A code unit the face cannot map still gets an explicit entry:
+          // CIDToGIDMap 0 (.notdef) plus a /W entry for GID 0 keeps the font
+          // dictionary width consistent with the embedded program (PDF/A-2b
+          // 6.2.11.5 / PDF/UA-1 7.21.5) instead of falling back to /DW 1000.
+          cidToGid.set(cu, newGid ?? 0);
         }
       }
     }
     if (!subsetted) {
       for (const cu of codeUnits) {
         const gid = cmap.get(cu);
-        if (gid !== undefined) cidToGid.set(cu, gid);
+        cidToGid.set(cu, gid ?? 0);
       }
     }
 
@@ -500,6 +511,7 @@ export async function buildEmbeddedPdfFonts(
     fonts.push({
       fontName: `${cleanName}${subsetted ? "Subset" : ""}`,
       fontFamily: source.family,
+      ...(fallbackSource !== undefined && source === fallbackSource ? { fallback: true } : {}),
       fontData,
       cidToGid,
       glyphAdvances: readGlyphAdvances(fontData),
@@ -655,14 +667,21 @@ export async function pagesToPdf(
 
   // Vector scene plans — pure analysis (resource names are page-local) done
   // before any object is written, so every allocation below is final.
-  const primaryEmbedded =
-    embeddedFonts.length > 0
-      ? embeddedFonts.reduce(
-          (best, cur) =>
-            (cur.font.cidToGid?.size ?? 0) > (best.font.cidToGid?.size ?? 0) ? cur : best,
-          embeddedFonts[0]!,
-        )
-      : undefined;
+  // The face the subsetter routes unmatched families to (`buildEmbeddedPdfFonts`
+  // falls back to the first configured source). Drawing must use this same
+  // face for unmatched text or its glyphs are subset into another face.
+  const fallbackEmbedded =
+    embeddedFonts.find((emb) => emb.font.fallback === true) ?? embeddedFonts[0];
+
+  /** True when the face's subset holds a glyph for every code unit of `text`. */
+  const planCoversText = (plan: EmbeddedFontPlan, text: string): boolean => {
+    const map = plan.font.cidToGid;
+    if (!map || map.size === 0) return false;
+    for (let i = 0; i < text.length; i++) {
+      if (!map.has(text.charCodeAt(i))) return false;
+    }
+    return true;
+  };
 
   // The face for a family: an exact family match wins, then the longest
   // substring match (so "Calibri" never resolves to "Calibri Light").
@@ -682,19 +701,25 @@ export async function pagesToPdf(
     }
     return best?.plan;
   };
+  /**
+   * Resolve the face for a run: family match first; when the family face's
+   * subset lacks glyphs the run needs, the face that actually holds them (the
+   * subsetter's fallback) wins over drawing .notdef with the wrong widths.
+   */
+  const embeddedPlanForText = (
+    family: string | undefined,
+    text: string,
+  ): EmbeddedFontPlan | undefined => {
+    const byFamily = embeddedFontForFamily(family);
+    if (byFamily && planCoversText(byFamily, text)) return byFamily;
+    if (fallbackEmbedded && planCoversText(fallbackEmbedded, text)) return fallbackEmbedded;
+    if (byFamily) return byFamily;
+    return fallbackEmbedded;
+  };
   const sceneFontForText = (node: PdfSceneTextNode): PdfTextFontRef => {
-    let embedded = embeddedFontForFamily(node.fontFamily);
-    if (embedded && node.rows.length > 0 && node.rows[0]?.text) {
-      const firstChar = node.rows[0].text.charCodeAt(0);
-      if (
-        embedded.font.cidToGid &&
-        !embedded.font.cidToGid.has(firstChar) &&
-        primaryEmbedded?.font.cidToGid?.has(firstChar)
-      ) {
-        embedded = primaryEmbedded;
-      }
-    }
-    embedded = embedded ?? (isPdfA || isPdfUa ? primaryEmbedded : undefined);
+    const text = node.rows.map((row) => row.text).join("\n");
+    let embedded = embeddedPlanForText(node.fontFamily, text);
+    embedded = embedded ?? (isPdfA || isPdfUa ? fallbackEmbedded : undefined);
     if (embedded) return { resource: embedded.resourceName, isUnicode: true };
     return {
       resource: standardFontFor(node.fontFamily, node.bold, node.italic),
@@ -1367,7 +1392,7 @@ export async function pagesToPdf(
 
   const embeddedFontForSpan = (span: PdfTextSpan): EmbeddedFontPlan | undefined => {
     if (embeddedFonts.length === 0) return undefined;
-    return embeddedFontForFamily(span.fontFamily) ?? embeddedFonts[0];
+    return embeddedPlanForText(span.fontFamily, span.text) ?? embeddedFonts[0];
   };
 
   for (const [i, shot] of shots.entries()) {
