@@ -680,6 +680,10 @@ class Flow {
     return entry;
   }
 
+  /** The footnote reserve (px) a placed slice adds to this page — the
+   *  separator plus the notes of its refs not yet registered here. Callers
+   *  pass the slice they intend to place, so a note only ever costs the page
+   *  its reference actually lands on. */
   private extraFootnoteHeightFor(laid: LaidOutBlock): number {
     if (!this.opts.footnoteDefinitions || this.opts.footnoteDefinitions.size === 0) return 0;
     const refs = noteRefsInBlock(laid);
@@ -1111,16 +1115,20 @@ class Flow {
     const before = this.spacingBefore(laid);
     const extraFnH = this.extraFootnoteHeightFor(laid);
     // Both spans are relative to this.y: the page bottom and the band top.
-    const room = Math.min(this.remaining() - extraFnH, this.bandCeiling() - this.y) - before;
-    // `room` is already net of the before-margin, so the check adds the
+    // `space` is the page's room WITHOUT the block's own unregistered notes —
+    // a split head pays for exactly the notes its lines bring (see
+    // sliceFittingWithNotes), so a marker's notes never shrink a page the
+    // marker does not land on.
+    const space = Math.min(this.remaining(), this.bandCeiling() - this.y) - before;
+    // `space` is already net of the before-margin, so the check adds the
     // extent alone — adding `before` here too would count the margin twice
     // and evict blocks Word keeps (a picture paragraph with an 8px before on
     // a near-full page, pixel-verified against the reference render).
-    if (fitExtentPx(laid) <= room || this.gridRowsFit(laid, room)) {
+    if (fitExtentPx(laid) + extraFnH <= space || this.gridRowsFit(laid, space - extraFnH)) {
       this.commit(laid, before);
       return true;
     }
-    const { k, midDepth } = this.sliceFitting(laid, room);
+    const { k, midDepth } = this.sliceFittingWithNotes(laid, space);
     // k = 0 with a midDepth is the force-split of a first row no page could
     // hold — the head is just that row's upper half.
     if (k > 0 || midDepth != null) {
@@ -1323,6 +1331,43 @@ class Flow {
     return moved;
   }
 
+  /** Word's widow/orphan adjustment for a paragraph cut: neither slice may be
+   *  left with a single line. A paragraph taller than the page relaxes the
+   *  rule and splits greedily (progress beats clipping). 0 = move it whole. */
+  private paragraphCut(laid: LaidOutParagraph, k: number): number {
+    if (k === 0) return 0;
+    const overPage = !this.opts.unbounded && laid.heightPx > this.opts.contentHeightPx;
+    if (overPage || laid.widowControl === false || laid.lines.length < 2) return k;
+    if (k === 1) return 0; // an orphaned single head line — move whole
+    if (laid.lines.length - k === 1) k--; // tail widow — give it a line
+    if (k < 2) return 0; // can't satisfy both — move whole
+    return k;
+  }
+
+  /** The split whose head fits `space` WITH the footnote reserve its own lines
+   *  bring: start from the note-free cut and step the legal cut back until
+   *  head + head-reserve fits. Reserving per head is what keeps a note from
+   *  costing body height on pages its reference never lands on. */
+  private sliceFittingWithNotes(
+    laid: LaidOutBlock,
+    space: number,
+  ): { k: number; midDepth?: number } {
+    let { k, midDepth } = this.sliceFitting(laid, space);
+    if (k === 0 && midDepth == null) return { k, midDepth };
+    for (;;) {
+      const [head] = splitLaid(laid, k, midDepth);
+      if (fitExtentPx(head) + this.extraFootnoteHeightFor(head) <= space) return { k, midDepth };
+      // Step the cut back: a mid-row split reopens the whole row first, then
+      // whole units drop one at a time (paragraph cuts keep the widow rules).
+      if (midDepth != null) {
+        midDepth = undefined;
+        continue;
+      }
+      k = laid.kind === "paragraph" ? this.paragraphCut(laid, k - 1) : k - 1;
+      if (k <= 0) return { k: 0 };
+    }
+  }
+
   /** The next split: `k` = the prefix count whose stacked height fits `space`,
    *  plus `midDepth` (px from the k-th table row's top) when that row itself
    *  splits mid-content. `k` = 0 means nothing fits — move the whole block. */
@@ -1342,13 +1387,7 @@ class Flow {
           h += laid.lines[k].heightPx;
           k++;
         }
-        if (k === 0) return { k: 0 };
-        if (!overPage && laid.widowControl !== false && laid.lines.length >= 2) {
-          if (k === 1) return { k: 0 }; // an orphaned single head line — move whole
-          if (laid.lines.length - k === 1) k--; // tail widow — give it a line
-          if (k < 2) return { k: 0 }; // can't satisfy both — move whole
-        }
-        return { k };
+        return { k: this.paragraphCut(laid, k) };
       }
       case "table": {
         // Word repeats a leading tblHeader band on every continuation page, so

@@ -1,7 +1,13 @@
 import { describe, expect, it } from "vitest";
 
 import { fakeFontMetrics, installFakeCanvas } from "../../test/fake-canvas";
-import type { LayoutBlock, LayoutParagraph, LayoutTable, LayoutTableCell } from "../layout-doc";
+import type {
+  LayoutBlock,
+  LayoutInline,
+  LayoutParagraph,
+  LayoutTable,
+  LayoutTableCell,
+} from "../layout-doc";
 import { TextMeasurer } from "../text/measure";
 import { twipToPx } from "../units";
 import { layoutFlow, layoutFlowSections } from "./flow";
@@ -1263,6 +1269,52 @@ describe("layoutFlow footnotes", () => {
     },
   ];
 
+  /** `n` lines of 20px; the LAST line carries `count` footnote markers. */
+  const paraWithNotesAtEnd = (n: number, count: number): LayoutParagraph => ({
+    kind: "paragraph",
+    inline: [
+      { kind: "text", text: "x", style: latin },
+      ...Array.from({ length: n - 2 }, () => [
+        { kind: "break" as const },
+        { kind: "text" as const, text: "x", style: latin },
+      ]).flat(),
+      { kind: "break" as const },
+      { kind: "text", text: "end", style: latin },
+      ...Array.from({ length: count }, (_, i) => ({
+        kind: "text" as const,
+        text: String(i + 1),
+        style: latin,
+        noteRef: { kind: "footnote" as const, id: i + 1, ordinal: i + 1 },
+      })),
+    ],
+    spacing: exact20,
+    defaultTextStyle: latin,
+    widowControl: false,
+  });
+
+  /** A 2-line note body (40px). */
+  const noteBody2 = (i: number): LayoutBlock[] => [
+    {
+      kind: "paragraph",
+      inline: [
+        { kind: "text", text: `note ${i}`, style: latin },
+        { kind: "break" },
+        { kind: "text", text: "more", style: latin },
+      ],
+      spacing: exact20,
+      defaultTextStyle: latin,
+      widowControl: false,
+    },
+  ];
+
+  const bodyLines = (pages: ReturnType<typeof layoutFlow>): number[] =>
+    pages.map((page) =>
+      page.items.reduce(
+        (n, item) => n + (item.block.kind === "paragraph" ? item.block.lines.length : 0),
+        0,
+      ),
+    );
+
   it("places footnote at the bottom of the page where reference lands", () => {
     const fnDefs = new Map<number, readonly LayoutBlock[]>([[1, noteBody("Footnote 1 text")]]);
     const pages = layoutFlow(
@@ -1341,6 +1393,73 @@ describe("layoutFlow footnotes", () => {
     // Total height = 17 (separator once) + 20 + 20 = 57px
     expect(pages[0].footnotes?.totalHeightPx).toBe(57);
     expect(pages[0].footnotes?.yPx).toBe(200 - 57);
+  });
+
+  it("keeps full body capacity on pages a multi-page paragraph crosses without its markers", () => {
+    // 60-line paragraph, all 8 markers bunched on its last line; body capacity
+    // is 20 lines (400px) and the notes weigh 17 + 8×40 = 337px. The notes may
+    // only shrink the page the markers land on, so the earlier pages keep the
+    // full body — the cut before the marker line moves one line (19) instead.
+    const fnDefs = new Map<number, readonly LayoutBlock[]>(
+      Array.from({ length: 8 }, (_, i) => [i + 1, noteBody2(i + 1)]),
+    );
+    const pages = layoutFlow(
+      [paraWithNotesAtEnd(60, 8)],
+      { contentWidthPx: 300, contentHeightPx: 400, footnoteDefinitions: fnDefs },
+      measurer,
+    );
+    expect(pages).toHaveLength(4);
+    expect(bodyLines(pages)).toEqual([20, 20, 19, 1]);
+    for (const page of pages.slice(0, 3)) expect(page.footnotes).toBeUndefined();
+    expect(pages[3].footnotes?.notes.map((n) => n.id)).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
+    expect(pages[3].footnotes?.totalHeightPx).toBe(337);
+  });
+
+  it("reserves each note only on the page its own marker lands on", () => {
+    // Markers on lines 10 and 30 of a 30-line paragraph, one 1-line note each
+    // (37px); capacity 10 lines (200px). Page 3 carries no marker and stays
+    // full, page 4 carries the second marker and absorbs its note.
+    const fnDefs = new Map<number, readonly LayoutBlock[]>([
+      [1, noteBody("Note 1")],
+      [2, noteBody("Note 2")],
+    ]);
+    const marker = (id: number, ordinal: number): LayoutInline => ({
+      kind: "text",
+      text: String(ordinal),
+      style: latin,
+      noteRef: { kind: "footnote", id, ordinal },
+    });
+    const inline: LayoutInline[] = [{ kind: "text", text: "x", style: latin }];
+    for (let i = 0; i < 29; i++) {
+      const line = i + 2; // the line this break opens
+      inline.push({ kind: "break" }, { kind: "text", text: "x", style: latin });
+      if (line === 10) inline.push(marker(1, 1));
+      if (line === 30) inline.push(marker(2, 2));
+    }
+    const page: LayoutParagraph = { ...paraWithNotesAtEnd(30, 0), inline };
+    const pages = layoutFlow(
+      [page],
+      { contentWidthPx: 300, contentHeightPx: 200, footnoteDefinitions: fnDefs },
+      measurer,
+    );
+    expect(bodyLines(pages)).toEqual([9, 8, 10, 3]);
+    expect(pages.map((p) => p.footnotes?.notes.map((n) => n.id) ?? [])).toEqual([[], [1], [], [2]]);
+  });
+
+  it("keeps widow control while shrinking only the marker page", () => {
+    // 4 lines, 100px page, widowControl on, marker on the last line: the note
+    // (37px) removes the 4th line from page 0, and the legal cut is 2+2 — a
+    // 3+1 split would leave an orphaned widow tail.
+    const fnDefs = new Map<number, readonly LayoutBlock[]>([[1, noteBody("Note 1")]]);
+    const p = { ...paraWithNotesAtEnd(4, 1), widowControl: true };
+    const pages = layoutFlow(
+      [p],
+      { contentWidthPx: 300, contentHeightPx: 100, footnoteDefinitions: fnDefs },
+      measurer,
+    );
+    expect(bodyLines(pages)).toEqual([2, 2]);
+    expect(pages[0].footnotes).toBeUndefined();
+    expect(pages[1].footnotes?.notes.map((n) => n.id)).toEqual([1]);
   });
 });
 
