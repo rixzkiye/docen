@@ -12,6 +12,7 @@ import { compileDocument, type DocumentOptions, type JSONContent } from "@docen/
 import { projectDocumentOptions, type ProjectedSection } from "@docen/docx/layout";
 import {
   browserFontMetrics,
+  computePageNumberOffsets,
   createMeasurer,
   layoutFlowSections,
   loadDefaultFonts,
@@ -260,6 +261,11 @@ export async function renderPdf(
 
   const measurer = options?.measurer ?? createMeasurer(browserFontMetrics);
   const { pages, sectionOfPage } = layoutFlowSections(flowSections, measurer);
+  // Per-section page-number offsets (w:pgNumType start): the PAGE fields in
+  // body, headers and footers paint the number the section shows — a front
+  // matter section restarting at i and a body section restarting at 1 must not
+  // fall back to the global physical index.
+  const pageNumberOffsets = computePageNumberOffsets(stageSections, sectionOfPage);
 
   const layers = extractPdfPageLayers(pages, stageSections, sectionOfPage);
 
@@ -298,6 +304,13 @@ export async function renderPdf(
       columns: sec.columns,
       pageIndex: i,
       pageCount: pages.length,
+      // The section's own page-number context: PAGE fields resolve to the
+      // section-local number (roman/decimal per w:pgNumType), matching the
+      // /PageLabels and the text layer instead of the global physical index.
+      pageNumber: {
+        offset: pageNumberOffsets[secIdx] ?? 0,
+        ...(sec.pageNumbering?.format ? { fmt: sec.pageNumbering.format } : {}),
+      },
       layer: "body",
       metrics: browserFontMetrics,
       showMarks: options?.showMarks,

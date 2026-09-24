@@ -8,6 +8,7 @@
 
 import type { FlowPage, LaidOutBlock } from "@docen/layout";
 import {
+  computePageNumberOffsets,
   fieldLabelOf,
   lineBaselineDepthPx,
   vertAlignBaselineShiftPx,
@@ -1810,6 +1811,10 @@ export function extractPdfPageLayers(
   sectionOfPage: readonly number[],
 ): { textSpans: PdfTextSpan[]; links: PdfLinkAnnotation[]; formFields: PdfFormField[] }[] {
   const toPt = (px: number): number => (px * 72) / 96;
+  // Per-section page-number offsets (w:pgNumType start) — the same skew the
+  // /PageLabels and the paint context use, so a section restarting at 1 shows
+  // its own 1 on its first page instead of the global physical index.
+  const pageNumberOffsets = computePageNumberOffsets(sections, sectionOfPage);
 
   return pages.map((page, pageIndex) => {
     const secIndex = sectionOfPage[pageIndex] ?? 0;
@@ -1836,12 +1841,13 @@ export function extractPdfPageLayers(
     const pageCtx = {
       pageIndex,
       pageCount: pages.length,
-      pageNumber: section?.pageNumbering
-        ? {
-            fmt: section.pageNumbering.format,
-            offset: (section.pageNumbering.start ?? 1) - 1,
-          }
-        : undefined,
+      // The section's own page-number context: PAGE fields in body and
+      // furniture resolve to the section-local number (roman/decimal per
+      // w:pgNumType), matching what the scene paints.
+      pageNumber: {
+        offset: pageNumberOffsets[secIndex] ?? 0,
+        ...(section?.pageNumbering?.format ? { fmt: section.pageNumbering.format } : {}),
+      },
     };
 
     const walkBlock = (block: LaidOutBlock, originX: number, originY: number): void => {
