@@ -4,6 +4,8 @@ import { NodeImageCache, type PdfImageCache } from "./node-image";
 import {
   composeMatrix,
   invertMatrix,
+  rowTexts,
+  type LeaferTextRow,
   type PdfMatrix,
   type PdfSceneNode,
   type PdfScenePage,
@@ -13,52 +15,6 @@ import {
 } from "./pdf-scene";
 
 const SHAPE_TAGS = new Set(["Rect", "Path", "Line", "Ellipse", "Polygon", "Star", "Pen"]);
-
-interface NodeTextRow {
-  x?: number;
-  y?: number;
-  width?: number;
-  text?: string;
-  data?: { char?: string }[];
-  words?: { data?: { char?: string }[] }[];
-}
-
-function rowTexts(elementText: string, rows: readonly NodeTextRow[]): string[] {
-  const out: string[] = [];
-  let cursor = 0;
-  for (const row of rows) {
-    if (typeof row.text === "string" && row.text.length > 0) {
-      out.push(row.text);
-      cursor += row.text.length;
-      continue;
-    }
-    const chars = row.data ?? [];
-    let text = "";
-    let i = 0;
-    while (i < chars.length && cursor < elementText.length) {
-      const source = elementText[cursor]!;
-      if (source === " ") {
-        text += " ";
-        cursor++;
-        continue;
-      }
-      if (source === "\n") {
-        cursor++;
-        break;
-      }
-      const char = chars[i]?.char;
-      if (typeof char === "string") text += char;
-      i++;
-      cursor++;
-    }
-    while (cursor < elementText.length && elementText[cursor] === " ") {
-      text += " ";
-      cursor++;
-    }
-    out.push(text);
-  }
-  return out;
-}
 
 export function paintColor(value: unknown): string | undefined {
   if (typeof value === "string") return value;
@@ -190,7 +146,7 @@ export async function serializeNodeScene(
       if (tag === "Text") {
         const textEl = el as unknown as {
           text?: string | number;
-          textDrawData?: { rows?: NodeTextRow[] };
+          textDrawData?: { rows?: LeaferTextRow[] };
           fontSize?: number;
           fontFamily?: string;
           fontWeight?: number | string;

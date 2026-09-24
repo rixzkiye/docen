@@ -18,6 +18,8 @@ import type { App, IUI } from "leafer-ui";
 import {
   composeMatrix,
   invertMatrix,
+  rowTexts,
+  type LeaferTextRow,
   type PdfMatrix,
   type PdfSceneImageData,
   type PdfSceneNode,
@@ -30,64 +32,6 @@ import {
 /** A shape tag — the Leafer elements `getPathString(true, true)` describes as
  *  a filled/stroked path in local coordinates. */
 const SHAPE_TAGS = new Set(["Rect", "Path", "Line", "Ellipse", "Polygon", "Star", "Pen"]);
-
-/** One text row from Leafer's own layout. Char-mode rows (letter spacing /
- *  wrapping) carry `words`, not `text`; the letters are reassembled so the
- *  PDF row still reads as the laid string. */
-interface LeaferTextRow {
-  x?: number;
-  y?: number;
-  width?: number;
-  text?: string;
-  /** Char-mode rows (wrapping, letter spacing, explicit box) carry the run's
-   *  glyphs here; plain rows carry `text`. */
-  data?: { char?: string }[];
-  words?: { data?: { char?: string }[] }[];
-}
-
-/** Rebuild one element's row strings. Plain rows carry their own `text`; in
- *  char mode Leafer strips spaces from `data`, so the element's source string
- *  is walked in parallel to re-insert them (spaces are gaps in char mode, and
- *  a PDF Tj must carry them explicitly — the row's glyph positions are the
- *  face's own advances, see the /W widths the exporter emits). */
-function rowTexts(elementText: string, rows: readonly LeaferTextRow[]): string[] {
-  const out: string[] = [];
-  let cursor = 0;
-  for (const row of rows) {
-    if (typeof row.text === "string" && row.text.length > 0) {
-      out.push(row.text);
-      cursor += row.text.length;
-      continue;
-    }
-    const chars = row.data ?? [];
-    let text = "";
-    let i = 0;
-    while (i < chars.length && cursor < elementText.length) {
-      const source = elementText[cursor]!;
-      if (source === " ") {
-        text += " ";
-        cursor++;
-        continue;
-      }
-      if (source === "\n") {
-        cursor++;
-        break;
-      }
-      const char = chars[i]?.char;
-      if (typeof char === "string") text += char;
-      i++;
-      cursor++;
-    }
-    // Trailing source spaces belong to this row (Leafer trims them from the
-    // glyph run, but they are part of the row's text).
-    while (cursor < elementText.length && elementText[cursor] === " ") {
-      text += " ";
-      cursor++;
-    }
-    out.push(text);
-  }
-  return out;
-}
 
 /** An FNV-1a hash of a byte run — image dedupe keys. */
 function hashBytes(data: Uint8Array): string {

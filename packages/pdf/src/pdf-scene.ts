@@ -105,6 +105,73 @@ export type PdfSceneNode =
   | PdfSceneImageNode
   | PdfSceneTextNode;
 
+/** One row from Leafer's own text layout (`textDrawData.rows`), as read by
+ *  the scene walkers. Plain rows carry `text`; char-mode rows (wrapping,
+ *  letter spacing, an explicit box) carry their glyphs in `data` instead —
+ *  Leafer drops the spaces from it (they are advances, not glyphs), so the
+ *  element's source string has to be walked in parallel to re-insert them. */
+export interface LeaferTextRow {
+  readonly x?: number;
+  readonly y?: number;
+  readonly width?: number;
+  readonly text?: string;
+  readonly data?: readonly { readonly char?: string }[];
+  readonly words?: readonly { readonly data?: readonly { readonly char?: string }[] }[];
+}
+
+/** Rebuild one element's row strings. Plain rows carry their own `text`; in
+ *  char mode Leafer strips spaces from `data`, so the element's source string
+ *  is walked in parallel to re-insert them (spaces are gaps in char mode, and
+ *  a PDF Tj must carry them explicitly — the row's glyph positions are the
+ *  face's own advances, see the /W widths the exporter emits). `data` entries
+ *  are per word when Leafer justified the row (each entry spans the word's
+ *  chars), so the cursor advances by the entry's length, not one code unit. */
+export function rowTexts(elementText: string, rows: readonly LeaferTextRow[]): string[] {
+  const out: string[] = [];
+  let cursor = 0;
+  for (const row of rows) {
+    if (typeof row.text === "string" && row.text.length > 0) {
+      out.push(row.text);
+      cursor += row.text.length;
+      if (elementText[cursor] === "\n") cursor++;
+      continue;
+    }
+    const chars = row.data ?? [];
+    let text = "";
+    for (const entry of chars) {
+      const char = entry?.char;
+      if (char === " ") {
+        // Overflow char-mode rows keep the space entry itself; its source
+        // slot is the same space.
+        if (elementText[cursor] === " ") cursor++;
+        text += " ";
+        continue;
+      }
+      // Spaces between entries are the gaps Leafer dropped from `data`.
+      while (cursor < elementText.length && elementText[cursor] === " ") {
+        text += " ";
+        cursor++;
+      }
+      if (elementText[cursor] === "\n") {
+        cursor++;
+        break;
+      }
+      if (typeof char !== "string" || char.length === 0) continue;
+      text += char;
+      cursor += Math.min(char.length, elementText.length - cursor);
+    }
+    // Trailing source spaces belong to this row (Leafer trims them from the
+    // glyph run, but they are part of the row's text).
+    while (cursor < elementText.length && elementText[cursor] === " ") {
+      text += " ";
+      cursor++;
+    }
+    if (elementText[cursor] === "\n") cursor++;
+    out.push(text);
+  }
+  return out;
+}
+
 /** One page's serialized scene — CSS px, y down. */
 export interface PdfScenePage {
   readonly width: number;
