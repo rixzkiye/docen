@@ -83,6 +83,11 @@ export interface PdfSceneTextRow {
   readonly y: number;
   readonly text: string;
   readonly width: number;
+  /** Justified/squeezed rows only: the extra advance (px in the element's
+   *  text space, may be negative) the row inserts after each grapheme of
+   *  `text` — Leafer CharLayout's uniform per-letter share or per-word-gap
+   *  share. Absent = natural advances (plain `Tj`). */
+  readonly extras?: readonly number[];
 }
 
 export interface PdfSceneTextNode extends PdfSceneNodeBase {
@@ -115,6 +120,7 @@ export interface LeaferTextRow {
   readonly y?: number;
   readonly width?: number;
   readonly text?: string;
+  readonly extras?: readonly number[];
   readonly data?: readonly { readonly char?: string }[];
   readonly words?: readonly { readonly data?: readonly { readonly char?: string }[] }[];
 }
@@ -668,6 +674,10 @@ function encodeHexUtf16(str: string): string {
   return hex;
 }
 
+/** Grapheme segmentation for a justified row's TJ runs — the same unit the
+ *  node kit's row `extras` are keyed by. */
+const GRAPHEME_SEGMENTER = new Intl.Segmenter(undefined, { granularity: "grapheme" });
+
 /** Emit one text row — `row.x/y` is the baseline in the node's local space,
  *  the node matrix maps local → page, and the page wrapper flips page px to
  *  PDF pt; the row's own `1 0 0 -1` counter-flip keeps glyphs upright.
@@ -692,8 +702,38 @@ function emitTextRow(
   }
   out.push(`/${font.resource} ${pdfNum(node.fontSize, 3)} Tf`);
   out.push(`1 0 0 -1 ${pdfNum(row.x, 3)} ${pdfNum(row.y, 3)} Tm`);
-  if (font.isUnicode) out.push(`<${encodeHexUtf16(row.text)}> Tj`);
-  else out.push(`(${escapeLiteral(row.text)}) Tj`);
+  const extras = row.extras;
+  const parts: string[] = [];
+  if (extras) {
+    for (const { segment } of GRAPHEME_SEGMENTER.segment(row.text)) parts.push(segment);
+  }
+  if (extras && extras.length === parts.length && parts.length > 1) {
+    // Justified/squeezed row: the pen advances by the natural glyph widths
+    // plus each grapheme's extra share (Leafer's char/word distribution),
+    // expressed as TJ displacement adjustments in thousandths of the font
+    // size. Consecutive zero-extra graphemes stay one string.
+    const items: string[] = [];
+    let run = "";
+    const flush = (): void => {
+      if (!run) return;
+      items.push(font.isUnicode ? `<${encodeHexUtf16(run)}>` : `(${escapeLiteral(run)})`);
+      run = "";
+    };
+    for (let i = 0; i < parts.length; i++) {
+      run += parts[i]!;
+      const extra = extras[i] ?? 0;
+      if (extra !== 0) {
+        flush();
+        items.push(pdfNum((-extra * 1000) / node.fontSize, 4));
+      }
+    }
+    flush();
+    out.push(`[ ${items.join(" ")} ] TJ`);
+  } else if (font.isUnicode) {
+    out.push(`<${encodeHexUtf16(row.text)}> Tj`);
+  } else {
+    out.push(`(${escapeLiteral(row.text)}) Tj`);
+  }
   out.push("ET");
 }
 

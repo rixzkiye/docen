@@ -83,6 +83,43 @@ describe("PaintKit abstraction", () => {
     expect(taller.textDrawData.rows[0]?.y).toBe((20 + 0.7 * 10) / 2);
   });
 
+  it("distributes a justified Text's slack like Leafer's CharLayout", () => {
+    // Word mode (Latin): the slack lands on the Leafer word boundaries; a
+    // line-final whitespace run stays untrimmed/unstretched (Leafer's
+    // trimRight) and the last word rides the interval edge.
+    const word = new NodeText({
+      text: "ab cd ef ",
+      textAlign: "both-justify",
+      width: 100,
+      textNaturalWidth: 80,
+      fontSize: 10,
+    });
+    const wordRow = word.textDrawData.rows[0]!;
+    expect(wordRow.extras).toHaveLength(9);
+    expect(wordRow.extras!.at(-1)).toBe(0);
+    expect(wordRow.extras!.reduce((sum, extra) => sum + extra, 0)).toBeCloseTo(20, 6);
+
+    // Letter mode (CJK / squeezed): one uniform share per code point, so the
+    // last glyph's prefix shift fills the interval.
+    const letter = new NodeText({
+      text: "天地",
+      textAlign: "both-letter",
+      width: 100,
+      textNaturalWidth: 80,
+      fontSize: 10,
+    });
+    const letterRow = letter.textDrawData.rows[0]!;
+    expect(letterRow.extras).toEqual([20, 20]);
+
+    // Undefined natural width or a left-aligned Text keeps the natural rows
+    // every other node-kit consumer relies on.
+    expect(new NodeText({ text: "ab", width: 100 }).textDrawData.rows[0]!.extras).toBeUndefined();
+    expect(
+      new NodeText({ text: "ab", textAlign: "left", width: 100, textNaturalWidth: 80 }).textDrawData
+        .rows[0]!.extras,
+    ).toBeUndefined();
+  });
+
   it("supports dynamic withKit context switching", () => {
     expect(getActiveKit()).toBe(leaferKit);
 

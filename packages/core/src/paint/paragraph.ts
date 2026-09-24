@@ -762,6 +762,20 @@ export function paintParagraph(
         }
 
         if (!paintedGlyphs) {
+          // The node kit has no font metrics to re-measure the run, so a
+          // justified/squeezed Text also carries its natural advance: the
+          // interval is `width`, and the node lane spreads `width - natural`
+          // exactly as Leafer's CharLayout would (browser kit measures it).
+          // A line-final whitespace run is not part of that natural — the
+          // layout excluded it from the slack and Leafer trims it too.
+          const trailingPx =
+            itemIndex === line.items.length - 1 ? (line.trailingWhitespacePx ?? 0) : 0;
+          const naturalWidthPx =
+            intervalPx != null
+              ? item.widthPx - trailingPx
+              : squeezePx != null
+                ? squeezePx / (line.advanceScale ?? 1) - trailingPx
+                : undefined;
           const textEl = new Text({
             x: lineX + item.xPx,
             y: baseY,
@@ -771,6 +785,7 @@ export function paintParagraph(
                 : squeezePx != null
                   ? squeezePx / scale
                   : undefined,
+            ...(naturalWidthPx != null ? { textNaturalWidth: naturalWidthPx / scale } : {}),
             textWrap: intervalPx != null || squeezePx != null ? "none" : undefined,
             textAlign: rights
               ? justifyPerGrapheme(display)

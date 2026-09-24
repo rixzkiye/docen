@@ -420,6 +420,7 @@ function layoutParagraphUncached(
   //  - center/right shift the whole line's items by the slack after the
   //    content (trailing whitespace hangs and never counts).
   const justifyGapPx: (number | undefined)[] = packed.map(() => undefined);
+  const trailingWhitespacePx: (number | undefined)[] = packed.map(() => undefined);
   const stretchAll = para.align === "distribute";
   if (para.align === "both" || stretchAll) {
     for (let i = 0; i < packed.length; i++) {
@@ -428,7 +429,9 @@ function layoutParagraphUncached(
       if (!stretchAll && i === packed.length - 1) continue;
       // A hard break ends this line — it is that logical line's last line.
       if (para.inline[line.endInlineIndex]?.kind === "break") continue;
-      justifyGapPx[i] = justifyLine(line, para.inline, measurer);
+      const just = justifyLine(line, para.inline, measurer);
+      justifyGapPx[i] = just.delta;
+      trailingWhitespacePx[i] = just.trailingWhitespacePx;
     }
   } else if (para.align === "center" || para.align === "right") {
     for (const line of packed) {
@@ -472,6 +475,7 @@ function layoutParagraphUncached(
       // edge, not the last glyph) and hit-testing's line-end boundary.
       maxWidthPx: line.maxWidthPx,
       justifyGapPx: justifyGapPx[i],
+      trailingWhitespacePx: trailingWhitespacePx[i],
       hangPx: line.hangPx,
       xOffsetPx: line.xOffsetPx,
     });
@@ -533,15 +537,18 @@ function trailingHang(
  *  CJK items stretch per inter-grapheme gap (Word's CJK justification),
  *  Latin items per word gap (spaces absorb the slack; letter-spreading
  *  English is the letter-mode tell-tale). Re-spaces every item's x in place
- *  and returns the per-unit stretch (0 when there is nothing to spread). */
+ *  and returns the per-unit stretch (0 when there is nothing to spread) plus
+ *  the trailing whitespace it left out (the node lane's Text cannot measure
+ *  it and must not spread the slack over it — Leafer trims it too). */
 function justifyLine(
   line: PackedLine,
   inline: readonly LayoutInline[],
   measurer: TextMeasurer,
-): number {
+): { delta: number; trailingWhitespacePx: number } {
   const items = line.items;
   const last = items[items.length - 1];
-  const hang = Math.max(trailingHang(items, inline, measurer), line.hangPx ?? 0);
+  const trailingWhitespacePx = trailingHang(items, inline, measurer);
+  const hang = Math.max(trailingWhitespacePx, line.hangPx ?? 0);
   const itemUnits = items.map((it) => {
     if (it.kind !== "text") return 1;
     if (CJK_ITEM.test(it.text)) {
@@ -556,13 +563,13 @@ function justifyLine(
   for (const u of itemUnits) units += Math.max(u, 0);
   const delta =
     units > 0 ? Math.max(0, line.maxWidthPx - (last.xPx + last.widthPx - hang)) / units : 0;
-  if (delta === 0) return 0;
+  if (delta === 0) return { delta: 0, trailingWhitespacePx };
   let before = 0;
   items.forEach((it, i) => {
     it.xPx += delta * before;
     before += itemUnits[i]!;
   });
-  return delta;
+  return { delta, trailingWhitespacePx };
 }
 
 /** Items stretch per grapheme when they hold any CJK glyph (the painter's

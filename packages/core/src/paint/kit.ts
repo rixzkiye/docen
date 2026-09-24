@@ -10,6 +10,8 @@
  * @module
  */
 
+import { leaferWordIndices } from "@docen/layout";
+
 export interface AffineMatrix {
   readonly a: number;
   readonly b: number;
@@ -273,8 +275,14 @@ export class NodeText extends NodeBaseElement {
   declare verticalAlign?: string;
   declare textWrap?: string;
   declare textDecoration?: string;
+  /** The text's natural advance in element space. Leafer measures this
+   *  internally when it lays a justified Text into `width`; the node lane has
+   *  no font metrics, so the painter passes the laid item's own width. */
+  declare textNaturalWidth?: number;
 
-  get textDrawData(): { rows: Array<{ x: number; y: number; width: number; text: string }> } {
+  get textDrawData(): {
+    rows: Array<{ x: number; y: number; width: number; text: string; extras?: number[] }>;
+  } {
     const str = typeof this.text === "string" ? this.text : String(this.text ?? "");
     const size = this.fontSize ?? 14;
     // Leafer's row baseline sits ((lineHeight + 0.7 × fontSize) / 2) below the
@@ -289,17 +297,57 @@ export class NodeText extends NodeBaseElement {
     const height = this.height ?? 0;
     if (this.verticalAlign === "middle") y += (height - lineHeight) / 2;
     else if (this.verticalAlign === "bottom") y += height - lineHeight;
+    const width = this.width ?? 0;
+    const align = typeof this.textAlign === "string" ? this.textAlign : "";
+    const extras =
+      align.includes("both") && this.textNaturalWidth != null && this.textNaturalWidth > 0
+        ? justifyExtras(str, align.includes("letter"), width - this.textNaturalWidth)
+        : undefined;
     return {
       rows: [
         {
           x: 0,
           y,
-          width: this.width ?? 0,
+          width,
           text: str,
+          ...(extras ? { extras } : {}),
         },
       ],
     };
   }
+}
+
+const GRAPHEME_SEGMENTER = new Intl.Segmenter(undefined, { granularity: "grapheme" });
+
+/** Leafer CharLayout's justify distribution for one row: the extra advance
+ *  (element-space px, may be negative for a squeezed line) inserted after
+ *  every grapheme (letter mode — uniform share) or after every Leafer word
+ *  (word mode — space/break/CJK tokens stand alone), so a justified Text
+ *  fills its `width` interval exactly like the browser canvas. A line-final
+ *  whitespace run is excluded: Leafer's trimRight drops it from the stretch
+ *  basis, and it keeps its natural advance. */
+function justifyExtras(text: string, letter: boolean, slackPx: number): number[] | undefined {
+  const graphemes: string[] = [];
+  for (const { segment } of GRAPHEME_SEGMENTER.segment(text)) graphemes.push(segment);
+  let end = graphemes.length;
+  while (end > 0 && /\s/.test(graphemes[end - 1]!)) end--;
+  if (end < 2) return undefined;
+  let shares: number[];
+  if (letter) {
+    const share = slackPx / (end - 1);
+    if (share === 0) return undefined;
+    shares = Array.from({ length: end }, () => share);
+  } else {
+    const indices = leaferWordIndices(text);
+    const words = (indices[end - 1] ?? 0) + 1;
+    if (words < 2) return undefined;
+    const share = slackPx / (words - 1);
+    if (share === 0) return undefined;
+    shares = Array.from({ length: end }, (_, i) =>
+      i < end - 1 && indices[i + 1] !== indices[i] ? share : 0,
+    );
+  }
+  return shares.concat(Array.from({ length: graphemes.length - end }, () => 0));
 }
 
 export class NodeImage extends NodeBaseElement {

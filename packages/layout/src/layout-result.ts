@@ -172,6 +172,11 @@ export interface LaidOutLine {
    *  A justified line is any line where this is set — the painter stretches
    *  each item to the next item's x (the last one to `maxWidthPx`). */
   justifyGapPx?: number;
+  /** The advance of the line-final whitespace run — it hangs past the right
+   *  edge and is never stretched (the painter's justified Text trims it like
+   *  Leafer's own CharLayout does before spreading the slack). Undefined when
+   *  the line has no trailing whitespace. */
+  trailingWhitespacePx?: number;
   /** The advance of the closing punctuation hanging past this line's right
    *  edge (w:overflowPunct) — the painter's stretch target for the last item
    *  extends by it, so the full glyphs fill the width and the closer hangs

@@ -168,6 +168,7 @@ export async function serializeNodeScene(
             x: numberOr(row.x, 0)!,
             y: numberOr(row.y, 0)!,
             width: numberOr(row.width, 0)!,
+            ...(Array.isArray(row.extras) ? { extras: row.extras } : {}),
             text,
           });
         }
