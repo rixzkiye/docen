@@ -57,6 +57,11 @@ export const DEFAULT_FONT_FACES: readonly DefaultFontFace[] = [
  *  answering a fetch) wins. */
 const ASSET_ROOT_CANDIDATES = ["../../assets/fonts/", "../assets/fonts/"] as const;
 
+/** Node fallback roots relative to `process.cwd()` for bundled server builds
+ *  (Next.js CJS chunks), where `import.meta.url` does not point at the package
+ *  tree. The app ships the faces at `src/templates/assets/fonts`. */
+const CWD_ASSET_ROOT_CANDIDATES = ["src/templates/assets/fonts/", "assets/fonts/"] as const;
+
 function relativeAssetUrl(candidate: string, file: string): URL {
   return new URL(`${candidate}${file}`, import.meta.url);
 }
@@ -69,12 +74,30 @@ async function resolveAssetUrl(file: string, baseUrl?: URL | string): Promise<UR
   if (baseUrl) return new URL(file, baseUrl);
   if (typeof process !== "undefined" && process.versions?.node) {
     const { existsSync } = await import("node:fs");
-    const { fileURLToPath } = await import("node:url");
-    for (const candidate of ASSET_ROOT_CANDIDATES) {
-      const url = relativeAssetUrl(candidate, file);
+    const { fileURLToPath, pathToFileURL } = await import("node:url");
+    let moduleBase: string | undefined;
+    try {
+      moduleBase = import.meta.url;
+    } catch {
+      // Bundled CJS chunks may not define `import.meta.url`.
+      moduleBase = undefined;
+    }
+    if (moduleBase) {
+      for (const candidate of ASSET_ROOT_CANDIDATES) {
+        const url = new URL(`${candidate}${file}`, moduleBase);
+        if (existsSync(fileURLToPath(url))) return url;
+      }
+    }
+    const cwdBase = pathToFileURL(`${process.cwd().replace(/\/+$/u, "")}/`);
+    for (const candidate of CWD_ASSET_ROOT_CANDIDATES) {
+      const url = new URL(`${candidate}${file}`, cwdBase);
       if (existsSync(fileURLToPath(url))) return url;
     }
-    return relativeAssetUrl(ASSET_ROOT_CANDIDATES[0], file);
+    throw new Error(
+      `[@docen/layout] bundled fonts not found next to the package (${ASSET_ROOT_CANDIDATES.join(
+        ", ",
+      )}) or under the app assets (${CWD_ASSET_ROOT_CANDIDATES.join(", ")}); pass baseUrl to registerDefaultFonts()`,
+    );
   }
   let lastError: unknown;
   for (const candidate of ASSET_ROOT_CANDIDATES) {
