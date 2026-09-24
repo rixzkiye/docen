@@ -10,6 +10,7 @@ import type { FlowPage, LaidOutBlock } from "@docen/layout";
 import {
   computePageNumberOffsets,
   fieldLabelOf,
+  justifiedIntervals,
   lineBaselineDepthPx,
   vertAlignBaselineShiftPx,
   vertAlignedSizePx,
@@ -46,8 +47,14 @@ export interface PdfTextSpan {
   x: number;
   /** PDF baseline y in pt (distance from page bottom edge). */
   y: number;
-  /** Laid out run width in pt. */
+  /** Laid out run width in pt. On a justified span this is the stretch
+   *  interval (the visible glyphs fill it); `trailingWhitespace` is excluded
+   *  from the Tz stretch basis so the hanging spaces keep their natural
+   *  advance past the edge. */
   width: number;
+  /** Line-final whitespace advance in pt (justified spans only) — the text
+   *  string carries the spaces but they are not painted to the interval. */
+  trailingWhitespace?: number;
   /** Line/run height in pt. */
   height: number;
   /** Font size in pt. */
@@ -1510,20 +1517,24 @@ export async function pagesToPdf(
         const yCoord = visibleText ? span.y - 0.28 : span.y;
         content += `1 0 ${skew} 1 ${span.x.toFixed(2)} ${yCoord.toFixed(2)} Tm\n`;
 
-        // Horizontal scaling Tz to match rendered word bounding box
+        // Horizontal scaling Tz to match rendered word bounding box. A
+        // justified span's trailing whitespace hangs past the interval: the
+        // stretch basis is the visible text only, so the glyphs land exactly
+        // on `span.width` and the hanging spaces scale with them beyond it.
+        const stretchText = span.trailingWhitespace ? span.text.replace(/\s+$/u, "") : span.text;
         let estWidth = 0;
         const letterSpacing = span.letterSpacing ?? 0;
         if (embedded?.font.glyphAdvances && embedded.font.cidToGid) {
-          for (let i = 0; i < span.text.length; i++) {
-            const code = span.text.charCodeAt(i);
+          for (let i = 0; i < stretchText.length; i++) {
+            const code = stretchText.charCodeAt(i);
             const gid = embedded.font.cidToGid.get(code) ?? 0;
             const adv = embedded.font.glyphAdvances[gid] ?? 500;
             estWidth += (adv / 1000) * span.fontSize + letterSpacing;
           }
         } else {
-          const isCjk = /[\u3000-\u9fff\uac00-\ud7af]/.test(span.text);
+          const isCjk = /[\u3000-\u9fff\uac00-\ud7af]/.test(stretchText);
           const estCharWidth = isCjk ? span.fontSize : span.fontSize * 0.52;
-          estWidth = (estCharWidth + letterSpacing) * span.text.length;
+          estWidth = (estCharWidth + letterSpacing) * stretchText.length;
         }
         if (estWidth > 0 && span.width > 0) {
           const scale = (span.width / estWidth) * 100;
@@ -1861,8 +1872,11 @@ export function extractPdfPageLayers(
               (para.indent?.leftPx ?? 0) +
               (line.firstLineIndentPx ?? 0) +
               (line.xOffsetPx ?? 0);
+            // A justified line's spans stretch to the layout's interval (the
+            // same target the painter fills); null on unjustified lines.
+            const intervals = justifiedIntervals(line);
 
-            for (const item of line.items) {
+            for (const [itemIndex, item] of line.items.entries()) {
               if (item.kind !== "text") continue;
               const inline = para.inline[item.inlineIndex];
               if (inline && "suppressed" in inline && inline.suppressed) continue;
@@ -1887,6 +1901,14 @@ export function extractPdfPageLayers(
               const xPt = toPt(lineX + item.xPx);
               const yPt = toPdfY(baselineYPx);
               const widthPt = toPt(item.widthPx);
+              // Justified spans carry the interval width (visible glyphs end
+              // at intervals[itemIndex]); the final whitespace hangs outside
+              // and stays out of the stretch basis.
+              const intervalPt = intervals ? toPt(intervals[itemIndex]! - item.xPx) : widthPt;
+              const trailingPt =
+                intervals != null && itemIndex === line.items.length - 1
+                  ? toPt(line.trailingWhitespacePx ?? 0)
+                  : 0;
               const heightPt = toPt(line.heightPx);
               const fontSizePt = toPt(sizePx);
 
@@ -1904,7 +1926,8 @@ export function extractPdfPageLayers(
                 text,
                 x: xPt,
                 y: yPt,
-                width: widthPt,
+                width: intervalPt,
+                ...(trailingPt > 0 ? { trailingWhitespace: trailingPt } : {}),
                 height: heightPt,
                 fontSize: fontSizePt,
                 fontFamily,

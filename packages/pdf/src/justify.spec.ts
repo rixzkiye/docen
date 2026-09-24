@@ -63,6 +63,13 @@ function textLaneMeasurer(): TextMeasurer {
   return measurer;
 }
 
+/** Exactly `renderPdf`'s default (`options.measurer` unset): shaping on, so
+ *  the painter takes the glyph-outline lane and the layout spans are the
+ *  extraction layer. */
+function productionMeasurer(): TextMeasurer {
+  return createMeasurer(browserFontMetrics);
+}
+
 /** Per-line rightmost word edge (pt), from the PDF's own painted glyphs. */
 function rightEdges(pdf: Uint8Array): number[] {
   const dir = mkdtempSync(join(tmpdir(), "docen-justify-"));
@@ -120,5 +127,33 @@ describe("justified paragraphs fill the layout interval (W31)", () => {
     const left = rightEdges(await renderPdf(buildDoc() as never, { measurer }));
     expect(justified.at(-1)!).toBeCloseTo(left.at(-1)!, 0);
     expect(justified.at(-1)!).toBeLessThan(justified[0]! - 5);
+  }, 120_000);
+});
+
+describe("justified paragraphs fill the layout interval with the production measurer", () => {
+  it("fills every full line (shaped glyph-outline lane, attr and docDefaults)", async () => {
+    for (const variant of [{ alignment: "both" as const }, { defaults: true }]) {
+      const measurer = productionMeasurer();
+      const edges = rightEdges(await renderPdf(buildDoc(variant) as never, { measurer }));
+      const targets = layoutTargetsPt(variant, measurer);
+      expect(edges).toHaveLength(targets.length);
+      const full = edges.length - 1;
+      for (let i = 0; i < full; i++) {
+        expect(Math.abs(edges[i]! - targets[i]!), `line ${i}`).toBeLessThanOrEqual(1);
+      }
+      // Last line stays natural with the production lane too.
+      expect(targets[full]! - edges[full]!).toBeGreaterThan(5);
+    }
+  }, 120_000);
+
+  it("leaves a left-aligned paragraph ragged (shaped glyph-outline lane)", async () => {
+    const measurer = productionMeasurer();
+    const edges = rightEdges(await renderPdf(buildDoc() as never, { measurer }));
+    const targets = layoutTargetsPt({}, measurer);
+    expect(edges).toHaveLength(targets.length);
+    const full = edges.length - 1;
+    for (let i = 0; i < full; i++) {
+      expect(targets[i]! - edges[i]!, `line ${i}`).toBeGreaterThan(1);
+    }
   }, 120_000);
 });

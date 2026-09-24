@@ -735,6 +735,10 @@ export function paintParagraph(
           shadow = [...(Array.isArray(shadow) ? shadow : shadow ? [shadow] : []), ...edges];
         }
 
+        // The line-final whitespace run hangs past the right edge; neither
+        // lane may spread the slack over it (the layout excluded it too).
+        const trailingPx =
+          itemIndex === line.items.length - 1 ? (line.trailingWhitespacePx ?? 0) : 0;
         let paintedGlyphs = false;
         if (
           label === display &&
@@ -745,10 +749,13 @@ export function paintParagraph(
           // Target painted width (justified interval or the squeezed item
           // width) vs the run's natural scaled advance — the glyph positions
           // and x scale stretch by the ratio, matching how the Text path
-          // fills `intervalPx`/`squeezePx`.
+          // fills `intervalPx`/`squeezePx`. A justified run's tail whitespace
+          // stays out of the stretch basis: the visible glyphs, not the
+          // hanging spaces, must reach the interval.
           const naturalPx = item.glyphRun.totalAdvancePx * scale;
           const targetPx = intervalPx ?? item.widthPx;
-          const advanceScale = naturalPx > 0 && targetPx > 0 ? targetPx / naturalPx : 1;
+          const stretchPx = intervalPx != null ? naturalPx - trailingPx : naturalPx;
+          const advanceScale = stretchPx > 0 && targetPx > 0 ? targetPx / stretchPx : 1;
           paintedGlyphs = paintGlyphRun(tree, item.glyphRun, {
             x: lineX + item.xPx,
             y: baseY + leaferBaselinePadPx(ownSize),
@@ -766,10 +773,6 @@ export function paintParagraph(
           // justified/squeezed Text also carries its natural advance: the
           // interval is `width`, and the node lane spreads `width - natural`
           // exactly as Leafer's CharLayout would (browser kit measures it).
-          // A line-final whitespace run is not part of that natural — the
-          // layout excluded it from the slack and Leafer trims it too.
-          const trailingPx =
-            itemIndex === line.items.length - 1 ? (line.trailingWhitespacePx ?? 0) : 0;
           const naturalWidthPx =
             intervalPx != null
               ? item.widthPx - trailingPx
