@@ -42,6 +42,40 @@ let wasmInstance: WebAssembly.Instance | null = null;
 let wasmExports: ShapingWasmExports | null = null;
 
 /**
+ * Resolve the vendored shaping wasm for Node runtimes. Bundled server builds
+ * (Next.js CJS chunks) may not define a usable `import.meta.url`, so the
+ * module-relative URL is probed first and the app-provided copy
+ * (`src/templates/assets/docen_shaping.wasm`) is the deterministic fallback.
+ */
+async function readVendoredWasm(): Promise<Uint8Array> {
+  const { existsSync, readFileSync } = await import("node:fs");
+  const { fileURLToPath, pathToFileURL } = await import("node:url");
+  const candidates: URL[] = [];
+  try {
+    candidates.push(new URL("../wasm/docen_shaping.wasm", import.meta.url));
+  } catch {
+    // Bundled CJS chunks may not define `import.meta.url`.
+  }
+  candidates.push(
+    new URL(
+      "src/templates/assets/docen_shaping.wasm",
+      pathToFileURL(`${process.cwd().replace(/\/+$/u, "")}/`),
+    ),
+  );
+  for (const candidate of candidates) {
+    try {
+      const path = fileURLToPath(candidate);
+      if (existsSync(path)) return readFileSync(path);
+    } catch {
+      // Try the next candidate.
+    }
+  }
+  throw new Error(
+    "[@docen/shaping] docen_shaping.wasm not found next to the package or under the app assets",
+  );
+}
+
+/**
  * Initialize the docen-shaping WebAssembly module.
  * Can be provided an ArrayBuffer/Uint8Array, or defaults to reading/fetching the vendored wasm file.
  */
@@ -64,11 +98,7 @@ export async function initShapingWasm(
     const res = await fetch(new URL("../wasm/docen_shaping.wasm", import.meta.url));
     bytes = await res.arrayBuffer();
   } else {
-    // Dynamic import to prevent browser bundlers (Vite/webpack) from failing on Node builtins
-    const { readFileSync } = await import("node:fs");
-    const { fileURLToPath } = await import("node:url");
-    const wasmPath = fileURLToPath(new URL("../wasm/docen_shaping.wasm", import.meta.url));
-    bytes = readFileSync(wasmPath);
+    bytes = await readVendoredWasm();
   }
 
   const module = await WebAssembly.compile(bytes as BufferSource);
