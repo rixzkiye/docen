@@ -366,7 +366,7 @@ function stepRichInlineLine(
       segmentIndex: cursor.segmentIndex,
       graphemeIndex: cursor.graphemeIndex,
     };
-    const lineWidthForItem = stepPreparedLineGeometry(item.prepared, lineEnd, availableWidth);
+    let lineWidthForItem = stepPreparedLineGeometry(item.prepared, lineEnd, availableWidth);
     if (lineWidthForItem === null) {
       itemIndex++;
       cursor.segmentIndex = 0;
@@ -383,12 +383,50 @@ function stepRichInlineLine(
       continue;
     }
 
-    const itemOccupiedWidth = lineWidthForItem + item.extraWidth;
-    const lineWidthContribution = gapBefore + itemOccupiedWidth;
+    let itemOccupiedWidth = lineWidthForItem + item.extraWidth;
+    let lineWidthContribution = gapBefore + itemOccupiedWidth;
 
     // The lower-level walker may force one unit to make progress. If that unit
     // only fits on a fresh line, wrap before this rich item instead.
-    if (lineWidth > 0 && atItemStart && lineWidthContribution > remainingWidth) break lineLoop;
+    if (lineWidth > 0 && atItemStart && lineWidthContribution > remainingWidth) {
+      // The walker's greedy slice can overshoot the remaining width by a hair
+      // (a forced break unit, a hanging punctuation) even though an earlier
+      // break opportunity fits. Wrapping the whole item then leaves a nearly
+      // empty justified line — the "dan cinta damai. Mubarok 3" production
+      // defect. Re-query strictly (the overshoot plus a half pixel) so the
+      // slice lands on the last fitting break; only a genuine first-unit
+      // overflow (a word that cannot fit anywhere) still wraps the item.
+      const strictEnd: LineBreakCursor = {
+        segmentIndex: cursor.segmentIndex,
+        graphemeIndex: cursor.graphemeIndex,
+      };
+      const overflowPx = lineWidthContribution - remainingWidth;
+      const strictWidth =
+        lineEnd.segmentIndex > 0
+          ? stepPreparedLineGeometry(
+              item.prepared,
+              strictEnd,
+              Math.max(1, availableWidth - overflowPx - 0.5),
+            )
+          : null;
+      const strictProgress =
+        strictEnd.segmentIndex > cursor.segmentIndex ||
+        (strictEnd.segmentIndex === cursor.segmentIndex &&
+          strictEnd.graphemeIndex > cursor.graphemeIndex);
+      if (
+        strictWidth === null ||
+        strictEnd.segmentIndex < 1 ||
+        !strictProgress ||
+        gapBefore + strictWidth + item.extraWidth > remainingWidth
+      ) {
+        break lineLoop;
+      }
+      lineWidthForItem = strictWidth;
+      lineEnd.segmentIndex = strictEnd.segmentIndex;
+      lineEnd.graphemeIndex = strictEnd.graphemeIndex;
+      itemOccupiedWidth = lineWidthForItem + item.extraWidth;
+      lineWidthContribution = gapBefore + itemOccupiedWidth;
+    }
 
     // If the only thing we can fit after paying the boundary gap is a partial
     // slice of the item's first segment, prefer wrapping before the item so we

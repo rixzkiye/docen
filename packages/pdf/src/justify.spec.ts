@@ -283,3 +283,104 @@ describe("justified word advances stay natural (W35)", () => {
     expect(Math.max(...ratios) - Math.min(...ratios)).toBeLessThan(0.05);
   }, 120_000);
 });
+
+describe("footnote-marker lines fill their interval (W36)", () => {
+  const run = (text: string) => ({
+    type: "text",
+    text,
+    marks: [{ type: "textStyle", attrs: { font: "Times New Roman" } }],
+  });
+  const marker = (id: number) => ({
+    type: "inlinePassthrough",
+    attrs: { data: JSON.stringify({ footnoteReference: id }) },
+  });
+  const note = (id: number) => ({
+    id,
+    children: [
+      {
+        paragraph: {
+          style: "FootnoteText",
+          children: [
+            { style: "FootnoteReference", children: [{ footnoteRef: true }] },
+            { text: `Catatan ${id}.` },
+          ],
+        },
+      },
+    ],
+  });
+
+  /** The production repro: a justified paragraph whose footnote markers sit
+   *  mid-sentence; the run after a marker is long enough that its greedy
+   *  slice overshoots the remaining line by a hair (the walker's forced
+   *  unit), which used to wrap the whole run and leave a ~70pt-gap line. */
+  function buildMarkerDoc() {
+    return {
+      type: "doc",
+      attrs: {
+        documentExtras: { footnotes: [1, 2, 3, 4, 5].map(note) },
+        sectionProperties: {
+          pageSize: { width: 11906, height: 16838, orientation: "portrait" },
+          pageMargin: {
+            top: 2268,
+            bottom: 1701,
+            left: 2268,
+            right: 1701,
+            header: 720,
+            footer: 720,
+          },
+        },
+        styles: {
+          default: {
+            document: {
+              run: {
+                font: { ascii: "Times New Roman", hAnsi: "Times New Roman", cs: "Times New Roman" },
+                size: 12,
+              },
+              paragraph: {
+                alignment: "both",
+                spacing: { line: 360, lineRule: "multiple", after: 120 },
+                indent: { firstLine: 567 },
+              },
+            },
+          },
+        },
+      },
+      content: [
+        {
+          type: "paragraph",
+          content: [
+            run(
+              "Novel Ayat-Ayat Cinta karya Habiburrahman El Shirazy merupakan salah satu karya sastra Islam populer yang telah banyak dikaji dalam penelitian akademik. Sebagai contoh, Supratno ",
+            ),
+            marker(1),
+            run(" mengkaji nilai multikultural dalam novel tersebut, sedangkan Yasid dan Juhdi "),
+            marker(2),
+            run(" menelaah Islam sebagai agama toleransi dan cinta damai. Mubarok "),
+            marker(3),
+            run(
+              " menganalisis aspek stilistika dan implikasinya sebagai bahan ajar bahasa Indonesia, sementara Yulianto ",
+            ),
+            marker(4),
+            run(" meneliti konstruksi maskulinitas Islam. Rosdiana "),
+            marker(5),
+            run(
+              " membongkar ideologi wacana pada novel yang sama. Keragaman pendekatan tersebut menunjukkan bahwa novel Ayat-Ayat Cinta memuat lapisan makna yang produktif untuk dianalisis dari sisi nilai, kebahasaan, dan ideologi.",
+            ),
+          ],
+        },
+      ],
+    };
+  }
+
+  it("keeps the following run on the marker's line instead of wrapping it whole", async () => {
+    const measurer = productionMeasurer();
+    const lines = linesOf(await renderPdf(buildMarkerDoc() as never, { measurer }));
+    const line = lines.find((entry) => entry.words.some((word) => word.text === "Mubarok"));
+    expect(line).toBeDefined();
+    // The marker must not end the line: the next run's prefix joins it.
+    expect(line!.words.some((word) => word.text === "menganalisis")).toBe(true);
+    // ...and the line's gaps stay normal (the defect stretched them to ~70pt).
+    const gaps = line!.words.slice(1).map((word, index) => word.xMin - line!.words[index]!.xMax);
+    expect(Math.max(...gaps)).toBeLessThan(20);
+  }, 120_000);
+});
