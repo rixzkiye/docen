@@ -1,4 +1,4 @@
-import type { LaidOutGlyphRun } from "@docen/layout";
+import { utf8ToUtf16Offsets, type LaidOutGlyphRun } from "@docen/layout";
 import { getShapingBackend, hasShapingBackend, type PathCommand } from "@docen/shaping";
 
 import { leaferKit } from "./kit";
@@ -116,6 +116,19 @@ export interface PaintGlyphRunOptions {
   /** Extra x-advance stretch (justification / CJK advance compression): both
    *  the glyph positions and the x scale multiply by it. */
   advanceScale?: number;
+  /** Word-gap justification for a spaced (non-CJK) run — the outline twin of
+   *  the node lane's `both-justify`: each space glyph's advance grows by
+   *  `gapPx` and the glyphs after it shift with it, so the word outlines keep
+   *  their natural width and only the gaps stretch. `text` is the run's
+   *  painted string (UTF-16; glyph clusters are UTF-8 byte offsets) and
+   *  `stretchEnd` the exclusive end of the visible slice — trailing
+   *  whitespace hangs at its natural advance, unstretched. Mutually exclusive
+   *  with a non-1 `advanceScale`. */
+  wordStretch?: {
+    readonly text: string;
+    readonly gapPx: number;
+    readonly stretchEnd?: number;
+  };
   /** Graphics element factory kit. Defaults to leaferKit if not provided. */
   kit?: import("./kit").PaintKit;
 }
@@ -140,33 +153,49 @@ export function paintGlyphRun(
   const advanceScale = options.advanceScale ?? 1;
   const scaleX = (options.scaleX ?? 1) * advanceScale * scale;
   const scaleY = scale;
+  const wordStretch = options.wordStretch;
+  const clusterMap = wordStretch ? utf8ToUtf16Offsets(wordStretch.text) : undefined;
+  const stretchEnd = wordStretch?.stretchEnd ?? wordStretch?.text.length ?? 0;
+  // RTL visual order runs leftwards: a gap after a space shifts the glyphs
+  // that follow it in the array (the left neighbours) left, not right.
+  const rtl = glyphRun.direction === "rtl";
 
   let paintedAny = false;
+  let gapShift = 0;
 
   for (const glyph of glyphRun.glyphs) {
+    const charIndex = clusterMap ? (clusterMap[glyph.cluster] ?? glyph.cluster) : -1;
+    const isSpace =
+      wordStretch != null &&
+      charIndex >= 0 &&
+      charIndex < stretchEnd &&
+      (wordStretch.text[charIndex] === " " || wordStretch.text[charIndex] === "\u3000");
     const pathStr = cache.getGlyphPath(fontId, glyph.glyphId, glyphRun.variations);
-    if (!pathStr) continue;
+    if (pathStr) {
+      const glyphEl = kit.createPath({
+        x: options.x + glyph.xPx * advanceScale + (rtl ? -gapShift : gapShift),
+        y: options.y + glyph.yPx,
+        scaleX,
+        scaleY,
+        path: pathStr,
+        fill: options.fill ?? "#1b1b1b",
+        stroke: options.stroke,
+        strokeWidth: options.strokeWidth,
+        shadow: options.shadow,
+        opacity: options.opacity,
+        // Marks glyph outlines for the PDF exporter: the vector export emits
+        // them as paths (or drops them in embedded-font text measurement mode,
+        // where the invisible text layer renders visibly instead).
+        data: { docenGlyph: true },
+        hittable: false,
+      });
 
-    const glyphEl = kit.createPath({
-      x: options.x + glyph.xPx * advanceScale,
-      y: options.y + glyph.yPx,
-      scaleX,
-      scaleY,
-      path: pathStr,
-      fill: options.fill ?? "#1b1b1b",
-      stroke: options.stroke,
-      strokeWidth: options.strokeWidth,
-      shadow: options.shadow,
-      opacity: options.opacity,
-      // Marks glyph outlines for the PDF exporter: the vector export emits
-      // them as paths (or drops them in embedded-font text measurement mode,
-      // where the invisible text layer renders visibly instead).
-      data: { docenGlyph: true },
-      hittable: false,
-    });
-
-    tree.add(glyphEl);
-    paintedAny = true;
+      tree.add(glyphEl);
+      paintedAny = true;
+    }
+    // A space glyph still advances the word gap even when its own outline is
+    // empty (spaces usually carry none) — the shift rides the pen, not ink.
+    if (isSpace && wordStretch) gapShift += wordStretch.gapPx;
   }
 
   return paintedAny;

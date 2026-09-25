@@ -755,7 +755,23 @@ export function paintParagraph(
           const naturalPx = item.glyphRun.totalAdvancePx * scale;
           const targetPx = intervalPx ?? item.widthPx;
           const stretchPx = intervalPx != null ? naturalPx - trailingPx : naturalPx;
-          const advanceScale = stretchPx > 0 && targetPx > 0 ? targetPx / stretchPx : 1;
+          let advanceScale = stretchPx > 0 && targetPx > 0 ? targetPx / stretchPx : 1;
+          // A justified Latin (non-CJK) run stretches its space advances
+          // only — the outline twin of the node lane's `both-justify` — so
+          // the word outlines keep their natural width (Word's jc=both).
+          // CJK/no-space runs keep the uniform both-letter stretch above;
+          // squeezes never take this path (no interval).
+          let wordStretch: { text: string; gapPx: number; stretchEnd: number } | undefined;
+          if (intervalPx != null && !justifyPerGrapheme(display)) {
+            const visible = trailingPx > 0 ? display.replace(/\s+$/u, "") : display;
+            let spaces = 0;
+            for (const ch of visible) if (ch === " " || ch === "\u3000") spaces++;
+            const slackPx = targetPx - (item.glyphRun.totalAdvancePx - trailingPx);
+            if (spaces > 0 && slackPx > 0) {
+              advanceScale = 1;
+              wordStretch = { text: display, gapPx: slackPx / spaces, stretchEnd: visible.length };
+            }
+          }
           paintedGlyphs = paintGlyphRun(tree, item.glyphRun, {
             x: lineX + item.xPx,
             y: baseY + leaferBaselinePadPx(ownSize),
@@ -765,6 +781,7 @@ export function paintParagraph(
             shadow,
             scaleX: scale !== 1 ? scale : undefined,
             advanceScale,
+            ...(wordStretch ? { wordStretch } : {}),
           });
         }
 

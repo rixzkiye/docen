@@ -143,4 +143,58 @@ describe("R6.4 Glyph Painter (Vector Outline Painting)", () => {
     cache.setGlyphPath(1, 10, "plain");
     expect(cache.getGlyphPath(1, 10, [{ tag: "wght", value: 700 }])).toBeUndefined();
   });
+
+  it("wordStretch grows only the space advances — word outlines stay natural", () => {
+    const tree = new Group();
+    const cache = new GlyphOutlineCache();
+    for (const gid of [1, 2, 3, 4, 5]) cache.setGlyphPath(1, gid, `M 0 0 L ${gid} 0 Z`);
+    // An empty outline for the space glyph: it must still advance the gap.
+    cache.setGlyphPath(1, 4, "");
+
+    const glyphRun: LaidOutGlyphRun = {
+      fontId: 1,
+      fontName: "TestFont",
+      fontSizePx: 10,
+      unitsPerEm: 1000,
+      totalAdvancePx: 50,
+      direction: "ltr",
+      glyphs: [0, 1, 2, 3, 4].map((i) => ({
+        glyphId: i + 1,
+        cluster: i,
+        xAdvance: 1000,
+        yAdvance: 0,
+        xOffset: 0,
+        yOffset: 0,
+        xPx: i * 10,
+        yPx: 0,
+      })),
+    };
+
+    const painted = paintGlyphRun(tree as any, glyphRun, {
+      x: 0,
+      y: 0,
+      outlineCache: cache,
+      wordStretch: { text: "dan c ", gapPx: 6 },
+    });
+
+    expect(painted).toBe(true);
+    // The space paints no ink; the four word glyphs do.
+    expect(tree.children.length).toBe(4);
+    const xs = tree.children.map((c: any) => c.x);
+    // "d", "a", "n" keep their natural pen positions; "c" (after the space)
+    // shifts by exactly the gap.
+    expect(xs).toEqual([0, 10, 20, 46]);
+    // The outlines are never x-scaled by a word gap.
+    for (const child of tree.children as any[]) expect(child.scaleX).toBeCloseTo(0.01, 6);
+
+    // Trailing whitespace past `stretchEnd` hangs unstretched.
+    tree.children.length = 0;
+    paintGlyphRun(tree as any, glyphRun, {
+      x: 0,
+      y: 0,
+      outlineCache: cache,
+      wordStretch: { text: "dan c ", gapPx: 6, stretchEnd: 3 },
+    });
+    expect((tree.children as any[]).map((c: any) => c.x)).toEqual([0, 10, 20, 40]);
+  });
 });

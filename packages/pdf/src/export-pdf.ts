@@ -11,6 +11,7 @@ import {
   computePageNumberOffsets,
   fieldLabelOf,
   justifiedIntervals,
+  justifyPerGrapheme,
   lineBaselineDepthPx,
   vertAlignBaselineShiftPx,
   vertAlignedSizePx,
@@ -29,6 +30,7 @@ import type { CanvasStageSection, PdfStageSection } from "./stage-section";
 export type { CanvasStageSection, PdfStageSection };
 import {
   extGStateDict,
+  pdfNum,
   planSceneContent,
   standardFontFor,
   wrapSceneContent,
@@ -55,6 +57,10 @@ export interface PdfTextSpan {
   /** Line-final whitespace advance in pt (justified spans only) — the text
    *  string carries the spaces but they are not painted to the interval. */
   trailingWhitespace?: number;
+  /** The span rides a justified line (layout interval present): the emitter
+   *  stretches it to `width` — word gaps via TJ on a spaced (non-CJK) run,
+   *  uniform Tz otherwise. */
+  justified?: boolean;
   /** Line/run height in pt. */
   height: number;
   /** Font size in pt. */
@@ -355,6 +361,42 @@ export function encodeHexUtf16(str: string): string {
     hex += str.charCodeAt(i).toString(16).padStart(4, "0");
   }
   return hex;
+}
+
+/** The number of space advances in a run's visible text (word-mode
+ *  justification stretches exactly these gaps). */
+function countSpaceAdvances(text: string): number {
+  let count = 0;
+  for (const ch of text) if (ch === " " || ch === "\u3000") count++;
+  return count;
+}
+
+/** One justified word-mode row as a TJ array: the text at its natural glyph
+ *  advances with `adj` (thousandths of the font size; negative moves the pen
+ *  right) inserted after every space before `stretchEnd`, so the gaps absorb
+ *  the slack and the words keep their natural width. The trailing whitespace
+ *  past `stretchEnd` hangs unadjusted. */
+function justifiedWordGaps(
+  text: string,
+  stretchEnd: number,
+  adj: number,
+  isUnicode: boolean,
+): string {
+  const items: string[] = [];
+  let run = "";
+  let index = 0;
+  for (const ch of text) {
+    run += ch;
+    const at = index;
+    index += ch.length;
+    if (at < stretchEnd && (ch === " " || ch === "\u3000")) {
+      items.push(isUnicode ? `<${encodeHexUtf16(run)}>` : `(${escapePdfString(run)})`);
+      items.push(pdfNum(adj, 4));
+      run = "";
+    }
+  }
+  if (run) items.push(isUnicode ? `<${encodeHexUtf16(run)}>` : `(${escapePdfString(run)})`);
+  return `[ ${items.join(" ")} ] TJ`;
 }
 
 /** Determine whether a string can be safely represented in standard 7-bit ASCII. */
@@ -1518,9 +1560,12 @@ export async function pagesToPdf(
         content += `1 0 ${skew} 1 ${span.x.toFixed(2)} ${yCoord.toFixed(2)} Tm\n`;
 
         // Horizontal scaling Tz to match rendered word bounding box. A
-        // justified span's trailing whitespace hangs past the interval: the
-        // stretch basis is the visible text only, so the glyphs land exactly
-        // on `span.width` and the hanging spaces scale with them beyond it.
+        // justified spaced (non-CJK) span instead distributes its slack
+        // through the word gaps via TJ adjustments, so the words keep their
+        // natural advance (Word's jc=both; the outline lane's wordStretch
+        // twin). CJK/no-space/squeezed spans keep the uniform stretch, and a
+        // justified span's trailing whitespace hangs past the interval at its
+        // natural advance.
         const stretchText = span.trailingWhitespace ? span.text.replace(/\s+$/u, "") : span.text;
         let estWidth = 0;
         const letterSpacing = span.letterSpacing ?? 0;
@@ -1536,19 +1581,27 @@ export async function pagesToPdf(
           const estCharWidth = isCjk ? span.fontSize : span.fontSize * 0.52;
           estWidth = (estCharWidth + letterSpacing) * stretchText.length;
         }
-        if (estWidth > 0 && span.width > 0) {
-          const scale = (span.width / estWidth) * 100;
-          if (scale >= 30 && scale <= 400 && Math.abs(scale - 100) > 0.05) {
-            content += `${scale.toFixed(1)} Tz\n`;
-          } else {
-            content += `100 Tz\n`;
-          }
-        }
-
-        if (isUnicode) {
-          content += `<${encodeHexUtf16(span.text)}> Tj\n`;
+        const gapCount = span.justified ? countSpaceAdvances(stretchText) : 0;
+        const slackPt = span.width - estWidth;
+        if (gapCount > 0 && slackPt > 0.05 && !justifyPerGrapheme(stretchText)) {
+          content += `100 Tz\n`;
+          const adj = (-slackPt / gapCount / span.fontSize) * 1000;
+          content += `${justifiedWordGaps(span.text, stretchText.length, adj, isUnicode)}\n`;
         } else {
-          content += `(${escapePdfString(span.text)}) Tj\n`;
+          if (estWidth > 0 && span.width > 0) {
+            const scale = (span.width / estWidth) * 100;
+            if (scale >= 30 && scale <= 400 && Math.abs(scale - 100) > 0.05) {
+              content += `${scale.toFixed(1)} Tz\n`;
+            } else {
+              content += `100 Tz\n`;
+            }
+          }
+
+          if (isUnicode) {
+            content += `<${encodeHexUtf16(span.text)}> Tj\n`;
+          } else {
+            content += `(${escapePdfString(span.text)}) Tj\n`;
+          }
         }
       }
       content += `ET\n`;
@@ -1927,6 +1980,7 @@ export function extractPdfPageLayers(
                 x: xPt,
                 y: yPt,
                 width: intervalPt,
+                ...(intervals ? { justified: true } : {}),
                 ...(trailingPt > 0 ? { trailingWhitespace: trailingPt } : {}),
                 height: heightPt,
                 fontSize: fontSizePt,

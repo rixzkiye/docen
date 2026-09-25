@@ -7,6 +7,7 @@
 
 import type {
   FontMetrics,
+  LaidOutGlyphRun,
   LaidOutParagraph,
   LayoutInline,
   LayoutTextStyle,
@@ -79,6 +80,7 @@ vi.mock("leafer-ui", () => {
 
 const { Group } = await import("leafer-ui");
 const { paintParagraph, MERGE_FIELD_HIGHLIGHT } = await import("./paragraph");
+const { defaultGlyphOutlineCache } = await import("./glyph-painter");
 
 // ── tracked-format-change margin bars ──────────────────────────────────────
 
@@ -560,5 +562,120 @@ describe("paintParagraph drop caps", () => {
     );
     const labels = nodesOf(root, "Text").map((t) => t.props.text);
     expect(labels).toEqual(["Once upon"]);
+  });
+});
+
+// ── W35 word-gap justification (outline lane) ──────────────────────────────
+
+/** One shaped run over `text`: 10px advances, glyph ids 1..n, clusters in the
+ *  shaper's UTF-8 byte offsets. Outlines are seeded into the shared cache the
+ *  painter falls back to. */
+function testGlyphRun(text: string): LaidOutGlyphRun {
+  const chars = [...text];
+  const glyphs: LaidOutGlyphRun["glyphs"][number][] = [];
+  let byte = 0;
+  for (const [i, ch] of chars.entries()) {
+    glyphs.push({
+      glyphId: i + 1,
+      cluster: byte,
+      xAdvance: 1000,
+      yAdvance: 0,
+      xOffset: 0,
+      yOffset: 0,
+      xPx: i * 10,
+      yPx: 0,
+    });
+    const cp = ch.codePointAt(0)!;
+    byte += cp < 0x80 ? 1 : cp < 0x800 ? 2 : cp < 0x10000 ? 3 : 4;
+    defaultGlyphOutlineCache.setGlyphPath(1, i + 1, "M 0 0 L 5 0 L 5 5 Z");
+  }
+  return {
+    fontId: 1,
+    fontName: "TestFont",
+    fontSizePx: 10,
+    unitsPerEm: 1000,
+    direction: "ltr",
+    glyphs,
+    totalAdvancePx: chars.length * 10,
+  };
+}
+
+/** A justified single-item line over a shaped run: `justifyGapPx` marks the
+ *  line justified and the interval target is `maxWidthPx`. */
+function glyphPara(text: string, justifyGapPx: number, maxWidthPx: number): LaidOutParagraph {
+  const glyphRun = testGlyphRun(text);
+  return {
+    kind: "paragraph",
+    heightPx: 20,
+    beforePx: 0,
+    afterPx: 0,
+    inline: [{ kind: "text", text, style: { family: "serif", sizePx: 10 } }],
+    lines: [
+      {
+        yPx: 0,
+        heightPx: 20,
+        naturalPx: 20,
+        final: false,
+        maxWidthPx,
+        endInlineIndex: 0,
+        justifyGapPx,
+        hangPx: 0,
+        items: [
+          {
+            kind: "text",
+            inlineIndex: 0,
+            text,
+            xPx: 0,
+            widthPx: glyphRun.totalAdvancePx,
+            glyphRun,
+          },
+        ],
+      },
+    ],
+  };
+}
+
+const glyphProps = (root: StubNode, key: "x" | "scaleX"): number[] =>
+  nodesOf(root, "Path")
+    .filter((n) => (n.props.data as { docenGlyph?: boolean } | undefined)?.docenGlyph)
+    .map((n) => Number(n.props[key]));
+
+describe("W35 justified outline runs", () => {
+  it("spreads a Latin line's slack through its spaces — word outlines stay natural", () => {
+    const text = "dan cinta damai."; // 16 chars; spaces at 3 and 9
+    const root = paint(glyphPara(text, 10, 400));
+    // 400 − 160 natural = 240 slack over 2 spaces = 120 per gap: the glyphs
+    // before each space keep their natural pen, the ones after shift.
+    expect(glyphProps(root, "x")).toEqual([
+      0, 10, 20, 30, 160, 170, 180, 190, 200, 210, 340, 350, 360, 370, 380, 390,
+    ]);
+    // The outlines themselves are never x-scaled by the word gap.
+    for (const scaleX of glyphProps(root, "scaleX")) expect(scaleX).toBeCloseTo(0.01, 6);
+  });
+
+  it("keeps a CJK line's uniform both-letter stretch (no word-gap mode)", () => {
+    const text = "天地 玄黃"; // 5 chars, one space, CJK ⇒ per-grapheme
+    const root = paint(glyphPara(text, 10, 400));
+    // Uniform: every advance (and the glyph x scale) multiplies by 8 — the
+    // space glyph takes no extra gap of its own.
+    expect(glyphProps(root, "x")).toEqual([0, 80, 160, 240, 320]);
+    for (const scaleX of glyphProps(root, "scaleX")) expect(scaleX).toBeCloseTo(0.08, 6);
+  });
+
+  it("keeps a no-space run's uniform stretch", () => {
+    const text = "Mubarok";
+    const root = paint(glyphPara(text, 10, 400));
+    const scale = 400 / 70;
+    glyphProps(root, "x").forEach((x, i) => expect(x).toBeCloseTo(i * 10 * scale, 6));
+  });
+
+  it("hangs the line-final whitespace at its natural advance (W32)", () => {
+    const text = "dan cinta  "; // 11 chars; two trailing spaces
+    const para = glyphPara(text, 10, 400);
+    para.lines[0]!.trailingWhitespacePx = 20;
+    const root = paint(para);
+    // The visible slice fills 400 (last word ends there); the trailing spaces
+    // hang past it, un-stretched and still 10px apart.
+    expect(glyphProps(root, "x")).toEqual([0, 10, 20, 30, 350, 360, 370, 380, 390, 400, 410]);
   });
 });

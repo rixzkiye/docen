@@ -38,6 +38,25 @@ export function itemFontOf(
   );
 }
 
+/** Maps each UTF-8 byte offset of `text` to its UTF-16 code-unit offset —
+ *  the index space glyph clusters live in (HarfBuzz reports clusters as
+ *  UTF-8 byte offsets) mapped onto the JS string the painter walks. The
+ *  final entry maps the byte length to `text.length`. */
+export function utf8ToUtf16Offsets(text: string): number[] {
+  const map: number[] = [];
+  let u16 = 0;
+  for (let i = 0; i < text.length;) {
+    const cp = text.codePointAt(i)!;
+    const u16Len = cp > 0xffff ? 2 : 1;
+    const u8Len = cp < 0x80 ? 1 : cp < 0x800 ? 2 : cp < 0x10000 ? 3 : 4;
+    for (let b = 0; b < u8Len; b++) map.push(u16);
+    u16 += u16Len;
+    i += u16Len;
+  }
+  map.push(text.length);
+  return map;
+}
+
 /**
  * Derives grapheme-exact caret and selection geometry directly from a shaped OpenType glyph run.
  * Accurately divides ligature clusters and handles complex script clusters.
@@ -59,19 +78,7 @@ export function itemGlyphLayoutFromRun(
   }
 
   // Build map from UTF-8 byte offset to UTF-16 code unit offset
-  const utf8ToUtf16: number[] = [];
-  let u16 = 0;
-  for (let i = 0; i < text.length;) {
-    const cp = text.codePointAt(i)!;
-    const u16Len = cp > 0xffff ? 2 : 1;
-    const u8Len = cp < 0x80 ? 1 : cp < 0x800 ? 2 : cp < 0x10000 ? 3 : 4;
-    for (let b = 0; b < u8Len; b++) {
-      utf8ToUtf16.push(u16);
-    }
-    u16 += u16Len;
-    i += u16Len;
-  }
-  utf8ToUtf16.push(text.length);
+  const utf8ToUtf16 = utf8ToUtf16Offsets(text);
 
   // Group glyphs by their cluster start character index
   interface ClusterBounds {
